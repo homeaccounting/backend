@@ -1,0 +1,231 @@
+---
+description: 
+globs: *.hs
+alwaysApply: false
+---
+# Rule: Code Quality
+
+When generating code for this Haskell project, I must follow these requirements in their exact order, treating each as a mandatory precondition for the next level of safety.
+
+## AI Quick Reference
+- ✅ Ensure strict type safety with GHC, required extensions, and prohibited features
+- ✅ Apply LiquidHaskell refinements to all domain types in src/
+- ✅ Follow error handling patterns using explicit errors in types
+- ✅ Format all Haskell code according to ormolu standards
+- ✅ Document all exports with usage examples and mathematical properties
+
+## A. Type System Safety
+I will ensure all code (both src/ and test/) uses:
+1. GHC with full warnings enabled
+2. Required extensions: NoImplicitPrelude, StrictData, GADTs, KindSignatures, DataKinds, TypeFamilies
+3. Prohibited features: 
+   - Partial functions
+   - Unsafe coercions
+   - GeneralizedNewtypeDeriving
+   - OverlappingInstances
+   - IncoherentInstances
+   - ImpredicativeTypes
+   - **Generic deriving for LiquidHaskell-refined types** - never use `deriving Generic` with types that have LiquidHaskell refinements as it bypasses refinement verification
+4. Type class requirements:
+   - Explicit superclass constraints
+   - Minimal complete definitions
+   - No orphan instances or partial methods
+5. Data type requirements:
+   - Total functions only
+   - Smart constructors
+   - Phantom types for compile-time guarantees
+   - GADTs for constraints
+   - Newtype wrappers
+   - No exposed constructors
+   - **Data encapsulation pattern**:
+     - Never export data constructors directly
+     - Never export field selectors directly
+     - Always provide accessor functions for fields
+     - Always provide smart constructors for creation
+     - Prevent record update syntax bypass of invariants
+   - **Deriving strategy**:
+     - Only derive type classes that are strictly necessary
+     - Avoid `deriving Generic` for types with LiquidHaskell refinements
+     - Use manual instances instead of generic deriving when needed
+     - If Generic is absolutely required, use Internal module pattern and add runtime validation
+6. Additional Requirements for src/:
+   - All domain types must have LiquidHaskell refinement types
+   - All mathematical constraints must be compile-time verified
+   - No runtime checks for properties verifiable at compile-time
+   - For detailed LiquidHaskell implementation practices, follow [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc)
+   - Required Refinement Categories:
+     1. **Numeric Precision and Bounds**
+        - All numeric quantities must specify precision
+        - All percentages must specify valid ranges
+        - All indices and counts must specify bounds
+        - Example (generic requirements):
+          ```haskell
+          -- Numeric values: appropriate decimal precision
+          -- Percentages: valid range constraints
+          -- Counts: non-negative bounds
+          ```
+
+     2. **Data Structure Invariants**
+        - All collections must specify size constraints
+        - All sequences must specify ordering properties
+        - All trees must specify balance conditions
+        - Example (generic requirements):
+          ```haskell
+          -- Collections: min/max size constraints
+          -- Sequences: ordering properties (ascending, etc.)
+          -- Data structures: appropriate balance constraints
+          ```
+
+     3. **Domain Logic Constraints**
+        - All business rules must be encoded in types
+        - All state transitions must preserve invariants
+        - All calculations must maintain precision
+        - Example (generic requirements):
+          ```haskell
+          -- Domain values: appropriate validation constraints
+          -- State transitions: preservation of invariants
+          -- Calculations: precision guarantees
+          ```
+
+     4. **Conservation Laws**
+        - All transformations must preserve total quantities
+        - All conversions must maintain value equivalence
+        - All state changes must preserve invariants
+        - Example (generic requirements):
+          ```haskell
+          -- Transformations: conservation of quantities
+          -- Conversions: value equivalence maintenance
+          -- State changes: invariant preservation
+          ```
+
+   - Refinement Type Patterns:
+     ```haskell
+     -- Example patterns to follow:
+     {-@ type NonNegative a = {v:a | v >= 0} @-}
+     {-@ type Percentage = {v:Double | 0 <= v && v <= 1.0} @-}
+     {-@ type Preserves f = forall a. {v:a | f a == f v} @-}
+     {-@ type Monotonic f = forall a b. {v:Bool | a <= b => f a <= f b} @-}
+     ```
+
+## B. Implementation Requirements
+
+1. **Verification Strategy:**
+   - For src/: Use LiquidHaskell to verify all compile-time properties, following [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc)
+   - For test/: Follow verification requirements in [formal-verification.mdc](mdc:.cursor/rules/formal-verification.mdc)
+
+2. **Type Safety:**
+   - Follow all architectural patterns defined in [module-architecture.mdc](mdc:.cursor/rules/module-architecture.mdc)
+   - Ensure total functions only
+   - Use smart constructors
+   - Express all invariants as types where possible
+   - Preserve type-level guarantees
+
+3. **Error Handling:**
+   - Follow idiomatic error handling approach defined in [Control.Error](mdc:src/Control/Error.hs)
+   - Use type-first error handling with explicit errors in function signatures
+   - Pure functions must return `Either` for operations that can fail
+   - Keep core validation logic pure and push effects to the boundaries
+   - Provide complete error context with `mkAppError`
+   - Use `AppM` for effectful operations that can fail
+   - Follow patterns defined in [idiomatic-error-handling.md](mdc:docs/idiomatic-error-handling.md)
+
+4. **Performance Characteristics:**
+   - Document complexity guarantees
+   - Optimize critical paths
+   - Maintain predictable performance
+   - Avoid space leaks
+   - Profile key operations
+
+## C. Documentation Requirements
+
+1. **Code Documentation:**
+   - Follow documentation patterns from [module-architecture.mdc](mdc:.cursor/rules/module-architecture.mdc)
+   - Document all exports
+   - Provide usage examples
+   - Include property tests
+   - Reference academic sources
+
+2. **Code Formatting:**
+   - Format all Haskell code using ormolu standards
+   - Maintain consistent indentation, line breaks, and spacing
+   - Respect module structure formatting (imports, exports, declarations)
+   - Preserve code organization within functions
+   - Do not manually override ormolu formatting decisions
+   - Ensure all generated code is immediately compliant with ormolu without requiring reformatting
+
+3. **Mathematical Documentation:**
+   - Category theory structures
+   - Type theory concepts
+   - Formal notation
+   - Literature references
+   - Algebraic properties
+
+## D. Verification Process
+
+1. **Static Analysis:**
+   - Enable all GHC warnings
+   - Use HLint
+   - Verify code formatting with ormolu
+   - Maintain zero warnings
+   - Verify type safety
+   - Check documentation
+
+2. **Compile-time Verification:**
+   - All src/ mathematical properties must be verified by LiquidHaskell (following [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc))
+   - All test/ verification must follow [formal-verification.mdc](mdc:.cursor/rules/formal-verification.mdc)
+
+## E. Dependency Control
+
+1. **Package Requirements:**
+   - Explicit version bounds
+   - Mathematical documentation
+   - Property tests included
+   - Type safety guaranteed
+   - No unsafe features
+
+2. **Dependency Management:**
+   - Minimize dependencies
+   - Verify compatibility
+   - Document rationale
+   - Track security
+   - Maintain updates
+
+## F. Mathematical Verification
+
+1. **Property Preservation:**
+   - Referential transparency
+   - Type safety
+   - Mathematical properties
+   - Performance characteristics
+   - State isolation
+
+2. **LiquidHaskell Requirements:**
+   - For implementation details and patterns, refer to [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc)
+   - Core Type Refinements:
+     ```haskell
+     {-@ type NonNegative a = {v:a | v >= 0} @-}
+     {-@ type Positive a = {v:a | v > 0} @-}
+     {-@ type Percentage = {v:Double | 0.0 <= v && v <= 1.0} @-}
+     {-@ type Bounded a low high = {v:a | low <= v && v <= high} @-}
+     ```
+   - Collection Constraints:
+     ```haskell
+     {-@ type SizedList a n = {v:[a] | len v == n} @-}
+     {-@ type NonEmptyList a = {v:[a] | len v > 0} @-}
+     {-@ type SortedList a = {v:[a] | isSorted v} @-}
+     ```
+   - Function Properties:
+     ```haskell
+     {-@ measure size @-}
+     {-@ preserve :: (a -> b) -> a -> {v:b | preserve v == preserve a} @-}
+     {-@ monotonic :: (Ord a, Ord b) => (a -> b) -> a -> a -> Bool @-}
+     ```
+
+3. **Verification Requirements:**
+   - All core calculations must have refinement types
+   - Operations must preserve domain constraints
+   - Classification operations must be statically verified
+   - Data structure operations must maintain invariants
+   - Transformations must preserve conservation properties
+   - Decimal precision must be statically guaranteed
+   - No runtime checks for properties verifiable at compile-time

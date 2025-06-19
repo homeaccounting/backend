@@ -1,0 +1,268 @@
+---
+description: 
+globs: *.hs
+alwaysApply: false
+---
+---
+description: 
+globs: *.hs,package.yaml
+alwaysApply: false
+---
+# Rule: Module Architecture
+
+## A. Module Hierarchy
+
+1. **Domain Layer** (`src/Domain/`):
+   - Core business types used across components
+   - Mathematical properties and invariants
+   - Type-level guarantees
+   - Smart constructors with validation
+   - No component dependencies
+   - Examples:
+     * `Domain.EntityId`
+     * `Domain.ValueObject`
+     * `Domain.Aggregate`
+
+2. **Component Layer** (`src/Components/`):
+   - Each component in dedicated directory
+   - Follows Hexagonal Architecture pattern with clear ports and adapters
+   - Module names must be self-describing without requiring full path context
+   - Two component categories:
+
+   A. **Domain Components** (e.g., BusinessLogic, DomainService):
+      ```text
+      Components/
+      └── ComponentName/
+          ├── ComponentNameAPI.hs        # Public API (Safe)
+          │   - Pure domain operations (e.g., calculateValue, analyzeData)
+          │   - Only imports: Domain types, Infrastructure
+          │   - All operations must be pure calculations
+          │   - Uses Control.Error for error handling
+          ├── Config/                    # Configuration
+          │   ├── ComponentNameEnv.hs    # Pure environment structure (Safe)
+          │   └── ComponentNameM.hs      # Effect handling (Trustworthy)
+          └── Implementation/            # Implementation details
+              ├── Internal.hs            # Re-exports core types and functions
+              ├── Core/                  # Business logic (Safe)
+              │   ├── ComponentNameCalculations.hs    # Pure domain calculations
+              │   └── ComponentNameAnalysis.hs        # Pure analysis functions
+              └── Types/                 # Implementation types (Safe)
+                  └── DomainType.hs      # Component-specific types
+      ```
+      - Focus on business logic and domain rules
+      - All calculations must be pure mathematical operations
+      - No IO or effects in implementation
+      - Safe modules by default
+      - Uses Control.Error for error handling with explicit types
+
+   B. **Integration Components** (e.g., ExternalSystemConnector):
+      ```text
+      Components/
+      └── ComponentName/
+          ├── ComponentNameAPI.hs       # Public API (Safe)
+          │   - Integration operations (e.g., fetchData)
+          │   - Only imports: Domain types, Infrastructure, OutboundPorts
+          │   - Coordinates effects and error handling
+          ├── Config/                   # Configuration
+          │   ├── ComponentNameEnv.hs   # Pure environment structure
+          │   └── ComponentNameM.hs     # Effect handling (Trustworthy)
+          ├── OutboundPorts/           # Port interfaces (Safe)
+          │   └── PortName.hs          # e.g., HttpClient.hs
+          └── Implementation/           # Implementation details
+              ├── Internal.hs          # Re-exports adapters and parsers
+              ├── Adapters/            # Port implementations (Trustworthy)
+              │   └── {ExternalSystem}PortName.hs  # External system client e.g., ExternalSystemHttpClient.hs
+              └── Parsers/             # Data conversion (Trustworthy)
+      ```
+      - Focus on external system integration
+      - Clear separation of ports and adapters
+      - Effects isolated to adapter implementations
+      - Uses Control.Error for error handling
+
+      Effectful Operations Limited To:
+      1. ExternalConnectors: External API communication
+      2. StorageServices: File system/database operations
+      3. UserInterface: Console/UI operations 
+      4. ConfigManager: Environment and configuration
+
+   Common Requirements for Both:
+   - Clear API boundary through ComponentNameAPI which must be pure and safe
+   - Pure environment structure in ComponentNameEnv
+   - Effect handling in ComponentNameM (when needed)
+   - Follow patterns in [application-composition.md](mdc:docs/application-composition.md)
+   - Maintain mathematical properties and type safety
+   - No dependency on internal modules of other components
+   - No circular dependencies between components
+   - Use Control.Error for all error handling
+   - Maintain perfect debug context for errors
+
+   Naming Conventions:
+   - All module names must be self-describing (e.g., ExternalSystemConnectorAPI.hs)
+   - Use ComponentName prefix for all public modules
+   - Internal modules may use shorter names within their context
+   - Names should reflect hexagonal architecture concepts (API, Ports, Adapters)
+
+3. **Infrastructure Layer** (`src/`):
+   - Cross-cutting concerns in appropriate namespaces:
+     * `Control/`: Effects and error handling
+     * `Data/`: Generic data types and math
+     * `System/`: System-level utilities
+
+## B. Documentation Requirements
+
+1. **Module Headers:**
+   ```haskell
+   {- |
+   Description : One-line description
+   
+   Detailed module description with:
+   1. Purpose and role in architecture
+   2. Key abstractions and patterns
+   3. Mathematical properties
+   4. Usage examples
+   -}
+   ```
+
+2. **Module Documentation:**
+   - Purpose in system
+   - Architectural role
+   - Port definitions
+   - Mathematical properties
+   - Usage patterns
+   - Error handling approach
+
+## C. Testing Module Organization
+
+1. **Test Directory Structure:**
+   ```
+   test/
+   ├── Components/                               # Component tests
+   │   └── ComponentName/
+   │       ├── TestSupport/                      # Generators, mocks, and helpers
+   │       │   └── Mock{OutboundPort}.hs         # For example, MockHttpClient.hs
+   │       ├── ComponentNameSpec.hs              # Unit tests
+   │       ├── ComponentNameIntegrationSpec.hs   # Integration tests
+   │       └── ComponentNamePropertySpec.hs      # Property tests
+   ├── Control/                                  # Effects and error handling tests
+   │   └── EffectName/
+   │       ├── EffectNameSpec.hs                 # Unit tests
+   │       └── EffectNamePropertySpec.hs         # Property tests
+   ├── Data/                                     # Generic data types and math tests
+   │   └── TypeName/
+   │       ├── TypeNameSpec.hs                   # Unit tests
+   │       └── TypeNamePropertySpec.hs           # Property tests
+   └── Spec.hs                                   # Test entry point
+   ```
+
+2. **Test File Naming Conventions:**
+   - `*Spec.hs`: Regular unit tests including error handling tests
+   - `*PropertySpec.hs`: Property-based tests and type class law verification
+   - `*IntegrationSpec.hs`: Integration tests with external systems
+
+3. **Test Execution:**
+   - All tests: Run via standard cabal test command
+   - See [idiomatic-error-handling.md](mdc:docs/idiomatic-error-handling.md) for details on error handling testing strategy
+
+## D. Application Composition
+
+The complete application composition pattern is defined in [application-composition.md](mdc:docs/application-composition.md).
+This document establishes:
+
+1. **Layer Structure:**
+   - API Layer (Safe): Component operations
+   - Environment Layer (Safe): Pure environment composition
+   - Effect Layer (Trustworthy): Effect handling and lifting
+   - Runtime Layer (Trustworthy): System composition
+
+2. **Safety Boundaries:**
+   - Safe modules: Pure operations and types
+   - Trustworthy modules: Controlled effects
+   - Perfect error context preservation
+   - Resource safety guarantees
+
+3. **Component Integration:**
+   - Environment composition pattern
+   - Effect lifting hierarchy
+   - Port implementation strategy
+   - API usage through lifting
+
+4. **Implementation Requirements:**
+   - Total construction
+   - Pure composition
+   - Type-safe port creation
+   - Mathematical properties
+
+When implementing new components or modifying existing ones, refer to
+[application-composition.md](mdc:docs/application-composition.md) for detailed patterns and examples of:
+- Environment structure and composition
+- Effect handling and lifting
+- Port implementation and usage
+- Safety boundary maintenance
+
+Note: Many Domain Component operations can be implemented as pure functions without requiring ComponentNameM. Use ComponentNameM only when operations need to integrate with effectful components.
+
+## E. Error Handling in System Architecture
+
+All modules in the entire codebase must strictly adhere to the idiomatic error handling approach defined in [idiomatic-error-handling.mdc](mdc:.cursor/rules/idiomatic-error-handling.mdc). This includes Domain types, Components, and Infrastructure modules - no exceptions.
+
+1. **System-Wide Requirements**:
+   - The idiomatic error handling approach is a fundamental architectural requirement
+   - It applies equally to all modules regardless of their location
+   - Domain types, Components, and Infrastructure code must all follow this pattern
+   - Example from Domain layer:
+     ```haskell
+     -- In Domain/EntityId.hs
+     mkEntityId :: Text -> Either ValidationError EntityId
+     mkEntityId eid = do
+       -- Validation with explicit error result
+       if isValid eid
+         then Right $ EntityId eid
+         else Left $ ValidationError "Invalid entity ID" 
+                       (Map.singleton "value" eid)
+     ```
+
+2. **Port Interface Requirements**:
+   - Must use `MonadError AppError m` constraint for operations that can fail
+   - Operations that can fail must be explicit in their type signatures
+   - Must return the actual result type directly (through the monadic context)
+   - Example:
+     ```haskell
+     -- CORRECT: Port interface with explicit error handling
+     data HttpClient = HttpClient
+         { executeRequest :: (MonadError AppError m, MonadIO m) => HttpConfig -> Text -> Map Text Text -> m Response
+         , getResponseBody :: (MonadError AppError m, MonadIO m) => Response -> m ByteString
+         }
+     
+     -- INCORRECT: Port without explicit error handling in type
+     data HttpClient = HttpClient
+         { executeRequest :: HttpConfig -> Text -> Map Text Text -> IO Response
+         , getResponseBody :: Response -> IO ByteString  -- WRONG! No explicit error handling
+         }
+     ```
+
+3. **API Implementation Pattern**:
+   - Must validate all inputs with explicit error results
+   - Must handle all errors through `throwError` or `Either`
+   - All operations must have explicit error handling
+   - Example:
+     ```haskell
+     fetchData :: (MonadError AppError m, MonadIO m) => EntityId -> m [DataItem]
+     fetchData entityId = do
+       -- Validate input with explicit error
+       when (invalidEntityId entityId) $ 
+         throwError $ mkAppError "Invalid entity ID" "fetchData" 
+           (Map.singleton "entityId" (show entityId))
+       
+       -- Continue with valid input
+       response <- httpClient.executeRequest config "/data" params
+       
+       -- Parse response with explicit error handling
+       parseDataItems response
+     ```
+
+4. **Error Context Requirements**:
+   - Function name as context
+   - Input values in debug info
+   - Current operation state
+   - Mathematical context when relevant
+   - Expected vs. actual values

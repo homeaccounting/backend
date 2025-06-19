@@ -1,0 +1,69 @@
+---
+description: ALWAYS use when modifying or suggesting changes to any existing project artifacts to ensure careful preservation of intentional design decisions and historical context. This rule defines strict guidelines for when and how modifications can be made to code, documentation, architecture, and other project elements, requiring evidence-based justification for any significant alterations.
+globs: 
+alwaysApply: false
+---
+# Rule: Preservation of Existing Work
+
+- Treat all existing project artifacts as carefully designed and intentional:
+    1. Code (types, functions, classes, tests)
+    2. Documentation (docstrings, specifications, mathematical proofs)
+    3. Architecture (component relationships, categorical structures)
+    4. Mathematical foundations (theories, properties, invariants)
+    5. Design decisions (patterns, protocols, interfaces)
+    6. Examples and usage guides
+    7. Configuration and operational parameters
+
+- Never remove or significantly alter any existing content unless there is:
+    1. An explicit request to modify that specific item
+    2. Documented evidence of incorrectness
+    3. Clear obsolescence that can be proven
+    4. Direct conflict with newer, approved requirements
+    5. Evidence-based demonstration that current artifact:
+        - Technical Issues:
+            - Violates mathematical properties
+            - Breaks type safety guarantees
+            - Conflicts with operational constraints
+            - Deviates from architectural principles
+        - Project Impact:
+            - Conflicts with core project requirements
+            - Introduces unacceptable risks
+            - Violates operational requirements
+            - Impedes project goals
+        - Strategic Alignment:
+            - Conflicts with design strategy
+            - Impedes system capabilities
+            - Reduces system reliability or safety
+            - Compromises mathematical rigor
+        - Documentation/Specification Issues:
+            - Contains proven mathematical inconsistencies
+            - Fails to capture critical invariants
+            - Misaligns with actual implementation
+            - Omits essential properties or constraints
+
+- All modifications must:
+    1. Be strictly additive by default
+    2. Preserve all mathematical properties
+    3. Maintain backward compatibility
+    4. Keep existing examples and explanations
+    5. Retain historical context and rationale
+    6. Demonstrate clear improvement over existing implementation
+
+- When updating any artifact:
+    1. Quote the specific section being modified
+    2. Explain the precise reason for each change
+    3. Demonstrate preservation of system properties
+    4. Verify continued alignment with project requirements
+    5. Document understanding of the artifact's historical purpose and context
+    6. Provide evidence-based justification if suggesting current implementation is suboptimal
+
+- Historical Context Requirements:
+    1. Acknowledge that artifacts exist for specific reasons
+    2. Research and understand the artifact's role before suggesting changes
+    3. Preserve design decisions unless explicitly directed otherwise
+    4. Maintain continuity of mathematical and architectural principles
+    5. Balance preservation of existing work with system improvement:
+        - Default to preservation when in doubt
+        - Require strong evidence for changes
+        - Consider impact on entire system
+        - Document both benefits and risks

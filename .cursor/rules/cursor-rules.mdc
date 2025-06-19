@@ -1,0 +1,260 @@
+---
+description: ALWAYS use when asked to CREATE A RULE or UPDATE A RULE or taught a lesson from the user that should be retained as a new rule for Cursor
+globs: 
+alwaysApply: false
+---
+# Cursor Rules Format
+
+## AI Consumption Context
+
+Rules are created for AI Assistants as both authors and consumers:
+- Rules are NOT primarily intended for human developers
+- Rules ARE designed for AI consumption across multiple chats
+- Rules should be optimized for AI context processing efficiency
+- AI is both the writer and reader of all rules
+
+When creating or updating rules:
+1. Organize content for AI comprehension and retrieval
+2. Optimize for context window efficiency
+3. Structure for quick inference of relevant patterns
+4. Format for ease of AI parsing and application
+
+## Core Structure
+
+```mdc
+---
+description: ACTION when TRIGGER to OUTCOME
+globs: *.mdc
+---
+
+# Rule Title
+
+## AI Quick Reference
+- Key patterns to immediately apply
+- Recognition contexts for this rule
+- Implementation checklist
+- Common anti-patterns to avoid
+
+## Detailed Guidance
+- Context-specific implementation patterns
+- Concrete, complete examples
+- Clear pattern/anti-pattern pairs
+- Decision trees for complex scenarios
+```
+
+## File Organization
+
+### Location
+- Path: `.cursor/rules/`
+- Extension: `.mdc`
+
+### Glob Pattern Examples
+Common glob patterns for different rule types:
+- Core standards: .cursor/rules/*.mdc
+- Language rules: src/**/*.{js,ts}
+- Testing standards: **/*.test.{js,ts}
+- React components: src/components/**/*.tsx
+- Documentation: docs/**/*.md
+- Configuration files: *.config.{js,json}
+- Build artifacts: dist/**/*
+- Multiple extensions: src/**/*.{js,jsx,ts,tsx}
+- Multiple files: dist/**/*, docs/**/*.md
+
+## Required Fields
+
+### Frontmatter
+- description: ACTION TRIGGER OUTCOME format
+- globs: `glob pattern for files and folders`
+
+### Body
+- <version>X.Y.Z</version>
+- AI Quick Reference section at the top
+- Detailed implementation guidance
+- Concrete examples
+- Formatted for fast AI comprehension
+
+## AI Optimization Guidelines
+
+### Content Structure
+- Place most critical information first
+- Use clear hierarchical organization
+- Provide implementation checklists
+- Include pattern recognition guidance
+- Front-load actionable patterns
+
+### Pattern Format
+- Present concrete, complete examples
+- Include anti-pattern/pattern pairs
+- Show full implementation context
+- Use clear section markers
+- Optimize code blocks for direct application
+
+### Scannable Structure
+- Use consistent heading hierarchies
+- Create clear visual distinctions between sections
+- Limit paragraph length
+- Use bullet points for lists of items
+- Employ tables for structured comparisons
+
+### AI Quick Reference Format
+```
+## AI Quick Reference
+
+### Key Patterns to Apply
+- ✅ Pattern 1
+- ✅ Pattern 2
+- ✅ Pattern 3
+
+### Recognition Contexts
+1. **Context A**: When to apply pattern 1
+2. **Context B**: When to apply pattern 2
+3. **Context C**: When to apply pattern 3
+
+### Implementation Checklist
+**Category 1:**
+- ☐ Step 1
+- ☐ Step 2
+- ☐ Step 3
+```
+
+## Formatting Guidelines
+
+- Use Concise Markdown primarily
+- XML tags limited to:
+  - <example>
+  - <danger>
+  - <required>
+  - <rules>
+  - <rule>
+  - <critical>
+  - <version>
+- Always indent content within XML or nested XML tags by 2 spaces
+- Keep rules as short as possible
+- Use Mermaid syntax if it will be shorter or clearer than describing a complex rule
+- Use Emojis where appropriate to convey meaning that will improve rule understanding
+- Keep examples as short as possible to clearly convey the positive or negative example
+- Optimize all content for AI consumption (not human readability)
+
+## Rule Organization and Cross-Referencing
+
+### DRY Principles for Rules
+- Avoid duplication of guidance across rule files
+- Prefer cross-references over duplicating content
+- Use Markdown links with the `mdc:` prefix to reference other rules
+- Format: `[rule-name.mdc](mdc:.cursor/rules/rule-name.mdc)`
+
+### Cross-Reference Strategy
+1. **Parent-Child Relationships**:
+   - Parent rules define high-level requirements
+   - Child rules elaborate specific implementation details
+   - Parent rules reference child rules for detailed guidance
+   - Example:
+     ```markdown
+     For detailed LiquidHaskell implementation practices, follow [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc)
+     ```
+
+2. **Sibling Relationships**:
+   - Related rules with different concerns reference each other
+   - Clarify boundaries of responsibility
+   - Explicitly mention overlapping concepts
+   - Example:
+     ```markdown
+     Runtime verification of properties not verifiable by LiquidHaskell (see [code-quality.mdc](mdc:.cursor/rules/code-quality.mdc) and [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc))
+     ```
+
+3. **Domain-Specific Examples**:
+   - Keep domain-specific examples in the main rule
+   - Reference implementation patterns in specialized rules
+   - Example:
+     ```markdown
+     // In code-quality.mdc - keep domain-specific examples:
+     {-@ type AssetQuantity = {v:Decimal | hasDecimals 8 v && v >= 0} @-}
+     
+     // But reference implementation patterns:
+     For implementation details and patterns, refer to [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc)
+     ```
+
+### Creating New vs. Updating Existing Rules
+- **Create New Rule When**:
+  - Topic requires dedicated, detailed guidance
+  - Implementation details are extensive
+  - Pattern will be referenced from multiple places
+  - Subject has unique glob pattern requirements
+  
+- **Update Existing Rule When**:
+  - Change is small and closely related to existing content
+  - Concept fits naturally within existing rule boundaries
+  - No need for separate glob pattern
+
+### Rule Update Guidelines
+1. **Add Cross-References**:
+   - When extracting content to a new rule, add references in the source rule
+   - When adding related guidance, reference existing rules
+   
+2. **Update All Affected Rules**:
+   - When creating a specialized rule, update all related rules with references
+   - Ensure consistent terminology across all related rules
+   
+3. **Content Placement**:
+   - Keep high-level requirements and overview in parent rules
+   - Move detailed implementation guidance to specialized rules
+   - Maintain domain-specific examples where most contextually relevant
+
+<example>
+// Good: Cross-reference for detailed implementation
+**LiquidHaskell Verification Strategy:**
+- Use LiquidHaskell to verify all compile-time properties, following [liquidhaskell-verification.mdc](mdc:.cursor/rules/liquidhaskell-verification.mdc)
+</example>
+
+<example type="invalid">
+// Bad: Duplicating detailed guidance
+**LiquidHaskell Verification Strategy:**
+- Use LiquidHaskell to verify all compile-time properties
+- Always start with the plugin configuration only
+- Add refinements incrementally in order of complexity
+- Document each refinement directly above the code it applies to
+- Replace 'assume' with precise refinements incrementally
+</example>
+
+## AI Context Efficiency
+
+1. Keep frontmatter description under 120 characters while maintaining clear intent for rule selection
+2. Begin with AI Quick Reference section at the top of every rule
+3. Use hierarchical structure for quick AI parsing
+4. Remove redundant information across sections
+5. Maintain high information density with minimal tokens
+6. Focus on machine-actionable instructions over human explanations
+7. Optimize for repeated retrieval across different chat sessions
+8. Recognize that the AI will be processing the rule with limited context
+
+### AI Quick Reference Template
+Every rule should begin with an AI Quick Reference that follows this structure:
+
+```markdown
+## AI Quick Reference
+
+### Key Patterns to Apply
+- ✅ Pattern 1: Brief explanation
+- ✅ Pattern 2: Brief explanation
+- ✅ Pattern 3: Brief explanation
+
+### Recognizing Application Contexts
+1. **Context A**: How to identify when pattern 1 applies
+2. **Context B**: How to identify when pattern 2 applies
+3. **Context C**: How to identify when pattern 3 applies
+
+### Implementation Checklist
+- ☐ Step 1: What to verify or implement
+- ☐ Step 2: What to verify or implement
+- ☐ Step 3: What to verify or implement
+```
+
+<critical>
+  - NEVER include verbose explanations or redundant context that increases AI token overhead
+  - Keep file as short and to the point as possible BUT NEVER at the expense of sacrificing rule impact and usefulness for the AI Agent.
+  - the front matter can ONLY have the fields description and globs.
+  - Rules are always written for AI consumption, not human developers
+  - Rules should be optimized for repeated retrieval across different chat sessions
+  - AI is both the author and consumer of all rules
+</critical>
+

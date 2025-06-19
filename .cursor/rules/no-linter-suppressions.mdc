@@ -1,0 +1,17 @@
+---
+description: 
+globs: *.hs
+alwaysApply: false
+---
+# Rule: No Linter Suppressions
+
+A. Linter Suppressions
+    - Never disable linter checks except when:
+        - Type system limitations require it
+        - Third-party APIs force compromises
+        - Mathematical properties demand it
+    - Suppression requirements:
+        - Must be explicitly approved by the user
+        - Must be documented with rationale
+        - Must be scoped to specific lines
+        - Must reference this rule

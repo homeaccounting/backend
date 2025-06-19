@@ -1,0 +1,149 @@
+---
+description: ALWAYS use when ASKED to preserve discussion context to ENABLE continuation in future chats
+globs: 
+alwaysApply: false
+---
+# Context Capture Documentation
+
+## Context
+- When a complex discussion needs to be preserved for future work
+- When transitioning work between different chat sessions
+- When creating implementation plans based on current analysis
+- When documentation is needed to share context with other stakeholders
+
+## Requirements
+- Generate a comprehensive markdown document that captures:
+  - Current design and architecture understanding
+  - Relevant codebase context and structures
+  - Analysis and thought process behind recommendations
+  - Specific examples demonstrating current and proposed approaches
+  - Step-by-step implementation plans
+  - Testing strategies and considerations
+  - Risks and mitigations
+  - Any additional context necessary for future implementation
+
+- Document structure must include:
+  - Executive summary with concise overview
+  - Detailed table of contents for navigation
+  - Current state description
+  - Proposed changes with justification
+  - Implementation plan with concrete steps
+  - Code examples with clear before/after comparisons
+  - Consideration of edge cases and potential issues
+
+- Always generate a separate new chat prompt:
+  - Provide a concise, ready-to-use prompt at the end of your response
+  - Format the prompt as a quoted block with "New Chat Prompt:" header
+  - Include sufficient context about the plan/document
+  - Reference the specific document path
+  - Frame the prompt to initiate implementation work
+  - The prompt should be self-contained and actionable
+  - Keep the prompt under 400 characters for easy copying
+
+- All recommendations must maintain alignment with project standards:
+  - Preserve mathematical correctness
+  - Maintain error handling principles
+  - Respect architectural boundaries
+  - Consider testing implications
+
+## Examples
+
+<example>
+CORRECT: Creating a comprehensive context document
+
+```
+# [Feature Name]: [Action] Implementation Plan
+
+## Executive Summary
+[1-2 paragraph overview capturing the essence of the change and its benefits]
+
+## Table of Contents
+1. [Current Architecture](mdc:#current-architecture)
+2. [Operational Context](mdc:#operational-context)
+3. [Analysis and Justification](mdc:#analysis-and-justification)
+4. [Concrete Examples](mdc:#concrete-examples)
+5. [Implementation Plan](mdc:#implementation-plan)
+6. [Testing Strategy](mdc:#testing-strategy)
+7. [Risks and Mitigations](mdc:#risks-and-mitigations)
+
+## Current Architecture
+[Detailed description of current implementation with code examples]
+
+## Operational Context
+[Description of how the feature fits into the overall system]
+
+## Analysis and Justification
+[Reasoning behind the proposed change with pros and cons analysis]
+
+## Concrete Examples
+[Multiple specific code examples showing current vs proposed approach]
+
+## Implementation Plan
+[Step-by-step plan with clear phases and success criteria]
+
+## Testing Strategy
+[Approach to testing the changes, including unit, integration, property tests]
+
+## Risks and Mitigations
+[Potential issues and how to address them]
+```
+</example>
+
+<example type="invalid">
+INCORRECT: Creating a vague, unstructured document
+
+```
+# Changes Needed
+
+Here are some things we discussed:
+- We should change how the system works
+- The current approach is a bit complex
+- A simpler way might be better
+
+We should make these changes at some point. Remember we talked about using X instead of Y.
+```
+
+This example fails to:
+- Provide sufficient detail for implementation
+- Include concrete code examples
+- Offer step-by-step guidance
+- Consider testing or risks
+- Maintain connection to architectural principles
+</example>
+
+<example>
+CORRECT: Request to generate a context capture document
+
+"Please create a markdown document that captures the current design, codebase context, and the thought process, analysis, recommendations, concrete examples, and a step-by-step plan for [specific change]. This document should provide sufficient detail to enable implementation in a new chat without the context of this chat."
+</example>
+
+<example type="invalid">
+INCORRECT: Vague request for documentation
+
+"Can you write up what we just talked about?"
+
+This request lacks:
+- Specific mention of what aspects of the discussion to capture
+- Clear purpose for the document
+- Indication of necessary detail level
+- Structure requirements
+</example>
+
+<example>
+CORRECT: New chat prompt format
+
+New Chat Prompt:
+"I'd like to implement the simplified monad design as documented in docs/projects/simplified-monad-design.md. Let's start with Phase 1 of the implementation plan: creating test helpers and updating the AppEnv accessors. Please help me write the necessary code for these initial steps."
+</example>
+
+<example type="invalid">
+INCORRECT: Vague new chat prompt
+
+"Let's continue our discussion from earlier about some changes to the architecture."
+
+This prompt fails to:
+- Reference the specific document
+- Indicate which phase or step to work on
+- Provide sufficient context about the planned changes
+- Give clear direction for what to do next
+</example> 

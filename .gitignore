@@ -1,0 +1,59 @@
+# Haskell
+dist/
+dist-newstyle/
+.ghc.environment.*
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+*.prof
+*.aux
+*.hp
+*.ps
+*.tix
+*.chi
+*.chs.h
+*.dyn_o-boot
+*.dyn_hi-boot
+*.o-boot
+*.hi-boot
+*~
+
+# Cabal
+cabal.project.local
+cabal.project.local~
+.cabal-sandbox/
+cabal.sandbox.config
+*.cabal.backup
+
+# Stack
+.stack-work/
+*.stack-work
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Nix
+result
+result-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+
+# Database files
+*.db
+*.sqlite
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
