@@ -1,0 +1,47 @@
+# Architecture Decision Records (ADRs)
+
+This directory contains Architecture Decision Records documenting significant technical decisions made in this project.
+
+## Decisions
+
+| ID | Title | Status | Date |
+|----|-------|--------|------|
+| — | No decisions recorded yet | — | — |
+
+## ADR Format
+
+Each ADR follows this structure:
+
+```markdown
+# NNN - Title
+
+## Status
+Proposed | Accepted | Deprecated | Superseded by [NNN](./NNN-title.md)
+
+## Context
+What is the issue that we're seeing that is motivating this decision?
+
+## Decision
+What is the change that we're proposing and/or doing?
+
+## Consequences
+What becomes easier or more difficult because of this change?
+```
+
+## Creating a New ADR
+
+1. Copy the template above
+2. Name the file `NNN-short-title.md` (e.g., `001-event-sourcing.md`)
+3. Fill in all sections
+4. Update this README index
+5. Submit for review
+
+## Numbering
+
+- Use sequential three-digit numbers: `001`, `002`, `003`
+- Never reuse numbers, even for superseded decisions
+
+## Related
+
+- [Documentation Management Rule](../../.cursor/rules/documentation-management.mdc)
+- [Implementation Plans](../plans/)

@@ -1,0 +1,34 @@
+# HLint configuration for the accounting project
+# See https://github.com/ndmitchell/hlint for documentation
+
+# Note: Build artifacts (dist, dist-newstyle, .stack-work) are automatically
+# excluded by using 'hlint --git' in CI, which only lints tracked files.
+
+# Ignore specific patterns that are acceptable in this codebase
+- ignore: {name: Use newtype instead of data}  # Sometimes data is clearer
+- ignore: {name: Redundant do}  # Explicit do blocks improve clarity
+- ignore: {name: Use const}  # Lambda functions can be more explicit
+
+# Enforce some best practices
+- warn: {name: Use camelCase}
+- warn: {name: Use infix}
+- warn: {name: Use String}  # Prefer Text over String
+
+# Note: We use RIO instead of Prelude throughout the project.
+# Import enforcement is handled by code review and compilation.
+
+# Module-specific ignores
+- ignore:
+    name: Avoid lambda
+    within:
+      - Domain.Account.CommandHandler
+      - Domain.Transaction.CommandHandler
+      - Application.ProcessManagers.TransferManager
+
+# Allow incomplete patterns in test code
+- ignore:
+    name: Incomplete patterns
+    within:
+      - test/**/*Spec.hs
+      - test/**/*Property*.hs
+

@@ -1,0 +1,104 @@
+-- |
+-- Module      : Domain.Transaction
+-- Description : Public API for the Transaction aggregate
+--
+-- This module re-exports all Transaction aggregate components, providing a single
+-- import point for working with money transfers.
+--
+-- Usage:
+-- >>> import Domain.Transaction
+--
+-- This gives you access to:
+--   - Events: TransferInitiated, TransferCompleted, TransferFailed
+--   - Commands: InitiateTransfer, CompleteTransfer, FailTransfer
+--   - Projection: Transaction, transactionProjection, TransactionEvent, TransactionStatus
+--   - Command Handler: transactionCommandHandler, TransactionCommand
+--   - Errors: TransactionError, SourceAccountNotFound, TargetAccountNotFound, etc.
+--
+-- The Transaction aggregate represents a money transfer between accounts.
+-- It follows event sourcing and CQRS patterns with a saga/process manager:
+--   - Commands express user intent or process manager actions
+--   - Command handler validates commands against current state
+--   - Events represent facts about state changes
+--   - Projection rebuilds state from events
+--   - Process manager orchestrates the transfer saga
+--
+-- Transaction Lifecycle:
+--
+-- 1. User initiates transfer:
+--    >>> let cmd = InitiateTransfer sourceId targetId (Money 500.0) "Rent"
+--    >>> let events = handleTransactionCommand transactionDefault cmd
+--    [TransferInitiatedTransactionEvent (TransferInitiated ...)]
+--
+-- 2. Process manager receives TransferInitiated event and:
+--    - Issues DebitAccount command to source account
+--    - If successful, issues CreditAccount command to target account
+--    - If both succeed, issues CompleteTransfer command
+--    - If any fails, issues FailTransfer command
+--
+-- 3. Transaction reaches terminal state:
+--    >>> let completeCmd = CompleteTransfer
+--    >>> let events = handleTransactionCommand pendingTx completeCmd
+--    [TransferCompletedTransactionEvent TransferCompleted]
+--
+-- State Machine:
+--   [Uninitialized] --InitiateTransfer-→ [Pending]
+--                                           ↓
+--                   CompleteTransfer ← [Pending] → FailTransfer
+--                         ↓                             ↓
+--                    [Completed]                    [Failed]
+--                    (terminal)                     (terminal)
+--
+-- Business Rules:
+--   - Source and target accounts must be different
+--   - Transfer amount must be positive
+--   - Only Pending transactions can transition to terminal states
+--   - Terminal states (Completed/Failed) are immutable
+--   - All state changes are event-sourced
+--
+-- Integration with Process Manager:
+--   The Transaction aggregate is designed to work with a saga/process manager
+--   that orchestrates the transfer between accounts. The process manager:
+--   - Listens for TransferInitiated events
+--   - Coordinates debit and credit operations on account aggregates
+--   - Issues CompleteTransfer or FailTransfer based on outcomes
+--   - Handles compensation if needed
+--
+-- Example Transfer Flow:
+--
+-- Successful transfer:
+-- >>> -- User initiates
+-- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 100) "Payment")
+-- → TransferInitiated event
+--
+-- >>> -- Process manager reacts
+-- >>> issueCommand sourceId (DebitAccount (Money 100) "Transfer out")
+-- → AccountDebited event
+--
+-- >>> issueCommand targetId (CreditAccount (Money 100) "Transfer in")
+-- → AccountCredited event
+--
+-- >>> issueCommand txId CompleteTransfer
+-- → TransferCompleted event
+--
+-- Failed transfer:
+-- >>> -- User initiates
+-- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 1000) "Payment")
+-- → TransferInitiated event
+--
+-- >>> -- Process manager reacts
+-- >>> issueCommand sourceId (DebitAccount (Money 1000) "Transfer out")
+-- → AccountDebitRejected event (insufficient funds)
+--
+-- >>> -- Process manager handles failure
+-- >>> issueCommand txId (FailTransfer "Insufficient funds in source account")
+-- → TransferFailed event
+module Domain.Transaction
+  ( module X,
+  )
+where
+
+import Domain.Transaction.CommandHandler as X
+import Domain.Transaction.Commands as X
+import Domain.Transaction.Events as X
+import Domain.Transaction.Projection as X

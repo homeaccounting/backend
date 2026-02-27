@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(just test:*)",
+      "Bash(just build:*)",
+      "Bash(cabal clean:*)",
+      "Bash(echo:*)",
+      "Bash(timeout 15 cabal test:*)",
+      "Bash(cabal test:*)",
+      "Bash(cabal build:*)",
+      "Bash(git diff-tree:*)",
+      "Bash(git add:*)",
+      "Skill(superpowers:executing-plans)",
+      "Bash(just format:*)",
+      "Bash(just lint:*)",
+      "Skill(superpowers:finishing-a-development-branch)",
+      "Skill(superpowers:brainstorming)",
+      "WebSearch",
+      "WebFetch(domain:hackage.haskell.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:hackage-content.haskell.org)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:subagent-driven-development)",
+      "Bash(ghc-pkg list:*)",
+      "Bash(ghc-pkg field:*)",
+      "Bash(just rebuild)",
+      "Bash(ghc-pkg describe:*)",
+      "Bash(cabal list-bin:*)",
+      "Bash(cabal unpack:*)",
+      "Bash(curl -s \"https://api.telegram.org/bot***REMOVED***/getMe\")",
+      "Bash(nix flake show:*)",
+      "Bash(cabal list:*)",
+      "Bash(cabal get:*)",
+      "Bash(cat:*)",
+      "Bash(git -C /Users/oleksandrsy/Projects/Self/Homeaccounting/backend status)",
+      "Bash(git -C /Users/oleksandrsy/Projects/Self/Homeaccounting/backend log --oneline)",
+      "Bash(hpack:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

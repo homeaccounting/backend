@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - '**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and Test (GHC ${{ matrix.ghc }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: accounting
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["9.6.7"]
+        cabal: ["3.10.3.0"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Temporarily hide cabal.project to avoid early cabal update
+        run: |
+          if [ -f accounting/cabal.project ]; then mv accounting/cabal.project accounting/cabal.project.bak; fi
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev postgresql-client libsqlite3-dev
+
+      - name: Set up Haskell (GHC/Cabal)
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: ${{ matrix.cabal }}
+
+      - name: Cache Cabal store and dist-newstyle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            accounting/dist-newstyle
+          key: ${{ runner.os }}-cabal-${{ matrix.ghc }}-${{ hashFiles('**/package.yaml', 'accounting/cabal.project') }}
+          restore-keys: |
+            ${{ runner.os }}-cabal-${{ matrix.ghc }}-
+
+      - name: Prepare cabal (ignore project) and install hpack
+        run: |
+          cabal update --ignore-project
+          cabal install --ignore-project hpack
+
+      - name: Generate .cabal file with hpack for accounting project
+        run: |
+          export PATH="$HOME/.cabal/bin:$PATH"          
+          hpack
+
+      - name: Restore cabal.project
+        run: |
+          if [ -f accounting/cabal.project.bak ]; then mv accounting/cabal.project.bak accounting/cabal.project; fi
+
+      - name: Install hlint (ignore project)
+        run: |
+          cabal install --ignore-project hlint
+
+      - name: Lint (hlint) - accounting project
+        run: |
+          export PATH="$HOME/.cabal/bin:$PATH"          
+          hlint --version
+          # Lint only tracked files to avoid build artifacts
+          hlint --git
+
+      - name: Build accounting project
+        run: |          
+          cabal update
+          cabal build all -j
+
+      - name: Wait for Postgres to be ready
+        env:
+          PGPASSWORD: password
+        run: |
+          for i in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres; then
+              echo "Postgres is ready"
+              break
+            fi
+            echo "Waiting for Postgres... ($i)"
+            sleep 2
+          done
+
+      # Note: Database schema is automatically created by eventium-postgresql
+      # when tests initialize the event store via initializeEventStore.
+      # No manual schema setup is required.
+
+      - name: Run test suites
+        run: |          
+          cabal test all -j --test-show-details=direct --enable-tests
+

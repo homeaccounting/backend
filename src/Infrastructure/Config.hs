@@ -1,0 +1,484 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+-- |
+-- Module      : Infrastructure.Config
+-- Description : Application configuration loading and parsing
+--
+-- This module provides configuration loading from YAML files with support for
+-- environment variable substitution. The configuration is validated at load time
+-- to ensure all required values are present and valid.
+--
+-- Usage:
+--   >>> config <- loadConfig "config/local.yaml"
+--   >>> case config of
+--   >>>   Right appConfig -> runApp appConfig
+--   >>>   Left err -> handleError err
+module Infrastructure.Config
+  ( -- * Configuration Types
+    AppConfig (..),
+    ServerConfig (..),
+    DatabaseConfig (..),
+    LoggingConfig (..),
+    LogLevel (..),
+    LogFormat (..),
+    CorsConfig (..),
+    EventStoreConfig (..),
+    ProcessManagerConfig (..),
+
+    -- * Auth Configuration (re-exports)
+    JWTConfig (..),
+    OAuthConfig (..),
+    TelegramConfig (..),
+
+    -- * Configuration Loading
+    loadConfig,
+    loadConfigWithEnv,
+
+    -- * Configuration Validation
+    validateConfig,
+
+    -- * Environment Variable Substitution
+    substituteEnvVars,
+  )
+where
+
+import Control.Exception (IOException, try)
+import Data.Aeson
+  ( FromJSON (..),
+    ToJSON (..),
+    Value (..),
+    withObject,
+    withText,
+    (.:),
+    (.:?),
+  )
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser)
+import qualified Data.ByteString as BS
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import Data.Yaml (decodeEither', prettyPrintParseException)
+import GHC.Generics (Generic)
+import Infrastructure.Auth.JWT (JWTConfig (..))
+import Infrastructure.Auth.OAuth (OAuthConfig (..))
+import Infrastructure.Auth.Telegram (TelegramConfig (..))
+import System.Environment (lookupEnv)
+import qualified Text.Read as Read
+
+-- -----------------------------------------------------------------------------
+-- Configuration Types
+-- -----------------------------------------------------------------------------
+
+-- | Top-level application configuration.
+--
+-- Contains all configuration sections for the application including server,
+-- database, logging, CORS, event store, and process manager settings.
+data AppConfig = AppConfig
+  { appServer :: !ServerConfig,
+    appDatabase :: !DatabaseConfig,
+    appLogging :: !LoggingConfig,
+    appCors :: !CorsConfig,
+    appEventStore :: !EventStoreConfig,
+    appProcessManagers :: !ProcessManagerConfig,
+    appAuth :: !JWTConfig,
+    appOAuth :: !OAuthConfig,
+    appTelegram :: !TelegramConfig
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON AppConfig where
+  parseJSON = withObject "AppConfig" $ \v ->
+    AppConfig
+      <$> v .: "server"
+      <*> v .: "database"
+      <*> v .: "logging"
+      <*> v .: "cors"
+      <*> v .: "event_store"
+      <*> v .: "process_managers"
+      <*> v .: "auth"
+      <*> v .: "oauth"
+      <*> v .: "telegram"
+
+instance ToJSON AppConfig
+
+-- | Server configuration.
+--
+-- Defines the host and port for the HTTP server.
+--
+-- Properties:
+--  - serverHost: Network interface to bind to (e.g., "0.0.0.0", "127.0.0.1")
+--  - serverPort: TCP port to listen on (1-65535)
+data ServerConfig = ServerConfig
+  { serverHost :: !Text,
+    serverPort :: !Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON ServerConfig where
+  parseJSON = withObject "ServerConfig" $ \v ->
+    ServerConfig
+      <$> v .: "host"
+      <*> v .: "port"
+
+instance ToJSON ServerConfig
+
+-- | Database configuration.
+--
+-- PostgreSQL connection settings including connection pool configuration.
+--
+-- Properties:
+--  - dbHost: Database server hostname
+--  - dbPort: Database server port (typically 5432)
+--  - dbUser: Database username
+--  - dbPassword: Database password
+--  - dbDatabase: Database name
+--  - dbPoolSize: Maximum number of connections in pool
+--  - dbConnectionTimeout: Connection timeout in seconds
+data DatabaseConfig = DatabaseConfig
+  { dbHost :: !Text,
+    dbPort :: !Int,
+    dbUser :: !Text,
+    dbPassword :: !Text,
+    dbDatabase :: !Text,
+    dbPoolSize :: !Int,
+    dbConnectionTimeout :: !Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON DatabaseConfig where
+  parseJSON = withObject "DatabaseConfig" $ \v ->
+    DatabaseConfig
+      <$> v .: "host"
+      <*> v .: "port"
+      <*> v .: "user"
+      <*> v .: "password"
+      <*> v .: "database"
+      <*> v .: "pool_size"
+      <*> v .: "connection_timeout"
+
+instance ToJSON DatabaseConfig
+
+-- | Logging configuration.
+--
+-- Defines logging level and output format.
+data LoggingConfig = LoggingConfig
+  { logLevel :: !LogLevel,
+    logFormat :: !LogFormat
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON LoggingConfig where
+  parseJSON = withObject "LoggingConfig" $ \v ->
+    LoggingConfig
+      <$> v .: "level"
+      <*> v .: "format"
+
+instance ToJSON LoggingConfig
+
+-- | Log level enumeration.
+--
+-- Defines the verbosity of logging output.
+data LogLevel
+  = LogDebug
+  | LogInfo
+  | LogWarn
+  | LogError
+  deriving (Show, Eq, Generic)
+
+instance FromJSON LogLevel where
+  parseJSON = withText "LogLevel" $ \t ->
+    case T.toLower t of
+      "debug" -> pure LogDebug
+      "info" -> pure LogInfo
+      "warn" -> pure LogWarn
+      "warning" -> pure LogWarn
+      "error" -> pure LogError
+      _ -> fail $ "Invalid log level: " <> T.unpack t
+
+instance ToJSON LogLevel where
+  toJSON LogDebug = String "debug"
+  toJSON LogInfo = String "info"
+  toJSON LogWarn = String "warn"
+  toJSON LogError = String "error"
+
+-- | Log format enumeration.
+--
+-- Defines the output format for log messages.
+data LogFormat
+  = LogText
+  | LogJson
+  deriving (Show, Eq, Generic)
+
+instance FromJSON LogFormat where
+  parseJSON = withText "LogFormat" $ \t ->
+    case T.toLower t of
+      "text" -> pure LogText
+      "json" -> pure LogJson
+      _ -> fail $ "Invalid log format: " <> T.unpack t
+
+instance ToJSON LogFormat where
+  toJSON LogText = String "text"
+  toJSON LogJson = String "json"
+
+-- | CORS configuration.
+--
+-- Cross-Origin Resource Sharing settings for the HTTP server.
+data CorsConfig = CorsConfig
+  { corsEnabled :: !Bool,
+    corsAllowedOrigins :: ![Text],
+    corsAllowedMethods :: ![Text],
+    corsAllowedHeaders :: ![Text],
+    corsMaxAge :: !(Maybe Int)
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON CorsConfig where
+  parseJSON = withObject "CorsConfig" $ \v ->
+    CorsConfig
+      <$> v .: "enabled"
+      <*> v .: "allowed_origins"
+      <*> v .: "allowed_methods"
+      <*> v .: "allowed_headers"
+      <*> v .:? "max_age"
+
+instance ToJSON CorsConfig
+
+-- | Event store configuration.
+--
+-- Settings for the event sourcing event store.
+data EventStoreConfig = EventStoreConfig
+  { esSnapshotFrequency :: !Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON EventStoreConfig where
+  parseJSON = withObject "EventStoreConfig" $ \v ->
+    EventStoreConfig
+      <$> v .: "snapshot_frequency"
+
+instance ToJSON EventStoreConfig
+
+-- | Process manager configuration.
+--
+-- Settings for process managers (sagas) that coordinate across aggregates.
+data ProcessManagerConfig = ProcessManagerConfig
+  { pmPollIntervalMs :: !Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON ProcessManagerConfig where
+  parseJSON = withObject "ProcessManagerConfig" $ \v ->
+    ProcessManagerConfig
+      <$> v .: "poll_interval_ms"
+
+instance ToJSON ProcessManagerConfig
+
+-- -----------------------------------------------------------------------------
+-- Configuration Loading
+-- -----------------------------------------------------------------------------
+
+-- | Load configuration from a YAML file.
+--
+-- Reads and parses a YAML configuration file. Does not perform environment
+-- variable substitution.
+--
+-- >>> loadConfig "config/local.yaml"
+-- Right (AppConfig {...})
+--
+-- Returns an error if:
+--  - File cannot be read
+--  - YAML parsing fails
+--  - Configuration validation fails
+loadConfig :: FilePath -> IO (Either Text AppConfig)
+loadConfig path = do
+  result <- try $ BS.readFile path
+  case result of
+    Left (err :: IOException) ->
+      pure $ Left $ T.pack $ "Failed to read config file: " <> show err
+    Right contents ->
+      case decodeEither' contents of
+        Left err ->
+          pure $ Left $ T.pack $ "Failed to parse config: " <> prettyPrintParseException err
+        Right config ->
+          case validateConfig config of
+            Left validationErr -> pure $ Left validationErr
+            Right () -> pure $ Right config
+
+-- | Load configuration from a YAML file with environment variable substitution.
+--
+-- Reads and parses a YAML configuration file, substituting environment variables
+-- in string values. Environment variables should be in the format ${VAR_NAME}.
+--
+-- >>> loadConfigWithEnv "config/prod.yaml"
+-- Right (AppConfig {...})
+--
+-- This function:
+--  1. Reads the YAML file
+--  2. Substitutes environment variables
+--  3. Parses the configuration
+--  4. Validates the result
+--
+-- Returns an error if:
+--  - File cannot be read
+--  - YAML parsing fails
+--  - Required environment variable is not set
+--  - Configuration validation fails
+loadConfigWithEnv :: FilePath -> IO (Either Text AppConfig)
+loadConfigWithEnv path = do
+  result <- try $ BS.readFile path
+  case result of
+    Left (err :: IOException) ->
+      pure $ Left $ "Failed to read config file: " <> T.pack (show err)
+    Right contents -> do
+      -- Decode to JSON Value first for env var substitution
+      case decodeEither' contents of
+        Left err ->
+          pure $ Left $ "Failed to parse config: " <> T.pack (prettyPrintParseException err)
+        Right (value :: Value) -> do
+          -- Substitute environment variables
+          substitutedValue <- substituteEnvVars value
+          case substitutedValue of
+            Left err -> pure $ Left err
+            Right newValue ->
+              -- Parse the substituted value into AppConfig
+              case Aeson.fromJSON newValue of
+                Aeson.Error err ->
+                  pure $ Left $ T.pack $ "Failed to parse config after substitution: " <> err
+                Aeson.Success config ->
+                  case validateConfig config of
+                    Left validationErr -> pure $ Left validationErr
+                    Right () -> pure $ Right config
+
+-- | Substitute environment variables in a JSON value.
+--
+-- Recursively traverses a JSON value and replaces strings of the format
+-- \${VAR_NAME} with the value of the environment variable VAR_NAME.
+--
+-- Returns an error if a required environment variable is not set.
+substituteEnvVars :: Value -> IO (Either Text Value)
+substituteEnvVars = go
+  where
+    go :: Value -> IO (Either Text Value)
+    go (Object obj) = do
+      results <- traverse go obj
+      pure $ Object <$> sequenceA results
+    go (Array arr) = do
+      results <- traverse go arr
+      pure $ Array <$> sequenceA results
+    go (String text) = do
+      result <- substituteText text
+      case result of
+        Left err -> pure $ Left err
+        Right newText -> pure $ Right $ coerceValue newText
+    go other = pure $ Right other
+
+    -- \| Parse and resolve a single @${…}@ reference.
+    --
+    -- Accepted forms:
+    --
+    --   * @${VAR}@        — required, error if unset
+    --   * @${VAR:-value}@ — optional, falls back to @value@
+    --   * @${VAR:-}@      — optional, falls back to empty string
+    substituteText :: Text -> IO (Either Text Text)
+    substituteText text
+      | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text =
+          let inner = T.drop 2 $ T.dropEnd 1 text
+              (varName, mDefault) = parseVarExpr inner
+           in do
+                envValue <- lookupEnv (T.unpack varName)
+                case (envValue, mDefault) of
+                  (Just val, _) -> pure $ Right $ T.pack val
+                  (Nothing, Just def') -> pure $ Right def'
+                  (Nothing, Nothing) ->
+                    pure $
+                      Left $
+                        "Environment variable not set: " <> varName
+      | otherwise = pure $ Right text
+
+    -- \| Split @VAR_NAME:-default@ into the variable name and an optional
+    -- default value.  If the @:-@ separator is absent, no default is
+    -- returned.
+    parseVarExpr :: Text -> (Text, Maybe Text)
+    parseVarExpr expr =
+      case T.breakOn ":-" expr of
+        (name, rest)
+          | T.null rest -> (name, Nothing)
+          | otherwise -> (name, Just $ T.drop 2 rest)
+
+    -- \| Attempt to coerce a substituted text value to the appropriate JSON
+    -- type.  Environment variable substitution always produces 'Text', but
+    -- downstream 'FromJSON' instances expect 'Number', 'Bool', or 'Null'
+    -- for non-string fields.
+    coerceValue :: Text -> Value
+    coerceValue t
+      | T.null t = String t -- preserve empty strings for Text fields
+      | T.toLower t == "null" = Null
+      | T.toLower t == "true" = Bool True
+      | T.toLower t == "false" = Bool False
+      | Just n <- Read.readMaybe (T.unpack t) :: Maybe Integer =
+          Number (fromInteger n)
+      | Just d <- Read.readMaybe (T.unpack t) :: Maybe Double =
+          Number (realToFrac d)
+      | otherwise = String t
+
+-- -----------------------------------------------------------------------------
+-- Configuration Validation
+-- -----------------------------------------------------------------------------
+
+-- | Validate application configuration.
+--
+-- Checks that all configuration values are within valid ranges and make sense.
+--
+-- Validation rules:
+--  - Server port must be between 1 and 65535
+--  - Database port must be between 1 and 65535
+--  - Database pool size must be positive
+--  - Database connection timeout must be positive
+--  - Snapshot frequency must be positive
+--  - Poll interval must be positive
+validateConfig :: AppConfig -> Either Text ()
+validateConfig config = do
+  -- Validate server config
+  let serverPortValue = serverPort (appServer config)
+  when (serverPortValue < 1 || serverPortValue > 65535) $
+    Left $
+      "Invalid server port: " <> T.pack (show serverPortValue) <> " (must be 1-65535)"
+
+  -- Validate database config
+  let dbPortValue = dbPort (appDatabase config)
+  when (dbPortValue < 1 || dbPortValue > 65535) $
+    Left $
+      "Invalid database port: " <> T.pack (show dbPortValue) <> " (must be 1-65535)"
+
+  let poolSize = dbPoolSize (appDatabase config)
+  when (poolSize < 1) $
+    Left $
+      "Invalid database pool size: " <> T.pack (show poolSize) <> " (must be positive)"
+
+  let connTimeout = dbConnectionTimeout (appDatabase config)
+  when (connTimeout < 1) $
+    Left $
+      "Invalid database connection timeout: " <> T.pack (show connTimeout) <> " (must be positive)"
+
+  -- Validate event store config
+  let snapshotFreq = esSnapshotFrequency (appEventStore config)
+  when (snapshotFreq < 1) $
+    Left $
+      "Invalid snapshot frequency: " <> T.pack (show snapshotFreq) <> " (must be positive)"
+
+  -- Validate process manager config
+  let pollInterval = pmPollIntervalMs (appProcessManagers config)
+  when (pollInterval < 1) $
+    Left $
+      "Invalid poll interval: " <> T.pack (show pollInterval) <> " (must be positive)"
+
+-- Helper function for when
+when :: Bool -> Either Text () -> Either Text ()
+when True action = action
+when False _ = Right ()

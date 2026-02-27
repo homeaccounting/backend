@@ -1,0 +1,430 @@
+# System Architecture
+
+**Level 2 Document**: Current architectural state. Updated when major structural changes occur.
+
+## Overview
+
+A personal accounting backend built in Haskell using Domain-Driven Design with CQRS and Event Sourcing. The system tracks financial accounts, money transfers, and supports multi-user access with role-based permissions.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Web Layer (HTTP only)                         │
+│  ┌──────────┐ ┌──────────┐ ┌─────────────┐ ┌────────────────┐   │
+│  │ AuthAPI  │ │ UserAPI  │ │ AccountAPI  │ │ TransactionAPI │   │
+│  └────┬─────┘ └────┬─────┘ └──────┬──────┘ └───────┬────────┘   │
+│       │            │              │                │             │
+│       └────────────┴──────┬───────┴────────────────┘             │
+│                           │                                      │
+│  ┌──────────────┐  ┌──────┴──────┐  ┌───────────────────────┐   │
+│  │ ErrorMapping │  │ Auth        │  │ Types.hs (DTOs +      │   │
+│  │ (Domain→HTTP)│  │ Middleware  │  │  conversion functions) │   │
+│  └──────────────┘  └──────┬──────┘  └───────────────────────┘   │
+└───────────────────────────┼─────────────────────────────────────┘
+                            │
+┌───────────────────────────┼─────────────────────────────────────┐
+│                    Application Layer                              │
+│  ┌────────────┐ ┌──────────────┐ ┌────────────┐ ┌────────────┐   │
+│  │ AccountSvc │ │TransactionSvc│ │ AuthService│ │ UserService│   │
+│  └─────┬──────┘ └──────┬───────┘ └─────┬──────┘ └─────┬──────┘   │
+│           │                     │                    │            │
+│  ┌────────┴────┐  ┌────────────┴──────┐  ┌──────────┴────────┐  │
+│  │ Process     │  │  Authorization    │  │   Read Models     │  │
+│  │ Managers    │  │  Service (pure)   │  │  (Projections)    │  │
+│  └────────┬────┘  └──────────────────-┘  └───────────────────┘  │
+│           │                                                      │
+└───────────┼──────────────────────────────────────────────────────┘
+            │
+┌───────────┼─────────────────────────────────────────────────────┐
+│           ▼          Domain Layer (Pure)                          │
+│  ┌─────────┐    ┌─────────────┐    ┌──────────────┐             │
+│  │  User   │    │   Account   │    │ Transaction  │             │
+│  │Aggregate│    │  Aggregate  │    │  Aggregate   │             │
+│  └─────────┘    └─────────────┘    └──────────────┘             │
+│       │              │                    │                      │
+│       └──────────────┴────────────────────┘                      │
+│                      │                                           │
+│              ┌───────┴───────┐                                   │
+│              │  Core Types   │                                   │
+│              │ (Money, IDs)  │                                   │
+│              └───────────────┘                                   │
+└─────────────────────────────────────────────────────────────────┘
+                            │
+┌───────────────────────────┼─────────────────────────────────────┐
+│                   Infrastructure Layer                            │
+│  ┌──────────┐  ┌──────────┐  ┌────────┐  ┌──────────────────┐   │
+│  │ Eventium │  │ Database │  │ Config │  │ Auth (JWT/OAuth/ │   │
+│  │ (ES)     │  │ (PG)     │  │ (YAML) │  │ Password/TG)     │   │
+│  └──────────┘  └──────────┘  └────────┘  └──────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │  PostgreSQL   │
+                    │ (Event Store) │
+                    └───────────────┘
+```
+
+## Module Structure
+
+### Layer Dependencies (Top → Bottom)
+
+```
+Web → Application → Domain → Core
+                ↓
+          Infrastructure
+```
+
+**Strict rule**: Dependencies flow downward only. The Application layer never imports from Web. DTO conversion (request parsing, response building) happens exclusively in the Web layer; services accept and return domain/application types.
+
+### Source Layout
+
+```
+src/
+├── Domain/                 # Pure business logic (no IO)
+│   ├── Core/               # Shared types and errors
+│   │   ├── Types.hs        # Money, AccountId, UserId, etc.
+│   │   └── Errors.hs       # Core domain errors
+│   ├── Account/            # Account aggregate
+│   ├── Transaction/        # Transaction aggregate
+│   └── User/               # User aggregate
+│
+├── Application/            # Use cases and orchestration
+│   ├── ProcessManagers/    # Sagas (TransferManager)
+│   ├── ReadModels/         # Query projections
+│   └── Services/           # Business orchestration
+│       ├── AccountService.hs       # Account use case orchestration
+│       ├── AuthService.hs          # Authentication orchestration
+│       ├── AuthorizationService.hs # RBAC access control (pure)
+│       ├── TransactionService.hs   # Transfer use case orchestration
+│       └── UserService.hs          # User profile orchestration
+│
+├── Infrastructure/         # External world adapters
+│   ├── App.hs              # AppM monad (RIO-based)
+│   ├── Config.hs           # YAML configuration
+│   ├── Database.hs         # PostgreSQL connection
+│   ├── Eventium.hs         # Event store integration
+│   └── Auth/               # Authentication providers
+│       ├── JWT.hs
+│       ├── OAuth.hs
+│       ├── Password.hs
+│       └── Telegram.hs
+│
+├── Web/                    # HTTP interface (thin adapters)
+│   ├── API/                # Servant API definitions (handlers)
+│   ├── Middleware/         # Auth middleware
+│   ├── ErrorMapping.hs     # DomainError → ServerError mapping
+│   ├── Server.hs           # Warp server setup
+│   └── Types.hs            # Request/Response DTOs + conversions
+│
+└── Telegram/               # Telegram bot interface
+    ├── Bot.hs
+    ├── Commands.hs
+    ├── Keyboards.hs
+    └── Types.hs
+```
+
+## Bounded Contexts
+
+### User Aggregate (`Domain.User`)
+
+**Responsibility**: User identity, authentication methods, profile.
+
+**Commands**: `RegisterUser`, `RegisterViaTelegram`, `LinkOAuthAccount`, `LinkTelegramAccount`, `ChangePassword`
+
+**Events**: `UserRegistered`, `UserRegisteredViaTelegram`, `OAuthAccountLinked`, `TelegramAccountLinked`, `PasswordChanged`
+
+**Key Invariants**:
+- Email is unique identifier for web login
+- One Telegram account per user
+- Multiple OAuth providers can link to one user
+- External account auto-created on registration
+
+### Account Aggregate (`Domain.Account`)
+
+**Responsibility**: Account lifecycle, balance tracking, access control (RBAC).
+
+**Commands**:
+- *User-facing*: `CreateAccount`, `ShareAccount`, `RevokeAccountAccess`
+- *Internal (saga-only)*: `DebitAccount`, `CreditAccount` — issued by TransferManager process manager, not exposed via API
+
+**Events**:
+- `AccountCreated`, `AccountAccessGranted`, `AccountAccessRevoked`
+- `AccountDebited` — emitted when `DebitAccount` succeeds (carries `TransactionId` for saga correlation)
+- `AccountCredited` — emitted when `CreditAccount` succeeds (carries `TransactionId` for saga correlation)
+- `AccountDebitRejected` — emitted when `DebitAccount` fails (e.g., insufficient funds on `RegularAccount`; triggers saga compensation)
+
+**Key Invariants**:
+- Creator is always Owner
+- Owner cannot be removed from access list
+- External accounts cannot be shared
+- External accounts can have negative balance (debit always succeeds)
+- Regular accounts cannot go negative (debit rejected if insufficient funds)
+
+**Account Types**:
+- `RegularAccount` - User-created (Checking, Savings, Cash)
+- `ExternalAccount` - System-created, represents "outside world" for income/expenses
+
+**Access Roles**:
+| Role | View | Transfer | Share | Delete |
+|------|------|----------|-------|--------|
+| Owner | ✓ | ✓ | ✓ | ✓ |
+| Editor | ✓ | ✓ | ✗ | ✗ |
+| Viewer | ✓ | ✗ | ✗ | ✗ |
+
+### Transaction Aggregate (`Domain.Transaction`)
+
+**Responsibility**: Money transfers between accounts.
+
+**Commands**: `InitiateTransfer`, `CompleteTransfer`, `FailTransfer`
+
+**Events**: `TransferInitiated`, `TransferCompleted`, `TransferFailed`
+
+**Key Invariants**:
+- All money movement is via transfers (double-entry)
+- Source must have sufficient balance (except External)
+- User needs Editor+ role on both source and target
+
+**Transfer Patterns**:
+- Income: `External → Regular`
+- Expense: `Regular → External`
+- Internal: `Regular → Regular`
+
+## Data Flow
+
+### Command Flow (Write Path)
+
+```
+HTTP Request
+    │
+    ▼
+┌─────────────────┐
+│ Auth Middleware  │ ──── Extract UserId from JWT
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ API Handler     │ ──── Convert DTO → domain command
+│ (Web layer)     │      Map DomainError → HTTP error
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Service         │ ──── Orchestrate use case:
+│ (Application)   │      - Generate IDs
+│                 │      - Check authorization
+│                 │      - Execute command
+│                 │      - Query read model
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Command Handler │ ──── Pure domain logic
+└────────┬────────┘
+         │
+         ▼
+    [Event list]
+         │
+         ▼
+┌──────────────┐
+│ Event Store  │ ──── Append to PostgreSQL
+└──────────────┘
+         │
+         ▼
+┌──────────────┐
+│ Read Models  │ ──── Update projections
+└──────────────┘
+```
+
+### Query Flow (Read Path)
+
+```
+HTTP Request
+    │
+    ▼
+┌─────────────────┐
+│ Auth Middleware  │ ──── Extract UserId from JWT
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ API Handler     │ ──── Convert domain result → DTO
+│ (Web layer)     │      Map DomainError → HTTP error
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Service         │ ──── Orchestrate query:
+│ (Application)   │      - Validate IDs
+│                 │      - Check authorization
+│                 │      - Query read model
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Read Model      │ ──── Query in-memory projection
+└─────────────────┘
+         │
+         ▼
+    JSON Response
+```
+
+### Transfer Saga (Process Manager)
+
+The TransferManager process manager (saga) coordinates the full transfer flow.
+Users only issue `InitiateTransfer`. All subsequent commands are issued internally by the saga.
+
+```
+User issues InitiateTransfer
+         │
+         ▼
+┌───────────────────────────┐
+│ TransferInitiated (event) │  ← Transaction aggregate
+│ on transaction stream     │
+└───────────┬───────────────┘
+            │
+            ▼  TransferManager stores transfer data
+┌───────────────────────────┐
+│ DebitAccount (command)    │  → Source Account aggregate
+│ with TransactionId        │
+└───────────┬───────────────┘
+            │
+      ┌─────┴──────────┐
+      │                │
+   Success           Failure
+      │                │
+      ▼                ▼
+┌─────────────┐  ┌──────────────────────┐
+│ AccountDeb- │  │ AccountDebitRejected  │
+│ ited (event)│  │ (event)              │
+└──────┬──────┘  └──────────┬───────────┘
+       │                    │
+       ▼                    ▼
+┌─────────────────┐  ┌──────────────────┐
+│ CreditAccount   │  │ FailTransfer     │
+│ (→ target acct) │  │ (→ transaction)  │
+│ + CompleteTransf│  └──────────────────┘
+│ er (→ transact.)│         │
+└────────┬────────┘         ▼
+         │           ┌──────────────────┐
+         ▼           │ TransferFailed   │
+┌─────────────────┐  │ (terminal state) │
+│ AccountCredited │  └──────────────────┘
+│ (event)         │
+└────────┬────────┘
+         │
+         ▼  TransferManager cleans up tracking
+┌──────────────────────┐
+│ TransferCompleted    │
+│ (terminal state)     │
+└──────────────────────┘
+```
+
+**Saga Event/Command Summary:**
+
+| Step | Trigger Event | Saga Issues | Target |
+|------|--------------|-------------|--------|
+| 1 | `TransferInitiated` | `DebitAccount` | Source account |
+| 2a | `AccountDebited` | `CreditAccount` + `CompleteTransfer` | Target account + Transaction |
+| 2b | `AccountDebitRejected` | `FailTransfer` | Transaction |
+| 3 | `AccountCredited` | *(cleanup only)* | — |
+
+## Application Services
+
+The Application Services layer sits between the Web handlers and the Domain layer. Services orchestrate use cases without knowing about HTTP concerns.
+
+### Service Responsibilities
+
+| Service | Responsibility |
+|---------|---------------|
+| `AccountService` | Account CRUD, sharing, access revocation. Accepts domain commands, returns `Either DomainError (AccountId, AccountSummaryData)` |
+| `TransactionService` | Transfer initiation and status queries. Accepts domain commands, returns `Either DomainError (TransactionId, TransactionSummaryData)` |
+| `AuthService` | Registration, login, OAuth, Telegram auth, token refresh. Returns `Either DomainError AuthResult` |
+| `UserService` | User profile queries, password change, OAuth/Telegram unlinking. Returns `Either DomainError (UserId, UserSummaryData)` or `Either DomainError ()` |
+| `AuthorizationService` | Pure RBAC access control. No IO — evaluates permissions from data |
+
+### Error Handling
+
+Services return explicit `Either DomainError a` values. The Web layer maps these to HTTP responses:
+
+```
+Service returns Left DomainError
+         │
+         ▼
+┌─────────────────────┐
+│ Web.ErrorMapping    │
+│ throwDomainError    │
+└─────────┬───────────┘
+          │
+          ▼
+DomainError constructor → HTTP status:
+  ValidationErr  → 400 Bad Request
+  NotFound       → 404 Not Found
+  InsufficientFunds → 422 Unprocessable
+  AccountError   → 400 Bad Request
+  TransactionError → 400 Bad Request
+```
+
+### Web Handler Pattern
+
+All API handlers follow a uniform pattern:
+
+1. Extract data from HTTP request (path params, body, auth user)
+2. Convert DTO to domain type (via `Web.Types` conversion functions)
+3. Delegate to service (passing domain types only)
+4. Convert domain result to response DTO
+5. Map `Left DomainError` to HTTP error via `throwDomainError`
+
+## Infrastructure Components
+
+### Event Store (PostgreSQL + Eventium)
+
+- Immutable append-only log
+- Stream per aggregate (e.g., `account-{uuid}`)
+- Optimistic concurrency via version numbers
+- JSON event payloads
+
+### Read Models (In-Memory)
+
+- `AccountSummary` - Current balances, access lists
+- `TransactionSummary` - Transfer history
+- `UserSummary` - User profiles, linked accounts
+- Rebuilt from event stream on startup
+
+### Authentication
+
+| Provider | Purpose |
+|----------|---------|
+| Password (Argon2) | Email/password login |
+| JWT | Session tokens |
+| OAuth2 | Google, GitHub, Microsoft |
+| Telegram | Bot authentication |
+
+### Configuration
+
+- YAML files per environment (`config/local.yaml`, `config/test.yaml`, `config/prod.yaml`)
+- Environment variable substitution (`${VAR}`)
+- Loaded via `Infrastructure.Config`
+
+## Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| Language | Haskell (GHC 9.6.7) |
+| Application Monad | RIO (ReaderT IO) |
+| Web Framework | Servant + Warp |
+| Event Sourcing | Eventium |
+| Database | PostgreSQL |
+| Auth | jose (JWT), cryptonite (Argon2) |
+| Telegram | telegram-bot-simple |
+| Build | Cabal + Nix Flakes |
+| Linting | HLint + Ormolu |
+
+## Related
+
+- [Mission Statement](./mission-statement.md)
+- [Operational Context](./operational-context.md)
+- [User Experience Specification](./user-experience-spec.md)
+- [Account Backend Plan](./plans/2025-12-01-account-backend.md)
+- [User Management Plan](./plans/2026-01-30-user-management.md)
+- [API Services Refactoring Plan](./plans/2026-02-03-api-services-refactor.md)
+- [Transfer Saga Implementation Plan](./plans/2026-02-11-transfer-saga-implementation.md)

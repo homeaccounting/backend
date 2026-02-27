@@ -1,0 +1,20 @@
+-- Example cabal.project.local for local eventium development
+--
+-- Copy this file to cabal.project.local (gitignored) to use local eventium packages
+-- instead of the published Hackage versions.
+--
+-- Usage:
+--   cp cabal.project.local.example cabal.project.local
+--
+-- This is useful when:
+-- - You're developing changes to eventium libraries
+-- - You need to test unreleased eventium features
+-- - You want to debug eventium code alongside accounting code
+
+packages:
+  ../lib/eventium/eventium-core
+  ../lib/eventium/eventium-memory
+  ../lib/eventium/eventium-postgresql
+  ../lib/eventium/eventium-sql-common
+
+

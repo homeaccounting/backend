@@ -1,0 +1,11 @@
+cradle:
+  cabal:
+    - path: "src"
+      component: "lib:accounting"
+
+    - path: "app"
+      component: "accounting:exe:accounting"
+
+    - path: "test"
+      component: "accounting:test:accounting-test"
+

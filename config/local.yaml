@@ -1,0 +1,74 @@
+#  Local Configuration for Accounting Backend
+# Used for local developmen
+server:
+  host: "127.0.0.1"
+  port: 8080
+
+database:
+  host: "${DB_HOST:-127.0.0.1}"
+  port: "${DB_PORT:-5432}"
+  user: "${DB_USER:-postgres}"
+  password: "${DB_PASSWORD:-password}"
+  database: "${DB_NAME:-accounting}"
+  pool_size: 10
+  connection_timeout: 10
+
+logging:
+  level: "debug"
+  format: "text" # text or json
+
+cors:
+  enabled: true
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowed_headers:
+    - "Content-Type"
+    - "Authorization"
+  max_age: 86400
+
+event_store:
+  # Event store specific settings
+  snapshot_frequency: 100 # Create snapshot every N events
+
+process_managers:
+  # Process manager polling settings
+  poll_interval_ms: 1000
+
+# Authentication settings
+auth:
+  # JWT settings (use environment variables for secrets!)
+  jwt_secret: ${JWT_SECRET:-CHANGE_THIS_TO_A_SECURE_SECRET_IN_PRODUCTION}
+  jwt_expiry_seconds: 3600 # 1 hour
+  jwt_issuer: "accounting-api-dev"
+  jwt_audience: "accounting-app"
+
+# OAuth2 provider configuration
+oauth:
+  google:
+    client_id: ${GOOGLE_CLIENT_ID:-}
+    client_secret: ${GOOGLE_CLIENT_SECRET:-}
+    redirect_uri: "http://localhost:8080/api/auth/oauth/google/callback"
+  github:
+    client_id: ${GITHUB_CLIENT_ID:-}
+    client_secret: ${GITHUB_CLIENT_SECRET:-}
+    redirect_uri: "http://localhost:8080/api/auth/oauth/github/callback"
+  microsoft:
+    client_id: ${MICROSOFT_CLIENT_ID:-}
+    client_secret: ${MICROSOFT_CLIENT_SECRET:-}
+    redirect_uri: "http://localhost:8080/api/auth/oauth/microsoft/callback"
+
+# Telegram bot configuration
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN:-}
+  bot_username: ${TELEGRAM_BOT_USERNAME:-}
+  webhook_url: null # Use polling in development
+  use_polling: true
+  polling_timeout: 30
+  auth_max_age_seconds: 86400 # 24 hours

@@ -1,3 +1,0 @@
-[submodule "lib/eventium"]
-	path = lib/eventium
-	url = git@github.com:aleks-sidorenko/eventium.git

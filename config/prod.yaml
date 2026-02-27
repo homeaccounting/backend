@@ -1,0 +1,63 @@
+# Production Configuration for Accounting Backend
+# All sensitive/environment-specific values are injected via ${VAR} substitution.
+# Required environment variables MUST be set — no defaults are provided.
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+database:
+  host: "${DB_HOST}"
+  port: "${DB_PORT}"
+  user: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  database: "${DB_NAME}"
+  pool_size: 20
+  connection_timeout: 30
+
+logging:
+  level: "info"
+  format: "json"
+
+cors:
+  enabled: false  # Use reverse proxy/API gateway for CORS in production
+  allowed_origins: []
+  allowed_methods: []
+  allowed_headers: []
+
+event_store:
+  snapshot_frequency: 100
+
+process_managers:
+  poll_interval_ms: 1000
+
+# Authentication settings
+auth:
+  jwt_secret: "${JWT_SECRET}"
+  jwt_expiry_seconds: 3600
+  jwt_issuer: "accounting-api"
+  jwt_audience: "accounting-app"
+
+# OAuth2 provider configuration
+oauth:
+  google:
+    client_id: "${GOOGLE_CLIENT_ID}"
+    client_secret: "${GOOGLE_CLIENT_SECRET}"
+    redirect_uri: "${GOOGLE_REDIRECT_URI}"
+  github:
+    client_id: "${GITHUB_CLIENT_ID}"
+    client_secret: "${GITHUB_CLIENT_SECRET}"
+    redirect_uri: "${GITHUB_REDIRECT_URI}"
+  microsoft:
+    client_id: "${MICROSOFT_CLIENT_ID}"
+    client_secret: "${MICROSOFT_CLIENT_SECRET}"
+    redirect_uri: "${MICROSOFT_REDIRECT_URI}"
+
+# Telegram bot configuration
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  bot_username: "${TELEGRAM_BOT_USERNAME}"
+  webhook_url: "${TELEGRAM_WEBHOOK_URL}"
+  use_polling: false
+  polling_timeout: "${TELEGRAM_POLLING_TIMEOUT:-30}"
+  auth_max_age_seconds: 86400

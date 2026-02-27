@@ -1,0 +1,399 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+
+-- |
+-- Module      : Main
+-- Description : Application entry point and composition root
+--
+-- This module is the composition root for the accounting backend application.
+-- It initializes all infrastructure components, wires them together, and starts
+-- the application.
+--
+-- Responsibilities:
+--   1. Configuration loading from YAML files
+--   2. Logging infrastructure setup
+--   3. Database connection pool creation
+--   4. Event store initialization
+--   5. Read model creation and registration
+--   6. Process manager registration
+--   7. Web server startup (when ready)
+--   8. Graceful shutdown handling
+--
+-- Architecture Pattern:
+--
+-- This follows the "Composition Root" pattern where all dependencies are
+-- created and wired together at the application's entry point. This ensures:
+--   - Single place for dependency wiring
+--   - Clear initialization order
+--   - Proper resource cleanup
+--   - Testability (can create test environments)
+--
+-- Startup Sequence:
+--
+-- 1. Load configuration from YAML file
+-- 2. Setup structured logging
+-- 3. Initialize database connection pool
+-- 4. Run database migrations
+-- 5. Create event store readers/writers
+-- 6. Initialize read models
+-- 7. Register event handlers (process managers, read model updaters)
+-- 8. Start web server (Phase 6, when ready)
+-- 9. Wait for shutdown signal
+-- 10. Cleanup resources
+--
+-- Error Handling:
+--
+-- Startup errors are fatal and will cause the application to exit with
+-- a non-zero status code. This follows the "fail fast" principle:
+--   - Configuration errors: Exit immediately with clear message
+--   - Database errors: Exit immediately (can't run without database)
+--   - Migration errors: Exit immediately (schema issues)
+--
+-- Resource Management:
+--
+-- All resources are properly managed:
+--   - Database connections: Connection pool with automatic cleanup
+--   - Event store: Initialized once, shared across threads
+--   - Read models: STM ensures thread-safe access
+--   - Web server: Graceful shutdown on SIGTERM/SIGINT
+--
+-- Usage:
+--
+-- Development:
+-- >>> cabal run accounting -- --config config/test.yaml
+--
+-- Production:
+-- >>> accounting --config config/prod.yaml
+--
+-- Environment Variables:
+--   - CONFIG_FILE: Path to configuration file (default: config/local.yaml)
+--   - All other env vars are consumed via ${VAR} substitution in YAML configs
+module Main (main) where
+
+-- Configuration
+
+-- Database
+
+-- Event Store
+
+-- Application
+import Data.Text.Display (displayShow, displayText)
+import Database.Persist.Postgresql (ConnectionPool, SqlPersistT)
+import Eventium.Store.Class
+  ( EventStoreReader (..),
+    EventStoreWriter (..),
+    GlobalEventStoreReader,
+    VersionedEventStoreReader,
+    VersionedEventStoreWriter,
+  )
+import Infrastructure.App
+  ( AppEnv,
+    AppM,
+    HasAppConfig (appConfigL),
+    HasBotState (botStateL),
+    initializeAppEnv,
+    runAppM,
+  )
+import Infrastructure.Auth.JWT (JWTConfig (..))
+import Infrastructure.Auth.OAuth (OAuthConfig (..))
+import Infrastructure.Auth.Telegram (TelegramConfig (..))
+import Infrastructure.Config
+  ( AppConfig (..),
+    ServerConfig (..),
+    loadConfigWithEnv,
+  )
+import qualified Infrastructure.Config as Config
+import Infrastructure.Database
+  ( convertDatabaseConfig,
+    createConnectionPool,
+    defaultSqlEventStoreConfig,
+    initializeDatabase,
+    runDbDirect,
+  )
+import Infrastructure.Eventium
+  ( AccountingGlobalEventStoreReader,
+    AccountingVersionedEventStoreReader,
+    AccountingVersionedEventStoreWriter,
+    accountingEventStoreWriter,
+    accountingGlobalEventStoreReader,
+    accountingVersionedEventStoreReader,
+    createAccountSummaryEventHandler,
+    createTransactionSummaryEventHandler,
+    createUserSummaryEventHandler,
+    liftGlobalReader,
+    liftIOEventHandler,
+    liftVersionedReader,
+    liftVersionedWriter,
+  )
+import RIO
+import qualified RIO.Text as T
+-- Web Server
+
+-- System
+import System.Environment (getArgs, lookupEnv)
+import System.IO (hPutStrLn, stderr)
+import Telegram.Api (createTelegramClientEnv)
+import Telegram.Bot (initBot, runBotPolling)
+import Web.Server (runServer)
+
+-- -----------------------------------------------------------------------------
+-- Main Entry Point
+-- -----------------------------------------------------------------------------
+
+-- | Application entry point.
+--
+-- This is the main function that:
+--  1. Parses command-line arguments
+--  2. Loads configuration
+--  3. Initializes all components
+--  4. Runs the application
+--  5. Handles shutdown
+--
+-- Example:
+-- >>> main
+-- >>> -- Starts the application with default configuration
+main :: IO ()
+main = do
+  -- Parse command-line arguments
+  args <- getArgs
+  configPath <- getConfigPath args
+
+  -- Load configuration (with environment variable substitution)
+  configResult <- loadConfigWithEnv configPath
+  config <- case configResult of
+    Left err -> do
+      hPutStrLn stderr $ "Failed to load configuration: " <> T.unpack err
+      exitFailure
+    Right cfg -> return cfg
+
+  -- Setup logging
+  logOptions <- createLogOptions config
+  withLogFunc logOptions $ \logFunc -> do
+    -- Run application with RIO
+    runRIO logFunc $ do
+      logInfo "Starting Accounting Backend..."
+      logInfo $ "Environment: " <> displayShow (appEnvironment config)
+
+      -- Initialize application environment
+      env <- initializeEnvironment logFunc config
+
+      -- Run application
+      liftIO $ runAppM env applicationMain
+
+-- | Get configuration file path from command-line args or environment.
+--
+-- Priority:
+--  1. Command-line argument: --config <path>
+--  2. Environment variable: CONFIG_FILE
+--  3. Default: config/local.yaml
+--
+-- Example:
+-- >>> getConfigPath ["--config", "config/prod.yaml"]
+-- >>> "config/prod.yaml"
+--
+-- >>> getConfigPath []
+-- >>> -- Reads CONFIG_FILE or defaults to "config/local.yaml"
+getConfigPath :: [String] -> IO FilePath
+getConfigPath args = case args of
+  ["--config", path] -> return path
+  "--config" : path : _ -> return path
+  _ -> do
+    maybeEnvPath <- lookupEnv "CONFIG_FILE"
+    return $ fromMaybe "config/local.yaml" maybeEnvPath
+
+-- | Create log options based on configuration.
+--
+-- This configures RIO's structured logging:
+--  - Log output destination (stdout)
+--  - Log level filtering
+--  - Timestamp format
+--  - Color output (for TTY)
+--
+-- Example:
+-- >>> logOptions <- createLogOptions config
+-- >>> -- LogOptions configured based on appLogging config
+createLogOptions :: AppConfig -> IO LogOptions
+createLogOptions config = do
+  let minLevel = convertLogLevel (Config.logLevel $ appLogging config)
+  baseOptions <- logOptionsHandle stdout True
+  return
+    $ setLogMinLevel minLevel
+    $ setLogUseLoc False
+    $ setLogUseTime True baseOptions
+  where
+    convertLogLevel :: Config.LogLevel -> RIO.LogLevel
+    convertLogLevel Config.LogDebug = LevelDebug
+    convertLogLevel Config.LogInfo = LevelInfo
+    convertLogLevel Config.LogWarn = LevelWarn
+    convertLogLevel Config.LogError = LevelError
+
+-- | Initialize the application environment.
+--
+-- This function creates and initializes all application resources:
+--  1. Database connection pool
+--  2. Database schema (migrations)
+--  3. Event store readers/writers
+--  4. Read models
+--  5. Process managers
+--
+-- Returns the fully initialized AppEnv ready for use.
+--
+-- Example:
+-- >>> env <- initializeEnvironment logFunc config
+-- >>> -- AppEnv ready to use
+initializeEnvironment :: LogFunc -> AppConfig -> RIO LogFunc AppEnv
+initializeEnvironment logFunc config = do
+  logInfo "Initializing application environment..."
+
+  -- 1. Initialize database connection pool
+  logInfo "Creating database connection pool..."
+  let dbConfigForPool = convertDatabaseConfig (appDatabase config)
+  pool <- liftIO $ createConnectionPool dbConfigForPool
+  logInfo
+    $ "Database pool created (size: "
+    <> displayShow (Config.dbPoolSize $ appDatabase config)
+    <> ")"
+
+  -- 2. Run database migrations and initialization
+  logInfo "Initializing database and running migrations..."
+  liftIO $ initializeDatabase pool
+  logInfo "Database initialized successfully"
+
+  -- 3. Initialize read models (must happen before creating the writer)
+  logInfo "Initializing read models..."
+  (accountSummaryReadModel, accountSummaryHandler) <- liftIO createAccountSummaryEventHandler
+  (transactionSummaryReadModel, transactionSummaryHandler) <- liftIO createTransactionSummaryEventHandler
+  (userSummaryReadModel, userSummaryHandler) <- liftIO createUserSummaryEventHandler
+  logInfo "Read models initialized"
+
+  -- 4. Create event store readers/writers with read model handlers on the event bus
+  logInfo "Creating event store readers and writers..."
+  let eventStoreConfig = defaultSqlEventStoreConfig
+      -- Create SQL-based event stores with read model handlers on the event bus
+      sqlWriter =
+        accountingEventStoreWriter
+          eventStoreConfig
+          [ liftIOEventHandler accountSummaryHandler,
+            liftIOEventHandler transactionSummaryHandler,
+            liftIOEventHandler userSummaryHandler
+          ]
+      sqlReader = accountingVersionedEventStoreReader eventStoreConfig
+      sqlGlobalReader = accountingGlobalEventStoreReader eventStoreConfig
+      -- Lift to IO by running through the connection pool
+      writer = liftVersionedWriter pool sqlWriter
+      reader = liftVersionedReader pool sqlReader
+      globalReader = liftGlobalReader pool sqlGlobalReader
+  logInfo "Event store configured with read model handlers"
+
+  -- 5. Auth configurations (loaded from YAML config)
+  logInfo "Auth configurations loaded from config file"
+  let jwtConfig = appAuth config
+      oauthConfig = appOAuth config
+      telegramConfig = appTelegram config
+
+  -- 5b. Initialize Telegram bot
+  logInfo "Initializing Telegram bot..."
+  botState <- liftIO $ initBot telegramConfig
+  logInfo $ "Telegram bot initialized (polling: " <> displayShow (telegramUsePolling telegramConfig) <> ")"
+
+  -- 5c. Create Telegram API client environment
+  telegramClientEnv <-
+    if T.null (telegramBotToken telegramConfig)
+      then do
+        logWarn "Telegram bot token is empty, bot will be disabled"
+        return Nothing
+      else do
+        cEnv <- liftIO $ createTelegramClientEnv (telegramBotToken telegramConfig)
+        logInfo "Telegram API client environment created"
+        return (Just cEnv)
+
+  -- 6. Register process managers
+  -- Note: Process managers are registered via the event bus in the writer
+  -- The transferProcessManager is already wired in accountingEventStoreWriter
+  logInfo "Process managers registered via event bus"
+
+  -- 7. Build application environment
+  let configDbConfig = appDatabase config -- Config.DatabaseConfig for AppEnv
+      env =
+        initializeAppEnv
+          logFunc
+          config
+          configDbConfig
+          pool
+          writer
+          reader
+          globalReader
+          accountSummaryReadModel
+          transactionSummaryReadModel
+          userSummaryReadModel
+          jwtConfig
+          oauthConfig
+          telegramConfig
+          botState
+          telegramClientEnv
+
+  logInfo "Application environment initialized successfully"
+  return env
+
+-- Helper to get environment name from config
+appEnvironment :: AppConfig -> Text
+appEnvironment config =
+  -- This would come from config if we add it
+  -- For now, infer from database name
+  let dbName = Config.dbDatabase (appDatabase config)
+   in if "_dev" `T.isSuffixOf` dbName
+        then "development"
+        else
+          if "_test" `T.isSuffixOf` dbName
+            then "test"
+            else "production"
+
+-- -----------------------------------------------------------------------------
+-- Application Main
+-- -----------------------------------------------------------------------------
+
+-- | Main application logic.
+--
+-- This is the core application loop. It:
+--  1. Logs startup information
+--  2. Starts the HTTP web server
+--  3. Blocks until shutdown signal (SIGTERM/SIGINT)
+--  4. Handles graceful shutdown
+--
+-- The web server:
+--  - Listens on configured port (default: 8080)
+--  - Serves REST API endpoints
+--  - Handles CORS requests
+--  - Logs all requests/responses
+--  - Handles errors gracefully
+--
+-- Example:
+-- >>> runAppM env applicationMain
+-- >>> -- HTTP server running at http://0.0.0.0:8080
+applicationMain :: AppM ()
+applicationMain = do
+  logInfo "==================================="
+  logInfo "  Accounting Backend Started"
+  logInfo "==================================="
+
+  -- Display configuration info
+  config <- view appConfigL
+  logInfo $ "Server Port: " <> displayShow (Config.serverPort $ appServer config)
+  logInfo $ "Database: " <> displayText (Config.dbDatabase $ appDatabase config)
+
+  -- Get the application environment
+  env <- ask
+  let telegramCfg = appTelegram config
+
+  if telegramUsePolling telegramCfg
+    then do
+      logInfo "Telegram bot: polling mode"
+      botState <- view botStateL
+      liftIO $ race_ (runAppM env $ runBotPolling telegramCfg botState) (runServer env)
+    else do
+      logInfo "Telegram bot: webhook mode (ensure webhook endpoint is registered)"
+      liftIO $ runServer env
+
+-- -----------------------------------------------------------------------------
+-- Utilities
+-- -----------------------------------------------------------------------------

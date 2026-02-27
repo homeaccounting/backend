@@ -1,0 +1,91 @@
+-- |
+-- Module      : Application.ProcessManagers
+-- Description : Public API for process managers
+--
+-- This module re-exports all process managers (sagas) in the application.
+-- Process managers coordinate operations across multiple aggregates to implement
+-- complex workflows like money transfers.
+--
+-- Usage:
+-- >>> import Application.ProcessManagers
+--
+-- This gives you access to:
+--   - TransferManager: Coordinates money transfers between accounts
+--   - transferProcessManager: The main transfer saga
+--
+-- Process Manager Pattern:
+--
+-- A process manager (also called a saga) is a long-running stateful component that:
+--   1. Listens to events from multiple aggregates
+--   2. Maintains state to track progress
+--   3. Issues commands to aggregates
+--   4. Handles compensation for failures
+--
+-- The Transfer Process Manager:
+--
+-- The transfer process manager coordinates money transfers between accounts:
+--
+-- 1. Listen for TransferInitiated event (Transaction aggregate)
+-- 2. Issue DebitAccount command (Account aggregate - source)
+-- 3. On success, issue CreditAccount command (Account aggregate - target)
+-- 4. Issue CompleteTransfer command (Transaction aggregate)
+-- 5. On failure, issue FailTransfer command (Transaction aggregate)
+--
+-- Example Flow:
+--
+-- Successful Transfer:
+-- >>> -- User initiates transfer
+-- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 100) "Rent")
+-- >>> → TransferInitiated event
+-- >>>
+-- >>> -- Process manager receives event
+-- >>> → Issues DebitAccount to source account
+-- >>> → AccountDebited event
+-- >>>
+-- >>> -- Process manager receives debit success
+-- >>> → Issues CreditAccount to target account
+-- >>> → AccountCredited event
+-- >>>
+-- >>> -- Process manager receives credit success
+-- >>> → Issues CompleteTransfer to transaction
+-- >>> → TransferCompleted event
+-- >>> -- Transfer complete!
+--
+-- Failed Transfer:
+-- >>> -- User initiates transfer
+-- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 1000) "Payment")
+-- >>> → TransferInitiated event
+-- >>>
+-- >>> -- Process manager receives event
+-- >>> → Issues DebitAccount to source account
+-- >>> → AccountDebitRejected event (insufficient funds)
+-- >>>
+-- >>> -- Process manager receives debit failure
+-- >>> → Issues FailTransfer to transaction
+-- >>> → TransferFailed event
+-- >>> -- Transfer failed with compensation
+--
+-- Properties:
+--
+--   - Eventually Consistent: Operations complete asynchronously
+--   - Compensating: Failures trigger compensating actions
+--   - Coordinated: Ensures proper order of operations
+--   - Idempotent: Safe to replay events
+--   - Stateful: Tracks progress of sagas
+--
+-- Integration:
+--
+-- Process managers are registered with the event store/event bus:
+-- >>> subscribeProcessManager eventBus writer transferProcessManager
+--
+-- They automatically:
+--   - Receive all domain events
+--   - Filter relevant events
+--   - Update internal state
+--   - Issue commands and events
+module Application.ProcessManagers
+  ( module X,
+  )
+where
+
+import Application.ProcessManagers.TransferManager as X

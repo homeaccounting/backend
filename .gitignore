@@ -1,59 +1,50 @@
 # Haskell
 dist/
 dist-newstyle/
-.ghc.environment.*
+.stack-work/
 *.hi
 *.o
-*.dyn_hi
-*.dyn_o
 *.prof
 *.aux
 *.hp
-*.ps
-*.tix
-*.chi
-*.chs.h
-*.dyn_o-boot
-*.dyn_hi-boot
-*.o-boot
-*.hi-boot
-*~
+*.eventlog
+.HTF/
+.ghc.environment.*
+tags
 
 # Cabal
 cabal.project.local
 cabal.project.local~
 .cabal-sandbox/
 cabal.sandbox.config
-*.cabal.backup
 
-# Stack
-.stack-work/
-*.stack-work
-
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.DS_Store
 
 # Nix
 result
 result-*
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment files
+# Environment
 .env
-.env.local
+.envrc.local
 
-# Database files
+# Database
 *.db
 *.sqlite
-
-# Docker
-.dockerignore
+*.sqlite3
 
 # Logs
 *.log
+logs/
+
+# Claude
+.claude/
+
+
+

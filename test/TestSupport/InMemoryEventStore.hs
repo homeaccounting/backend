@@ -1,0 +1,436 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+
+-- |
+-- Module      : TestSupport.InMemoryEventStore
+-- Description : In-memory event store setup for testing
+--
+-- This module provides utilities for creating in-memory event stores
+-- for testing. It uses the eventium-memory package to create STM-based
+-- event stores that are fast, isolated, and don't require a database.
+--
+-- Benefits:
+--   - Fast test execution (no I/O overhead)
+--   - Isolated test state (each test gets fresh store)
+--   - No database setup required
+--   - Process managers and sagas work as in production
+--
+-- Usage:
+--
+-- >>> testEnv <- createTestAppEnv
+-- >>> runAppM testEnv $ do
+-- >>>   -- Use the test environment with in-memory event store
+-- >>>   writer <- view eventStoreWriterL
+-- >>>   reader <- view eventStoreReaderL
+-- >>>   ...
+module TestSupport.InMemoryEventStore
+  ( -- * Test Environment Creation
+    createTestAppEnv,
+    createTestAppEnvWithProcessManager,
+    createInMemoryEventStores,
+
+    -- * Event Store Components
+    InMemoryEventStores (..),
+  )
+where
+
+import Application.ProcessManagers (transferProcessManager)
+import Application.ReadModels.AccountSummary (createAccountSummaryReadModel)
+import Application.ReadModels.TransactionSummary (createTransactionSummaryReadModel)
+import Application.ReadModels.UserSummary ()
+import Control.Concurrent.STM (TVar, atomically)
+import Domain.Models (AccountingEvent)
+import Eventium (EventHandler (..), EventStoreReader (..), EventStoreWriter (..), VersionedStreamEvent, processManagerEventHandler, publishingEventStoreWriter, synchronousPublisher)
+import Eventium.Store.Memory
+  ( EventMap,
+    emptyEventMap,
+    tvarEventStoreReader,
+    tvarEventStoreWriter,
+    tvarGlobalEventStoreReader,
+  )
+import Infrastructure.App (AppEnv (..))
+import Infrastructure.Auth.JWT (defaultJWTConfig)
+import Infrastructure.Auth.OAuth (OAuthConfig (..))
+import Infrastructure.Auth.Telegram (TelegramConfig (..))
+import Infrastructure.Config
+  ( AppConfig (..),
+    CorsConfig (..),
+    DatabaseConfig (..),
+    EventStoreConfig (..),
+    JWTConfig (..),
+    LogFormat (..),
+    LogLevel (..),
+    LoggingConfig (..),
+    OAuthConfig (..),
+    ProcessManagerConfig (..),
+    ServerConfig (..),
+    TelegramConfig (..),
+  )
+import qualified Infrastructure.Database as DB
+import Infrastructure.Eventium
+  ( AccountingEventHandler,
+    AccountingGlobalEventStoreReader,
+    AccountingVersionedEventStoreReader,
+    AccountingVersionedEventStoreWriter,
+    commandDispatcher,
+    createAccountSummaryEventHandler,
+    createTransactionSummaryEventHandler,
+    createUserSummaryEventHandler,
+  )
+import RIO hiding (atomically, newTVarIO)
+import qualified RIO
+import qualified RIO.Text as T
+import System.Environment (lookupEnv)
+import Telegram.Types (BotState (..))
+
+-- -----------------------------------------------------------------------------
+-- Types
+-- -----------------------------------------------------------------------------
+
+-- | Container for in-memory event store components.
+--
+-- This holds the TVar-based event store implementations that work
+-- entirely in memory using STM transactions.
+data InMemoryEventStores = InMemoryEventStores
+  { inMemoryWriter :: !(AccountingVersionedEventStoreWriter STM),
+    inMemoryReader :: !(AccountingVersionedEventStoreReader STM),
+    inMemoryGlobalReader :: !(AccountingGlobalEventStoreReader STM),
+    inMemoryEventMap :: !(TVar (EventMap AccountingEvent))
+  }
+
+-- -----------------------------------------------------------------------------
+-- In-Memory Event Store Creation
+-- -----------------------------------------------------------------------------
+
+-- | Create in-memory event stores using STM.
+--
+-- This creates a fresh event store backed by a TVar. All operations
+-- are atomic via STM transactions.
+--
+-- The returned stores are fully functional and include:
+--  - Event versioning and ordering
+--  - Optimistic concurrency control
+--  - Global event stream access
+--
+-- Usage:
+-- >>> stores <- atomically createInMemoryEventStores
+-- >>> -- Use stores.inMemoryWriter, stores.inMemoryReader, etc.
+createInMemoryEventStores :: IO InMemoryEventStores
+createInMemoryEventStores = do
+  -- Create the TVar-backed event map
+  eventMapVar <- RIO.newTVarIO emptyEventMap
+
+  -- Create readers/writers that operate on this TVar
+  let writer = tvarEventStoreWriter eventMapVar
+      reader = tvarEventStoreReader eventMapVar
+      globalReader = tvarGlobalEventStoreReader eventMapVar
+
+  return
+    InMemoryEventStores
+      { inMemoryWriter = writer,
+        inMemoryReader = reader,
+        inMemoryGlobalReader = globalReader,
+        inMemoryEventMap = eventMapVar
+      }
+
+-- -----------------------------------------------------------------------------
+-- Test Environment Creation
+-- -----------------------------------------------------------------------------
+
+-- | Create a complete test AppEnv with in-memory components.
+--
+-- This creates a fully functional application environment suitable for testing:
+--  - In-memory event stores (no database)
+--  - Test configuration
+--  - Read models
+--  - Process managers (working via event bus)
+--  - Logging to stderr (for test output)
+--
+-- The environment is completely isolated and can be discarded after tests.
+--
+-- Example:
+-- >>> testEnv <- createTestAppEnv
+-- >>> runAppM testEnv $ do
+-- >>>   -- Create an account
+-- >>>   writer <- view eventStoreWriterL
+-- >>>   applyAccountCommand writer reader accountId createCmd
+--
+-- Note: This creates stores in STM but lifts them to IO for the AppEnv.
+-- The lifting is done via atomically, so all operations remain transactional.
+--
+-- This creates a complete test environment with both:
+--  - In-memory event stores (for fast, isolated testing)
+--  - Real database pool (for full integration if needed)
+--
+-- The function will use environment variables or defaults for database connection:
+--  - TEST_DB_HOST (default: localhost)
+--  - TEST_DB_PORT (default: 5432)
+--  - TEST_DB_NAME (default: accounting)
+--  - TEST_DB_USER (default: postgres)
+--  - TEST_DB_PASSWORD (default: postgres)
+--
+-- Note: Requires a PostgreSQL database to be running.
+-- Use docker-compose to start it: `docker compose up -d`
+createTestAppEnv :: IO AppEnv
+createTestAppEnv = do
+  -- Create a simple log function for tests that outputs to stderr
+  -- Using mkLogFunc instead of withLogFunc to avoid resource cleanup issues
+  -- (withLogFunc cleans up the LogFunc when callback returns, causing hangs)
+  let logFunc = mkLogFunc $ \_callStack _source _level msg ->
+        hPutBuilder stderr (getUtf8Builder (msg <> "\n"))
+
+  -- Create in-memory event stores
+  stores <- createInMemoryEventStores
+
+  -- Create read models first (before lifting writers)
+  (accountReadModel, accountHandler) <- createAccountSummaryEventHandler
+  (transactionReadModel, transactionHandler) <- createTransactionSummaryEventHandler
+  (userReadModel, userHandler) <- createUserSummaryEventHandler
+
+  -- Lift event stores from STM to IO
+  -- This wraps each operation with `atomically`
+  let baseWriter = liftSTMWriter (inMemoryWriter stores)
+      reader = liftSTMReader (inMemoryReader stores)
+      globalReader = liftSTMGlobalReader (inMemoryGlobalReader stores)
+
+      -- Wrap writer with event bus to update read models synchronously
+      writer = publishingEventStoreWriter baseWriter (synchronousPublisher (accountHandler <> transactionHandler <> userHandler))
+
+  -- Create test auth configs
+  let testJWTConfig = defaultJWTConfig
+      testOAuthConfig =
+        OAuthConfig
+          { oauthGoogle = Nothing,
+            oauthGitHub = Nothing,
+            oauthMicrosoft = Nothing
+          }
+      testTelegramConfig =
+        TelegramConfig
+          { telegramBotToken = "test_token",
+            telegramBotUsername = "test_bot",
+            telegramAuthMaxAge = 86400,
+            telegramWebhookUrl = Nothing,
+            telegramUsePolling = False,
+            telegramPollingTimeout = 30
+          }
+
+  -- Create test configuration
+  let config =
+        AppConfig
+          { appServer =
+              ServerConfig
+                { serverPort = 8080,
+                  serverHost = T.pack "127.0.0.1"
+                },
+            appDatabase =
+              DatabaseConfig
+                { dbHost = T.pack "localhost",
+                  dbPort = 5432,
+                  dbUser = T.pack "test",
+                  dbPassword = T.pack "test",
+                  dbDatabase = T.pack "test",
+                  dbPoolSize = 1,
+                  dbConnectionTimeout = 10
+                },
+            appLogging =
+              LoggingConfig
+                { logLevel = LogInfo,
+                  logFormat = LogText
+                },
+            appCors =
+              CorsConfig
+                { corsEnabled = True,
+                  corsAllowedOrigins = T.pack <$> ["*"],
+                  corsAllowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
+                  corsAllowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
+                  corsMaxAge = Just 3600
+                },
+            appEventStore =
+              EventStoreConfig
+                { esSnapshotFrequency = 100
+                },
+            appProcessManagers =
+              ProcessManagerConfig
+                { pmPollIntervalMs = 1000
+                },
+            appAuth = testJWTConfig,
+            appOAuth = testOAuthConfig,
+            appTelegram = testTelegramConfig
+          }
+
+      dbConfig = appDatabase config
+
+  -- Build the AppEnv
+  -- Note: We don't have a real connection pool, but handlers don't need it
+  -- because they work through the event store abstraction
+  -- Using undefined instead of error so it's only evaluated if actually used
+  botState <- RIO.newTVarIO (BotState mempty)
+
+  return
+    AppEnv
+      { appLogFunc = logFunc,
+        appConfig = config,
+        appDatabaseConfig = dbConfig,
+        appDbPool = error "Database pool should not be accessed in in-memory tests! Use event store abstractions instead.",
+        appEventStoreWriter = writer,
+        appEventStoreReader = reader,
+        appGlobalEventStoreReader = globalReader,
+        appAccountSummaryReadModel = accountReadModel,
+        appTransactionSummaryReadModel = transactionReadModel,
+        appUserSummaryReadModel = userReadModel,
+        appJWTConfig = testJWTConfig,
+        appOAuthConfig = testOAuthConfig,
+        appTelegramConfig = testTelegramConfig,
+        appBotState = botState,
+        appTelegramClientEnv = Nothing
+      }
+
+-- | Create a test AppEnv with the Transfer Process Manager enabled.
+--
+-- Like 'createTestAppEnv', but also wires the TransferManager event handler
+-- into the synchronous event bus. This means that when a TransferInitiated
+-- event is written, the process manager will automatically:
+--  1. Issue DebitAccount to the source account
+--  2. On AccountDebited, issue CreditAccount + CompleteTransfer
+--  3. On debit failure, the command dispatcher issues FailTransfer
+--
+-- Use this for integration tests that need end-to-end saga behavior.
+createTestAppEnvWithProcessManager :: IO AppEnv
+createTestAppEnvWithProcessManager = do
+  let logFunc = mkLogFunc $ \_callStack _source _level msg ->
+        hPutBuilder stderr (getUtf8Builder (msg <> "\n"))
+
+  stores <- createInMemoryEventStores
+
+  (accountReadModel, accountHandler) <- createAccountSummaryEventHandler
+  (transactionReadModel, transactionHandler) <- createTransactionSummaryEventHandler
+  (userReadModel, userHandler) <- createUserSummaryEventHandler
+
+  let baseWriter = liftSTMWriter (inMemoryWriter stores)
+      reader = liftSTMReader (inMemoryReader stores)
+      globalReader = liftSTMGlobalReader (inMemoryGlobalReader stores)
+
+      -- CRITICAL: Read model handlers FIRST, then process manager LAST.
+      -- See accountingEventStoreWriter for the depth-first dispatch explanation.
+      publishingWriter = publishingEventStoreWriter baseWriter (synchronousPublisher combinedHandler)
+      pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher publishingWriter reader)
+      combinedHandler = accountHandler <> transactionHandler <> userHandler <> pmHandler
+      writer = publishingWriter
+
+  let testJWTConfig = defaultJWTConfig
+      testOAuthConfig =
+        OAuthConfig
+          { oauthGoogle = Nothing,
+            oauthGitHub = Nothing,
+            oauthMicrosoft = Nothing
+          }
+      testTelegramConfig =
+        TelegramConfig
+          { telegramBotToken = "test_token",
+            telegramBotUsername = "test_bot",
+            telegramAuthMaxAge = 86400,
+            telegramWebhookUrl = Nothing,
+            telegramUsePolling = False,
+            telegramPollingTimeout = 30
+          }
+
+  let config =
+        AppConfig
+          { appServer =
+              ServerConfig
+                { serverPort = 8080,
+                  serverHost = T.pack "127.0.0.1"
+                },
+            appDatabase =
+              DatabaseConfig
+                { dbHost = T.pack "localhost",
+                  dbPort = 5432,
+                  dbUser = T.pack "test",
+                  dbPassword = T.pack "test",
+                  dbDatabase = T.pack "test",
+                  dbPoolSize = 1,
+                  dbConnectionTimeout = 10
+                },
+            appLogging =
+              LoggingConfig
+                { logLevel = LogInfo,
+                  logFormat = LogText
+                },
+            appCors =
+              CorsConfig
+                { corsEnabled = True,
+                  corsAllowedOrigins = T.pack <$> ["*"],
+                  corsAllowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
+                  corsAllowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
+                  corsMaxAge = Just 3600
+                },
+            appEventStore =
+              EventStoreConfig
+                { esSnapshotFrequency = 100
+                },
+            appProcessManagers =
+              ProcessManagerConfig
+                { pmPollIntervalMs = 1000
+                },
+            appAuth = testJWTConfig,
+            appOAuth = testOAuthConfig,
+            appTelegram = testTelegramConfig
+          }
+
+      dbConfig = appDatabase config
+
+  botState <- RIO.newTVarIO (BotState mempty)
+
+  return
+    AppEnv
+      { appLogFunc = logFunc,
+        appConfig = config,
+        appDatabaseConfig = dbConfig,
+        appDbPool = error "Database pool should not be accessed in in-memory tests!",
+        appEventStoreWriter = writer,
+        appEventStoreReader = reader,
+        appGlobalEventStoreReader = globalReader,
+        appAccountSummaryReadModel = accountReadModel,
+        appTransactionSummaryReadModel = transactionReadModel,
+        appUserSummaryReadModel = userReadModel,
+        appJWTConfig = testJWTConfig,
+        appOAuthConfig = testOAuthConfig,
+        appTelegramConfig = testTelegramConfig,
+        appBotState = botState,
+        appTelegramClientEnv = Nothing
+      }
+
+-- -----------------------------------------------------------------------------
+-- STM to IO Lifting
+-- -----------------------------------------------------------------------------
+
+-- | Lift an STM event store writer to IO.
+--
+-- Wraps each write operation with `atomically` to ensure transactional
+-- semantics are preserved when running in IO.
+liftSTMWriter ::
+  AccountingVersionedEventStoreWriter STM ->
+  AccountingVersionedEventStoreWriter IO
+liftSTMWriter (EventStoreWriter stmWrite) =
+  EventStoreWriter $ \uuid expectedVersion events ->
+    atomically $ stmWrite uuid expectedVersion events
+
+-- | Lift an STM event store reader to IO.
+--
+-- Wraps each read operation with `atomically`.
+liftSTMReader ::
+  AccountingVersionedEventStoreReader STM ->
+  AccountingVersionedEventStoreReader IO
+liftSTMReader (EventStoreReader stmRead) =
+  EventStoreReader $ \range ->
+    atomically $ stmRead range
+
+-- | Lift an STM global event store reader to IO.
+--
+-- Wraps each global read operation with `atomically`.
+liftSTMGlobalReader ::
+  AccountingGlobalEventStoreReader STM ->
+  AccountingGlobalEventStoreReader IO
+liftSTMGlobalReader (EventStoreReader stmRead) =
+  EventStoreReader $ \range ->
+    atomically $ stmRead range
