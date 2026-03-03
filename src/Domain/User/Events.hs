@@ -40,7 +40,7 @@ import Domain.Core.Types
     PasswordHash,
     TelegramIdentity,
   )
-import Infrastructure.Json (deriveJSONUnPrefixLower)
+import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------

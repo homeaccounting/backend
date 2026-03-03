@@ -108,7 +108,6 @@ import Infrastructure.Auth.JWT (JWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig)
 import Infrastructure.Auth.Telegram (TelegramConfig)
 import Infrastructure.Config (AppConfig, DatabaseConfig)
-import Servant.Client (ClientEnv)
 import Infrastructure.Eventium
   ( AccountingGlobalEventStoreReader,
     AccountingVersionedEventStoreReader,
@@ -116,6 +115,7 @@ import Infrastructure.Eventium
   )
 import RIO
 import qualified RIO.Text as T
+import Servant.Client (ClientEnv)
 import Telegram.Types (BotState)
 
 -- -----------------------------------------------------------------------------

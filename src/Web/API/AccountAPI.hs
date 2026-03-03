@@ -95,13 +95,15 @@ type AccountAPI =
     :> "accounts"
     :> ReqBody '[JSON] CreateAccountRequest
     :> Verb 'POST 201 '[JSON] AccountResponse
-    -- GET /api/accounts/:id - Get account by ID
-    :<|> "api"
+    -- GET /api/accounts/:id - Get account by ID (requires auth)
+    :<|> AuthProtect "jwt"
+      :> "api"
       :> "accounts"
       :> Capture "id" UUID
       :> Get '[JSON] AccountResponse
-    -- GET /api/accounts - List all accounts
-    :<|> "api"
+    -- GET /api/accounts - List all accounts (requires auth)
+    :<|> AuthProtect "jwt"
+      :> "api"
       :> "accounts"
       :> Get '[JSON] AccountListResponse
     -- POST /api/accounts/:id/share - Share account with another user (requires auth)
@@ -174,17 +176,18 @@ createAccountHandler user request = do
         Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts/:id - Get account by ID.
-getAccountHandler :: UUID -> AppM AccountResponse
-getAccountHandler accountUuid = do
+getAccountHandler :: AuthenticatedUser -> UUID -> AppM AccountResponse
+getAccountHandler _user accountUuid = do
   result <- AccountService.getAccount accountUuid
   case result of
     Right (accountId, summary) -> return $ fromAccountSummary accountId summary
     Left err -> throwDomainError err
 
--- | Handler for GET /api/accounts - List all accounts.
-listAccountsHandler :: AppM AccountListResponse
-listAccountsHandler = do
-  accountsList <- AccountService.listAccounts
+-- | Handler for GET /api/accounts - List accounts accessible to the authenticated user.
+listAccountsHandler :: AuthenticatedUser -> AppM AccountListResponse
+listAccountsHandler user = do
+  let userId = authUserId user
+  accountsList <- AccountService.listAccountsForUser userId
   let responses = map (uncurry fromAccountSummary) accountsList
       totalCount = length responses
   return $ AccountListResponse responses totalCount

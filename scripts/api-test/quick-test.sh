@@ -9,6 +9,15 @@
 #   - Token is saved to /tmp/test_auth_token.txt and reused automatically
 
 API_BASE_URL="http://localhost:8080"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Load .env if Telegram env vars are missing (direnv may not have reloaded)
+if [ -z "$TELEGRAM_USER_ID" ] && [ -f "${PROJECT_ROOT}/.env" ]; then
+    set -a
+    source "${PROJECT_ROOT}/.env"
+    set +a
+fi
 
 # Colors
 GREEN='\033[0;32m'
@@ -25,6 +34,7 @@ print_usage() {
     echo "Authentication Commands:"
     echo "  register <email> <password>  - Register a new user"
     echo "  login <email> <password>     - Login and save token"
+    echo "  telegram-login [id] [name] [username] - Login via Telegram (requires TELEGRAM_BOT_TOKEN)"
     echo "  token                        - Show current saved token"
     echo ""
     echo "Account Commands:"
@@ -45,9 +55,17 @@ print_usage() {
     echo "Other Commands:"
     echo "  health                       - Check if server is running"
     echo ""
+    echo "Environment variables (for Telegram):"
+    echo "  TELEGRAM_BOT_TOKEN   - Required for telegram-login"
+    echo "  TELEGRAM_USER_ID     - Default Telegram user ID"
+    echo "  TELEGRAM_FIRST_NAME  - Default first name"
+    echo "  TELEGRAM_USERNAME    - Default username (without @)"
+    echo ""
     echo "Examples:"
     echo "  $0 register user@example.com MyPassword123"
     echo "  $0 login user@example.com MyPassword123"
+    echo "  $0 telegram-login                          # Uses env var defaults"
+    echo "  $0 telegram-login 12345 John johndoe       # Override with args"
     echo "  $0 create \"My Account\" 1000"
     echo "  $0 list"
     echo "  $0 transfer <from-id> <to-id> 300"
@@ -85,7 +103,7 @@ auth_header() {
 case "${1:-help}" in
     health)
         echo -e "${YELLOW}Checking server health...${NC}"
-        if curl -s "${API_BASE_URL}/api/accounts" > /dev/null 2>&1; then
+        if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
             echo -e "${GREEN}✓ Server is running at ${API_BASE_URL}${NC}"
         else
             echo -e "${RED}✗ Server is not running at ${API_BASE_URL}${NC}"
@@ -137,6 +155,46 @@ case "${1:-help}" in
         fi
         ;;
 
+    telegram-login)
+        # Compute Telegram auth hash and login
+        # Uses env vars as defaults: TELEGRAM_BOT_TOKEN (required),
+        # TELEGRAM_USER_ID, TELEGRAM_FIRST_NAME, TELEGRAM_USERNAME (optional)
+        if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo -e "${RED}TELEGRAM_BOT_TOKEN env var is required${NC}"
+            echo "  export TELEGRAM_BOT_TOKEN='your-bot-token'"
+            exit 1
+        fi
+        if ! command -v openssl &> /dev/null; then
+            echo -e "${RED}openssl is required for hash computation${NC}"
+            exit 1
+        fi
+        TG_ID="${2:-${TELEGRAM_USER_ID:-$(( RANDOM * 10000 + RANDOM ))}}"
+        TG_NAME="${3:-${TELEGRAM_FIRST_NAME:-TestUser}}"
+        TG_USERNAME="${4:-${TELEGRAM_USERNAME:-tguser_$(date +%s)}}"
+        TG_AUTH_DATE=$(date +%s)
+
+        # Build data-check-string (sorted key=value pairs)
+        DATA_CHECK="auth_date=${TG_AUTH_DATE}\nfirst_name=${TG_NAME}\nid=${TG_ID}\nusername=${TG_USERNAME}"
+        DATA_CHECK_SORTED=$(printf '%b' "$DATA_CHECK" | sort | tr '\n' $'\n')
+        DATA_CHECK_SORTED="${DATA_CHECK_SORTED%$'\n'}"
+
+        # secret_key = SHA256(bot_token), hash = HMAC-SHA256(data, secret_key)
+        SECRET_HEX=$(printf '%s' "$TELEGRAM_BOT_TOKEN" | openssl dgst -sha256 -binary | xxd -p | tr -d '\n')
+        TG_HASH=$(printf '%s' "$DATA_CHECK_SORTED" | openssl dgst -sha256 -mac hmac -macopt "hexkey:${SECRET_HEX}" -binary | xxd -p | tr -d '\n')
+
+        echo -e "${YELLOW}Logging in via Telegram (ID: $TG_ID, @$TG_USERNAME)${NC}"
+        RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/telegram" \
+            -H "Content-Type: application/json" \
+            -d "{\"telegramAuthId\": $TG_ID, \"telegramAuthFirstName\": \"$TG_NAME\", \"telegramAuthLastName\": null, \"telegramAuthUsername\": \"$TG_USERNAME\", \"telegramAuthPhotoUrl\": null, \"telegramAuthAuthDate\": $TG_AUTH_DATE, \"telegramAuthHash\": \"$TG_HASH\"}")
+        check_jq "$RESPONSE"
+        TOKEN=$(echo "$RESPONSE" | jq -r '.authToken' 2>/dev/null)
+        if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+            echo "$TOKEN" > /tmp/test_auth_token.txt
+            echo "$TG_ID" > /tmp/test_telegram_id.txt
+            echo -e "${GREEN}✓ Token saved to /tmp/test_auth_token.txt${NC}"
+        fi
+        ;;
+
     token)
         TOKEN=$(get_token)
         if [ -n "$TOKEN" ]; then
@@ -169,7 +227,8 @@ case "${1:-help}" in
 
     list)
         echo -e "${YELLOW}Listing all accounts...${NC}"
-        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts")
+        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
+            -H "$(auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -180,7 +239,8 @@ case "${1:-help}" in
         fi
         ACCOUNT_ID="$2"
         echo -e "${YELLOW}Getting account: $ACCOUNT_ID${NC}"
-        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}")
+        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}" \
+            -H "$(auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -248,7 +308,8 @@ case "${1:-help}" in
         fi
         TRANSACTION_ID="$2"
         echo -e "${YELLOW}Getting transaction: $TRANSACTION_ID${NC}"
-        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}")
+        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
+            -H "$(auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -274,7 +335,7 @@ case "${1:-help}" in
             -H "$(auth_header)" \
             -d "{\"currentPassword\": \"$CURRENT\", \"newPassword\": \"$NEW\"}")
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-        BODY=$(echo "$RESPONSE" | head -n -1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
         if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
             echo -e "${GREEN}✓ Password changed successfully${NC}"
             echo "$NEW" > /tmp/test_auth_password.txt

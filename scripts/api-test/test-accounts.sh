@@ -42,7 +42,7 @@ print_info() {
 # Check if server is running
 check_server() {
     print_info "Checking if server is running..."
-    if curl -s "${API_BASE_URL}/api/accounts" > /dev/null 2>&1; then
+    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
         print_success "Server is running at ${API_BASE_URL}"
     else
         print_error "Server is not running at ${API_BASE_URL}"
@@ -116,7 +116,7 @@ test_create_account() {
         -d @"${PAYLOADS_DIR}/create-savings.json")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
@@ -141,7 +141,7 @@ test_create_account_unauthorized() {
         -d '{"accountName": "Unauthorized Account", "initialBalance": 100.0}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -156,6 +156,8 @@ test_create_account_unauthorized() {
 test_get_account() {
     print_header "TEST: Get Account by ID"
 
+    ensure_authenticated
+
     if [ ! -f /tmp/test_account_id.txt ]; then
         print_error "No account ID found. Run create test first."
         return 1
@@ -164,7 +166,8 @@ test_get_account() {
     ACCOUNT_ID=$(cat /tmp/test_account_id.txt)
     print_info "Getting account: $ACCOUNT_ID"
 
-    RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}")
+    RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
     echo "$RESPONSE" | jq '.'
 
     if echo "$RESPONSE" | jq -e '.accountId' > /dev/null 2>&1; then
@@ -179,8 +182,11 @@ test_get_account() {
 test_list_accounts() {
     print_header "TEST: List All Accounts"
 
+    ensure_authenticated
+
     print_info "Listing all accounts..."
-    RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts")
+    RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
     echo "$RESPONSE" | jq '.'
 
     TOTAL_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
@@ -218,7 +224,7 @@ test_share_account() {
         -d "{\"shareUserId\": \"$SECOND_USER_ID\", \"shareRole\": \"editor\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -250,7 +256,7 @@ test_revoke_access() {
         -H "Authorization: Bearer $AUTH_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 

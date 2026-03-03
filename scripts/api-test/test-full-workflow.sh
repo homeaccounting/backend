@@ -58,7 +58,7 @@ check_jq() {
 # Check if server is running
 check_server() {
     print_info "Checking if server is running..."
-    if curl -s "${API_BASE_URL}/api/accounts" > /dev/null 2>&1; then
+    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
         print_success "Server is running at ${API_BASE_URL}"
     else
         print_error "Server is not running at ${API_BASE_URL}"
@@ -195,7 +195,8 @@ main() {
     print_step "6" "List All Accounts"
 
     print_info "Retrieving list of all accounts..."
-    LIST_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts")
+    LIST_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
 
     echo "$LIST_RESPONSE" | jq '.'
 
@@ -242,7 +243,8 @@ EOF
     for i in {1..10}; do
         wait_for_completion "Checking status (attempt $i/10)..." 1
 
-        STATUS_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}")
+        STATUS_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
+            -H "Authorization: Bearer $AUTH_TOKEN")
         STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status')
 
         echo "$STATUS_RESPONSE" | jq '.'
@@ -288,7 +290,7 @@ EOF
         -d "{\"shareUserId\": \"$SECOND_USER_ID\", \"shareRole\": \"viewer\"}")
 
     SHARE_CODE=$(echo "$SHARE_RESPONSE" | tail -n1)
-    SHARE_BODY=$(echo "$SHARE_RESPONSE" | head -n -1)
+    SHARE_BODY=$(echo "$SHARE_RESPONSE" | sed '$d')
 
     echo "$SHARE_BODY" | jq '.' 2>/dev/null || echo "$SHARE_BODY"
 
@@ -304,12 +306,14 @@ EOF
     print_step "10" "Verify Final Account Balances"
 
     print_info "Retrieving final Savings Account balance..."
-    FINAL_SAVINGS=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SAVINGS_ID}")
+    FINAL_SAVINGS=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SAVINGS_ID}" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
     FINAL_SAVINGS_BALANCE=$(echo "$FINAL_SAVINGS" | jq -r '.currentBalance')
     echo "$FINAL_SAVINGS" | jq '.'
 
     print_info "Retrieving final Checking Account balance..."
-    FINAL_CHECKING=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${CHECKING_ID}")
+    FINAL_CHECKING=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${CHECKING_ID}" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
     FINAL_CHECKING_BALANCE=$(echo "$FINAL_CHECKING" | jq -r '.currentBalance')
     echo "$FINAL_CHECKING" | jq '.'
 

@@ -26,7 +26,7 @@ module Application.Services.AccountService
   ( -- * Service Functions
     createAccount,
     getAccount,
-    listAccounts,
+    listAccountsForUser,
     shareAccount,
     revokeAccountAccess,
   )
@@ -34,8 +34,8 @@ where
 
 import Application.ReadModels.AccountSummary
   ( AccountSummaryData (..),
+    getAccessibleAccounts,
     getAccountSummary,
-    getAllAccountSummaries,
   )
 import Data.Text (Text)
 import Data.UUID (UUID)
@@ -149,21 +149,21 @@ getAccount accountUuid = do
           logWarn "Account not found"
           return $ Left $ NotFound "Account" (tshow accountUuid)
 
--- | List all accounts.
+-- | List accounts accessible to a given user.
 --
--- Queries the read model for all account summaries.
+-- Queries the read model for accounts where the user has access (owner, editor, or viewer).
 -- Returns a list of (AccountId, AccountSummaryData) pairs.
-listAccounts :: AppM [(AccountId, AccountSummaryData)]
-listAccounts = do
-  logInfo "Listing all accounts..."
+listAccountsForUser :: UserId -> AppM [(AccountId, AccountSummaryData)]
+listAccountsForUser userId = do
+  logInfo $ "Listing accounts for user " <> displayShow userId
 
   readModel <- view accountSummaryReadModelL
-  accountsMap <- liftIO $ getAllAccountSummaries readModel
+  accountsList <- liftIO $ getAccessibleAccounts readModel userId
 
-  let accountsList = Map.toList accountsMap
+  let result = map (\(aid, summary, _role) -> (aid, summary)) accountsList
 
-  logInfo $ "Found " <> displayShow (length accountsList) <> " account(s)"
-  return accountsList
+  logInfo $ "Found " <> displayShow (length result) <> " account(s)"
+  return result
 
 -- | Share an account with another user.
 --

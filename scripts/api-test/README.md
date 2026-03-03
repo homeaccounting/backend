@@ -15,7 +15,8 @@ scripts/api-test/
 ├── QUICK_START.md         # Quick reference guide
 ├── CURL_REFERENCE.md      # Complete curl command reference
 ├── quick-test.sh          # Quick helper commands
-├── test-auth.sh           # Authentication tests (register, login, refresh)
+├── test-auth.sh           # Authentication tests (register, login, refresh, telegram)
+├── test-telegram.sh       # Telegram-specific auth tests and workflows
 ├── test-user.sh           # User profile tests (get, update, change password)
 ├── test-accounts.sh       # Account operations tests (create, share, revoke)
 ├── test-transactions.sh   # Transaction operations tests (transfer, status)
@@ -127,12 +128,25 @@ Available operations:
 - Verify balances
 - Test insufficient funds
 
+#### Test Telegram Authentication
+
+```bash
+# Requires TELEGRAM_BOT_TOKEN env var (same token the server uses)
+export TELEGRAM_BOT_TOKEN='your-bot-token'
+
+./scripts/api-test/test-telegram.sh all        # All Telegram tests
+./scripts/api-test/test-telegram.sh login       # Login via Telegram
+./scripts/api-test/test-telegram.sh workflow    # Full workflow: login → accounts → transfer
+```
+
 ### Quick Commands
 
 ```bash
 # Authentication
 ./scripts/api-test/quick-test.sh register user@example.com MyPassword123
 ./scripts/api-test/quick-test.sh login user@example.com MyPassword123
+./scripts/api-test/quick-test.sh telegram-login                     # Login via Telegram (random ID)
+./scripts/api-test/quick-test.sh telegram-login 12345 John johndoe  # Login with specific Telegram ID
 ./scripts/api-test/quick-test.sh token
 
 # Accounts (create/share/revoke require auth)

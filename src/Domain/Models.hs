@@ -80,7 +80,7 @@ import Domain.Transaction as X
 import Domain.User as X
 import Eventium (CommandHandler, Projection, TypeEmbedding (..), embeddedCommandHandler, embeddedProjection)
 import Eventium.TH (mkSumTypeEmbedding)
-import Infrastructure.Json (dropSuffix)
+import Eventium.Json (dropSuffix)
 import SumTypesX.TH (SumTypeOptions (..), SumTypeTagOptions (ConstructTagName), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------

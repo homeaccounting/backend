@@ -111,19 +111,39 @@ spec = describe "AccountService" $ do
         Left err -> expectationFailure $ "Expected NotFound, got: " <> show err
         Right _ -> expectationFailure "Expected Left"
 
-  describe "listAccounts" $ do
+  describe "listAccountsForUser" $ do
     it "returns empty list when no accounts exist" $ do
       env <- createTestAppEnv
-      result <- runAppM env listAccounts
+      result <- runAppM env $ listAccountsForUser testUserId1
       result `shouldBe` []
 
-    it "returns all created accounts" $ do
+    it "returns only accounts accessible to the user" $ do
       env <- createTestAppEnv
       _ <- runAppM env $ do
         _ <- createAccount validCreateAccount
         createAccount validCreateAccount {createAccountName = "Checking"}
-      result <- runAppM env listAccounts
+      result <- runAppM env $ listAccountsForUser testUserId1
       length result `shouldBe` 2
+
+    it "does not return accounts owned by other users" $ do
+      env <- createTestAppEnv
+      _ <- runAppM env $ do
+        _ <- createAccount validCreateAccount
+        createAccount
+          validCreateAccount
+            { createAccountName = "Other User Account",
+              createAccountCreatedBy = testUserId2
+            }
+      user1Accounts <- runAppM env $ listAccountsForUser testUserId1
+      user2Accounts <- runAppM env $ listAccountsForUser testUserId2
+      length user1Accounts `shouldBe` 1
+      length user2Accounts `shouldBe` 1
+
+    it "returns shared accounts" $ do
+      (env, accountId) <- createTestAccount validCreateAccount
+      _ <- runAppM env $ shareAccount testUserId1 (unAccountId accountId) testUserUuid2 "viewer"
+      user2Accounts <- runAppM env $ listAccountsForUser testUserId2
+      length user2Accounts `shouldBe` 1
 
   describe "shareAccount" $ do
     it "shares an account with another user" $ do

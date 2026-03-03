@@ -81,8 +81,9 @@ type TransactionAPI =
     :> "transactions"
     :> ReqBody '[JSON] TransferRequest
     :> Post '[JSON] TransactionResponse
-    -- GET /api/transactions/:id - Get transaction status (public)
-    :<|> "api"
+    -- GET /api/transactions/:id - Get transaction status (requires auth)
+    :<|> AuthProtect "jwt"
+      :> "api"
       :> "transactions"
       :> Capture "id" UUID
       :> Get '[JSON] TransactionResponse
@@ -131,8 +132,8 @@ initiateTransferHandler user request = do
                 Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions/:id - Get transaction status.
-getTransactionHandler :: UUID -> AppM TransactionResponse
-getTransactionHandler transactionUuid = do
+getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse
+getTransactionHandler _user transactionUuid = do
   result <- TransactionService.getTransaction transactionUuid
   case result of
     Right (txId, summary) -> return $ fromTransactionSummary txId summary

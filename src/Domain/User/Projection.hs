@@ -63,7 +63,7 @@ import Domain.Core.Types
   )
 import Domain.User.Events
 import Eventium (Projection (..))
-import Infrastructure.Json (unPrefixLower)
+import Eventium.Json (unPrefixLower)
 import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------

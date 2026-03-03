@@ -60,7 +60,7 @@ import Domain.Core.Types (AccountId, Money, UserId, mkAccountId, mkMoney, unsafe
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import GHC.Generics (Generic)
-import Infrastructure.Json (unPrefixLower)
+import Eventium.Json (unPrefixLower)
 import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------

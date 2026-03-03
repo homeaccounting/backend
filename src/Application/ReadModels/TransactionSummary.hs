@@ -174,9 +174,9 @@ processEvent ::
   GlobalStreamEvent AccountingEvent ->
   Map TransactionId TransactionSummaryData
 processEvent summaries globalEvent =
-  let versionedEvent = streamEventEvent globalEvent
+  let versionedEvent = streamEventPayload globalEvent
       streamUuid = streamEventKey versionedEvent
-      payload = streamEventEvent versionedEvent
+      payload = streamEventPayload versionedEvent
    in case payload of
         TransferInitiatedEvent evt ->
           case mkTransactionIdSafe streamUuid of

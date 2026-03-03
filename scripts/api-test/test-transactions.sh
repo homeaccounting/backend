@@ -42,7 +42,7 @@ print_info() {
 # Check if server is running
 check_server() {
     print_info "Checking if server is running..."
-    if curl -s "${API_BASE_URL}/api/accounts" > /dev/null 2>&1; then
+    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
         print_success "Server is running at ${API_BASE_URL}"
     else
         print_error "Server is not running at ${API_BASE_URL}"
@@ -186,7 +186,7 @@ test_transfer_unauthorized() {
         }')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -201,6 +201,8 @@ test_transfer_unauthorized() {
 test_get_transaction() {
     print_header "TEST: Get Transaction Status"
 
+    ensure_authenticated
+
     if [ ! -f /tmp/test_transaction_id.txt ]; then
         print_error "No transaction ID found. Run initiate test first."
         return 1
@@ -213,7 +215,8 @@ test_get_transaction() {
     for i in {1..5}; do
         print_info "Polling attempt $i/5..."
 
-        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}")
+        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
+            -H "Authorization: Bearer $AUTH_TOKEN")
         echo "$RESPONSE" | jq '.'
 
         STATUS=$(echo "$RESPONSE" | jq -r '.status')
@@ -241,6 +244,8 @@ test_get_transaction() {
 test_verify_balances() {
     print_header "TEST: Verify Account Balances"
 
+    ensure_authenticated
+
     if [ ! -f /tmp/test_source_account_id.txt ] || [ ! -f /tmp/test_target_account_id.txt ]; then
         print_error "Accounts not set up."
         return 1
@@ -251,14 +256,16 @@ test_verify_balances() {
 
     # Check source account
     print_info "Checking source account balance..."
-    SOURCE_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SOURCE_ACCOUNT_ID}")
+    SOURCE_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SOURCE_ACCOUNT_ID}" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
     SOURCE_BALANCE=$(echo "$SOURCE_RESPONSE" | jq -r '.currentBalance')
     echo "$SOURCE_RESPONSE" | jq '.'
     print_info "Source account balance: \$${SOURCE_BALANCE}"
 
     # Check target account
     print_info "Checking target account balance..."
-    TARGET_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${TARGET_ACCOUNT_ID}")
+    TARGET_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${TARGET_ACCOUNT_ID}" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
     TARGET_BALANCE=$(echo "$TARGET_RESPONSE" | jq -r '.currentBalance')
     echo "$TARGET_RESPONSE" | jq '.'
     print_info "Target account balance: \$${TARGET_BALANCE}"
@@ -307,7 +314,8 @@ EOF
         # Poll for failure
         for i in {1..5}; do
             sleep 1
-            STATUS_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}")
+            STATUS_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
+                -H "Authorization: Bearer $AUTH_TOKEN")
             STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status')
 
             if [ "$STATUS" = "Failed" ]; then

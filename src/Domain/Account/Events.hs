@@ -39,7 +39,7 @@ where
 
 import Data.Text (Text)
 import Domain.Core.Types (AccountRole, AccountType, Money, TransactionId, UserId)
-import Infrastructure.Json (deriveJSONUnPrefixLower)
+import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------

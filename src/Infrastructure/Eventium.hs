@@ -234,7 +234,7 @@ accountingEventStoreWriter config extraHandlers =
 -- | Event logger handler — logs all events as pretty-printed JSON.
 eventLoggerHandler :: (MonadIO m) => AccountingEventHandler m
 eventLoggerHandler = EventHandler $ \versionedEvent ->
-  liftIO $ printEventJSON (streamEventKey versionedEvent, streamEventEvent versionedEvent)
+  liftIO $ printEventJSON (streamEventKey versionedEvent, streamEventPayload versionedEvent)
 
 -- | Transfer process manager event handler.
 --
@@ -388,7 +388,7 @@ loadUserAggregate ::
   m User
 loadUserAggregate reader userId = do
   events <- getEvents reader (allEvents userId)
-  pure $ latestProjection userAccountingProjection (streamEventEvent <$> events)
+  pure $ latestProjection userAccountingProjection (streamEventPayload <$> events)
 
 -- -----------------------------------------------------------------------------
 -- Event Store Lifting Helpers

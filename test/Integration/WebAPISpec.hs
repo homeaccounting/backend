@@ -67,6 +67,11 @@ postJSON path = request "POST" path [(hContentType, "application/json")]
 getJSON :: BS.ByteString -> WaiSession st0 SResponse
 getJSON path = request "GET" path [(hContentType, "application/json")] ""
 
+-- | Helper to make a GET request with auth header
+getJSONAuth :: BS.ByteString -> Text -> WaiSession st0 SResponse
+getJSONAuth path token =
+  request "GET" path [(hContentType, "application/json"), (hAuthorization, "Bearer " <> encodeUtf8 token)] ""
+
 -- | Helper to make a POST request with JSON content type and auth header
 postJSONAuth :: BS.ByteString -> Text -> LBS.ByteString -> WaiSession st0 SResponse
 postJSONAuth path token =
@@ -366,9 +371,10 @@ accountRetrievalSpec =
 
     describe "returns 404 for non-existent account" $ with mkApp $ do
       it "with nil UUID" $ do
+        token <- liftIO generateTestToken
         -- Use a random UUID that doesn't exist
         let fakeUuid = UUID.nil
-        get (fromString $ "/api/accounts/" <> UUID.toString fakeUuid)
+        getJSONAuth (fromString $ "/api/accounts/" <> UUID.toString fakeUuid) token
           `shouldRespondWith` 404
 
 -- | Test account listing via GET /api/accounts
@@ -393,8 +399,8 @@ accountListingSpec =
         _ <- postJSONAuth "/api/accounts" token (encode account1)
         _ <- postJSONAuth "/api/accounts" token (encode account2)
 
-        -- List accounts (public endpoint)
-        response <- get "/api/accounts"
+        -- List accounts (requires auth)
+        response <- getJSONAuth "/api/accounts" token
 
         -- Verify response
         liftIO $ do
@@ -404,7 +410,8 @@ accountListingSpec =
 
     describe "returns empty list when no accounts exist" $ with mkApp $ do
       it "returns empty accounts array" $ do
-        response <- get "/api/accounts"
+        token <- liftIO generateTestToken
+        response <- getJSONAuth "/api/accounts" token
 
         liftIO $ do
           statusCode (simpleStatus response) `shouldBe` 200
@@ -497,8 +504,9 @@ transferStatusSpec =
 
     describe "returns 404 for non-existent transaction" $ with mkApp $ do
       it "with nil UUID" $ do
+        token <- liftIO generateTestToken
         let fakeUuid = UUID.nil
-        get (fromString $ "/api/transactions/" <> UUID.toString fakeUuid)
+        getJSONAuth (fromString $ "/api/transactions/" <> UUID.toString fakeUuid) token
           `shouldRespondWith` 404
 
 -- -----------------------------------------------------------------------------

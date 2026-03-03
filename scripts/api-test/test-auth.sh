@@ -9,6 +9,14 @@
 API_BASE_URL="http://localhost:8080"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOADS_DIR="${SCRIPT_DIR}/payloads/auth"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Load .env if Telegram env vars are missing (direnv may not have reloaded)
+if [ -z "$TELEGRAM_USER_ID" ] && [ -f "${PROJECT_ROOT}/.env" ]; then
+    set -a
+    source "${PROJECT_ROOT}/.env"
+    set +a
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,7 +47,7 @@ print_info() {
 # Check if server is running
 check_server() {
     print_info "Checking if server is running..."
-    if curl -s "${API_BASE_URL}/api/accounts" > /dev/null 2>&1; then
+    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
         print_success "Server is running at ${API_BASE_URL}"
     else
         print_error "Server is not running at ${API_BASE_URL}"
@@ -66,7 +74,7 @@ test_register() {
         -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
@@ -107,7 +115,7 @@ test_register_duplicate() {
         -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -137,7 +145,7 @@ test_login() {
         -d "{\"loginEmail\": \"$TEST_EMAIL\", \"loginPassword\": \"$TEST_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
@@ -177,7 +185,7 @@ test_login_wrong_password() {
         -d "{\"loginEmail\": \"$TEST_EMAIL\", \"loginPassword\": \"WrongPassword!\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -207,7 +215,7 @@ test_refresh_token() {
         -d "{\"refreshToken\": \"$AUTH_TOKEN\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
@@ -230,7 +238,7 @@ test_oauth_initiate() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_BASE_URL}/api/auth/oauth/google")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -244,6 +252,59 @@ test_oauth_initiate() {
     fi
 }
 
+# Test: Telegram Login
+test_telegram_login() {
+    print_header "TEST: Telegram Login"
+
+    if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+        print_info "TELEGRAM_BOT_TOKEN not set, skipping Telegram test"
+        print_info "Set it to enable: export TELEGRAM_BOT_TOKEN='your-token'"
+        return 0
+    fi
+
+    if ! command -v xxd &> /dev/null; then
+        print_info "xxd not found, skipping Telegram test"
+        return 0
+    fi
+
+    local TG_ID="${TELEGRAM_USER_ID:-$(( RANDOM * 10000 + RANDOM ))}"
+    local TG_NAME="${TELEGRAM_FIRST_NAME:-AuthTestUser}"
+    local TG_USERNAME="${TELEGRAM_USERNAME:-auth_tg_$(date +%s)}"
+    local TG_AUTH_DATE
+    TG_AUTH_DATE=$(date +%s)
+
+    # Build data-check-string (sorted key=value pairs)
+    local DATA_CHECK
+    DATA_CHECK=$(printf 'auth_date=%s\nfirst_name=%s\nid=%s\nusername=%s' \
+        "$TG_AUTH_DATE" "$TG_NAME" "$TG_ID" "$TG_USERNAME" | sort)
+
+    # secret_key = SHA256(bot_token), hash = HMAC-SHA256(data, secret_key)
+    local SECRET_HEX
+    SECRET_HEX=$(printf '%s' "$TELEGRAM_BOT_TOKEN" | openssl dgst -sha256 -binary | xxd -p | tr -d '\n')
+    local TG_HASH
+    TG_HASH=$(printf '%s' "$DATA_CHECK" | openssl dgst -sha256 -mac hmac -macopt "hexkey:${SECRET_HEX}" -binary | xxd -p | tr -d '\n')
+
+    print_info "Logging in via Telegram (ID: $TG_ID, @$TG_USERNAME)"
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/telegram" \
+        -H "Content-Type: application/json" \
+        -d "{\"telegramAuthId\": $TG_ID, \"telegramAuthFirstName\": \"$TG_NAME\", \"telegramAuthLastName\": null, \"telegramAuthUsername\": \"$TG_USERNAME\", \"telegramAuthPhotoUrl\": null, \"telegramAuthAuthDate\": $TG_AUTH_DATE, \"telegramAuthHash\": \"$TG_HASH\"}")
+
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+
+    echo "$BODY" | jq '.'
+
+    AUTH_TOKEN=$(echo "$BODY" | jq -r '.authToken')
+
+    if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
+        print_success "Telegram login successful"
+        echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
+    else
+        print_error "Telegram login failed (HTTP $HTTP_CODE)"
+        return 1
+    fi
+}
+
 # Test: Access Protected Endpoint Without Token (expected 401)
 test_unauthorized_access() {
     print_header "TEST: Access Protected Endpoint Without Token (Expected 401)"
@@ -254,7 +315,7 @@ test_unauthorized_access() {
         -d '{"accountName": "Test Account", "initialBalance": 100.0}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -285,6 +346,7 @@ main() {
         echo "  wrong-password   - Test login with wrong password (expected failure)"
         echo "  refresh          - Refresh JWT token"
         echo "  oauth            - Test OAuth initiate (Google)"
+        echo "  telegram         - Test Telegram login (requires TELEGRAM_BOT_TOKEN)"
         echo "  unauthorized     - Test accessing protected endpoint without token"
         echo ""
         echo "Example: $0 all"
@@ -299,6 +361,7 @@ main() {
             test_login_wrong_password
             test_refresh_token
             test_oauth_initiate
+            test_telegram_login
             test_unauthorized_access
             print_header "ALL AUTH TESTS COMPLETED"
             ;;
@@ -319,6 +382,9 @@ main() {
             ;;
         oauth)
             test_oauth_initiate
+            ;;
+        telegram)
+            test_telegram_login
             ;;
         unauthorized)
             test_unauthorized_access

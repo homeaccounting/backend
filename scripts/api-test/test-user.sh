@@ -41,7 +41,7 @@ print_info() {
 # Check if server is running
 check_server() {
     print_info "Checking if server is running..."
-    if curl -s "${API_BASE_URL}/api/accounts" > /dev/null 2>&1; then
+    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
         print_success "Server is running at ${API_BASE_URL}"
     else
         print_error "Server is not running at ${API_BASE_URL}"
@@ -100,7 +100,7 @@ test_get_profile() {
         -H "Authorization: Bearer $AUTH_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
@@ -125,7 +125,7 @@ test_get_profile_unauthorized() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_BASE_URL}/api/users/me")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -149,7 +149,7 @@ test_update_profile() {
         -d '{"updateEmail": "newemail@example.com"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -181,7 +181,7 @@ test_change_password() {
         -d "{\"currentPassword\": \"$CURRENT_PASSWORD\", \"newPassword\": \"$NEW_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -207,7 +207,7 @@ test_change_password_wrong() {
         -d '{"currentPassword": "WrongPassword!", "newPassword": "ShouldNotWork123!"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -230,7 +230,7 @@ test_unlink_oauth() {
         -H "Authorization: Bearer $AUTH_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
@@ -252,7 +252,7 @@ test_unlink_telegram() {
         -H "Authorization: Bearer $AUTH_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
