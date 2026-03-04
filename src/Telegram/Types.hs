@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 -- |
 -- Module      : Telegram.Types
@@ -39,7 +38,7 @@ import GHC.Generics (Generic)
 --   - Session data per user
 data BotState = BotState
   { -- | Active conversations by Telegram user ID
-    botStateConversations :: Map TelegramId ConversationState
+    conversations :: Map TelegramId ConversationState
   }
   deriving (Show, Eq, Generic)
 

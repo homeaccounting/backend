@@ -55,16 +55,16 @@ testExternalAccountId = mockAccountId (UUID.fromWords 10 0 0 0)
 testOAuthIdentity :: OAuthIdentity
 testOAuthIdentity =
   OAuthIdentity
-    { oauthProvider = Google,
-      oauthSubject = "google-subject-123"
+    { provider = Google,
+      subject = "google-subject-123"
     }
 
 testTelegramIdentity :: TelegramIdentity
 testTelegramIdentity =
   TelegramIdentity
-    { telegramId = TelegramId 123456789,
-      telegramUsername = Just "testuser",
-      telegramFirstName = "Test"
+    { id = TelegramId 123456789,
+      username = Just "testuser",
+      firstName = "Test"
     }
 
 -- | Register a test user with password via event store.
@@ -73,9 +73,9 @@ registerTestUser env = runAppM env $ do
   let registerCmd =
         RegisterUserUserCommand
           RegisterUser
-            { registerUserEmail = "test@example.com",
-              registerUserPasswordHash = mockPasswordHash "hashed-password",
-              registerUserExternalAccountId = testExternalAccountId
+            { email = "test@example.com",
+              passwordHash = mockPasswordHash "hashed-password",
+              externalAccountId = testExternalAccountId
             }
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
@@ -84,11 +84,11 @@ registerTestUser env = runAppM env $ do
 
 -- | Link an OAuth identity to the test user.
 linkOAuth :: AppEnv -> OAuthIdentity -> IO ()
-linkOAuth env identity = runAppM env $ do
+linkOAuth env ident = runAppM env $ do
   let linkCmd =
         LinkOAuthAccountUserCommand
           LinkOAuthAccount
-            { linkOAuthAccountIdentity = identity
+            { identity = ident
             }
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
@@ -101,7 +101,7 @@ linkTelegram env = runAppM env $ do
   let linkCmd =
         LinkTelegramAccountUserCommand
           LinkTelegramAccount
-            { linkTelegramAccountIdentity = testTelegramIdentity
+            { identity = testTelegramIdentity
             }
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
@@ -122,8 +122,8 @@ spec = describe "UserService" $ do
       shouldBeRight result
       let (retId, userData) = fromRight' result
       retId `shouldBe` testUserId
-      userSummaryDataEmail userData `shouldBe` Just "test@example.com"
-      userSummaryDataHasPassword userData `shouldBe` True
+      userData.email `shouldBe` Just "test@example.com"
+      userData.hasPassword `shouldBe` True
 
     it "returns NotFound for non-existent user" $ do
       env <- createTestAppEnv

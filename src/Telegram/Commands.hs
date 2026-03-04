@@ -141,13 +141,13 @@ handleAccounts _botState telegramId chatId = do
       accountReadModel <- view accountSummaryReadModelL
       allAccounts <- getAllAccountSummaries accountReadModel
 
-      let userAccounts = Map.toList $ Map.filter (\acc -> accountSummaryDataCreatedBy acc == userId) allAccounts
+      let userAccounts = Map.toList $ Map.filter (\acc -> acc.createdBy == userId) allAccounts
 
       if null userAccounts
         then sendMsg chatId "You don't have any accounts yet."
         else do
           let formatAccount (_accId, acc) =
-                "• " <> accountSummaryDataName acc <> " (" <> showAccountType (accountSummaryDataType acc) <> ")"
+                "• " <> acc.name <> " (" <> showAccountType acc.accountType <> ")"
               accountList = T.unlines $ map formatAccount userAccounts
           sendMsg chatId $ "Your accounts:\n\n" <> accountList
 
@@ -163,15 +163,15 @@ handleBalance _botState telegramId chatId _args = do
       accountReadModel <- view accountSummaryReadModelL
       allAccounts <- getAllAccountSummaries accountReadModel
 
-      let userAccounts = Map.toList $ Map.filter (\acc -> accountSummaryDataCreatedBy acc == userId) allAccounts
+      let userAccounts = Map.toList $ Map.filter (\acc -> acc.createdBy == userId) allAccounts
 
       if null userAccounts
         then sendMsg chatId "You don't have any accounts yet."
         else do
           let formatBalance (_accId, acc) =
-                accountSummaryDataName acc <> ": " <> formatMoney (accountSummaryDataBalance acc)
+                acc.name <> ": " <> formatMoney acc.balance
               balanceList = T.unlines $ map formatBalance userAccounts
-              total = foldl' addMoney (unsafeMoney 0) $ map (accountSummaryDataBalance . snd) userAccounts
+              total = foldl' addMoney (unsafeMoney 0) $ map (\(_, acc) -> acc.balance) userAccounts
           sendMsg chatId $ "Your balances:\n\n" <> balanceList <> "\n---\nTotal: " <> formatMoney total
 
 -- | Handle /transfer command.

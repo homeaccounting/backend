@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
@@ -169,7 +170,7 @@ userServer =
 -- | Handler for GET /api/users/me - Get current user profile.
 handleGetProfile :: AuthenticatedUser -> AppM UserProfileResponse
 handleGetProfile user = do
-  result <- UserService.getProfile (authUserId user)
+  result <- UserService.getProfile user.authUserId
   case result of
     Right (userId, userData) -> return $ userDataToProfileResponse userId userData
     Left err -> throwDomainError err
@@ -186,7 +187,7 @@ handleUpdateProfile user UpdateProfileRequest {..} =
       throwIO err501 {errBody = "Email update not yet implemented"}
     Nothing -> do
       -- No changes, return current profile
-      result <- UserService.getProfile (authUserId user)
+      result <- UserService.getProfile user.authUserId
       case result of
         Right (userId, userData) -> return $ userDataToProfileResponse userId userData
         Left err -> throwDomainError err
@@ -194,7 +195,7 @@ handleUpdateProfile user UpdateProfileRequest {..} =
 -- | Handler for POST /api/users/me/change-password - Change password.
 handleChangePassword :: AuthenticatedUser -> ChangePasswordRequest -> AppM NoContent
 handleChangePassword user ChangePasswordRequest {..} = do
-  result <- UserService.changePassword (authUserId user) currentPassword newPassword
+  result <- UserService.changePassword user.authUserId currentPassword newPassword
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -202,7 +203,7 @@ handleChangePassword user ChangePasswordRequest {..} = do
 -- | Handler for DELETE /api/users/me/oauth/:provider - Unlink OAuth provider.
 handleUnlinkOAuth :: AuthenticatedUser -> Text -> AppM NoContent
 handleUnlinkOAuth user providerText = do
-  result <- UserService.unlinkOAuth (authUserId user) providerText
+  result <- UserService.unlinkOAuth user.authUserId providerText
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -210,7 +211,7 @@ handleUnlinkOAuth user providerText = do
 -- | Handler for DELETE /api/users/me/telegram - Unlink Telegram.
 handleUnlinkTelegram :: AuthenticatedUser -> AppM NoContent
 handleUnlinkTelegram user = do
-  result <- UserService.unlinkTelegram (authUserId user)
+  result <- UserService.unlinkTelegram user.authUserId
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -224,9 +225,9 @@ userDataToProfileResponse :: UserId -> UserSummaryData -> UserProfileResponse
 userDataToProfileResponse userId UserSummaryData {..} =
   UserProfileResponse
     { profileUserId = userId,
-      profileEmail = userSummaryDataEmail,
-      profileHasPassword = userSummaryDataHasPassword,
-      profileOAuthIdentities = userSummaryDataOAuthIdentities,
-      profileTelegramIdentity = userSummaryDataTelegramIdentity,
-      profileExternalAccountId = userSummaryDataExternalAccountId
+      profileEmail = email,
+      profileHasPassword = hasPassword,
+      profileOAuthIdentities = oauthIdentities,
+      profileTelegramIdentity = telegramIdentity,
+      profileExternalAccountId = externalAccountId
     }

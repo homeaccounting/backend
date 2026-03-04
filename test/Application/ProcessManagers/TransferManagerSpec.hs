@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -19,7 +21,6 @@
 module Application.ProcessManagers.TransferManagerSpec (spec) where
 
 import Application.ProcessManagers.TransferManager
-import qualified Control.Lens as Lens
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreditAccount (..), DebitAccount (..))
@@ -40,7 +41,8 @@ import Domain.Models
 import Domain.Transaction.Commands (CompleteTransfer (..), FailTransfer (..))
 import Domain.Transaction.Events (TransferCompleted (..), TransferInitiated (..))
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
-import RIO hiding (view)
+import Optics ((^.))
+import RIO hiding (view, (^.))
 import Test.Hspec
 
 -- -----------------------------------------------------------------------------
@@ -73,11 +75,11 @@ mkTransferInitiatedEvent =
     (emptyMetadata "")
     ( TransferInitiatedEvent
         TransferInitiated
-          { transferInitiatedFromAccountId = unsafeAccountId sourceAcctUuid,
-            transferInitiatedToAccountId = unsafeAccountId targetAcctUuid,
-            transferInitiatedAmount = unsafeMoney 200,
-            transferInitiatedReason = "Test transfer",
-            transferInitiatedBy = unsafeUserId userUuid
+          { fromAccountId = unsafeAccountId sourceAcctUuid,
+            toAccountId = unsafeAccountId targetAcctUuid,
+            amount = unsafeMoney 200,
+            reason = "Test transfer",
+            by = unsafeUserId userUuid
           }
     )
 
@@ -90,9 +92,9 @@ mkAccountDebitedEvent =
     (emptyMetadata "")
     ( AccountDebitedEvent
         AccountDebited
-          { accountDebitedAmount = unsafeMoney 200,
-            accountDebitedTransactionId = unsafeTransactionId txUuid,
-            accountDebitedReason = "Test transfer"
+          { amount = unsafeMoney 200,
+            transactionId = unsafeTransactionId txUuid,
+            reason = "Test transfer"
           }
     )
 
@@ -105,9 +107,9 @@ mkAccountCreditedEvent =
     (emptyMetadata "")
     ( AccountCreditedEvent
         AccountCredited
-          { accountCreditedAmount = unsafeMoney 200,
-            accountCreditedTransactionId = unsafeTransactionId txUuid,
-            accountCreditedReason = "Test transfer"
+          { amount = unsafeMoney 200,
+            transactionId = unsafeTransactionId txUuid,
+            reason = "Test transfer"
           }
     )
 
@@ -124,7 +126,7 @@ mkUnrelatedEvent =
 
 -- | Get the number of tracked transfers.
 transferCount :: TransferManager -> Int
-transferCount = Map.size . Lens.view transferManagerTransfers
+transferCount mgr = Map.size (mgr ^. #transfers)
 
 -- -----------------------------------------------------------------------------
 -- Test Spec
@@ -135,21 +137,21 @@ spec = describe "TransferManager (Saga)" $ do
   describe "Initial State" $ do
     it "starts with empty transfers map" $ do
       let initialState = emptyTransferManager
-      Map.null (Lens.view transferManagerTransfers initialState) `shouldBe` True
+      Map.null (initialState ^. #transfers) `shouldBe` True
 
   describe "Transfer Initiation (TransferInitiated)" $ do
     it "tracks transfer data in state" $ do
       let state = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
       transferCount state `shouldBe` 1
-      let transfers = Lens.view transferManagerTransfers state
+      let transfersMap = state ^. #transfers
           txId = unsafeTransactionId txUuid
-      case Map.lookup txId transfers of
+      case Map.lookup txId transfersMap of
         Nothing -> expectationFailure "Transfer not found in tracking map"
         Just td -> do
-          transferDataSourceAccount td `shouldBe` unsafeAccountId sourceAcctUuid
-          transferDataTargetAccount td `shouldBe` unsafeAccountId targetAcctUuid
-          transferDataAmount td `shouldBe` unsafeMoney 200
-          transferDataReason td `shouldBe` "Test transfer"
+          td.sourceAccount `shouldBe` unsafeAccountId sourceAcctUuid
+          td.targetAccount `shouldBe` unsafeAccountId targetAcctUuid
+          td.amount `shouldBe` unsafeMoney 200
+          td.reason `shouldBe` "Test transfer"
 
     it "issues DebitAccount effect with compensation to source account" $ do
       let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
@@ -159,10 +161,10 @@ spec = describe "TransferManager (Saga)" $ do
         [IssueCommandWithCompensation targetId cmd onFailure] -> do
           targetId `shouldBe` sourceAcctUuid
           case cmd of
-            DebitAccountCommand (DebitAccount amt txId reason) -> do
+            DebitAccountCommand (DebitAccount amt txId rsn) -> do
               amt `shouldBe` unsafeMoney 200
               txId `shouldBe` unsafeTransactionId txUuid
-              reason `shouldBe` "Test transfer"
+              rsn `shouldBe` "Test transfer"
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
           -- Verify compensation produces FailTransfer
           let compensationEffects = onFailure (RejectionReason "Insufficient funds")
@@ -171,8 +173,8 @@ spec = describe "TransferManager (Saga)" $ do
             [IssueCommand failTarget failCmd] -> do
               failTarget `shouldBe` txUuid
               case failCmd of
-                FailTransferCommand (FailTransfer reason) ->
-                  reason `shouldBe` "Insufficient funds"
+                FailTransferCommand (FailTransfer rsn) ->
+                  rsn `shouldBe` "Insufficient funds"
                 other -> expectationFailure $ "Expected FailTransferCommand, got: " ++ show other
             _ -> expectationFailure "Expected exactly 1 compensation effect"
         _ -> expectationFailure "Expected exactly 1 IssueCommandWithCompensation effect"
@@ -192,11 +194,11 @@ spec = describe "TransferManager (Saga)" $ do
               (emptyMetadata "")
               ( TransferInitiatedEvent
                   TransferInitiated
-                    { transferInitiatedFromAccountId = unsafeAccountId sourceAcctUuid,
-                      transferInitiatedToAccountId = unsafeAccountId targetAcctUuid,
-                      transferInitiatedAmount = unsafeMoney 100,
-                      transferInitiatedReason = "Bad",
-                      transferInitiatedBy = unsafeUserId userUuid
+                    { fromAccountId = unsafeAccountId sourceAcctUuid,
+                      toAccountId = unsafeAccountId targetAcctUuid,
+                      amount = unsafeMoney 100,
+                      reason = "Bad",
+                      by = unsafeUserId userUuid
                     }
               )
           state = handleTransferEvent emptyTransferManager badEvent
@@ -216,10 +218,10 @@ spec = describe "TransferManager (Saga)" $ do
           -- First effect: CreditAccount to target
           creditTarget `shouldBe` targetAcctUuid
           case creditCmd of
-            CreditAccountCommand (CreditAccount amt txId reason) -> do
+            CreditAccountCommand (CreditAccount amt txId rsn) -> do
               amt `shouldBe` unsafeMoney 200
               txId `shouldBe` unsafeTransactionId txUuid
-              reason `shouldBe` "Test transfer"
+              rsn `shouldBe` "Test transfer"
             other -> expectationFailure $ "Expected CreditAccountCommand, got: " ++ show other
 
           -- Second effect: CompleteTransfer to transaction

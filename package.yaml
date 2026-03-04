@@ -55,8 +55,9 @@ dependencies:
   # Concurrency
   - stm >= 2.5 && < 2.6
 
-  # Lens
-  - lens >= 4.19 && < 5.4
+  # Optics
+  - optics >= 0.4 && < 0.5
+  - optics-th >= 0.4 && < 0.5
 
   # Template Haskell & code generation
   - template-haskell >= 2.16 && < 2.22
@@ -84,6 +85,19 @@ dependencies:
   # Telegram Bot
   - telegram-bot-api >= 7.4 && < 7.5
   - servant-client >= 0.19 && < 0.21
+
+default-extensions:
+  - NoFieldSelectors
+  - DuplicateRecordFields
+  - OverloadedLabels
+  - OverloadedRecordDot
+  - DataKinds
+  - FlexibleInstances
+  - MultiParamTypeClasses
+  - TypeFamilies
+  - UndecidableInstances
+  - FlexibleContexts
+  - TypeOperators
 
 library:
   source-dirs: src

@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 -- |
 -- Module      : Application.ReadModels.UserSummary
@@ -91,17 +91,17 @@ import Safe (maximumDef)
 -- without requiring event replay. It's optimized for read operations.
 data UserSummaryData = UserSummaryData
   { -- | User's email address (primary identifier for web login)
-    userSummaryDataEmail :: Maybe Text,
+    email :: Maybe Text,
     -- | Whether user has a password set
-    userSummaryDataHasPassword :: Bool,
+    hasPassword :: Bool,
     -- | List of linked OAuth identities
-    userSummaryDataOAuthIdentities :: [OAuthIdentity],
+    oauthIdentities :: [OAuthIdentity],
     -- | Linked Telegram identity (if any)
-    userSummaryDataTelegramIdentity :: Maybe TelegramIdentity,
+    telegramIdentity :: Maybe TelegramIdentity,
     -- | Reference to auto-created External account
-    userSummaryDataExternalAccountId :: AccountId,
+    externalAccountId :: AccountId,
     -- | Version number from event stream for optimistic concurrency
-    userSummaryDataVersion :: Int
+    version :: Int
   }
   deriving (Show, Eq, Generic)
 
@@ -118,16 +118,16 @@ instance FromJSON UserSummaryData
 --   - OAuth index: (Provider, Subject) -> User ID
 data UserSummaryReadModel = UserSummaryReadModel
   { -- | Latest processed sequence number
-    userSummaryLatestSequence :: SequenceNumber,
+    latestSequence :: SequenceNumber,
     -- | Primary data map: User ID -> Summary
-    userSummaryData :: Map UserId UserSummaryData,
+    summaryData :: Map UserId UserSummaryData,
     -- | Email index: Email -> User ID
-    userSummaryEmailIndex :: Map Text UserId, -- TODO: type Email = Text
+    emailIndex :: Map Text UserId, -- TODO: type Email = Text
 
     -- | Telegram index: Telegram ID -> User ID
-    userSummaryTelegramIndex :: Map TelegramId UserId,
+    telegramIndex :: Map TelegramId UserId,
     -- | OAuth index: (Provider, Subject) -> User ID
-    userSummaryOAuthIndex :: Map (OAuthProvider, Text) UserId -- TODO: type OAuthSubject = Text
+    oauthIndex :: Map (OAuthProvider, Text) UserId -- TODO: type OAuthSubject = Text
   }
   deriving (Show, Eq)
 
@@ -152,11 +152,11 @@ createUserSummaryReadModel =
 emptyUserSummaryReadModel :: UserSummaryReadModel
 emptyUserSummaryReadModel =
   UserSummaryReadModel
-    { userSummaryLatestSequence = -1,
-      userSummaryData = Map.empty,
-      userSummaryEmailIndex = Map.empty,
-      userSummaryTelegramIndex = Map.empty,
-      userSummaryOAuthIndex = Map.empty
+    { latestSequence = -1,
+      summaryData = Map.empty,
+      emailIndex = Map.empty,
+      telegramIndex = Map.empty,
+      oauthIndex = Map.empty
     }
 
 -- -----------------------------------------------------------------------------
@@ -189,11 +189,11 @@ handleUserSummaryEvents ::
 handleUserSummaryEvents readModelTVar events = do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
-  let newSeq = maximumDef (userSummaryLatestSequence currentModel) (streamEventPosition <$> events)
+  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
       updatedModel = foldl processUserEvent currentModel events
 
   liftIO . atomically . writeTVar readModelTVar $
-    updatedModel {userSummaryLatestSequence = newSeq}
+    updatedModel {latestSequence = newSeq}
 
 -- | Processes a single event and updates the user summary read model.
 processUserEvent ::
@@ -201,9 +201,9 @@ processUserEvent ::
   GlobalStreamEvent AccountingEvent ->
   UserSummaryReadModel
 processUserEvent model globalEvent =
-  let versionedEvent = streamEventPayload globalEvent
-      streamUuid = streamEventKey versionedEvent
-      payload = streamEventPayload versionedEvent
+  let versionedEvent = globalEvent.payload
+      streamUuid = versionedEvent.key
+      payload = versionedEvent.payload
    in case payload of
         UserRegisteredEvent evt ->
           case mkUserIdSafe streamUuid of
@@ -211,135 +211,135 @@ processUserEvent model globalEvent =
             Just userId ->
               let summary =
                     UserSummaryData
-                      { userSummaryDataEmail = Just (userRegisteredEmail evt),
-                        userSummaryDataHasPassword = True,
-                        userSummaryDataOAuthIdentities = [],
-                        userSummaryDataTelegramIdentity = Nothing,
-                        userSummaryDataExternalAccountId = userRegisteredExternalAccountId evt,
-                        userSummaryDataVersion = 1
+                      { email = Just evt.email,
+                        hasPassword = True,
+                        oauthIdentities = [],
+                        telegramIdentity = Nothing,
+                        externalAccountId = evt.externalAccountId,
+                        version = 1
                       }
                in model
-                    { userSummaryData = Map.insert userId summary (userSummaryData model),
-                      userSummaryEmailIndex = Map.insert (userRegisteredEmail evt) userId (userSummaryEmailIndex model)
+                    { summaryData = Map.insert userId summary model.summaryData,
+                      emailIndex = Map.insert evt.email userId model.emailIndex
                     }
         UserRegisteredViaTelegramEvent evt ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
-              let identity = userRegisteredViaTelegramIdentity evt
+              let ident = evt.identity
                   summary =
                     UserSummaryData
-                      { userSummaryDataEmail = Nothing,
-                        userSummaryDataHasPassword = False,
-                        userSummaryDataOAuthIdentities = [],
-                        userSummaryDataTelegramIdentity = Just identity,
-                        userSummaryDataExternalAccountId = userRegisteredViaTelegramExternalAccountId evt,
-                        userSummaryDataVersion = 1
+                      { email = Nothing,
+                        hasPassword = False,
+                        oauthIdentities = [],
+                        telegramIdentity = Just ident,
+                        externalAccountId = evt.externalAccountId,
+                        version = 1
                       }
                in model
-                    { userSummaryData = Map.insert userId summary (userSummaryData model),
-                      userSummaryTelegramIndex = Map.insert (telegramId identity) userId (userSummaryTelegramIndex model)
+                    { summaryData = Map.insert userId summary model.summaryData,
+                      telegramIndex = Map.insert ident.id userId model.telegramIndex
                     }
         OAuthAccountLinkedEvent evt ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
-              let identity = oAuthAccountLinkedIdentity evt
-                  oauthKey = (oauthProvider identity, oauthSubject identity)
+              let ident = evt.identity
+                  oauthKey = (ident.provider, ident.subject)
                in model
-                    { userSummaryData =
+                    { summaryData =
                         Map.adjust
                           ( \s ->
                               s
-                                { userSummaryDataOAuthIdentities = identity : userSummaryDataOAuthIdentities s,
-                                  userSummaryDataVersion = userSummaryDataVersion s + 1
+                                { oauthIdentities = ident : s.oauthIdentities,
+                                  version = s.version + 1
                                 }
                           )
                           userId
-                          (userSummaryData model),
-                      userSummaryOAuthIndex = Map.insert oauthKey userId (userSummaryOAuthIndex model)
+                          model.summaryData,
+                      oauthIndex = Map.insert oauthKey userId model.oauthIndex
                     }
         TelegramAccountLinkedEvent evt ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
-              let identity = telegramAccountLinkedIdentity evt
+              let ident = evt.identity
                in model
-                    { userSummaryData =
+                    { summaryData =
                         Map.adjust
                           ( \s ->
                               s
-                                { userSummaryDataTelegramIdentity = Just identity,
-                                  userSummaryDataVersion = userSummaryDataVersion s + 1
+                                { telegramIdentity = Just ident,
+                                  version = s.version + 1
                                 }
                           )
                           userId
-                          (userSummaryData model),
-                      userSummaryTelegramIndex = Map.insert (telegramId identity) userId (userSummaryTelegramIndex model)
+                          model.summaryData,
+                      telegramIndex = Map.insert ident.id userId model.telegramIndex
                     }
         OAuthAccountUnlinkedEvent evt ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
-              let identity = oAuthAccountUnlinkedIdentity evt
-                  oauthKey = (oauthProvider identity, oauthSubject identity)
+              let ident = evt.identity
+                  oauthKey = (ident.provider, ident.subject)
                in model
-                    { userSummaryData =
+                    { summaryData =
                         Map.adjust
                           ( \s ->
                               s
-                                { userSummaryDataOAuthIdentities =
+                                { oauthIdentities =
                                     filter
                                       ( \i ->
-                                          oauthProvider i /= oauthProvider identity
-                                            || oauthSubject i /= oauthSubject identity
+                                          i.provider /= ident.provider
+                                            || i.subject /= ident.subject
                                       )
-                                      (userSummaryDataOAuthIdentities s),
-                                  userSummaryDataVersion = userSummaryDataVersion s + 1
+                                      s.oauthIdentities,
+                                  version = s.version + 1
                                 }
                           )
                           userId
-                          (userSummaryData model),
-                      userSummaryOAuthIndex = Map.delete oauthKey (userSummaryOAuthIndex model)
+                          model.summaryData,
+                      oauthIndex = Map.delete oauthKey model.oauthIndex
                     }
         TelegramAccountUnlinkedEvent _ ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
-              case Map.lookup userId (userSummaryData model) of
+              case Map.lookup userId model.summaryData of
                 Nothing -> model
                 Just existing ->
-                  case userSummaryDataTelegramIdentity existing of
+                  case existing.telegramIdentity of
                     Nothing -> model
-                    Just identity ->
+                    Just ident ->
                       model
-                        { userSummaryData =
+                        { summaryData =
                             Map.adjust
                               ( \s ->
                                   s
-                                    { userSummaryDataTelegramIdentity = Nothing,
-                                      userSummaryDataVersion = userSummaryDataVersion s + 1
+                                    { telegramIdentity = Nothing,
+                                      version = s.version + 1
                                     }
                               )
                               userId
-                              (userSummaryData model),
-                          userSummaryTelegramIndex = Map.delete (telegramId identity) (userSummaryTelegramIndex model)
+                              model.summaryData,
+                          telegramIndex = Map.delete ident.id model.telegramIndex
                         }
         PasswordChangedEvent _ ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
               model
-                { userSummaryData =
+                { summaryData =
                     Map.adjust
                       ( \s ->
                           s
-                            { userSummaryDataHasPassword = True,
-                              userSummaryDataVersion = userSummaryDataVersion s + 1
+                            { hasPassword = True,
+                              version = s.version + 1
                             }
                       )
                       userId
-                      (userSummaryData model)
+                      model.summaryData
                 }
         _ -> model -- Ignore non-user events
 
@@ -354,7 +354,7 @@ processUserEvent model globalEvent =
 -- Example:
 -- >>> maybeSummary <- getUserSummary readModel userId
 -- >>> case maybeSummary of
--- >>>   Just summary -> print (userSummaryDataEmail summary)
+-- >>>   Just summary -> print (summary.email)
 -- >>>   Nothing -> putStrLn "User not found"
 getUserSummary ::
   (MonadIO m) =>
@@ -363,7 +363,7 @@ getUserSummary ::
   m (Maybe UserSummaryData)
 getUserSummary readModelTVar userId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup userId (userSummaryData model)
+  return $ Map.lookup userId model.summaryData
 
 -- | Retrieves a user by email address.
 --
@@ -379,11 +379,11 @@ getUserByEmail ::
   TVar UserSummaryReadModel ->
   Text ->
   m (Maybe (UserId, UserSummaryData))
-getUserByEmail readModelTVar email = do
+getUserByEmail readModelTVar emailAddr = do
   model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup email (userSummaryEmailIndex model) of
+  case Map.lookup emailAddr model.emailIndex of
     Nothing -> return Nothing
-    Just userId -> case Map.lookup userId (userSummaryData model) of
+    Just userId -> case Map.lookup userId model.summaryData of
       Nothing -> return Nothing
       Just summary -> return $ Just (userId, summary)
 
@@ -401,11 +401,11 @@ getUserByTelegramId ::
   TVar UserSummaryReadModel ->
   TelegramId ->
   m (Maybe (UserId, UserSummaryData))
-getUserByTelegramId readModelTVar telegramId = do
+getUserByTelegramId readModelTVar tgId = do
   model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup telegramId (userSummaryTelegramIndex model) of
+  case Map.lookup tgId model.telegramIndex of
     Nothing -> return Nothing
-    Just userId -> case Map.lookup userId (userSummaryData model) of
+    Just userId -> case Map.lookup userId model.summaryData of
       Nothing -> return Nothing
       Just summary -> return $ Just (userId, summary)
 
@@ -424,11 +424,11 @@ getUserByOAuthIdentity ::
   OAuthProvider ->
   Text ->
   m (Maybe (UserId, UserSummaryData))
-getUserByOAuthIdentity readModelTVar provider subject = do
+getUserByOAuthIdentity readModelTVar provider subjectVal = do
   model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup (provider, subject) (userSummaryOAuthIndex model) of
+  case Map.lookup (provider, subjectVal) model.oauthIndex of
     Nothing -> return Nothing
-    Just userId -> case Map.lookup userId (userSummaryData model) of
+    Just userId -> case Map.lookup userId model.summaryData of
       Nothing -> return Nothing
       Just summary -> return $ Just (userId, summary)
 
@@ -440,7 +440,7 @@ userExists ::
   m Bool
 userExists readModelTVar userId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member userId (userSummaryData model)
+  return $ Map.member userId model.summaryData
 
 -- | Checks if an email is already registered.
 emailExists ::
@@ -448,9 +448,9 @@ emailExists ::
   TVar UserSummaryReadModel ->
   Text ->
   m Bool
-emailExists readModelTVar email = do
+emailExists readModelTVar emailAddr = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member email (userSummaryEmailIndex model)
+  return $ Map.member emailAddr model.emailIndex
 
 -- | Checks if a Telegram ID is already linked to a user.
 telegramIdLinked ::
@@ -458,9 +458,9 @@ telegramIdLinked ::
   TVar UserSummaryReadModel ->
   TelegramId ->
   m Bool
-telegramIdLinked readModelTVar telegramId = do
+telegramIdLinked readModelTVar tgId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member telegramId (userSummaryTelegramIndex model)
+  return $ Map.member tgId model.telegramIndex
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -475,4 +475,4 @@ userSummaryToMap ::
   m (Map UserId UserSummaryData)
 userSummaryToMap readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ userSummaryData model
+  return model.summaryData

@@ -34,6 +34,7 @@ module Domain.User.Commands
   )
 where
 
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types
   ( AccountId,
@@ -41,7 +42,6 @@ import Domain.Core.Types
     PasswordHash,
     TelegramIdentity,
   )
-import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -85,11 +85,11 @@ userCommands =
 -- >>> RegisterUser "user@example.com" hashedPassword externalAccountId
 data RegisterUser = RegisterUser
   { -- | User's email address (primary identifier for web login)
-    registerUserEmail :: Text,
+    email :: Text,
     -- | Hashed password (Argon2)
-    registerUserPasswordHash :: PasswordHash,
+    passwordHash :: PasswordHash,
     -- | ID for the auto-created External account
-    registerUserExternalAccountId :: AccountId
+    externalAccountId :: AccountId
   }
   deriving (Show, Eq)
 
@@ -108,9 +108,9 @@ data RegisterUser = RegisterUser
 -- >>> RegisterViaTelegram telegramIdentity externalAccountId
 data RegisterViaTelegram = RegisterViaTelegram
   { -- | Telegram identity information
-    registerViaTelegramIdentity :: TelegramIdentity,
+    identity :: TelegramIdentity,
     -- | ID for the auto-created External account
-    registerViaTelegramExternalAccountId :: AccountId
+    externalAccountId :: AccountId
   }
   deriving (Show, Eq)
 
@@ -130,7 +130,7 @@ data RegisterViaTelegram = RegisterViaTelegram
 -- >>> LinkOAuthAccount oauthIdentity
 data LinkOAuthAccount = LinkOAuthAccount
   { -- | OAuth identity to link
-    linkOAuthAccountIdentity :: OAuthIdentity
+    identity :: OAuthIdentity
   }
   deriving (Show, Eq)
 
@@ -149,7 +149,7 @@ data LinkOAuthAccount = LinkOAuthAccount
 -- >>> LinkTelegramAccount telegramIdentity
 data LinkTelegramAccount = LinkTelegramAccount
   { -- | Telegram identity to link
-    linkTelegramAccountIdentity :: TelegramIdentity
+    identity :: TelegramIdentity
   }
   deriving (Show, Eq)
 
@@ -168,7 +168,7 @@ data LinkTelegramAccount = LinkTelegramAccount
 -- >>> UnlinkOAuthAccount Google
 data UnlinkOAuthAccount = UnlinkOAuthAccount
   { -- | OAuth identity to unlink
-    unlinkOAuthAccountIdentity :: OAuthIdentity
+    identity :: OAuthIdentity
   }
   deriving (Show, Eq)
 
@@ -203,7 +203,7 @@ data UnlinkTelegramAccount = UnlinkTelegramAccount
 -- >>> ChangePassword newHashedPassword
 data ChangePassword = ChangePassword
   { -- | New password hash
-    changePasswordNewHash :: PasswordHash
+    newHash :: PasswordHash
   }
   deriving (Show, Eq)
 
@@ -211,11 +211,11 @@ data ChangePassword = ChangePassword
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- Derive JSON instances for all commands using the unprefixed lowercase pattern
-deriveJSONUnPrefixLower ''RegisterUser
-deriveJSONUnPrefixLower ''RegisterViaTelegram
-deriveJSONUnPrefixLower ''LinkOAuthAccount
-deriveJSONUnPrefixLower ''LinkTelegramAccount
-deriveJSONUnPrefixLower ''UnlinkOAuthAccount
-deriveJSONUnPrefixLower ''UnlinkTelegramAccount
-deriveJSONUnPrefixLower ''ChangePassword
+-- Derive JSON instances for all commands using defaultOptions (fields already unprefixed)
+deriveJSON defaultOptions ''RegisterUser
+deriveJSON defaultOptions ''RegisterViaTelegram
+deriveJSON defaultOptions ''LinkOAuthAccount
+deriveJSON defaultOptions ''LinkTelegramAccount
+deriveJSON defaultOptions ''UnlinkOAuthAccount
+deriveJSON defaultOptions ''UnlinkTelegramAccount
+deriveJSON defaultOptions ''ChangePassword

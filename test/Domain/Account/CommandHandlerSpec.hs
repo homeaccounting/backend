@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -17,19 +19,17 @@
 -- model. Balance changes are handled by the transfer process manager.
 module Domain.Account.CommandHandlerSpec (spec) where
 
-import Control.Lens ((^.))
 import Data.Either (isLeft)
-import Domain.Account hiding (accountCreatedBy)
+import Domain.Account
 import Domain.Account.CommandHandler
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
-    AccountCreated (AccountCreated),
+    AccountCreated (..),
   )
-import qualified Domain.Account.Events as Events
-import Domain.Account.Projection (accountCreatedBy)
 import Domain.Core.Types
 import Eventium (latestProjection)
+import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import TestSupport.Generators ()
@@ -103,10 +103,10 @@ createAccountSpec = describe "CreateAccount Command" $ do
         let command =
               CreateAccountAccountCommand
                 $ CreateAccount
-                  { createAccountName = "Savings",
-                    createAccountInitialBalance = mockMoney 1000,
-                    createAccountCreatedBy = testOwnerId,
-                    createAccountType = RegularAccount
+                  { name = "Savings",
+                    initialBalance = mockMoney 1000,
+                    createdBy = testOwnerId,
+                    accountType = RegularAccount
                   }
         let result = handleAccountCommand account command
 
@@ -115,10 +115,10 @@ createAccountSpec = describe "CreateAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               AccountCreatedAccountEvent created -> do
-                Events.accountCreatedName created `shouldBe` "Savings"
-                Events.accountCreatedInitialBalance created `shouldBe` mockMoney 1000
-                Events.accountCreatedBy created `shouldBe` testOwnerId
-                Events.accountCreatedType created `shouldBe` RegularAccount
+                created.name `shouldBe` "Savings"
+                created.initialBalance `shouldBe` mockMoney 1000
+                created.by `shouldBe` testOwnerId
+                created.accountType `shouldBe` RegularAccount
               _ -> expectationFailure "Expected AccountCreated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -127,20 +127,20 @@ createAccountSpec = describe "CreateAccount Command" $ do
         let command =
               CreateAccountAccountCommand
                 $ CreateAccount
-                  { createAccountName = "Checking",
-                    createAccountInitialBalance = mockMoney 500,
-                    createAccountCreatedBy = testOwnerId,
-                    createAccountType = RegularAccount
+                  { name = "Checking",
+                    initialBalance = mockMoney 500,
+                    createdBy = testOwnerId,
+                    accountType = RegularAccount
                   }
         let result = handleAccountCommand account command
 
         case result of
           Right events -> do
             let newAccount = applyEvents events
-            newAccount ^. accountName `shouldBe` "Checking"
-            newAccount ^. accountBalance `shouldBe` mockMoney 500
-            newAccount ^. accountCreatedBy `shouldBe` testOwnerId
-            newAccount ^. accountType `shouldBe` RegularAccount
+            newAccount ^. #name `shouldBe` "Checking"
+            newAccount ^. #balance `shouldBe` mockMoney 500
+            newAccount ^. #createdBy `shouldBe` testOwnerId
+            newAccount ^. #accountType `shouldBe` RegularAccount
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
       it "Then owner is automatically added to access list" $ do
@@ -148,21 +148,21 @@ createAccountSpec = describe "CreateAccount Command" $ do
         let command =
               CreateAccountAccountCommand
                 $ CreateAccount
-                  { createAccountName = "My Account",
-                    createAccountInitialBalance = mockMoney 0,
-                    createAccountCreatedBy = testOwnerId,
-                    createAccountType = RegularAccount
+                  { name = "My Account",
+                    initialBalance = mockMoney 0,
+                    createdBy = testOwnerId,
+                    accountType = RegularAccount
                   }
         let result = handleAccountCommand account command
 
         case result of
           Right events -> do
             let newAccount = applyEvents events
-            let accessList = newAccount ^. accountAccessList
+            let accessList = newAccount ^. #accessList
             length accessList `shouldBe` 1
             let ownerAccess = head accessList
-            accessUserId ownerAccess `shouldBe` testOwnerId
-            accessRole ownerAccess `shouldBe` Owner
+            ownerAccess.userId `shouldBe` testOwnerId
+            ownerAccess.role `shouldBe` Owner
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
     describe "When creating external account" $ do
@@ -171,10 +171,10 @@ createAccountSpec = describe "CreateAccount Command" $ do
         let command =
               CreateAccountAccountCommand
                 $ CreateAccount
-                  { createAccountName = "External",
-                    createAccountInitialBalance = mockMoney 0,
-                    createAccountCreatedBy = testOwnerId,
-                    createAccountType = ExternalAccount
+                  { name = "External",
+                    initialBalance = mockMoney 0,
+                    createdBy = testOwnerId,
+                    accountType = ExternalAccount
                   }
         let result = handleAccountCommand account command
 
@@ -183,7 +183,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               AccountCreatedAccountEvent created ->
-                Events.accountCreatedType created `shouldBe` ExternalAccount
+                created.accountType `shouldBe` ExternalAccount
               _ -> expectationFailure "Expected AccountCreated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -193,10 +193,10 @@ createAccountSpec = describe "CreateAccount Command" $ do
         let command =
               CreateAccountAccountCommand
                 $ CreateAccount
-                  { createAccountName = "",
-                    createAccountInitialBalance = mockMoney 1000,
-                    createAccountCreatedBy = testOwnerId,
-                    createAccountType = RegularAccount
+                  { name = "",
+                    initialBalance = mockMoney 1000,
+                    createdBy = testOwnerId,
+                    accountType = RegularAccount
                   }
         let result = handleAccountCommand account command
 
@@ -209,10 +209,10 @@ createAccountSpec = describe "CreateAccount Command" $ do
         let command =
               CreateAccountAccountCommand
                 $ CreateAccount
-                  { createAccountName = "Another Account",
-                    createAccountInitialBalance = mockMoney 500,
-                    createAccountCreatedBy = testOwnerId,
-                    createAccountType = RegularAccount
+                  { name = "Another Account",
+                    initialBalance = mockMoney 500,
+                    createdBy = testOwnerId,
+                    accountType = RegularAccount
                   }
         let result = handleAccountCommand account command
 
@@ -231,9 +231,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
         let command =
               ShareAccountAccountCommand
                 $ ShareAccount
-                  { shareAccountUserId = testEditorId,
-                    shareAccountRole = Editor,
-                    shareAccountGrantedBy = testOwnerId
+                  { userId = testEditorId,
+                    role = Editor,
+                    grantedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -242,9 +242,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               AccountAccessGrantedAccountEvent granted -> do
-                accountAccessGrantedUserId granted `shouldBe` testEditorId
-                accountAccessGrantedRole granted `shouldBe` Editor
-                accountAccessGrantedBy granted `shouldBe` testOwnerId
+                granted.userId `shouldBe` testEditorId
+                granted.role `shouldBe` Editor
+                granted.by `shouldBe` testOwnerId
               _ -> expectationFailure "Expected AccountAccessGranted event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -253,9 +253,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
         let command =
               ShareAccountAccountCommand
                 $ ShareAccount
-                  { shareAccountUserId = testEditorId,
-                    shareAccountRole = Editor,
-                    shareAccountGrantedBy = testOwnerId
+                  { userId = testEditorId,
+                    role = Editor,
+                    grantedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -275,9 +275,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
         let command =
               ShareAccountAccountCommand
                 $ ShareAccount
-                  { shareAccountUserId = testViewerId,
-                    shareAccountRole = Viewer,
-                    shareAccountGrantedBy = testOwnerId
+                  { userId = testViewerId,
+                    role = Viewer,
+                    grantedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -286,7 +286,7 @@ shareAccountSpec = describe "ShareAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               AccountAccessGrantedAccountEvent granted ->
-                accountAccessGrantedRole granted `shouldBe` Viewer
+                granted.role `shouldBe` Viewer
               _ -> expectationFailure "Expected AccountAccessGranted event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -296,9 +296,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
         let command =
               ShareAccountAccountCommand
                 $ ShareAccount
-                  { shareAccountUserId = testViewerId,
-                    shareAccountRole = Viewer,
-                    shareAccountGrantedBy = testEditorId -- Editor trying to share
+                  { userId = testViewerId,
+                    role = Viewer,
+                    grantedBy = testEditorId -- Editor trying to share
                   }
         let result = handleAccountCommand account command
 
@@ -310,9 +310,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
         let command =
               ShareAccountAccountCommand
                 $ ShareAccount
-                  { shareAccountUserId = testOwnerId, -- Sharing with self
-                    shareAccountRole = Editor,
-                    shareAccountGrantedBy = testOwnerId
+                  { userId = testOwnerId, -- Sharing with self
+                    role = Editor,
+                    grantedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -325,9 +325,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
         let command =
               ShareAccountAccountCommand
                 $ ShareAccount
-                  { shareAccountUserId = testEditorId,
-                    shareAccountRole = Editor,
-                    shareAccountGrantedBy = testOwnerId
+                  { userId = testEditorId,
+                    role = Editor,
+                    grantedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -340,9 +340,9 @@ shareAccountSpec = describe "ShareAccount Command" $ do
         let command =
               ShareAccountAccountCommand
                 $ ShareAccount
-                  { shareAccountUserId = testEditorId,
-                    shareAccountRole = Editor,
-                    shareAccountGrantedBy = testOwnerId
+                  { userId = testEditorId,
+                    role = Editor,
+                    grantedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -361,8 +361,8 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let command =
               RevokeAccountAccessAccountCommand
                 $ RevokeAccountAccess
-                  { revokeAccountAccessUserId = testEditorId,
-                    revokeAccountAccessRevokedBy = testOwnerId
+                  { userId = testEditorId,
+                    revokedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -371,8 +371,8 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
             length events `shouldBe` 1
             case head events of
               AccountAccessRevokedAccountEvent revoked -> do
-                accountAccessRevokedUserId revoked `shouldBe` testEditorId
-                accountAccessRevokedBy revoked `shouldBe` testOwnerId
+                revoked.userId `shouldBe` testEditorId
+                revoked.by `shouldBe` testOwnerId
               _ -> expectationFailure "Expected AccountAccessRevoked event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -381,8 +381,8 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let command =
               RevokeAccountAccessAccountCommand
                 $ RevokeAccountAccess
-                  { revokeAccountAccessUserId = testEditorId,
-                    revokeAccountAccessRevokedBy = testOwnerId
+                  { userId = testEditorId,
+                    revokedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -413,8 +413,8 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let command =
               RevokeAccountAccessAccountCommand
                 $ RevokeAccountAccess
-                  { revokeAccountAccessUserId = testViewerId,
-                    revokeAccountAccessRevokedBy = testEditorId -- Editor trying to revoke
+                  { userId = testViewerId,
+                    revokedBy = testEditorId -- Editor trying to revoke
                   }
         let result = handleAccountCommand account command
 
@@ -426,8 +426,8 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let command =
               RevokeAccountAccessAccountCommand
                 $ RevokeAccountAccess
-                  { revokeAccountAccessUserId = testOwnerId, -- Trying to remove owner
-                    revokeAccountAccessRevokedBy = testOwnerId
+                  { userId = testOwnerId, -- Trying to remove owner
+                    revokedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -439,8 +439,8 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let command =
               RevokeAccountAccessAccountCommand
                 $ RevokeAccountAccess
-                  { revokeAccountAccessUserId = testEditorId, -- Has no access
-                    revokeAccountAccessRevokedBy = testOwnerId
+                  { userId = testEditorId, -- Has no access
+                    revokedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 
@@ -453,8 +453,8 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let command =
               RevokeAccountAccessAccountCommand
                 $ RevokeAccountAccess
-                  { revokeAccountAccessUserId = testEditorId,
-                    revokeAccountAccessRevokedBy = testOwnerId
+                  { userId = testEditorId,
+                    revokedBy = testOwnerId
                   }
         let result = handleAccountCommand account command
 

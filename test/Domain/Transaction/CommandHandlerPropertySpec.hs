@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -16,12 +17,12 @@
 --   - Validation: Business rules enforcement
 module Domain.Transaction.CommandHandlerPropertySpec (spec) where
 
-import Control.Lens ((^.))
 import Data.Either (fromRight, isLeft)
 import Domain.Core.Types
 import Domain.Transaction
 import Domain.Transaction.CommandHandler
 import Eventium (latestProjection)
+import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import Test.QuickCheck
@@ -49,15 +50,15 @@ testUserId = mockUserId (read "11111111-1111-1111-1111-111111111111")
 
 -- | Create a pending transaction
 createPendingTransaction :: AccountId -> AccountId -> Money -> Transaction
-createPendingTransaction fromId toId amount =
+createPendingTransaction fromId toId amt =
   applyEvents
     [ TransferInitiatedTransactionEvent
         $ TransferInitiated
-          { transferInitiatedFromAccountId = fromId,
-            transferInitiatedToAccountId = toId,
-            transferInitiatedAmount = amount,
-            transferInitiatedReason = "Test transfer",
-            transferInitiatedBy = testUserId
+          { fromAccountId = fromId,
+            toAccountId = toId,
+            amount = amt,
+            reason = "Test transfer",
+            by = testUserId
           }
     ]
 
@@ -70,19 +71,19 @@ determinismSpec = describe "Determinism Properties" $ do
   describe "When handling commands" $ do
     it "Then InitiateTransfer produces same events"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) (reason :: Text) ->
-        fromId /= toId && unMoney amount > 0 ==>
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
+        fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amount reason testUserId
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt rsn testUserId
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
 
     it "Then CompleteTransfer produces same events"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) ->
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
-          let transaction = createPendingTransaction fromId toId amount
+          let transaction = createPendingTransaction fromId toId amt
               command = CompleteTransferTransactionCommand CompleteTransfer
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
@@ -90,10 +91,10 @@ determinismSpec = describe "Determinism Properties" $ do
 
     it "Then FailTransfer produces same events"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) (reason :: Text) ->
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId ==>
-          let transaction = createPendingTransaction fromId toId amount
-              command = FailTransferTransactionCommand $ FailTransfer reason
+          let transaction = createPendingTransaction fromId toId amt
+              command = FailTransferTransactionCommand $ FailTransfer rsn
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
@@ -107,10 +108,10 @@ stateMachineSpec = describe "State Machine Properties" $ do
   describe "Terminal state immutability" $ do
     it "Then Completed transaction ignores all commands"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) ->
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amount "Test" testUserId,
+                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt "Test" testUserId,
                   TransferCompletedTransactionEvent TransferCompleted
                 ]
               transaction = applyEvents initialEvents
@@ -124,10 +125,10 @@ stateMachineSpec = describe "State Machine Properties" $ do
 
     it "Then Failed transaction ignores all commands"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) ->
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amount "Test" testUserId,
+                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt "Test" testUserId,
                   TransferFailedTransactionEvent $ TransferFailed "Error"
                 ]
               transaction = applyEvents initialEvents
@@ -142,9 +143,9 @@ stateMachineSpec = describe "State Machine Properties" $ do
   describe "Valid transitions" $ do
     it "Then Pending can transition to Completed"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) ->
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
-          let transaction = createPendingTransaction fromId toId amount
+          let transaction = createPendingTransaction fromId toId amt
               result = handleTransactionCommand transaction (CompleteTransferTransactionCommand CompleteTransfer)
            in case result of
                 Right [TransferCompletedTransactionEvent _] -> property True
@@ -152,10 +153,10 @@ stateMachineSpec = describe "State Machine Properties" $ do
 
     it "Then Pending can transition to Failed"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) (reason :: Text) ->
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId ==>
-          let transaction = createPendingTransaction fromId toId amount
-              result = handleTransactionCommand transaction (FailTransferTransactionCommand $ FailTransfer reason)
+          let transaction = createPendingTransaction fromId toId amt
+              result = handleTransactionCommand transaction (FailTransferTransactionCommand $ FailTransfer rsn)
            in case result of
                 Right [TransferFailedTransactionEvent _] -> property True
                 _ -> property False
@@ -165,15 +166,15 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ property
       $ \(_ :: ()) ->
         let transaction = applyEvents []
-         in transaction ^. transactionStatus === Pending
-              .&&. unMoney (transaction ^. transactionAmount) === 0
+         in transaction ^. #status === Pending
+              .&&. unMoney (transaction ^. #amount) === 0
 
     it "Then initiated transaction is Pending"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) ->
-        fromId /= toId && unMoney amount > 0 ==>
-          let transaction = createPendingTransaction fromId toId amount
-           in transaction ^. transactionStatus === Pending
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
+        fromId /= toId && unMoney amt > 0 ==>
+          let transaction = createPendingTransaction fromId toId amt
+           in transaction ^. #status === Pending
 
 -- -----------------------------------------------------------------------------
 -- Validation Properties
@@ -184,10 +185,10 @@ validationSpec = describe "Validation Properties" $ do
   describe "InitiateTransfer validation" $ do
     it "Then rejects same source and target"
       $ property
-      $ \(accountId :: AccountId) (amount :: Money) ->
-        unMoney amount > 0 ==>
+      $ \(accountId :: AccountId) (amt :: Money) ->
+        unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer accountId accountId amount "Self-transfer" testUserId
+              command = InitiateTransferTransactionCommand $ InitiateTransfer accountId accountId amt "Self-transfer" testUserId
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -202,10 +203,10 @@ validationSpec = describe "Validation Properties" $ do
 
     it "Then accepts valid transfer"
       $ property
-      $ \(fromId :: AccountId) (toId :: AccountId) (amount :: Money) ->
-        fromId /= toId && unMoney amount > 0 ==>
+      $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
+        fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amount "Valid" testUserId
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt "Valid" testUserId
               result = handleTransactionCommand transaction command
            in case result of
                 Right [TransferInitiatedTransactionEvent _] -> property True

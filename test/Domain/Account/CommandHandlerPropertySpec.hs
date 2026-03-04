@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -19,14 +20,14 @@
 -- the transfer process manager via AccountBalanceUpdated events.
 module Domain.Account.CommandHandlerPropertySpec (spec) where
 
-import Control.Lens ((^.))
 import Data.Either (fromRight, isLeft)
 import qualified Data.Text as T
-import Domain.Account hiding (accountCreatedBy)
+import Domain.Account
 import Domain.Account.CommandHandler
 import Domain.Account.Events (AccountAccessGranted (..), AccountAccessRevoked (..), AccountCreated (..))
 import Domain.Core.Types
 import Eventium (latestProjection)
+import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import Test.QuickCheck
@@ -50,14 +51,14 @@ applyEvents = latestProjection accountProjection
 
 -- | Create an account with given owner and type
 createAccountWithOwner :: Text -> Money -> UserId -> AccountType -> Account
-createAccountWithOwner name balance ownerId accType =
+createAccountWithOwner acctName balance ownerId accType =
   applyEvents
     [ AccountCreatedAccountEvent
         $ AccountCreated
-          { accountCreatedName = name,
-            accountCreatedInitialBalance = balance,
-            accountCreatedBy = ownerId,
-            accountCreatedType = accType
+          { name = acctName,
+            initialBalance = balance,
+            by = ownerId,
+            accountType = accType
           }
     ]
 
@@ -70,23 +71,23 @@ determinismSpec = describe "Determinism Properties" $ do
   describe "When handling commands" $ do
     it "Then CreateAccount produces same events for same input"
       $ property
-      $ \(name :: Text) (balance :: Money) (ownerId :: UserId) ->
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
         let account = applyEvents []
             command =
               CreateAccountAccountCommand
-                $ CreateAccount name balance ownerId RegularAccount
+                $ CreateAccount acctName balance ownerId RegularAccount
             events1 = handleAccountCommand account command
             events2 = handleAccountCommand account command
          in events1 === events2
 
     it "Then ShareAccount produces same events for same input"
       $ property
-      $ \(ownerId :: UserId) (targetId :: UserId) (role :: AccountRole) ->
+      $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
           let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
               command =
                 ShareAccountAccountCommand
-                  $ ShareAccount targetId role ownerId
+                  $ ShareAccount targetId targetRole ownerId
               events1 = handleAccountCommand account command
               events2 = handleAccountCommand account command
            in events1 === events2
@@ -118,34 +119,34 @@ invariantSpec = describe "Invariant Properties" $ do
   describe "When creating account" $ do
     it "Then owner is always in access list"
       $ property
-      $ \(name :: Text) (balance :: Money) (ownerId :: UserId) ->
-        not (T.null name) ==>
-          let account = createAccountWithOwner name balance ownerId RegularAccount
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
+        not (T.null acctName) ==>
+          let account = createAccountWithOwner acctName balance ownerId RegularAccount
            in hasAccess ownerId account
 
     it "Then owner has Owner role"
       $ property
-      $ \(name :: Text) (balance :: Money) (ownerId :: UserId) ->
-        not (T.null name) ==>
-          let account = createAccountWithOwner name balance ownerId RegularAccount
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
+        not (T.null acctName) ==>
+          let account = createAccountWithOwner acctName balance ownerId RegularAccount
            in getUserRole ownerId account === Just Owner
 
     it "Then maintains non-negative balance for regular accounts"
       $ property
-      $ \(name :: Text) (balance :: Money) (ownerId :: UserId) ->
-        not (T.null name) ==>
-          let account = createAccountWithOwner name balance ownerId RegularAccount
-           in unMoney (account ^. accountBalance) >= 0
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
+        not (T.null acctName) ==>
+          let account = createAccountWithOwner acctName balance ownerId RegularAccount
+           in unMoney (account ^. #balance) >= 0
 
   describe "When sharing access" $ do
     it "Then target user is added to access list"
       $ property
-      $ \(ownerId :: UserId) (targetId :: UserId) (role :: AccountRole) ->
+      $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
           let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
               command =
                 ShareAccountAccountCommand
-                  $ ShareAccount targetId role ownerId
+                  $ ShareAccount targetId targetRole ownerId
               result = handleAccountCommand account command
               baseEvents =
                 [ AccountCreatedAccountEvent
@@ -157,12 +158,12 @@ invariantSpec = describe "Invariant Properties" $ do
 
     it "Then target user has granted role"
       $ property
-      $ \(ownerId :: UserId) (targetId :: UserId) (role :: AccountRole) ->
+      $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
           let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
               command =
                 ShareAccountAccountCommand
-                  $ ShareAccount targetId role ownerId
+                  $ ShareAccount targetId targetRole ownerId
               result = handleAccountCommand account command
               baseEvents =
                 [ AccountCreatedAccountEvent
@@ -170,7 +171,7 @@ invariantSpec = describe "Invariant Properties" $ do
                 ]
               events = fromRight [] result
               newAccount = applyEvents (baseEvents <> events)
-           in getUserRole targetId newAccount === Just role
+           in getUserRole targetId newAccount === Just targetRole
 
   describe "When revoking access" $ do
     it "Then owner remains in access list"
@@ -201,29 +202,29 @@ businessRuleSpec = describe "Business Rule Properties" $ do
   describe "Account creation" $ do
     it "Then sets initial balance"
       $ property
-      $ \(name :: Text) (balance :: Money) (ownerId :: UserId) ->
-        not (T.null name) ==>
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
+        not (T.null acctName) ==>
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand
-                  $ CreateAccount name balance ownerId RegularAccount
+                  $ CreateAccount acctName balance ownerId RegularAccount
               result = handleAccountCommand account command
               events = fromRight [] result
               newAccount = applyEvents events
-           in newAccount ^. accountBalance === balance
+           in newAccount ^. #balance === balance
 
     it "Then sets account name"
       $ property
-      $ \(name :: Text) (balance :: Money) (ownerId :: UserId) ->
-        not (T.null name) ==>
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
+        not (T.null acctName) ==>
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand
-                  $ CreateAccount name balance ownerId RegularAccount
+                  $ CreateAccount acctName balance ownerId RegularAccount
               result = handleAccountCommand account command
               events = fromRight [] result
               newAccount = applyEvents events
-           in newAccount ^. accountName === name
+           in newAccount ^. #name === acctName
 
     it "Then rejects empty names"
       $ property
@@ -238,7 +239,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
   describe "Access management" $ do
     it "Then only owner can share access"
       $ property
-      $ \(ownerId :: UserId) (nonOwnerId :: UserId) (targetId :: UserId) (role :: AccountRole) ->
+      $ \(ownerId :: UserId) (nonOwnerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= nonOwnerId && nonOwnerId /= targetId && ownerId /= targetId ==>
           let baseEvents =
                 [ AccountCreatedAccountEvent
@@ -249,7 +250,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
               account = applyEvents baseEvents
               command =
                 ShareAccountAccountCommand
-                  $ ShareAccount targetId role nonOwnerId -- non-owner trying to share
+                  $ ShareAccount targetId targetRole nonOwnerId -- non-owner trying to share
               result = handleAccountCommand account command
            in isLeft result
 
@@ -265,12 +266,12 @@ businessRuleSpec = describe "Business Rule Properties" $ do
 
     it "Then external accounts cannot be shared"
       $ property
-      $ \(ownerId :: UserId) (targetId :: UserId) (role :: AccountRole) ->
+      $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
           let account = createAccountWithOwner "External" (mockMoney 0) ownerId ExternalAccount
               command =
                 ShareAccountAccountCommand
-                  $ ShareAccount targetId role ownerId
+                  $ ShareAccount targetId targetRole ownerId
               result = handleAccountCommand account command
            in isLeft result
 

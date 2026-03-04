@@ -37,9 +37,9 @@ module Domain.Account.Events
   )
 where
 
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types (AccountRole, AccountType, Money, TransactionId, UserId)
-import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -72,13 +72,13 @@ accountEvents =
 -- >>> AccountCreated "Checking" (Money 1000.0) userId RegularAccount
 data AccountCreated = AccountCreated
   { -- | Human-readable name for the account (e.g., "Checking", "Savings")
-    accountCreatedName :: Text,
+    name :: Text,
     -- | Initial balance when the account is created
-    accountCreatedInitialBalance :: Money,
+    initialBalance :: Money,
     -- | User who created the account (becomes Owner)
-    accountCreatedBy :: UserId,
+    by :: UserId,
     -- | Type of account (Regular or External)
-    accountCreatedType :: AccountType
+    accountType :: AccountType
   }
   deriving (Show, Eq)
 
@@ -91,11 +91,11 @@ data AccountCreated = AccountCreated
 -- >>> AccountAccessGranted targetUserId Editor grantingUserId
 data AccountAccessGranted = AccountAccessGranted
   { -- | User who was granted access
-    accountAccessGrantedUserId :: UserId,
+    userId :: UserId,
     -- | Role that was granted
-    accountAccessGrantedRole :: AccountRole,
+    role :: AccountRole,
     -- | User who granted the access (Owner)
-    accountAccessGrantedBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -107,9 +107,9 @@ data AccountAccessGranted = AccountAccessGranted
 -- >>> AccountAccessRevoked targetUserId revokingUserId
 data AccountAccessRevoked = AccountAccessRevoked
   { -- | User who lost access
-    accountAccessRevokedUserId :: UserId,
+    userId :: UserId,
     -- | User who revoked the access (Owner)
-    accountAccessRevokedBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -124,11 +124,11 @@ data AccountAccessRevoked = AccountAccessRevoked
 -- >>> AccountDebited (Money 200) txId "Transfer to Savings"
 data AccountDebited = AccountDebited
   { -- | Amount debited from the account (always positive)
-    accountDebitedAmount :: Money,
+    amount :: Money,
     -- | Transaction ID for saga correlation
-    accountDebitedTransactionId :: TransactionId,
+    transactionId :: TransactionId,
     -- | Reason or description for the debit
-    accountDebitedReason :: Text
+    reason :: Text
   }
   deriving (Show, Eq)
 
@@ -141,11 +141,11 @@ data AccountDebited = AccountDebited
 -- >>> AccountCredited (Money 200) txId "Transfer from Checking"
 data AccountCredited = AccountCredited
   { -- | Amount credited to the account (always positive)
-    accountCreditedAmount :: Money,
+    amount :: Money,
     -- | Transaction ID for saga correlation
-    accountCreditedTransactionId :: TransactionId,
+    transactionId :: TransactionId,
     -- | Reason or description for the credit
-    accountCreditedReason :: Text
+    reason :: Text
   }
   deriving (Show, Eq)
 
@@ -153,9 +153,9 @@ data AccountCredited = AccountCredited
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- Derive JSON instances for all events using the unprefixed lowercase pattern
-deriveJSONUnPrefixLower ''AccountCreated
-deriveJSONUnPrefixLower ''AccountAccessGranted
-deriveJSONUnPrefixLower ''AccountAccessRevoked
-deriveJSONUnPrefixLower ''AccountDebited
-deriveJSONUnPrefixLower ''AccountCredited
+-- Derive JSON instances for all events using default options (fields already unprefixed)
+deriveJSON defaultOptions ''AccountCreated
+deriveJSON defaultOptions ''AccountAccessGranted
+deriveJSON defaultOptions ''AccountAccessRevoked
+deriveJSON defaultOptions ''AccountDebited
+deriveJSON defaultOptions ''AccountCredited

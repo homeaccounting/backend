@@ -25,9 +25,9 @@ module Domain.Transaction.Events
   )
 where
 
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types (AccountId, Money, UserId)
-import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -63,15 +63,15 @@ transactionEvents =
 -- >>> TransferInitiated sourceId targetId (Money 500.0) "Rent payment" userId
 data TransferInitiated = TransferInitiated
   { -- | Account from which money will be debited
-    transferInitiatedFromAccountId :: AccountId,
+    fromAccountId :: AccountId,
     -- | Account to which money will be credited
-    transferInitiatedToAccountId :: AccountId,
+    toAccountId :: AccountId,
     -- | Amount of money to transfer
-    transferInitiatedAmount :: Money,
+    amount :: Money,
     -- | Reason or description for the transfer
-    transferInitiatedReason :: Text,
+    reason :: Text,
     -- | User who initiated the transfer (for audit trail)
-    transferInitiatedBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -94,7 +94,7 @@ data TransferCompleted = TransferCompleted
 -- >>> TransferFailed "Insufficient funds in source account"
 newtype TransferFailed = TransferFailed
   { -- | Description of why the transfer failed
-    transferFailedReason :: Text
+    reason :: Text
   }
   deriving (Show, Eq)
 
@@ -102,7 +102,7 @@ newtype TransferFailed = TransferFailed
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- Derive JSON instances for all events using the unprefixed lowercase pattern
-deriveJSONUnPrefixLower ''TransferInitiated
-deriveJSONUnPrefixLower ''TransferCompleted
-deriveJSONUnPrefixLower ''TransferFailed
+-- Derive JSON instances for all events (fields already unprefixed)
+deriveJSON defaultOptions ''TransferInitiated
+deriveJSON defaultOptions ''TransferCompleted
+deriveJSON defaultOptions ''TransferFailed

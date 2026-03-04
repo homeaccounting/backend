@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 -- |
 -- Module      : Application.ReadModels.TransactionSummary
@@ -58,13 +59,8 @@ import Domain.Models
   )
 import Domain.Transaction.Events
   ( TransferCompleted,
-    TransferFailed (transferFailedReason),
-    TransferInitiated
-      ( transferInitiatedAmount,
-        transferInitiatedFromAccountId,
-        transferInitiatedReason,
-        transferInitiatedToAccountId
-      ),
+    TransferFailed (..),
+    TransferInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Completed, Failed, Pending))
 import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
@@ -81,11 +77,11 @@ import Safe (maximumDef)
 -- without requiring event replay. It's optimized for read operations.
 data TransactionSummaryData
   = TransactionSummaryData
-  { transactionSummaryDataFromAccountId :: AccountId,
-    transactionSummaryDataToAccountId :: AccountId,
-    transactionSummaryDataAmount :: Money,
-    transactionSummaryDataReason :: Text,
-    transactionSummaryDataStatus :: TransactionStatus
+  { fromAccountId :: AccountId,
+    toAccountId :: AccountId,
+    amount :: Money,
+    reason :: Text,
+    status :: TransactionStatus
   }
   deriving (Show, Eq, Generic)
 
@@ -99,8 +95,8 @@ instance FromJSON TransactionSummaryData
 -- sequence number for reliable event processing.
 data TransactionSummaryReadModel
   = TransactionSummaryReadModel
-  { transactionSummaryLatestSequence :: SequenceNumber,
-    transactionSummaryData :: Map TransactionId TransactionSummaryData
+  { latestSequence :: SequenceNumber,
+    summaryData :: Map TransactionId TransactionSummaryData
   }
   deriving (Show, Eq)
 
@@ -122,8 +118,8 @@ createTransactionSummaryReadModel =
   liftIO $
     newTVarIO $
       TransactionSummaryReadModel
-        { transactionSummaryLatestSequence = -1,
-          transactionSummaryData = Map.empty
+        { latestSequence = -1,
+          summaryData = Map.empty
         }
 
 -- -----------------------------------------------------------------------------
@@ -155,13 +151,13 @@ handleTransactionSummaryEvents ::
 handleTransactionSummaryEvents readModelTVar events = do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
-  let newSeq = maximumDef (transactionSummaryLatestSequence currentModel) (streamEventPosition <$> events)
-      updatedData = foldl processEvent (transactionSummaryData currentModel) events
+  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
+      updatedData = foldl processEvent currentModel.summaryData events
 
   liftIO . atomically . writeTVar readModelTVar $
     currentModel
-      { transactionSummaryLatestSequence = newSeq,
-        transactionSummaryData = updatedData
+      { latestSequence = newSeq,
+        summaryData = updatedData
       }
 
 -- | Processes a single event and updates the transaction summary map.
@@ -174,9 +170,9 @@ processEvent ::
   GlobalStreamEvent AccountingEvent ->
   Map TransactionId TransactionSummaryData
 processEvent summaries globalEvent =
-  let versionedEvent = streamEventPayload globalEvent
-      streamUuid = streamEventKey versionedEvent
-      payload = streamEventPayload versionedEvent
+  let versionedEvent = globalEvent.payload
+      streamUuid = versionedEvent.key
+      payload = versionedEvent.payload
    in case payload of
         TransferInitiatedEvent evt ->
           case mkTransactionIdSafe streamUuid of
@@ -188,11 +184,11 @@ processEvent summaries globalEvent =
               -- The merge function keeps the existing entry if one already exists.
               let newEntry =
                     TransactionSummaryData
-                      { transactionSummaryDataFromAccountId = transferInitiatedFromAccountId evt,
-                        transactionSummaryDataToAccountId = transferInitiatedToAccountId evt,
-                        transactionSummaryDataAmount = transferInitiatedAmount evt,
-                        transactionSummaryDataReason = transferInitiatedReason evt,
-                        transactionSummaryDataStatus = Pending
+                      { fromAccountId = evt.fromAccountId,
+                        toAccountId = evt.toAccountId,
+                        amount = evt.amount,
+                        reason = evt.reason,
+                        status = Pending
                       }
                in Map.insertWith (\_ existing -> existing) transactionId newEntry summaries
         TransferCompletedEvent _evt ->
@@ -200,7 +196,7 @@ processEvent summaries globalEvent =
             Nothing -> summaries
             Just transactionId ->
               Map.adjust
-                (\summary -> summary {transactionSummaryDataStatus = Completed})
+                (\summary -> summary {status = Completed})
                 transactionId
                 summaries
         TransferFailedEvent evt ->
@@ -209,7 +205,7 @@ processEvent summaries globalEvent =
             Just transactionId ->
               Map.adjust
                 ( \summary ->
-                    summary {transactionSummaryDataStatus = Failed (transferFailedReason evt)}
+                    summary {status = Failed evt.reason}
                 )
                 transactionId
                 summaries
@@ -226,7 +222,7 @@ processEvent summaries globalEvent =
 -- Example:
 -- >>> maybeSummary <- getTransactionSummary readModel transactionId
 -- >>> case maybeSummary of
--- >>>   Just summary -> print (transactionSummaryDataStatus summary)
+-- >>>   Just summary -> print (summary.status)
 -- >>>   Nothing -> putStrLn "Transaction not found"
 getTransactionSummary ::
   (MonadIO m) =>
@@ -235,7 +231,7 @@ getTransactionSummary ::
   m (Maybe TransactionSummaryData)
 getTransactionSummary readModelTVar transactionId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup transactionId (transactionSummaryData model)
+  return $ Map.lookup transactionId model.summaryData
 
 -- | Retrieves all transaction summaries in the read model.
 --
@@ -250,7 +246,7 @@ getAllTransactionSummaries ::
   m (Map TransactionId TransactionSummaryData)
 getAllTransactionSummaries readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ transactionSummaryData model
+  return model.summaryData
 
 -- | Checks if a transaction exists in the read model.
 --
@@ -266,7 +262,7 @@ transactionExists ::
   m Bool
 transactionExists readModelTVar transactionId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member transactionId (transactionSummaryData model)
+  return $ Map.member transactionId model.summaryData
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions

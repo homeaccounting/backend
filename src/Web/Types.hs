@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -113,16 +114,16 @@ import GHC.Generics (Generic)
 -- @
 data CreateAccountRequest
   = CreateAccountRequest
-  { createAccountRequestName :: Text,
-    createAccountRequestInitialBalance :: Double
+  { name :: Text,
+    initialBalance :: Double
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON CreateAccountRequest where
   toJSON CreateAccountRequest {..} =
     object
-      [ "accountName" .= createAccountRequestName,
-        "initialBalance" .= createAccountRequestInitialBalance
+      [ "accountName" .= name,
+        "initialBalance" .= initialBalance
       ]
 
 instance FromJSON CreateAccountRequest where
@@ -165,20 +166,20 @@ instance FromJSON CreateAccountRequest where
 -- @
 data AccountResponse
   = AccountResponse
-  { accountResponseId :: UUID,
-    accountResponseName :: Text,
-    accountResponseBalance :: Double,
-    accountResponseVersion :: Int
+  { id :: UUID,
+    name :: Text,
+    balance :: Double,
+    version :: Int
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON AccountResponse where
   toJSON AccountResponse {..} =
     object
-      [ "accountId" .= accountResponseId,
-        "accountName" .= accountResponseName,
-        "currentBalance" .= accountResponseBalance,
-        "version" .= accountResponseVersion
+      [ "accountId" .= id,
+        "accountName" .= name,
+        "currentBalance" .= balance,
+        "version" .= version
       ]
 
 instance FromJSON AccountResponse where
@@ -215,16 +216,16 @@ instance FromJSON AccountResponse where
 -- @
 data AccountListResponse
   = AccountListResponse
-  { accountListResponseAccounts :: [AccountResponse],
-    accountListResponseTotalCount :: Int
+  { accounts :: [AccountResponse],
+    totalCount :: Int
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON AccountListResponse where
   toJSON AccountListResponse {..} =
     object
-      [ "accounts" .= accountListResponseAccounts,
-        "totalCount" .= accountListResponseTotalCount
+      [ "accounts" .= accounts,
+        "totalCount" .= totalCount
       ]
 
 instance FromJSON AccountListResponse where
@@ -263,20 +264,20 @@ instance FromJSON AccountListResponse where
 -- @
 data TransferRequest
   = TransferRequest
-  { transferRequestFromAccountId :: UUID,
-    transferRequestToAccountId :: UUID,
-    transferRequestAmount :: Double,
-    transferRequestReason :: Text
+  { fromAccountId :: UUID,
+    toAccountId :: UUID,
+    amount :: Double,
+    reason :: Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransferRequest where
   toJSON TransferRequest {..} =
     object
-      [ "fromAccountId" .= transferRequestFromAccountId,
-        "toAccountId" .= transferRequestToAccountId,
-        "amount" .= transferRequestAmount,
-        "reason" .= transferRequestReason
+      [ "fromAccountId" .= fromAccountId,
+        "toAccountId" .= toAccountId,
+        "amount" .= amount,
+        "reason" .= reason
       ]
 
 instance FromJSON TransferRequest where
@@ -329,26 +330,26 @@ instance FromJSON TransferRequest where
 -- @
 data TransactionResponse
   = TransactionResponse
-  { transactionResponseId :: UUID,
-    transactionResponseFromAccountId :: UUID,
-    transactionResponseToAccountId :: UUID,
-    transactionResponseAmount :: Double,
-    transactionResponseReason :: Text,
-    transactionResponseStatus :: Text,
-    transactionResponseFailureReason :: Maybe Text
+  { id :: UUID,
+    fromAccountId :: UUID,
+    toAccountId :: UUID,
+    amount :: Double,
+    reason :: Text,
+    status :: Text,
+    failureReason :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransactionResponse where
   toJSON TransactionResponse {..} =
     object
-      [ "transactionId" .= transactionResponseId,
-        "fromAccountId" .= transactionResponseFromAccountId,
-        "toAccountId" .= transactionResponseToAccountId,
-        "amount" .= transactionResponseAmount,
-        "reason" .= transactionResponseReason,
-        "status" .= transactionResponseStatus,
-        "failureReason" .= transactionResponseFailureReason
+      [ "transactionId" .= id,
+        "fromAccountId" .= fromAccountId,
+        "toAccountId" .= toAccountId,
+        "amount" .= amount,
+        "reason" .= reason,
+        "status" .= status,
+        "failureReason" .= failureReason
       ]
 
 instance FromJSON TransactionResponse where
@@ -375,16 +376,16 @@ instance FromJSON TransactionResponse where
 -- @
 data TransactionStatusResponse
   = TransactionStatusResponse
-  { transactionStatusResponseId :: UUID,
-    transactionStatusResponseStatus :: Text
+  { id :: UUID,
+    status :: Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransactionStatusResponse where
   toJSON TransactionStatusResponse {..} =
     object
-      [ "transactionId" .= transactionStatusResponseId,
-        "status" .= transactionStatusResponseStatus
+      [ "transactionId" .= id,
+        "status" .= status
       ]
 
 instance FromJSON TransactionStatusResponse where
@@ -416,18 +417,18 @@ instance FromJSON TransactionStatusResponse where
 -- @
 data ErrorResponse
   = ErrorResponse
-  { errorResponseMessage :: Text,
-    errorResponseCode :: Text,
-    errorResponseDetails :: Maybe (Map Text Text)
+  { message :: Text,
+    code :: Text,
+    details :: Maybe (Map Text Text)
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON ErrorResponse where
   toJSON ErrorResponse {..} =
     object
-      [ "errorMessage" .= errorResponseMessage,
-        "errorCode" .= errorResponseCode,
-        "details" .= errorResponseDetails
+      [ "errorMessage" .= message,
+        "errorCode" .= code,
+        "details" .= details
       ]
 
 instance FromJSON ErrorResponse where
@@ -453,16 +454,16 @@ instance FromJSON ErrorResponse where
 -- @
 data ValidationErrorResponse
   = ValidationErrorResponse
-  { validationErrorResponseMessage :: Text,
-    validationErrorResponseFieldErrors :: Map Text Text
+  { message :: Text,
+    fieldErrors :: Map Text Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON ValidationErrorResponse where
   toJSON ValidationErrorResponse {..} =
     object
-      [ "validationMessage" .= validationErrorResponseMessage,
-        "fieldErrors" .= validationErrorResponseFieldErrors
+      [ "validationMessage" .= message,
+        "fieldErrors" .= fieldErrors
       ]
 
 instance FromJSON ValidationErrorResponse where
@@ -513,14 +514,14 @@ fromDomainMoney = fromRational . unMoney
 toCreateAccountCommand :: UserId -> AccountType -> CreateAccountRequest -> Either Text CreateAccount
 toCreateAccountCommand createdBy accountType CreateAccountRequest {..} = do
   -- Validate account name
-  when (T.null createAccountRequestName) $
+  when (T.null name) $
     Left "Account name cannot be empty"
 
   -- Validate and convert initial balance
-  balance <- toDomainMoney createAccountRequestInitialBalance
+  domainBalance <- toDomainMoney initialBalance
 
   -- Create domain command with owner and type
-  return $ CreateAccount createAccountRequestName balance createdBy accountType
+  return $ CreateAccount name domainBalance createdBy accountType
   where
     when :: Bool -> Either Text () -> Either Text ()
     when True action = action
@@ -550,22 +551,22 @@ toInitiateTransferCommand ::
   Either Text InitiateTransfer
 toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
   -- Validate amount is positive
-  when (transferRequestAmount <= 0) $
+  when (amount <= 0) $
     Left "Transfer amount must be positive"
 
   -- Convert to domain Money
-  amount <- toDomainMoney transferRequestAmount
+  domainAmount <- toDomainMoney amount
 
   -- Validate source and destination are different
   when (fromId == toId) $
     Left "Cannot transfer to the same account"
 
   -- Validate reason (warning, not error)
-  when (T.null transferRequestReason) $
+  when (T.null reason) $
     Left "Transfer reason should not be empty"
 
   -- Create domain command with user who initiated
-  return $ InitiateTransfer fromId toId amount transferRequestReason initiatedBy
+  return $ InitiateTransfer fromId toId domainAmount reason initiatedBy
   where
     when :: Bool -> Either Text () -> Either Text ()
     when True action = action
@@ -584,10 +585,10 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
 fromAccountSummary :: AccountId -> AccountSummaryData -> AccountResponse
 fromAccountSummary accountId AccountSummaryData {..} =
   AccountResponse
-    { accountResponseId = unAccountId accountId,
-      accountResponseName = accountSummaryDataName,
-      accountResponseBalance = fromDomainMoney accountSummaryDataBalance,
-      accountResponseVersion = accountSummaryDataVersion
+    { id = unAccountId accountId,
+      name = name,
+      balance = fromDomainMoney balance,
+      version = version
     }
 
 -- | Converts TransactionSummaryData (read model) to TransactionResponse.
@@ -602,14 +603,14 @@ fromAccountSummary accountId AccountSummaryData {..} =
 fromTransactionSummary :: TransactionId -> TransactionSummaryData -> TransactionResponse
 fromTransactionSummary txId TransactionSummaryData {..} =
   TransactionResponse
-    { transactionResponseId = unTransactionId txId,
-      transactionResponseFromAccountId = unAccountId transactionSummaryDataFromAccountId,
-      transactionResponseToAccountId = unAccountId transactionSummaryDataToAccountId,
-      transactionResponseAmount = fromDomainMoney transactionSummaryDataAmount,
-      transactionResponseReason = transactionSummaryDataReason,
-      transactionResponseStatus = fromTransactionStatus transactionSummaryDataStatus,
-      transactionResponseFailureReason = case transactionSummaryDataStatus of
-        Failed reason -> Just reason
+    { id = unTransactionId txId,
+      fromAccountId = unAccountId fromAccountId,
+      toAccountId = unAccountId toAccountId,
+      amount = fromDomainMoney amount,
+      reason = reason,
+      status = fromTransactionStatus status,
+      failureReason = case status of
+        Failed failReason -> Just failReason
         _ -> Nothing
     }
 
@@ -625,14 +626,14 @@ fromTransactionSummary txId TransactionSummaryData {..} =
 fromTransaction :: TransactionId -> Transaction -> TransactionResponse
 fromTransaction txId tx =
   TransactionResponse
-    { transactionResponseId = unTransactionId txId,
-      transactionResponseFromAccountId = unAccountId (_transactionFromAccountId tx),
-      transactionResponseToAccountId = unAccountId (_transactionToAccountId tx),
-      transactionResponseAmount = fromDomainMoney (_transactionAmount tx),
-      transactionResponseReason = _transactionReason tx,
-      transactionResponseStatus = fromTransactionStatus (_transactionStatus tx),
-      transactionResponseFailureReason = case _transactionStatus tx of
-        Failed reason -> Just reason
+    { id = unTransactionId txId,
+      fromAccountId = unAccountId tx.fromAccountId,
+      toAccountId = unAccountId tx.toAccountId,
+      amount = fromDomainMoney tx.amount,
+      reason = tx.reason,
+      status = fromTransactionStatus tx.status,
+      failureReason = case tx.status of
+        Failed failReason -> Just failReason
         _ -> Nothing
     }
 

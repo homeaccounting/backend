@@ -102,7 +102,7 @@ generateExpiredToken = do
     Left _ -> error "Failed to create test user ID"
     Right userId -> do
       -- Use a config with 0 second expiry
-      let expiredConfig = defaultJWTConfig {jwtExpirySeconds = -3600} -- Already expired
+      let expiredConfig = defaultJWTConfig {expirySeconds = -3600} -- Already expired
       result <- generateToken expiredConfig userId "test@example.com"
       case result of
         Left err -> error $ "Failed to generate expired token: " <> show err

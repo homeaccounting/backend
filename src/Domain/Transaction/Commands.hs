@@ -30,9 +30,9 @@ module Domain.Transaction.Commands
   )
 where
 
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types (AccountId, Money, UserId)
-import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -78,15 +78,15 @@ transactionCommands =
 -- >>> InitiateTransfer sourceId targetId (Money 500.0) "Rent payment" userId
 data InitiateTransfer = InitiateTransfer
   { -- | Account from which money will be debited
-    initiateTransferFromAccountId :: AccountId,
+    fromAccountId :: AccountId,
     -- | Account to which money will be credited
-    initiateTransferToAccountId :: AccountId,
+    toAccountId :: AccountId,
     -- | Amount of money to transfer
-    initiateTransferAmount :: Money,
+    amount :: Money,
     -- | Reason or description for the transfer
-    initiateTransferReason :: Text,
+    reason :: Text,
     -- | User who initiated the transfer (for audit trail)
-    initiateTransferBy :: UserId
+    initiatedBy :: UserId
   }
   deriving (Show, Eq)
 
@@ -123,7 +123,7 @@ data CompleteTransfer = CompleteTransfer
 -- >>> FailTransfer "Insufficient funds in source account"
 newtype FailTransfer = FailTransfer
   { -- | Description of why the transfer failed
-    failTransferReason :: Text
+    reason :: Text
   }
   deriving (Show, Eq)
 
@@ -131,7 +131,7 @@ newtype FailTransfer = FailTransfer
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- Derive JSON instances for all commands using the unprefixed lowercase pattern
-deriveJSONUnPrefixLower ''InitiateTransfer
-deriveJSONUnPrefixLower ''CompleteTransfer
-deriveJSONUnPrefixLower ''FailTransfer
+-- Derive JSON instances for all commands (fields already unprefixed)
+deriveJSON defaultOptions ''InitiateTransfer
+deriveJSON defaultOptions ''CompleteTransfer
+deriveJSON defaultOptions ''FailTransfer

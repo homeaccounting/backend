@@ -86,6 +86,18 @@ library
       Paths_accounting
   hs-source-dirs:
       src
+  default-extensions:
+      NoFieldSelectors
+      DuplicateRecordFields
+      OverloadedLabels
+      OverloadedRecordDot
+      DataKinds
+      FlexibleInstances
+      MultiParamTypeClasses
+      TypeFamilies
+      UndecidableInstances
+      FlexibleContexts
+      TypeOperators
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -Wpartial-fields -fno-warn-orphans
   build-depends:
       aeson >=2.0 && <2.3
@@ -103,10 +115,11 @@ library
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
-    , lens >=4.19 && <5.4
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
+    , optics ==0.4.*
+    , optics-th ==0.4.*
     , persistent >=2.13 && <2.15
     , persistent-postgresql ==2.13.*
     , persistent-template ==2.12.*
@@ -138,6 +151,18 @@ executable accounting
       Paths_accounting
   hs-source-dirs:
       app
+  default-extensions:
+      NoFieldSelectors
+      DuplicateRecordFields
+      OverloadedLabels
+      OverloadedRecordDot
+      DataKinds
+      FlexibleInstances
+      MultiParamTypeClasses
+      TypeFamilies
+      UndecidableInstances
+      FlexibleContexts
+      TypeOperators
   ghc-options: -Wall -Wcompat -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       accounting
@@ -156,10 +181,11 @@ executable accounting
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
-    , lens >=4.19 && <5.4
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
+    , optics ==0.4.*
+    , optics-th ==0.4.*
     , persistent >=2.13 && <2.15
     , persistent-postgresql ==2.13.*
     , persistent-template ==2.12.*
@@ -212,6 +238,18 @@ test-suite accounting-test
       Paths_accounting
   hs-source-dirs:
       test
+  default-extensions:
+      NoFieldSelectors
+      DuplicateRecordFields
+      OverloadedLabels
+      OverloadedRecordDot
+      DataKinds
+      FlexibleInstances
+      MultiParamTypeClasses
+      TypeFamilies
+      UndecidableInstances
+      FlexibleContexts
+      TypeOperators
   ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
   build-tool-depends:
       hspec-discover:hspec-discover
@@ -239,10 +277,11 @@ test-suite accounting-test
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
-    , lens >=4.19 && <5.4
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
+    , optics ==0.4.*
+    , optics-th ==0.4.*
     , persistent >=2.13 && <2.15
     , persistent-postgresql ==2.13.*
     , persistent-template ==2.12.*

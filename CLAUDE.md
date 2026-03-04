@@ -136,7 +136,7 @@ cabal test all --test-option='--rerun'
 - **Formatter**: ormolu (mandatory, no manual overrides)
 - **Linter**: hlint — no suppressions allowed without explicit approval and documented rationale
 - **GHC warnings**: `-Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -Wpartial-fields`
-- **Required extensions**: `NoImplicitPrelude`, `StrictData`, `GADTs`, `KindSignatures`, `DataKinds`, `TypeFamilies`
+- **Required extensions**: `NoImplicitPrelude`, `StrictData`, `GADTs`, `KindSignatures`, `DataKinds`, `TypeFamilies`, `NoFieldSelectors`, `DuplicateRecordFields`, `OverloadedRecordDot`
 - Never export data constructors or field selectors directly — use smart constructors and accessor functions
 - Total functions only; no partial functions
 

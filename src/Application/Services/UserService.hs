@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -117,7 +118,7 @@ changePassword userId _currentPassword newPassword = do
       newPasswordHash <- hashPassword newPassword
 
       -- 3. Issue ChangePassword command
-      let changeCmd = ChangePasswordUserCommand ChangePassword {changePasswordNewHash = newPasswordHash}
+      let changeCmd = ChangePasswordUserCommand ChangePassword {newHash = newPasswordHash}
 
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
@@ -165,7 +166,7 @@ unlinkOAuth userId providerText = do
         Nothing -> return $ Left $ NotFound "User" (tshow userId)
         Just userData -> do
           -- 3. Check if OAuth provider is linked
-          case L.find (\i -> oauthProvider i == provider) (userSummaryDataOAuthIdentities userData) of
+          case L.find (\i -> i.provider == provider) userData.oauthIdentities of
             Nothing -> do
               logWarn "OAuth provider not linked"
               return $ Left $ NotFound "OAuthProvider" providerText
@@ -178,7 +179,7 @@ unlinkOAuth userId providerText = do
                   return $ Left $ UserError "Cannot unlink last login method"
                 else do
                   -- 5. Issue UnlinkOAuthAccount command
-                  let unlinkCmd = UnlinkOAuthAccountUserCommand UnlinkOAuthAccount {unlinkOAuthAccountIdentity = identity}
+                  let unlinkCmd = UnlinkOAuthAccountUserCommand UnlinkOAuthAccount {identity = identity}
 
                   writer <- view eventStoreWriterL
                   reader <- view eventStoreReaderL
@@ -218,7 +219,7 @@ unlinkTelegram userId = do
     Nothing -> return $ Left $ NotFound "User" (tshow userId)
     Just userData ->
       -- 2. Check if Telegram is linked
-      case userSummaryDataTelegramIdentity userData of
+      case userData.telegramIdentity of
         Nothing -> do
           logWarn "Telegram not linked"
           return $ Left $ NotFound "TelegramLink" (tshow userId)
@@ -254,9 +255,9 @@ unlinkTelegram userId = do
 -- Used to prevent unlinking the last login method.
 countLoginMethods :: UserSummaryData -> Int
 countLoginMethods UserSummaryData {..} =
-  (if userSummaryDataHasPassword then 1 else 0)
-    + length userSummaryDataOAuthIdentities
-    + (if isJust userSummaryDataTelegramIdentity then 1 else 0)
+  (if hasPassword then 1 else 0)
+    + length oauthIdentities
+    + (if isJust telegramIdentity then 1 else 0)
 
 -- | Parse OAuth provider from text.
 parseOAuthProvider :: Text -> Maybe OAuthProvider

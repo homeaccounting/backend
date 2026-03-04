@@ -40,12 +40,12 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import Control.Lens ((^.))
 import Domain.Core.Types (AccountId, Money, mkMoney, unAccountId, unMoney)
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
 import Eventium (CommandHandler (..))
+import Optics ((^.))
 import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
@@ -116,40 +116,40 @@ constructSumType
 handleTransactionCommand :: Transaction -> TransactionCommand -> Either TransactionError [TransactionEvent]
 -- Handle InitiateTransfer command
 handleTransactionCommand transaction (InitiateTransferTransactionCommand InitiateTransfer {..}) =
-  case transaction ^. transactionStatus of
+  case transaction ^. #status of
     Pending
-      | _transactionAmount transaction == (case mkMoney 0 of Right m -> m; Left _ -> error "mkMoney 0 failed") ->
-          if unAccountId initiateTransferFromAccountId == unAccountId initiateTransferToAccountId
+      | transaction.amount == (case mkMoney 0 of Right m -> m; Left _ -> error "mkMoney 0 failed") ->
+          if unAccountId fromAccountId == unAccountId toAccountId
             then Left TransferToSameAccount
             else
-              if unMoney initiateTransferAmount <= 0
+              if unMoney amount <= 0
                 then Left TransferAmountNotPositive
                 else
                   Right
                     [ TransferInitiatedTransactionEvent
                         TransferInitiated
-                          { transferInitiatedFromAccountId = initiateTransferFromAccountId,
-                            transferInitiatedToAccountId = initiateTransferToAccountId,
-                            transferInitiatedAmount = initiateTransferAmount,
-                            transferInitiatedReason = initiateTransferReason,
-                            transferInitiatedBy = initiateTransferBy
+                          { fromAccountId = fromAccountId,
+                            toAccountId = toAccountId,
+                            amount = amount,
+                            reason = reason,
+                            by = initiatedBy
                           }
                     ]
       | otherwise -> Left TransactionAlreadyInitiated
     _ -> Left TransactionAlreadyInitiated
 -- Handle CompleteTransfer command
 handleTransactionCommand transaction (CompleteTransferTransactionCommand CompleteTransfer) =
-  case transaction ^. transactionStatus of
+  case transaction ^. #status of
     Pending -> Right [TransferCompletedTransactionEvent TransferCompleted]
     _ -> Left TransactionNotPending
 -- Handle FailTransfer command
 handleTransactionCommand transaction (FailTransferTransactionCommand FailTransfer {..}) =
-  case transaction ^. transactionStatus of
+  case transaction ^. #status of
     Pending ->
       Right
         [ TransferFailedTransactionEvent
             TransferFailed
-              { transferFailedReason = failTransferReason
+              { reason = reason
               }
         ]
     _ -> Left TransactionNotPending

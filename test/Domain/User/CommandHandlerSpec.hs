@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -18,12 +20,12 @@
 --   - State transitions and invariants
 module Domain.User.CommandHandlerSpec (spec) where
 
-import Control.Lens ((^.))
 import Data.Either (isLeft)
 import Data.Text.Encoding (encodeUtf8)
 import Domain.Core.Types
 import Domain.User
 import Eventium (latestProjection)
+import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import TestSupport.Generators ()
@@ -70,9 +72,9 @@ registeredUser =
   applyEvents
     [ UserRegisteredUserEvent
         $ UserRegistered
-          { userRegisteredEmail = "test@example.com",
-            userRegisteredPasswordHash = testPasswordHash,
-            userRegisteredExternalAccountId = testExternalAccountId
+          { email = "test@example.com",
+            passwordHash = testPasswordHash,
+            externalAccountId = testExternalAccountId
           }
     ]
 
@@ -82,8 +84,8 @@ telegramUser =
   applyEvents
     [ UserRegisteredViaTelegramUserEvent
         $ UserRegisteredViaTelegram
-          { userRegisteredViaTelegramIdentity = testTelegramIdentity,
-            userRegisteredViaTelegramExternalAccountId = testExternalAccountId
+          { identity = testTelegramIdentity,
+            externalAccountId = testExternalAccountId
           }
     ]
 
@@ -91,17 +93,17 @@ telegramUser =
 testTelegramIdentity :: TelegramIdentity
 testTelegramIdentity =
   TelegramIdentity
-    { telegramId = mockTelegramId 123456789,
-      telegramUsername = Just "testuser",
-      telegramFirstName = "Test"
+    { id = mockTelegramId 123456789,
+      username = Just "testuser",
+      firstName = "Test"
     }
 
 -- | Test OAuth identity
 testOAuthIdentity :: OAuthIdentity
 testOAuthIdentity =
   OAuthIdentity
-    { oauthProvider = Google,
-      oauthSubject = "google-subject-12345"
+    { provider = Google,
+      subject = "google-subject-12345"
     }
 
 -- | Create user with multiple login methods (password + OAuth)
@@ -110,13 +112,13 @@ userWithMultipleLogins =
   applyEvents
     [ UserRegisteredUserEvent
         $ UserRegistered
-          { userRegisteredEmail = "multi@example.com",
-            userRegisteredPasswordHash = testPasswordHash,
-            userRegisteredExternalAccountId = testExternalAccountId
+          { email = "multi@example.com",
+            passwordHash = testPasswordHash,
+            externalAccountId = testExternalAccountId
           },
       OAuthAccountLinkedUserEvent
         $ OAuthAccountLinked
-          { oAuthAccountLinkedIdentity = testOAuthIdentity
+          { identity = testOAuthIdentity
           }
     ]
 
@@ -133,9 +135,9 @@ registerUserSpec = describe "RegisterUser Command" $ do
         let command =
               RegisterUserUserCommand
                 $ RegisterUser
-                  { registerUserEmail = "new@example.com",
-                    registerUserPasswordHash = testPasswordHash,
-                    registerUserExternalAccountId = testExternalAccountId
+                  { email = "new@example.com",
+                    passwordHash = testPasswordHash,
+                    externalAccountId = testExternalAccountId
                   }
         let result = handleUserCommand user command
 
@@ -144,9 +146,9 @@ registerUserSpec = describe "RegisterUser Command" $ do
             length events `shouldBe` 1
             case head events of
               UserRegisteredUserEvent registered -> do
-                userRegisteredEmail registered `shouldBe` "new@example.com"
-                userRegisteredPasswordHash registered `shouldBe` testPasswordHash
-                userRegisteredExternalAccountId registered `shouldBe` testExternalAccountId
+                registered.email `shouldBe` "new@example.com"
+                registered.passwordHash `shouldBe` testPasswordHash
+                registered.externalAccountId `shouldBe` testExternalAccountId
               _ -> expectationFailure "Expected UserRegistered event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -155,19 +157,19 @@ registerUserSpec = describe "RegisterUser Command" $ do
         let command =
               RegisterUserUserCommand
                 $ RegisterUser
-                  { registerUserEmail = "new@example.com",
-                    registerUserPasswordHash = testPasswordHash,
-                    registerUserExternalAccountId = testExternalAccountId
+                  { email = "new@example.com",
+                    passwordHash = testPasswordHash,
+                    externalAccountId = testExternalAccountId
                   }
         let result = handleUserCommand user command
 
         case result of
           Right events -> do
             let newUser = applyEvents events
-            newUser ^. userEmail `shouldBe` "new@example.com"
-            newUser ^. userPasswordHash `shouldBe` Just testPasswordHash
-            newUser ^. userExternalAccountId `shouldBe` testExternalAccountId
-            newUser ^. userIsRegistered `shouldBe` True
+            newUser ^. #email `shouldBe` "new@example.com"
+            newUser ^. #passwordHash `shouldBe` Just testPasswordHash
+            newUser ^. #externalAccountId `shouldBe` testExternalAccountId
+            newUser ^. #isRegistered `shouldBe` True
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given existing user" $ do
@@ -177,9 +179,9 @@ registerUserSpec = describe "RegisterUser Command" $ do
         let command =
               RegisterUserUserCommand
                 $ RegisterUser
-                  { registerUserEmail = "another@example.com",
-                    registerUserPasswordHash = testPasswordHash,
-                    registerUserExternalAccountId = testExternalAccountId
+                  { email = "another@example.com",
+                    passwordHash = testPasswordHash,
+                    externalAccountId = testExternalAccountId
                   }
         let result = handleUserCommand user command
 
@@ -198,8 +200,8 @@ registerViaTelegramSpec = describe "RegisterViaTelegram Command" $ do
         let command =
               RegisterViaTelegramUserCommand
                 $ RegisterViaTelegram
-                  { registerViaTelegramIdentity = testTelegramIdentity,
-                    registerViaTelegramExternalAccountId = testExternalAccountId
+                  { identity = testTelegramIdentity,
+                    externalAccountId = testExternalAccountId
                   }
         let result = handleUserCommand user command
 
@@ -208,8 +210,8 @@ registerViaTelegramSpec = describe "RegisterViaTelegram Command" $ do
             length events `shouldBe` 1
             case head events of
               UserRegisteredViaTelegramUserEvent registered -> do
-                userRegisteredViaTelegramIdentity registered `shouldBe` testTelegramIdentity
-                userRegisteredViaTelegramExternalAccountId registered `shouldBe` testExternalAccountId
+                registered.identity `shouldBe` testTelegramIdentity
+                registered.externalAccountId `shouldBe` testExternalAccountId
               _ -> expectationFailure "Expected UserRegisteredViaTelegram event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -218,18 +220,18 @@ registerViaTelegramSpec = describe "RegisterViaTelegram Command" $ do
         let command =
               RegisterViaTelegramUserCommand
                 $ RegisterViaTelegram
-                  { registerViaTelegramIdentity = testTelegramIdentity,
-                    registerViaTelegramExternalAccountId = testExternalAccountId
+                  { identity = testTelegramIdentity,
+                    externalAccountId = testExternalAccountId
                   }
         let result = handleUserCommand user command
 
         case result of
           Right events -> do
             let newUser = applyEvents events
-            newUser ^. userTelegramIdentity `shouldBe` Just testTelegramIdentity
-            newUser ^. userPasswordHash `shouldBe` Nothing -- No password for Telegram users
-            newUser ^. userExternalAccountId `shouldBe` testExternalAccountId
-            newUser ^. userIsRegistered `shouldBe` True
+            newUser ^. #telegramIdentity `shouldBe` Just testTelegramIdentity
+            newUser ^. #passwordHash `shouldBe` Nothing -- No password for Telegram users
+            newUser ^. #externalAccountId `shouldBe` testExternalAccountId
+            newUser ^. #isRegistered `shouldBe` True
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given existing user" $ do
@@ -239,8 +241,8 @@ registerViaTelegramSpec = describe "RegisterViaTelegram Command" $ do
         let command =
               RegisterViaTelegramUserCommand
                 $ RegisterViaTelegram
-                  { registerViaTelegramIdentity = testTelegramIdentity,
-                    registerViaTelegramExternalAccountId = testExternalAccountId
+                  { identity = testTelegramIdentity,
+                    externalAccountId = testExternalAccountId
                   }
         let result = handleUserCommand user command
 
@@ -259,7 +261,7 @@ linkOAuthAccountSpec = describe "LinkOAuthAccount Command" $ do
         let command =
               LinkOAuthAccountUserCommand
                 $ LinkOAuthAccount
-                  { linkOAuthAccountIdentity = testOAuthIdentity
+                  { identity = testOAuthIdentity
                   }
         let result = handleUserCommand user command
 
@@ -268,7 +270,7 @@ linkOAuthAccountSpec = describe "LinkOAuthAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               OAuthAccountLinkedUserEvent linked ->
-                oAuthAccountLinkedIdentity linked `shouldBe` testOAuthIdentity
+                linked.identity `shouldBe` testOAuthIdentity
               _ -> expectationFailure "Expected OAuthAccountLinked event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -277,14 +279,14 @@ linkOAuthAccountSpec = describe "LinkOAuthAccount Command" $ do
         let command =
               LinkOAuthAccountUserCommand
                 $ LinkOAuthAccount
-                  { linkOAuthAccountIdentity = testOAuthIdentity
+                  { identity = testOAuthIdentity
                   }
         let result = handleUserCommand user command
 
         case result of
           Right events -> do
             let updatedUser = latestProjection userProjection (toUserEvents registeredUser <> events)
-            testOAuthIdentity `elem` (updatedUser ^. userOAuthIdentities) `shouldBe` True
+            testOAuthIdentity `elem` (updatedUser ^. #oauthIdentities) `shouldBe` True
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given unregistered user" $ do
@@ -294,7 +296,7 @@ linkOAuthAccountSpec = describe "LinkOAuthAccount Command" $ do
         let command =
               LinkOAuthAccountUserCommand
                 $ LinkOAuthAccount
-                  { linkOAuthAccountIdentity = testOAuthIdentity
+                  { identity = testOAuthIdentity
                   }
         let result = handleUserCommand user command
 
@@ -307,7 +309,7 @@ linkOAuthAccountSpec = describe "LinkOAuthAccount Command" $ do
         let command =
               LinkOAuthAccountUserCommand
                 $ LinkOAuthAccount
-                  { linkOAuthAccountIdentity = testOAuthIdentity -- Same provider (Google)
+                  { identity = testOAuthIdentity -- Same provider (Google)
                   }
         let result = handleUserCommand user command
 
@@ -326,7 +328,7 @@ linkTelegramAccountSpec = describe "LinkTelegramAccount Command" $ do
         let command =
               LinkTelegramAccountUserCommand
                 $ LinkTelegramAccount
-                  { linkTelegramAccountIdentity = testTelegramIdentity
+                  { identity = testTelegramIdentity
                   }
         let result = handleUserCommand user command
 
@@ -335,7 +337,7 @@ linkTelegramAccountSpec = describe "LinkTelegramAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               TelegramAccountLinkedUserEvent linked ->
-                telegramAccountLinkedIdentity linked `shouldBe` testTelegramIdentity
+                linked.identity `shouldBe` testTelegramIdentity
               _ -> expectationFailure "Expected TelegramAccountLinked event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -344,14 +346,14 @@ linkTelegramAccountSpec = describe "LinkTelegramAccount Command" $ do
         let command =
               LinkTelegramAccountUserCommand
                 $ LinkTelegramAccount
-                  { linkTelegramAccountIdentity = testTelegramIdentity
+                  { identity = testTelegramIdentity
                   }
         let result = handleUserCommand user command
 
         case result of
           Right events -> do
             let updatedUser = latestProjection userProjection (toUserEvents registeredUser <> events)
-            updatedUser ^. userTelegramIdentity `shouldBe` Just testTelegramIdentity
+            updatedUser ^. #telegramIdentity `shouldBe` Just testTelegramIdentity
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given unregistered user" $ do
@@ -361,7 +363,7 @@ linkTelegramAccountSpec = describe "LinkTelegramAccount Command" $ do
         let command =
               LinkTelegramAccountUserCommand
                 $ LinkTelegramAccount
-                  { linkTelegramAccountIdentity = testTelegramIdentity
+                  { identity = testTelegramIdentity
                   }
         let result = handleUserCommand user command
 
@@ -373,14 +375,14 @@ linkTelegramAccountSpec = describe "LinkTelegramAccount Command" $ do
         let user = telegramUser
         let differentTelegram =
               TelegramIdentity
-                { telegramId = mockTelegramId 987654321,
-                  telegramUsername = Just "otheruser",
-                  telegramFirstName = "Other"
+                { id = mockTelegramId 987654321,
+                  username = Just "otheruser",
+                  firstName = "Other"
                 }
         let command =
               LinkTelegramAccountUserCommand
                 $ LinkTelegramAccount
-                  { linkTelegramAccountIdentity = differentTelegram
+                  { identity = differentTelegram
                   }
         let result = handleUserCommand user command
 
@@ -399,7 +401,7 @@ unlinkOAuthAccountSpec = describe "UnlinkOAuthAccount Command" $ do
         let command =
               UnlinkOAuthAccountUserCommand
                 $ UnlinkOAuthAccount
-                  { unlinkOAuthAccountIdentity = testOAuthIdentity
+                  { identity = testOAuthIdentity
                   }
         let result = handleUserCommand user command
 
@@ -408,7 +410,7 @@ unlinkOAuthAccountSpec = describe "UnlinkOAuthAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               OAuthAccountUnlinkedUserEvent unlinked ->
-                oAuthAccountUnlinkedIdentity unlinked `shouldBe` testOAuthIdentity
+                unlinked.identity `shouldBe` testOAuthIdentity
               _ -> expectationFailure "Expected OAuthAccountUnlinked event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -417,14 +419,14 @@ unlinkOAuthAccountSpec = describe "UnlinkOAuthAccount Command" $ do
         let command =
               UnlinkOAuthAccountUserCommand
                 $ UnlinkOAuthAccount
-                  { unlinkOAuthAccountIdentity = testOAuthIdentity
+                  { identity = testOAuthIdentity
                   }
         let result = handleUserCommand user command
 
         case result of
           Right events -> do
             let updatedUser = latestProjection userProjection (toUserEvents userWithMultipleLogins <> events)
-            testOAuthIdentity `elem` (updatedUser ^. userOAuthIdentities) `shouldBe` False
+            testOAuthIdentity `elem` (updatedUser ^. #oauthIdentities) `shouldBe` False
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given user with only OAuth login" $ do
@@ -436,9 +438,9 @@ unlinkOAuthAccountSpec = describe "UnlinkOAuthAccount Command" $ do
                 userProjection
                 [ UserRegisteredUserEvent
                     $ UserRegistered
-                      { userRegisteredEmail = "oauth@example.com",
-                        userRegisteredPasswordHash = testPasswordHash,
-                        userRegisteredExternalAccountId = testExternalAccountId
+                      { email = "oauth@example.com",
+                        passwordHash = testPasswordHash,
+                        externalAccountId = testExternalAccountId
                       }
                 ]
         -- This user has password + no OAuth yet, so we need a different test
@@ -467,13 +469,13 @@ unlinkTelegramAccountSpec = describe "UnlinkTelegramAccount Command" $ do
                 userProjection
                 [ UserRegisteredUserEvent
                     $ UserRegistered
-                      { userRegisteredEmail = "both@example.com",
-                        userRegisteredPasswordHash = testPasswordHash,
-                        userRegisteredExternalAccountId = testExternalAccountId
+                      { email = "both@example.com",
+                        passwordHash = testPasswordHash,
+                        externalAccountId = testExternalAccountId
                       },
                   TelegramAccountLinkedUserEvent
                     $ TelegramAccountLinked
-                      { telegramAccountLinkedIdentity = testTelegramIdentity
+                      { identity = testTelegramIdentity
                       }
                 ]
         let command = UnlinkTelegramAccountUserCommand UnlinkTelegramAccount
@@ -518,7 +520,7 @@ changePasswordSpec = describe "ChangePassword Command" $ do
         let command =
               ChangePasswordUserCommand
                 $ ChangePassword
-                  { changePasswordNewHash = testPasswordHash2
+                  { newHash = testPasswordHash2
                   }
         let result = handleUserCommand user command
 
@@ -527,7 +529,7 @@ changePasswordSpec = describe "ChangePassword Command" $ do
             length events `shouldBe` 1
             case head events of
               PasswordChangedUserEvent changed ->
-                passwordChangedNewHash changed `shouldBe` testPasswordHash2
+                changed.newHash `shouldBe` testPasswordHash2
               _ -> expectationFailure "Expected PasswordChanged event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -536,14 +538,14 @@ changePasswordSpec = describe "ChangePassword Command" $ do
         let command =
               ChangePasswordUserCommand
                 $ ChangePassword
-                  { changePasswordNewHash = testPasswordHash2
+                  { newHash = testPasswordHash2
                   }
         let result = handleUserCommand user command
 
         case result of
           Right events -> do
             let updatedUser = latestProjection userProjection (toUserEvents registeredUser <> events)
-            updatedUser ^. userPasswordHash `shouldBe` Just testPasswordHash2
+            updatedUser ^. #passwordHash `shouldBe` Just testPasswordHash2
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given unregistered user" $ do
@@ -553,7 +555,7 @@ changePasswordSpec = describe "ChangePassword Command" $ do
         let command =
               ChangePasswordUserCommand
                 $ ChangePassword
-                  { changePasswordNewHash = testPasswordHash2
+                  { newHash = testPasswordHash2
                   }
         let result = handleUserCommand user command
 
@@ -566,28 +568,28 @@ changePasswordSpec = describe "ChangePassword Command" $ do
 -- | Convert a registered user back to its events for testing projections
 toUserEvents :: User -> [UserEvent]
 toUserEvents user
-  | not (user ^. userIsRegistered) = []
+  | not (user ^. #isRegistered) = []
   | otherwise =
       baseEvent : oauthEvents <> telegramEvent
   where
     baseEvent =
       UserRegisteredUserEvent
         $ UserRegistered
-          { userRegisteredEmail = user ^. userEmail,
-            userRegisteredPasswordHash = fromMaybe testPasswordHash (user ^. userPasswordHash),
-            userRegisteredExternalAccountId = user ^. userExternalAccountId
+          { email = user ^. #email,
+            passwordHash = fromMaybe testPasswordHash (user ^. #passwordHash),
+            externalAccountId = user ^. #externalAccountId
           }
     oauthEvents =
       map
-        ( \identity ->
+        ( \ident ->
             OAuthAccountLinkedUserEvent
-              $ OAuthAccountLinked {oAuthAccountLinkedIdentity = identity}
+              $ OAuthAccountLinked {identity = ident}
         )
-        (user ^. userOAuthIdentities)
+        (user ^. #oauthIdentities)
     telegramEvent =
-      case user ^. userTelegramIdentity of
-        Just identity ->
+      case user ^. #telegramIdentity of
+        Just ident ->
           [ TelegramAccountLinkedUserEvent
-              $ TelegramAccountLinked {telegramAccountLinkedIdentity = identity}
+              $ TelegramAccountLinked {identity = ident}
           ]
         Nothing -> []

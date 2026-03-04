@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
@@ -162,7 +163,7 @@ accountServer =
 -- | Handler for POST /api/accounts - Create a new account.
 createAccountHandler :: AuthenticatedUser -> CreateAccountRequest -> AppM AccountResponse
 createAccountHandler user request = do
-  let userId = authUserId user
+  let userId = user.authUserId
       accountType = RegularAccount
   -- 1. Convert DTO to domain command (Web layer responsibility)
   case toCreateAccountCommand userId accountType request of
@@ -186,7 +187,7 @@ getAccountHandler _user accountUuid = do
 -- | Handler for GET /api/accounts - List accounts accessible to the authenticated user.
 listAccountsHandler :: AuthenticatedUser -> AppM AccountListResponse
 listAccountsHandler user = do
-  let userId = authUserId user
+  let userId = user.authUserId
   accountsList <- AccountService.listAccountsForUser userId
   let responses = map (uncurry fromAccountSummary) accountsList
       totalCount = length responses
@@ -195,7 +196,7 @@ listAccountsHandler user = do
 -- | Handler for POST /api/accounts/:id/share - Share account with another user.
 shareAccountHandler :: AuthenticatedUser -> UUID -> ShareAccountRequest -> AppM NoContent
 shareAccountHandler user accountUuid ShareAccountRequest {..} = do
-  let userId = authUserId user
+  let userId = user.authUserId
   result <- AccountService.shareAccount userId accountUuid shareUserId shareRole
   case result of
     Right () -> return NoContent
@@ -204,7 +205,7 @@ shareAccountHandler user accountUuid ShareAccountRequest {..} = do
 -- | Handler for DELETE /api/accounts/:id/access/:userId - Revoke user's access.
 revokeAccountAccessHandler :: AuthenticatedUser -> UUID -> UUID -> AppM NoContent
 revokeAccountAccessHandler user accountUuid targetUserUuid = do
-  let userId = authUserId user
+  let userId = user.authUserId
   result <- AccountService.revokeAccountAccess userId accountUuid targetUserUuid
   case result of
     Right () -> return NoContent

@@ -27,13 +27,8 @@ module Domain.User.Projection
   ( -- * User Aggregate
     User (..),
 
-    -- * Lens Accessors
-    userEmail,
-    userPasswordHash,
-    userOAuthIdentities,
-    userTelegramIdentity,
-    userExternalAccountId,
-    userIsRegistered,
+    -- * Optics Labels (via OverloadedLabels)
+    -- $labels
 
     -- * Event Sum Type
     UserEvent (..),
@@ -49,21 +44,19 @@ module Domain.User.Projection
   )
 where
 
-import Control.Lens (makeLenses, (%~), (&), (.~))
-import Data.Aeson.TH (deriveJSON)
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
     OAuthIdentity (..),
-    OAuthProvider,
     PasswordHash,
     TelegramIdentity,
     unsafeAccountId,
   )
 import Domain.User.Events
 import Eventium (Projection (..))
-import Eventium.Json (unPrefixLower)
+import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
 import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
@@ -77,12 +70,12 @@ import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOpt
 -- events through the projection.
 --
 -- Fields:
---   - _userEmail: User's email address (primary identifier for web login)
---   - _userPasswordHash: Optional password hash (None for Telegram-only users)
---   - _userOAuthIdentities: List of linked OAuth identities
---   - _userTelegramIdentity: Optional linked Telegram identity
---   - _userExternalAccountId: Reference to auto-created External account
---   - _userIsRegistered: Whether the user has been registered (vs default state)
+--   - email: User's email address (primary identifier for web login)
+--   - passwordHash: Optional password hash (None for Telegram-only users)
+--   - oauthIdentities: List of linked OAuth identities
+--   - telegramIdentity: Optional linked Telegram identity
+--   - externalAccountId: Reference to auto-created External account
+--   - isRegistered: Whether the user has been registered (vs default state)
 --
 -- Invariants:
 --   - User must have at least one login method (password, OAuth, or Telegram)
@@ -92,29 +85,29 @@ import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOpt
 --
 -- Example:
 -- >>> let user = User "user@example.com" (Just hash) [] Nothing extAccId True
--- >>> user ^. userEmail
+-- >>> user ^. #email
 -- "user@example.com"
 data User = User
   { -- | User's email address (primary identifier for web login)
-    _userEmail :: Text,
+    email :: Text,
     -- | Optional password hash (Argon2)
-    _userPasswordHash :: Maybe PasswordHash,
+    passwordHash :: Maybe PasswordHash,
     -- | List of linked OAuth identities
-    _userOAuthIdentities :: [OAuthIdentity],
+    oauthIdentities :: [OAuthIdentity],
     -- | Optional linked Telegram identity
-    _userTelegramIdentity :: Maybe TelegramIdentity,
+    telegramIdentity :: Maybe TelegramIdentity,
     -- | Reference to auto-created External account
-    _userExternalAccountId :: AccountId,
+    externalAccountId :: AccountId,
     -- | Whether this user has been registered
-    _userIsRegistered :: Bool
+    isRegistered :: Bool
   }
   deriving (Show, Eq)
 
--- Generate lens accessors for User fields
-makeLenses ''User
+-- Generate optics labels for User fields (accessed via #fieldName)
+makeFieldLabelsNoPrefix ''User
 
--- Derive JSON instances for User
-deriveJSON (unPrefixLower "_user") ''User
+-- Derive JSON instances for User (fields already unprefixed)
+deriveJSON defaultOptions ''User
 
 -- | Default initial state for a User aggregate.
 --
@@ -126,17 +119,17 @@ deriveJSON (unPrefixLower "_user") ''User
 userDefault :: User
 userDefault =
   User
-    { _userEmail = "",
-      _userPasswordHash = Nothing,
-      _userOAuthIdentities = [],
-      _userTelegramIdentity = Nothing,
-      _userExternalAccountId = unsafeAccountId UUID.nil,
-      _userIsRegistered = False
+    { email = "",
+      passwordHash = Nothing,
+      oauthIdentities = [],
+      telegramIdentity = Nothing,
+      externalAccountId = unsafeAccountId UUID.nil,
+      isRegistered = False
     }
 
 -- | Check if user has a password set.
 hasPassword :: User -> Bool
-hasPassword user = case _userPasswordHash user of
+hasPassword user = case user ^. #passwordHash of
   Just _ -> True
   Nothing -> False
 
@@ -157,8 +150,8 @@ loginMethodCount user =
   passwordCount + oauthCount + telegramCount
   where
     passwordCount = if hasPassword user then 1 else 0
-    oauthCount = length (_userOAuthIdentities user)
-    telegramCount = case _userTelegramIdentity user of
+    oauthCount = length (user ^. #oauthIdentities)
+    telegramCount = case user ^. #telegramIdentity of
       Just _ -> 1
       Nothing -> 0
 
@@ -209,43 +202,55 @@ deriving instance Eq UserEvent
 --   - TelegramAccountUnlinked: Clear Telegram identity
 --   - PasswordChanged: Update password hash
 handleUserEvent :: User -> UserEvent -> User
-handleUserEvent user (UserRegisteredUserEvent UserRegistered {..}) =
+handleUserEvent user (UserRegisteredUserEvent evt) =
   -- Initialize a new user with email and password
   user
-    & userEmail .~ userRegisteredEmail
-    & userPasswordHash .~ Just userRegisteredPasswordHash
-    & userExternalAccountId .~ userRegisteredExternalAccountId
-    & userIsRegistered .~ True
-handleUserEvent user (UserRegisteredViaTelegramUserEvent UserRegisteredViaTelegram {..}) =
+    & #email
+    .~ evt.email
+    & #passwordHash
+    .~ Just evt.passwordHash
+    & #externalAccountId
+    .~ evt.externalAccountId
+    & #isRegistered
+    .~ True
+handleUserEvent user (UserRegisteredViaTelegramUserEvent evt) =
   -- Initialize a new user with Telegram identity (no password)
   user
-    & userTelegramIdentity .~ Just userRegisteredViaTelegramIdentity
-    & userExternalAccountId .~ userRegisteredViaTelegramExternalAccountId
-    & userIsRegistered .~ True
-handleUserEvent user (OAuthAccountLinkedUserEvent OAuthAccountLinked {..}) =
+    & #telegramIdentity
+    .~ Just evt.identity
+    & #externalAccountId
+    .~ evt.externalAccountId
+    & #isRegistered
+    .~ True
+handleUserEvent user (OAuthAccountLinkedUserEvent evt) =
   -- Add OAuth identity to the list
   user
-    & userOAuthIdentities %~ (oAuthAccountLinkedIdentity :)
-handleUserEvent user (TelegramAccountLinkedUserEvent TelegramAccountLinked {..}) =
+    & #oauthIdentities
+    %~ (evt.identity :)
+handleUserEvent user (TelegramAccountLinkedUserEvent evt) =
   -- Set Telegram identity
   user
-    & userTelegramIdentity .~ Just telegramAccountLinkedIdentity
-handleUserEvent user (OAuthAccountUnlinkedUserEvent OAuthAccountUnlinked {..}) =
+    & #telegramIdentity
+    .~ Just evt.identity
+handleUserEvent user (OAuthAccountUnlinkedUserEvent evt) =
   -- Remove OAuth identity from the list
   user
-    & userOAuthIdentities %~ filter (not . matchesOAuth oAuthAccountUnlinkedIdentity)
+    & #oauthIdentities
+    %~ filter (not . matchesOAuth evt.identity)
   where
-    matchesOAuth target identity =
-      oauthProvider target == oauthProvider identity
-        && oauthSubject target == oauthSubject identity
+    matchesOAuth target ident =
+      target.provider == ident.provider
+        && target.subject == ident.subject
 handleUserEvent user (TelegramAccountUnlinkedUserEvent TelegramAccountUnlinked) =
   -- Clear Telegram identity
   user
-    & userTelegramIdentity .~ Nothing
-handleUserEvent user (PasswordChangedUserEvent PasswordChanged {..}) =
+    & #telegramIdentity
+    .~ Nothing
+handleUserEvent user (PasswordChangedUserEvent evt) =
   -- Update password hash
   user
-    & userPasswordHash .~ Just passwordChangedNewHash
+    & #passwordHash
+    .~ Just evt.newHash
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition
@@ -265,7 +270,7 @@ handleUserEvent user (PasswordChangedUserEvent PasswordChanged {..}) =
 -- Usage with eventium:
 -- >>> let events = [UserRegisteredUserEvent (UserRegistered "test@example.com" hash extId)]
 -- >>> latestProjection userProjection events
--- User {_userEmail = "test@example.com", ...}
+-- User {email = "test@example.com", ...}
 --
 -- Mathematical Properties:
 --   - Identity: latestProjection p [] == projectionSeed p

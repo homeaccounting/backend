@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -19,7 +20,7 @@
 --
 -- Application startup:
 -- >>> appConfig <- loadConfigWithEnv "config/local.yaml"
--- >>> let dbConfig = convertDatabaseConfig (appDatabase appConfig)
+-- >>> let dbConfig = convertDatabaseConfig appConfig.database
 -- >>> pool <- createConnectionPool dbConfig
 -- >>> initializeDatabase pool
 -- >>> -- Database ready to use
@@ -110,35 +111,35 @@ import qualified Infrastructure.Config as Config
 -- the connection pool.
 --
 -- Fields:
---  - dbHost: PostgreSQL host (e.g., "localhost")
---  - dbPort: PostgreSQL port (usually 5432)
---  - dbName: Database name
---  - dbUser: Database user
---  - dbPassword: Database password
---  - dbPoolSize: Connection pool size
+--  - host: PostgreSQL host (e.g., "localhost")
+--  - port: PostgreSQL port (usually 5432)
+--  - name: Database name
+--  - user: Database user
+--  - password: Database password
+--  - poolSize: Connection pool size
 --
 -- Example:
 -- >>> let config = DatabaseConfig
--- >>>       { dbHost = "localhost"
--- >>>       , dbPort = 5432
--- >>>       , dbName = "accounting"
--- >>>       , dbUser = "postgres"
--- >>>       , dbPassword = "postgres"
--- >>>       , dbPoolSize = 10
+-- >>>       { host = "localhost"
+-- >>>       , port = 5432
+-- >>>       , name = "accounting"
+-- >>>       , user = "postgres"
+-- >>>       , password = "postgres"
+-- >>>       , poolSize = 10
 -- >>>       }
 data DatabaseConfig = DatabaseConfig
   { -- | PostgreSQL host
-    dbHost :: Text,
+    host :: Text,
     -- | PostgreSQL port
-    dbPort :: Int,
+    port :: Int,
     -- | Database name
-    dbName :: Text,
+    name :: Text,
     -- | Database user
-    dbUser :: Text,
+    user :: Text,
     -- | Database password
-    dbPassword :: Text,
+    password :: Text,
     -- | Connection pool size (recommended: numCores * 2)
-    dbPoolSize :: Int
+    poolSize :: Int
   }
   deriving (Show, Eq)
 
@@ -157,12 +158,12 @@ data DatabaseConfig = DatabaseConfig
 defaultDatabaseConfig :: DatabaseConfig
 defaultDatabaseConfig =
   DatabaseConfig
-    { dbHost = "localhost",
-      dbPort = 5432,
-      dbName = "accounting",
-      dbUser = "postgres",
-      dbPassword = "postgres",
-      dbPoolSize = 10
+    { host = "localhost",
+      port = 5432,
+      name = "accounting",
+      user = "postgres",
+      password = "postgres",
+      poolSize = 10
     }
 
 -- | Convert from Config.DatabaseConfig to Database.DatabaseConfig.
@@ -176,17 +177,17 @@ defaultDatabaseConfig =
 --
 -- Usage:
 -- >>> config <- loadConfig "config/local.yaml"
--- >>> let dbConfig = convertDatabaseConfig (appDatabase config)
+-- >>> let dbConfig = convertDatabaseConfig config.database
 -- >>> pool <- createConnectionPool dbConfig
 convertDatabaseConfig :: Config.DatabaseConfig -> DatabaseConfig
 convertDatabaseConfig cfgDb =
   DatabaseConfig
-    { dbHost = Config.dbHost cfgDb,
-      dbPort = Config.dbPort cfgDb,
-      dbName = Config.dbDatabase cfgDb, -- Note: dbDatabase -> dbName
-      dbUser = Config.dbUser cfgDb,
-      dbPassword = Config.dbPassword cfgDb,
-      dbPoolSize = Config.dbPoolSize cfgDb
+    { host = cfgDb.host,
+      port = cfgDb.port,
+      name = cfgDb.database,
+      user = cfgDb.user,
+      password = cfgDb.password,
+      poolSize = cfgDb.poolSize
     }
 
 -- -----------------------------------------------------------------------------
@@ -203,15 +204,15 @@ convertDatabaseConfig cfgDb =
 buildConnectionString :: DatabaseConfig -> ConnectionString
 buildConnectionString DatabaseConfig {..} =
   "host="
-    <> TE.encodeUtf8 dbHost
+    <> TE.encodeUtf8 host
     <> " port="
-    <> TE.encodeUtf8 (T.pack $ show dbPort)
+    <> TE.encodeUtf8 (T.pack $ show port)
     <> " dbname="
-    <> TE.encodeUtf8 dbName
+    <> TE.encodeUtf8 name
     <> " user="
-    <> TE.encodeUtf8 dbUser
+    <> TE.encodeUtf8 user
     <> " password="
-    <> TE.encodeUtf8 dbPassword
+    <> TE.encodeUtf8 password
 
 -- -----------------------------------------------------------------------------
 -- Connection Pool Management
@@ -238,11 +239,11 @@ buildConnectionString DatabaseConfig {..} =
 createConnectionPool :: DatabaseConfig -> IO ConnectionPool
 createConnectionPool config = do
   let connString = buildConnectionString config
-      poolSize = dbPoolSize config
+      poolSizeValue = config.poolSize
 
   -- Create pool with logging (shows SQL in development)
   -- Use runNoLoggingT for production to disable SQL logging
-  runStdoutLoggingT $ createPostgresqlPool connString poolSize
+  runStdoutLoggingT $ createPostgresqlPool connString poolSizeValue
 
 -- | Create a PostgreSQL connection pool without logging.
 --
@@ -254,8 +255,8 @@ createConnectionPool config = do
 createConnectionPoolNoLogging :: DatabaseConfig -> IO ConnectionPool
 createConnectionPoolNoLogging config = do
   let connString = buildConnectionString config
-      poolSize = dbPoolSize config
-  runNoLoggingT $ createPostgresqlPool connString poolSize
+      poolSizeValue = config.poolSize
+  runNoLoggingT $ createPostgresqlPool connString poolSizeValue
 
 -- -----------------------------------------------------------------------------
 -- Database Operations

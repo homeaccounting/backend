@@ -45,10 +45,10 @@ testUserId2 = mockUserId testUserUuid2
 validCreateAccount :: CreateAccount
 validCreateAccount =
   CreateAccount
-    { createAccountName = "Savings",
-      createAccountInitialBalance = mockMoney 1000,
-      createAccountCreatedBy = testUserId1,
-      createAccountType = RegularAccount
+    { name = "Savings",
+      initialBalance = mockMoney 1000,
+      createdBy = testUserId1,
+      accountType = RegularAccount
     }
 
 -- | Helper to create an account and extract the AccountId.
@@ -71,26 +71,26 @@ spec = describe "AccountService" $ do
       result <- runAppM env $ createAccount validCreateAccount
       shouldBeRight result
       let (_, summary) = fromRight' result
-      accountSummaryDataName summary `shouldBe` "Savings"
-      accountSummaryDataBalance summary `shouldBe` mockMoney 1000
-      accountSummaryDataCreatedBy summary `shouldBe` testUserId1
-      accountSummaryDataType summary `shouldBe` RegularAccount
+      summary.name `shouldBe` "Savings"
+      summary.balance `shouldBe` mockMoney 1000
+      summary.createdBy `shouldBe` testUserId1
+      summary.accountType `shouldBe` RegularAccount
 
     it "creates an account with zero initial balance" $ do
       env <- createTestAppEnv
-      let cmd = validCreateAccount {createAccountInitialBalance = mockMoney 0}
+      let cmd = validCreateAccount {initialBalance = mockMoney 0}
       result <- runAppM env $ createAccount cmd
       shouldBeRight result
       let (_, summary) = fromRight' result
-      accountSummaryDataBalance summary `shouldBe` mockMoney 0
+      summary.balance `shouldBe` mockMoney 0
 
     it "creates an External account" $ do
       env <- createTestAppEnv
-      let cmd = validCreateAccount {createAccountType = ExternalAccount}
+      let cmd = (validCreateAccount :: CreateAccount) {accountType = ExternalAccount}
       result <- runAppM env $ createAccount cmd
       shouldBeRight result
       let (_, summary) = fromRight' result
-      accountSummaryDataType summary `shouldBe` ExternalAccount
+      summary.accountType `shouldBe` ExternalAccount
 
   describe "getAccount" $ do
     it "retrieves a previously created account" $ do
@@ -99,7 +99,7 @@ spec = describe "AccountService" $ do
       shouldBeRight result
       let (retId, summary) = fromRight' result
       retId `shouldBe` accountId
-      accountSummaryDataName summary `shouldBe` "Savings"
+      summary.name `shouldBe` "Savings"
 
     it "returns NotFound for non-existent account" $ do
       env <- createTestAppEnv
@@ -121,7 +121,7 @@ spec = describe "AccountService" $ do
       env <- createTestAppEnv
       _ <- runAppM env $ do
         _ <- createAccount validCreateAccount
-        createAccount validCreateAccount {createAccountName = "Checking"}
+        createAccount validCreateAccount {name = "Checking"}
       result <- runAppM env $ listAccountsForUser testUserId1
       length result `shouldBe` 2
 
@@ -131,8 +131,8 @@ spec = describe "AccountService" $ do
         _ <- createAccount validCreateAccount
         createAccount
           validCreateAccount
-            { createAccountName = "Other User Account",
-              createAccountCreatedBy = testUserId2
+            { name = "Other User Account",
+              createdBy = testUserId2
             }
       user1Accounts <- runAppM env $ listAccountsForUser testUserId1
       user2Accounts <- runAppM env $ listAccountsForUser testUserId2
@@ -161,7 +161,7 @@ spec = describe "AccountService" $ do
         Right _ -> expectationFailure "Expected Left"
 
     it "rejects sharing External accounts" $ do
-      let externalCmd = validCreateAccount {createAccountType = ExternalAccount}
+      let externalCmd = (validCreateAccount :: CreateAccount) {accountType = ExternalAccount}
       (env, accountId) <- createTestAccount externalCmd
       result <- runAppM env $ shareAccount testUserId1 (unAccountId accountId) testUserUuid2 "editor"
       shouldBeLeft result

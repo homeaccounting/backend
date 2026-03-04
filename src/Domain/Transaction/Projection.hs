@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -32,13 +31,8 @@ module Domain.Transaction.Projection
     -- * Transaction Status
     TransactionStatus (..),
 
-    -- * Lens Accessors
-    transactionFromAccountId,
-    transactionToAccountId,
-    transactionAmount,
-    transactionReason,
-    transactionStatus,
-    transactionInitiatedBy,
+    -- * Optics Labels (via OverloadedLabels)
+    -- $labels
 
     -- * Event Sum Type
     TransactionEvent (..),
@@ -51,16 +45,15 @@ module Domain.Transaction.Projection
   )
 where
 
-import Control.Lens (makeLenses, (&), (.~), (^.))
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Aeson.TH (deriveJSON)
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Data.UUID (nil)
 import Domain.Core.Types (AccountId, Money, UserId, mkAccountId, mkMoney, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import GHC.Generics (Generic)
-import Eventium.Json (unPrefixLower)
+import Optics (makeFieldLabelsNoPrefix, (&), (.~), (^.))
 import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
@@ -105,12 +98,12 @@ instance FromJSON TransactionStatus
 -- applying events through the projection.
 --
 -- Fields:
---   - _transactionFromAccountId: Source account for the transfer
---   - _transactionToAccountId: Destination account for the transfer
---   - _transactionAmount: Amount being transferred
---   - _transactionReason: Description/reason for the transfer
---   - _transactionStatus: Current status (Pending, Completed, Failed)
---   - _transactionInitiatedBy: User who initiated the transfer (for audit trail)
+--   - fromAccountId: Source account for the transfer
+--   - toAccountId: Destination account for the transfer
+--   - amount: Amount being transferred
+--   - reason: Description/reason for the transfer
+--   - status: Current status (Pending, Completed, Failed)
+--   - initiatedBy: User who initiated the transfer (for audit trail)
 --
 -- Invariants:
 --   - Amount is always non-negative (enforced by Money type)
@@ -124,29 +117,29 @@ instance FromJSON TransactionStatus
 --
 -- Example:
 -- >>> let tx = Transaction sourceId targetId (Money 500.0) "Rent" Pending userId
--- >>> tx ^. transactionStatus
+-- >>> tx ^. #status
 -- Pending
 data Transaction = Transaction
   { -- | Account from which money is being debited
-    _transactionFromAccountId :: AccountId,
+    fromAccountId :: AccountId,
     -- | Account to which money is being credited
-    _transactionToAccountId :: AccountId,
+    toAccountId :: AccountId,
     -- | Amount of money being transferred
-    _transactionAmount :: Money,
+    amount :: Money,
     -- | Reason or description for the transfer
-    _transactionReason :: Text,
+    reason :: Text,
     -- | Current status of the transaction
-    _transactionStatus :: TransactionStatus,
+    status :: TransactionStatus,
     -- | User who initiated the transfer
-    _transactionInitiatedBy :: UserId
+    initiatedBy :: UserId
   }
   deriving (Show, Eq)
 
--- Generate lens accessors for Transaction fields
-makeLenses ''Transaction
+-- Generate optics labels for Transaction fields (accessed via #fieldName)
+makeFieldLabelsNoPrefix ''Transaction
 
--- Derive JSON instances for Transaction
-deriveJSON (unPrefixLower "_transaction") ''Transaction
+-- Derive JSON instances for Transaction (fields already unprefixed)
+deriveJSON defaultOptions ''Transaction
 
 -- | Default initial state for a Transaction aggregate.
 --
@@ -164,18 +157,18 @@ deriveJSON (unPrefixLower "_transaction") ''Transaction
 transactionDefault :: Transaction
 transactionDefault =
   Transaction
-    { _transactionFromAccountId = case mkAccountId nil of
+    { fromAccountId = case mkAccountId nil of
         Right aid -> aid
         Left _ -> error "transactionDefault: mkAccountId should never fail for nil UUID",
-      _transactionToAccountId = case mkAccountId nil of
+      toAccountId = case mkAccountId nil of
         Right aid -> aid
         Left _ -> error "transactionDefault: mkAccountId should never fail for nil UUID",
-      _transactionAmount = case mkMoney 0 of
+      amount = case mkMoney 0 of
         Right m -> m
         Left _ -> error "transactionDefault: mkMoney 0 should never fail",
-      _transactionReason = "",
-      _transactionStatus = Pending,
-      _transactionInitiatedBy = unsafeUserId nil
+      reason = "",
+      status = Pending,
+      initiatedBy = unsafeUserId nil
     }
 
 -- -----------------------------------------------------------------------------
@@ -233,26 +226,32 @@ deriving instance Eq TransactionEvent
 -- represent invalid state transitions (e.g., completing an already completed
 -- transaction). In such cases, the state remains unchanged (idempotent).
 handleTransactionEvent :: Transaction -> TransactionEvent -> Transaction
-handleTransactionEvent transaction (TransferInitiatedTransactionEvent TransferInitiated {..}) =
+handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
   -- Initialize a new transaction with transfer details
   transaction
-    & transactionFromAccountId .~ transferInitiatedFromAccountId
-    & transactionToAccountId .~ transferInitiatedToAccountId
-    & transactionAmount .~ transferInitiatedAmount
-    & transactionReason .~ transferInitiatedReason
-    & transactionStatus .~ Pending
-    & transactionInitiatedBy .~ transferInitiatedBy
+    & #fromAccountId
+    .~ evt.fromAccountId
+    & #toAccountId
+    .~ evt.toAccountId
+    & #amount
+    .~ evt.amount
+    & #reason
+    .~ evt.reason
+    & #status
+    .~ Pending
+    & #initiatedBy
+    .~ evt.by
 handleTransactionEvent transaction (TransferCompletedTransactionEvent TransferCompleted) =
   -- Mark transaction as completed
   -- Only update if currently Pending (idempotent for other states)
-  case transaction ^. transactionStatus of
-    Pending -> transaction & transactionStatus .~ Completed
+  case transaction ^. #status of
+    Pending -> transaction & #status .~ Completed
     _ -> transaction -- Already in terminal state, no change
-handleTransactionEvent transaction (TransferFailedTransactionEvent TransferFailed {..}) =
+handleTransactionEvent transaction (TransferFailedTransactionEvent evt) =
   -- Mark transaction as failed with reason
   -- Only update if currently Pending (idempotent for other states)
-  case transaction ^. transactionStatus of
-    Pending -> transaction & transactionStatus .~ Failed transferFailedReason
+  case transaction ^. #status of
+    Pending -> transaction & #status .~ Failed evt.reason
     _ -> transaction -- Already in terminal state, no change
 
 -- -----------------------------------------------------------------------------
@@ -274,7 +273,7 @@ handleTransactionEvent transaction (TransferFailedTransactionEvent TransferFaile
 -- Usage with eventium:
 -- >>> let events = [TransferInitiatedTransactionEvent (TransferInitiated sourceId targetId (Money 500.0) "Rent")]
 -- >>> latestProjection transactionProjection events
--- Transaction {_transactionFromAccountId = sourceId, ..., _transactionStatus = Pending}
+-- Transaction {fromAccountId = sourceId, ..., status = Pending}
 --
 -- Mathematical Properties:
 --  - Identity: latestProjection p [] == projectionSeed p

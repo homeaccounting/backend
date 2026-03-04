@@ -38,12 +38,12 @@ testUserId1 :: UserId
 testUserId1 = mockUserId testUserUuid1
 
 mkCreateAccount :: Text -> UserId -> AccountType -> CreateAccount
-mkCreateAccount name userId accType =
+mkCreateAccount acctName userId accType =
   CreateAccount
-    { createAccountName = name,
-      createAccountInitialBalance = mockMoney 5000,
-      createAccountCreatedBy = userId,
-      createAccountType = accType
+    { name = acctName,
+      initialBalance = mockMoney 5000,
+      createdBy = userId,
+      accountType = accType
     }
 
 -- | Helper to create two accounts and return their IDs for transfer tests.
@@ -69,30 +69,30 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let transferCmd =
             InitiateTransfer
-              { initiateTransferFromAccountId = fromAccId,
-                initiateTransferToAccountId = toAccId,
-                initiateTransferAmount = mockMoney 100,
-                initiateTransferReason = "Test transfer",
-                initiateTransferBy = testUserId1
+              { fromAccountId = fromAccId,
+                toAccountId = toAccId,
+                amount = mockMoney 100,
+                reason = "Test transfer",
+                initiatedBy = testUserId1
               }
       result <- runAppM env $ initiateTransfer transferCmd
       shouldBeRight result
       let (_, summary) = fromRight' result
-      transactionSummaryDataFromAccountId summary `shouldBe` fromAccId
-      transactionSummaryDataToAccountId summary `shouldBe` toAccId
-      transactionSummaryDataAmount summary `shouldBe` mockMoney 100
-      transactionSummaryDataReason summary `shouldBe` "Test transfer"
+      summary.fromAccountId `shouldBe` fromAccId
+      summary.toAccountId `shouldBe` toAccId
+      summary.amount `shouldBe` mockMoney 100
+      summary.reason `shouldBe` "Test transfer"
 
   describe "getTransaction" $ do
     it "retrieves a previously created transaction" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let transferCmd =
             InitiateTransfer
-              { initiateTransferFromAccountId = fromAccId,
-                initiateTransferToAccountId = toAccId,
-                initiateTransferAmount = mockMoney 250,
-                initiateTransferReason = "Retrieve test",
-                initiateTransferBy = testUserId1
+              { fromAccountId = fromAccId,
+                toAccountId = toAccId,
+                amount = mockMoney 250,
+                reason = "Retrieve test",
+                initiatedBy = testUserId1
               }
       createResult <- runAppM env $ initiateTransfer transferCmd
       let (txId, _) = fromRight' createResult
@@ -100,8 +100,8 @@ spec = describe "TransactionService" $ do
       shouldBeRight result
       let (retId, summary) = fromRight' result
       retId `shouldBe` txId
-      transactionSummaryDataAmount summary `shouldBe` mockMoney 250
-      transactionSummaryDataReason summary `shouldBe` "Retrieve test"
+      summary.amount `shouldBe` mockMoney 250
+      summary.reason `shouldBe` "Retrieve test"
 
     it "returns NotFound for non-existent transaction" $ do
       env <- createTestAppEnv
@@ -115,13 +115,13 @@ spec = describe "TransactionService" $ do
 
     it "initiates multiple transfers and retrieves each" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
-      let mkTransferCmd amt reason =
+      let mkTransferCmd amt rsn =
             InitiateTransfer
-              { initiateTransferFromAccountId = fromAccId,
-                initiateTransferToAccountId = toAccId,
-                initiateTransferAmount = mockMoney amt,
-                initiateTransferReason = reason,
-                initiateTransferBy = testUserId1
+              { fromAccountId = fromAccId,
+                toAccountId = toAccId,
+                amount = mockMoney amt,
+                reason = rsn,
+                initiatedBy = testUserId1
               }
       result1 <- runAppM env $ initiateTransfer (mkTransferCmd 100 "First")
       result2 <- runAppM env $ initiateTransfer (mkTransferCmd 200 "Second")
@@ -136,5 +136,5 @@ spec = describe "TransactionService" $ do
 
       let (_, s1) = fromRight' getResult1
       let (_, s2) = fromRight' getResult2
-      transactionSummaryDataReason s1 `shouldBe` "First"
-      transactionSummaryDataReason s2 `shouldBe` "Second"
+      s1.reason `shouldBe` "First"
+      s2.reason `shouldBe` "Second"

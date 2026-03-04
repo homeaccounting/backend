@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -12,7 +14,6 @@
 module Application.ProcessManagers.TransferManagerPropertySpec (spec) where
 
 import Application.ProcessManagers.TransferManager
-import qualified Control.Lens as Lens
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Account.Events
@@ -29,7 +30,8 @@ import Domain.Core.Types
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransferInitiated (..))
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
-import RIO hiding (view)
+import Optics ((^.))
+import RIO hiding (view, (^.))
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
@@ -60,7 +62,7 @@ genTransferInitiatedEvent = do
   sourceId <- genUUID
   targetId <- genUUID `suchThat` (/= sourceId)
   userId <- genUUID
-  amount <- genPositiveAmount
+  amt <- genPositiveAmount
   pure
     ( txId,
       StreamEvent
@@ -69,11 +71,11 @@ genTransferInitiatedEvent = do
         (emptyMetadata "")
         ( TransferInitiatedEvent
             TransferInitiated
-              { transferInitiatedFromAccountId = unsafeAccountId sourceId,
-                transferInitiatedToAccountId = unsafeAccountId targetId,
-                transferInitiatedAmount = unsafeMoney amount,
-                transferInitiatedReason = "Property test transfer",
-                transferInitiatedBy = unsafeUserId userId
+              { fromAccountId = unsafeAccountId sourceId,
+                toAccountId = unsafeAccountId targetId,
+                amount = unsafeMoney amt,
+                reason = "Property test transfer",
+                by = unsafeUserId userId
               }
         )
     )
@@ -82,14 +84,14 @@ genTransferInitiatedEvent = do
 genAccountDebitedFor :: UUID.UUID -> TransferData -> VersionedStreamEvent AccountingEvent
 genAccountDebitedFor txId td =
   StreamEvent
-    (Domain.Core.Types.unAccountId $ transferDataSourceAccount td)
+    (Domain.Core.Types.unAccountId td.sourceAccount)
     1
     (emptyMetadata "")
     ( AccountDebitedEvent
         AccountDebited
-          { accountDebitedAmount = transferDataAmount td,
-            accountDebitedTransactionId = unsafeTransactionId txId,
-            accountDebitedReason = transferDataReason td
+          { amount = td.amount,
+            transactionId = unsafeTransactionId txId,
+            reason = td.reason
           }
     )
 
@@ -97,14 +99,14 @@ genAccountDebitedFor txId td =
 genAccountCreditedFor :: UUID.UUID -> TransferData -> VersionedStreamEvent AccountingEvent
 genAccountCreditedFor txId td =
   StreamEvent
-    (Domain.Core.Types.unAccountId $ transferDataTargetAccount td)
+    (Domain.Core.Types.unAccountId td.targetAccount)
     1
     (emptyMetadata "")
     ( AccountCreditedEvent
         AccountCredited
-          { accountCreditedAmount = transferDataAmount td,
-            accountCreditedTransactionId = unsafeTransactionId txId,
-            accountCreditedReason = transferDataReason td
+          { amount = td.amount,
+            transactionId = unsafeTransactionId txId,
+            reason = td.reason
           }
     )
 
@@ -133,8 +135,8 @@ spec = describe "TransferManager Properties" $ do
       $ \(_, event) ->
         let state1 = handleTransferEvent emptyManager event
             state2 = handleTransferEvent emptyManager event
-         in Map.size (Lens.view transferManagerTransfers state1)
-              === Map.size (Lens.view transferManagerTransfers state2)
+         in Map.size (state1 ^. #transfers)
+              === Map.size (state2 ^. #transfers)
 
   describe "Idempotency" $ do
     prop "duplicate TransferInitiated does not double-issue"
@@ -151,7 +153,7 @@ spec = describe "TransferManager Properties" $ do
       $ \(_, event) ->
         let state1 = handleTransferEvent emptyManager event
             state2 = handleTransferEvent state1 event
-         in Map.size (Lens.view transferManagerTransfers state2) === 1
+         in Map.size (state2 ^. #transfers) === 1
 
   describe "State Invariants" $ do
     prop "completed transfers are removed from tracking"
@@ -159,14 +161,14 @@ spec = describe "TransferManager Properties" $ do
       $ \(txId, initEvent) ->
         let stateAfterInit = handleTransferEvent emptyManager initEvent
             txIdTyped = unsafeTransactionId txId
-         in case Map.lookup txIdTyped (Lens.view transferManagerTransfers stateAfterInit) of
+         in case Map.lookup txIdTyped (stateAfterInit ^. #transfers) of
               Nothing -> discard -- Shouldn't happen with valid UUIDs
               Just td ->
                 let debitedEvent = genAccountDebitedFor txId td
                     creditedEvent = genAccountCreditedFor txId td
                     stateAfterDebit = handleTransferEvent stateAfterInit debitedEvent
                     stateAfterCredit = handleTransferEvent stateAfterDebit creditedEvent
-                 in Map.size (Lens.view transferManagerTransfers stateAfterCredit) === 0
+                 in Map.size (stateAfterCredit ^. #transfers) === 0
 
     prop "DebitAccount effect always targets source account UUID"
       $ forAll genTransferInitiatedEvent
@@ -176,7 +178,7 @@ spec = describe "TransferManager Properties" $ do
          in case effects of
               [IssueCommandWithCompensation targetId _ _] ->
                 let StreamEvent _ _ _ (TransferInitiatedEvent ti) = initEvent
-                 in targetId === Domain.Core.Types.unAccountId (transferInitiatedFromAccountId ti)
+                 in targetId === Domain.Core.Types.unAccountId ti.fromAccountId
               _ -> discard
 
     prop "compensation always produces exactly one effect"

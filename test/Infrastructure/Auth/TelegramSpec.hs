@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- |
@@ -15,25 +16,25 @@ import Test.Hspec
 testConfig :: TelegramConfig
 testConfig =
   TelegramConfig
-    { telegramBotToken = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
-      telegramBotUsername = "test_bot",
-      telegramAuthMaxAge = 86400, -- 24 hours
-      telegramWebhookUrl = Nothing,
-      telegramUsePolling = True,
-      telegramPollingTimeout = 30
+    { botToken = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+      botUsername = "test_bot",
+      authMaxAge = 86400, -- 24 hours
+      webhookUrl = Nothing,
+      usePolling = True,
+      pollingTimeout = 30
     }
 
 -- Helper to create auth data
 mkAuthData :: Int64 -> Text -> Int64 -> Text -> TelegramAuthData
-mkAuthData tgId firstName authDate hash =
+mkAuthData tgId firstName' authDate' hash' =
   TelegramAuthData
-    { telegramAuthId = tgId,
-      telegramAuthFirstName = firstName,
-      telegramAuthLastName = Nothing,
-      telegramAuthUsername = Nothing,
-      telegramAuthPhotoUrl = Nothing,
-      telegramAuthDate = authDate,
-      telegramAuthHash = hash
+    { id = tgId,
+      firstName = firstName',
+      lastName = Nothing,
+      username = Nothing,
+      photoUrl = Nothing,
+      authDate = authDate',
+      hash = hash'
     }
 
 spec :: Spec
@@ -63,7 +64,7 @@ spec = describe "Telegram Authentication" $ do
 
   describe "TelegramConfig" $ do
     it "has correct default max age of 24 hours" $ do
-      telegramAuthMaxAge testConfig `shouldBe` 86400
+      testConfig.authMaxAge `shouldBe` 86400
 
     it "has correct default polling timeout of 30 seconds" $ do
-      telegramPollingTimeout testConfig `shouldBe` 30
+      testConfig.pollingTimeout `shouldBe` 30

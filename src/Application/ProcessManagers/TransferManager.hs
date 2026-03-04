@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -47,13 +49,9 @@ module Application.ProcessManagers.TransferManager
     -- * Internal (exported for testing)
     handleTransferEvent,
     reactToTransferEvent,
-
-    -- * Lens Accessors
-    transferManagerTransfers,
   )
 where
 
-import Control.Lens (at, makeLenses, (%~), (&), (?~), (^.))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -68,7 +66,8 @@ import Eventium
     UUID,
     VersionedStreamEvent,
   )
-import Eventium.TypeEmbedding (embed)
+import Eventium.TypeEmbedding (TypeEmbedding (..))
+import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
 
 -- -----------------------------------------------------------------------------
 -- Transfer Manager State
@@ -80,7 +79,7 @@ import Eventium.TypeEmbedding (embed)
 -- For each transfer, it tracks the source and target accounts to coordinate the saga.
 data TransferManager = TransferManager
   { -- | Map of transaction ID to transfer tracking data
-    _transferManagerTransfers :: Map TransactionId TransferData
+    transfers :: Map TransactionId TransferData
   }
   deriving (Show)
 
@@ -100,20 +99,20 @@ data TransferPhase
 -- can coordinate operations across both accounts.
 data TransferData = TransferData
   { -- | Source account (being debited)
-    transferDataSourceAccount :: AccountId,
+    sourceAccount :: AccountId,
     -- | Target account (being credited)
-    transferDataTargetAccount :: AccountId,
+    targetAccount :: AccountId,
     -- | Amount being transferred
-    transferDataAmount :: Money,
+    amount :: Money,
     -- | Reason for the transfer
-    transferDataReason :: Text,
+    reason :: Text,
     -- | Current phase of the transfer saga
-    transferDataPhase :: TransferPhase
+    phase :: TransferPhase
   }
   deriving (Show, Eq)
 
--- Generate lens accessors for TransferManager
-makeLenses ''TransferManager
+-- Generate optics labels for TransferManager
+makeFieldLabelsNoPrefix ''TransferManager
 
 -- | Initial/default transfer manager state.
 transferManagerDefault :: TransferManager
@@ -138,34 +137,34 @@ transferManagerProjection =
 -- State updates only — no side effects or command generation.
 handleTransferEvent :: TransferManager -> VersionedStreamEvent AccountingEvent -> TransferManager
 -- Store transfer data when a new transfer is initiated
-handleTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent TransferInitiated {..})) =
+handleTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)) =
   case mkTransactionIdSafe txUuid of
     Nothing -> manager
     Just txId ->
-      case manager ^. transferManagerTransfers . at txId of
+      case manager ^. #transfers % at txId of
         Nothing ->
           -- First time seeing this transfer: track it in AwaitingDebit phase
           manager
-            & transferManagerTransfers
-              . at txId
-              ?~ TransferData
-                { transferDataSourceAccount = transferInitiatedFromAccountId,
-                  transferDataTargetAccount = transferInitiatedToAccountId,
-                  transferDataAmount = transferInitiatedAmount,
-                  transferDataReason = transferInitiatedReason,
-                  transferDataPhase = AwaitingDebit
-                }
+            & #transfers
+            % at txId
+            ?~ TransferData
+              { sourceAccount = evt.fromAccountId,
+                targetAccount = evt.toAccountId,
+                amount = evt.amount,
+                reason = evt.reason,
+                phase = AwaitingDebit
+              }
         Just td
-          | transferDataPhase td == AwaitingDebit ->
+          | td.phase == AwaitingDebit ->
               -- Advance to DebitIssued after first reaction
               manager
-                & transferManagerTransfers
-                  . at txId
-                  ?~ td {transferDataPhase = DebitIssued}
+                & #transfers
+                % at txId
+                ?~ td {phase = DebitIssued}
         _ -> manager
 -- Clean up transfer tracking when credit succeeds (saga complete)
-handleTransferEvent manager (StreamEvent _ _ _ (AccountCreditedEvent AccountCredited {..})) =
-  manager & transferManagerTransfers %~ Map.delete accountCreditedTransactionId
+handleTransferEvent manager (StreamEvent _ _ _ (AccountCreditedEvent evt)) =
+  manager & #transfers %~ Map.delete evt.transactionId
 -- All other events: no state change
 handleTransferEvent manager _ = manager
 
@@ -188,32 +187,30 @@ handleTransferEvent manager _ = manager
 -- The process manager handles its own compensation.
 reactToTransferEvent :: TransferManager -> VersionedStreamEvent AccountingEvent -> [ProcessManagerEffect AccountingCommand]
 -- TransferInitiated -> Issue DebitAccount to source (with compensation on failure)
-reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent TransferInitiated {..})) =
+reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)) =
   case mkTransactionIdSafe txUuid of
     Nothing -> []
     Just txId ->
-      case manager ^. transferManagerTransfers . at txId of
+      case manager ^. #transfers % at txId of
         Just td
-          | transferDataPhase td == AwaitingDebit ->
+          | td.phase == AwaitingDebit ->
               [ IssueCommandWithCompensation
-                  (unAccountId transferInitiatedFromAccountId)
-                  ( embed
-                      accountCommandEmbedding
+                  (unAccountId evt.fromAccountId)
+                  ( accountCommandEmbedding.embed
                       ( DebitAccountAccountCommand
                           DebitAccount
-                            { debitAccountAmount = transferInitiatedAmount,
-                              debitAccountTransactionId = txId,
-                              debitAccountReason = transferInitiatedReason
+                            { amount = evt.amount,
+                              transactionId = txId,
+                              reason = evt.reason
                             }
                       )
                   )
-                  ( \(RejectionReason reason) ->
+                  ( \(RejectionReason rejReason) ->
                       [ IssueCommand
                           (unTransactionId txId)
-                          ( embed
-                              transactionCommandEmbedding
+                          ( transactionCommandEmbedding.embed
                               ( FailTransferTransactionCommand
-                                  FailTransfer {failTransferReason = reason}
+                                  FailTransfer {reason = rejReason}
                               )
                           )
                       ]
@@ -221,26 +218,24 @@ reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent Tra
               ]
         _ -> [] -- Idempotency: not in AwaitingDebit phase
         -- AccountDebited -> Issue CreditAccount + CompleteTransfer
-reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent AccountDebited {..})) =
-  case Map.lookup accountDebitedTransactionId (manager ^. transferManagerTransfers) of
+reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
+  case Map.lookup evt.transactionId (manager ^. #transfers) of
     Nothing -> []
     Just TransferData {..} ->
       [ IssueCommand
-          (unAccountId transferDataTargetAccount)
-          ( embed
-              accountCommandEmbedding
+          (unAccountId targetAccount)
+          ( accountCommandEmbedding.embed
               ( CreditAccountAccountCommand
                   CreditAccount
-                    { creditAccountAmount = transferDataAmount,
-                      creditAccountTransactionId = accountDebitedTransactionId,
-                      creditAccountReason = transferDataReason
+                    { amount = amount,
+                      transactionId = evt.transactionId,
+                      reason = reason
                     }
               )
           ),
         IssueCommand
-          (unTransactionId accountDebitedTransactionId)
-          ( embed
-              transactionCommandEmbedding
+          (unTransactionId evt.transactionId)
+          ( transactionCommandEmbedding.embed
               (CompleteTransferTransactionCommand CompleteTransfer)
           )
       ]

@@ -33,6 +33,7 @@ module Domain.User.Events
   )
 where
 
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types
   ( AccountId,
@@ -40,7 +41,6 @@ import Domain.Core.Types
     PasswordHash,
     TelegramIdentity,
   )
-import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -75,11 +75,11 @@ userEvents =
 -- >>> UserRegistered "user@example.com" hashedPassword externalAccountId
 data UserRegistered = UserRegistered
   { -- | User's email address
-    userRegisteredEmail :: Text,
+    email :: Text,
     -- | Hashed password (Argon2)
-    userRegisteredPasswordHash :: PasswordHash,
+    passwordHash :: PasswordHash,
     -- | ID of the auto-created External account
-    userRegisteredExternalAccountId :: AccountId
+    externalAccountId :: AccountId
   }
   deriving (Show, Eq)
 
@@ -91,9 +91,9 @@ data UserRegistered = UserRegistered
 -- >>> UserRegisteredViaTelegram telegramIdentity externalAccountId
 data UserRegisteredViaTelegram = UserRegisteredViaTelegram
   { -- | Telegram identity information
-    userRegisteredViaTelegramIdentity :: TelegramIdentity,
+    identity :: TelegramIdentity,
     -- | ID of the auto-created External account
-    userRegisteredViaTelegramExternalAccountId :: AccountId
+    externalAccountId :: AccountId
   }
   deriving (Show, Eq)
 
@@ -105,7 +105,7 @@ data UserRegisteredViaTelegram = UserRegisteredViaTelegram
 -- >>> OAuthAccountLinked (OAuthIdentity Google "123456789")
 data OAuthAccountLinked = OAuthAccountLinked
   { -- | OAuth identity that was linked
-    oAuthAccountLinkedIdentity :: OAuthIdentity
+    identity :: OAuthIdentity
   }
   deriving (Show, Eq)
 
@@ -117,7 +117,7 @@ data OAuthAccountLinked = OAuthAccountLinked
 -- >>> TelegramAccountLinked telegramIdentity
 data TelegramAccountLinked = TelegramAccountLinked
   { -- | Telegram identity that was linked
-    telegramAccountLinkedIdentity :: TelegramIdentity
+    identity :: TelegramIdentity
   }
   deriving (Show, Eq)
 
@@ -129,7 +129,7 @@ data TelegramAccountLinked = TelegramAccountLinked
 -- >>> OAuthAccountUnlinked (OAuthIdentity Google "123456789")
 data OAuthAccountUnlinked = OAuthAccountUnlinked
   { -- | OAuth identity that was unlinked
-    oAuthAccountUnlinkedIdentity :: OAuthIdentity
+    identity :: OAuthIdentity
   }
   deriving (Show, Eq)
 
@@ -148,7 +148,7 @@ data TelegramAccountUnlinked = TelegramAccountUnlinked
 -- >>> PasswordChanged newHashedPassword
 data PasswordChanged = PasswordChanged
   { -- | New password hash
-    passwordChangedNewHash :: PasswordHash
+    newHash :: PasswordHash
   }
   deriving (Show, Eq)
 
@@ -156,11 +156,11 @@ data PasswordChanged = PasswordChanged
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- Derive JSON instances for all events using the unprefixed lowercase pattern
-deriveJSONUnPrefixLower ''UserRegistered
-deriveJSONUnPrefixLower ''UserRegisteredViaTelegram
-deriveJSONUnPrefixLower ''OAuthAccountLinked
-deriveJSONUnPrefixLower ''TelegramAccountLinked
-deriveJSONUnPrefixLower ''OAuthAccountUnlinked
-deriveJSONUnPrefixLower ''TelegramAccountUnlinked
-deriveJSONUnPrefixLower ''PasswordChanged
+-- Derive JSON instances for all events using defaultOptions (fields already unprefixed)
+deriveJSON defaultOptions ''UserRegistered
+deriveJSON defaultOptions ''UserRegisteredViaTelegram
+deriveJSON defaultOptions ''OAuthAccountLinked
+deriveJSON defaultOptions ''TelegramAccountLinked
+deriveJSON defaultOptions ''OAuthAccountUnlinked
+deriveJSON defaultOptions ''TelegramAccountUnlinked
+deriveJSON defaultOptions ''PasswordChanged

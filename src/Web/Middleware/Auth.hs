@@ -209,6 +209,6 @@ extractBearerToken authHeader =
 claimsToUser :: JWTClaims -> AuthenticatedUser
 claimsToUser JWTClaims {..} =
   AuthenticatedUser
-    { authUserId = jwtUserId,
-      authUserEmail = jwtEmail
+    { authUserId = userId,
+      authUserEmail = email
     }

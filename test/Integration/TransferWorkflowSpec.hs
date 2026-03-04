@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -77,8 +78,8 @@ import TestSupport.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithPro
 setupRegularAccounts :: IO (AppEnv, UUID, UUID, UUID)
 setupRegularAccounts = do
   env <- createTestAppEnv
-  let writer = appEventStoreWriter env
-      reader = appEventStoreReader env
+  let writer = env.eventStoreWriter
+      reader = env.eventStoreReader
 
   userUuid <- UUID.nextRandom
   acctUuid1 <- UUID.nextRandom
@@ -89,10 +90,10 @@ setupRegularAccounts = do
     applyAccountCommand writer reader acctUuid1
       $ CreateAccountAccountCommand
         CreateAccount
-          { createAccountName = "Source Account",
-            createAccountInitialBalance = unsafeMoney 1000,
-            createAccountCreatedBy = unsafeUserId userUuid,
-            createAccountType = RegularAccount
+          { name = "Source Account",
+            initialBalance = unsafeMoney 1000,
+            createdBy = unsafeUserId userUuid,
+            accountType = RegularAccount
           }
 
   -- Create target account with initial balance of 500
@@ -100,10 +101,10 @@ setupRegularAccounts = do
     applyAccountCommand writer reader acctUuid2
       $ CreateAccountAccountCommand
         CreateAccount
-          { createAccountName = "Target Account",
-            createAccountInitialBalance = unsafeMoney 500,
-            createAccountCreatedBy = unsafeUserId userUuid,
-            createAccountType = RegularAccount
+          { name = "Target Account",
+            initialBalance = unsafeMoney 500,
+            createdBy = unsafeUserId userUuid,
+            accountType = RegularAccount
           }
 
   return (env, acctUuid1, acctUuid2, userUuid)
@@ -112,8 +113,8 @@ setupRegularAccounts = do
 setupRegularAccountsWithPM :: IO (AppEnv, UUID, UUID, UUID)
 setupRegularAccountsWithPM = do
   env <- createTestAppEnvWithProcessManager
-  let writer = appEventStoreWriter env
-      reader = appEventStoreReader env
+  let writer = env.eventStoreWriter
+      reader = env.eventStoreReader
 
   userUuid <- UUID.nextRandom
   acctUuid1 <- UUID.nextRandom
@@ -123,20 +124,20 @@ setupRegularAccountsWithPM = do
     applyAccountCommand writer reader acctUuid1
       $ CreateAccountAccountCommand
         CreateAccount
-          { createAccountName = "Source Account",
-            createAccountInitialBalance = unsafeMoney 1000,
-            createAccountCreatedBy = unsafeUserId userUuid,
-            createAccountType = RegularAccount
+          { name = "Source Account",
+            initialBalance = unsafeMoney 1000,
+            createdBy = unsafeUserId userUuid,
+            accountType = RegularAccount
           }
 
   _ <-
     applyAccountCommand writer reader acctUuid2
       $ CreateAccountAccountCommand
         CreateAccount
-          { createAccountName = "Target Account",
-            createAccountInitialBalance = unsafeMoney 500,
-            createAccountCreatedBy = unsafeUserId userUuid,
-            createAccountType = RegularAccount
+          { name = "Target Account",
+            initialBalance = unsafeMoney 500,
+            createdBy = unsafeUserId userUuid,
+            accountType = RegularAccount
           }
 
   return (env, acctUuid1, acctUuid2, userUuid)
@@ -155,9 +156,9 @@ initiateAndCompleteTransfer ::
   Rational ->
   Text ->
   IO UUID
-initiateAndCompleteTransfer env fromUuid toUuid userUuid amount reason = do
-  let writer = appEventStoreWriter env
-      reader = appEventStoreReader env
+initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
+  let writer = env.eventStoreWriter
+      reader = env.eventStoreReader
 
   txUuid <- UUID.nextRandom
 
@@ -166,11 +167,11 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amount reason = do
     applyTransactionCommand writer reader txUuid
       $ InitiateTransferTransactionCommand
         InitiateTransfer
-          { initiateTransferFromAccountId = unsafeAccountId fromUuid,
-            initiateTransferToAccountId = unsafeAccountId toUuid,
-            initiateTransferAmount = unsafeMoney amount,
-            initiateTransferReason = reason,
-            initiateTransferBy = unsafeUserId userUuid
+          { fromAccountId = unsafeAccountId fromUuid,
+            toAccountId = unsafeAccountId toUuid,
+            amount = unsafeMoney amt,
+            reason = rsn,
+            initiatedBy = unsafeUserId userUuid
           }
 
   -- Step 2: Complete the transfer (simulates TransferManager behavior)
@@ -190,9 +191,9 @@ initiateTransferOnly ::
   Rational ->
   Text ->
   IO UUID
-initiateTransferOnly env fromUuid toUuid userUuid amount reason = do
-  let writer = appEventStoreWriter env
-      reader = appEventStoreReader env
+initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
+  let writer = env.eventStoreWriter
+      reader = env.eventStoreReader
 
   txUuid <- UUID.nextRandom
 
@@ -200,11 +201,11 @@ initiateTransferOnly env fromUuid toUuid userUuid amount reason = do
     applyTransactionCommand writer reader txUuid
       $ InitiateTransferTransactionCommand
         InitiateTransfer
-          { initiateTransferFromAccountId = unsafeAccountId fromUuid,
-            initiateTransferToAccountId = unsafeAccountId toUuid,
-            initiateTransferAmount = unsafeMoney amount,
-            initiateTransferReason = reason,
-            initiateTransferBy = unsafeUserId userUuid
+          { fromAccountId = unsafeAccountId fromUuid,
+            toAccountId = unsafeAccountId toUuid,
+            amount = unsafeMoney amt,
+            reason = rsn,
+            initiatedBy = unsafeUserId userUuid
           }
 
   return txUuid
@@ -235,15 +236,15 @@ successfulTransferSpec =
       txUuid <- initiateAndCompleteTransfer env acct1Uuid acct2Uuid userUuid 200 "Test transfer"
 
       -- Verify transaction in read model
-      let txReadModel = appTransactionSummaryReadModel env
+      let txReadModel = env.transactionSummaryReadModel
       maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model"
         Just txData -> do
-          transactionSummaryDataFromAccountId txData `shouldBe` unsafeAccountId acct1Uuid
-          transactionSummaryDataToAccountId txData `shouldBe` unsafeAccountId acct2Uuid
-          transactionSummaryDataAmount txData `shouldBe` unsafeMoney 200
-          transactionSummaryDataStatus txData `shouldBe` Completed
+          txData.fromAccountId `shouldBe` unsafeAccountId acct1Uuid
+          txData.toAccountId `shouldBe` unsafeAccountId acct2Uuid
+          txData.amount `shouldBe` unsafeMoney 200
+          txData.status `shouldBe` Completed
 
 -- -----------------------------------------------------------------------------
 -- Income Flow (External -> Regular)
@@ -254,8 +255,8 @@ incomeFlowSpec =
   describe "Income Flow (External -> Regular)" $ do
     it "allows transfer from external account" $ do
       env <- createTestAppEnv
-      let writer = appEventStoreWriter env
-          reader = appEventStoreReader env
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
 
       userUuid <- UUID.nextRandom
       extUuid <- UUID.nextRandom
@@ -266,10 +267,10 @@ incomeFlowSpec =
         applyAccountCommand writer reader extUuid
           $ CreateAccountAccountCommand
             CreateAccount
-              { createAccountName = "External",
-                createAccountInitialBalance = unsafeMoney 0,
-                createAccountCreatedBy = unsafeUserId userUuid,
-                createAccountType = ExternalAccount
+              { name = "External",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = ExternalAccount
               }
 
       -- Create regular account (income destination)
@@ -277,26 +278,26 @@ incomeFlowSpec =
         applyAccountCommand writer reader regUuid
           $ CreateAccountAccountCommand
             CreateAccount
-              { createAccountName = "Wallet",
-                createAccountInitialBalance = unsafeMoney 0,
-                createAccountCreatedBy = unsafeUserId userUuid,
-                createAccountType = RegularAccount
+              { name = "Wallet",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = RegularAccount
               }
 
       -- Transfer from external to regular (income flow)
       txUuid <- initiateAndCompleteTransfer env extUuid regUuid userUuid 500 "Salary"
 
       -- Verify transaction completed with correct data
-      let txReadModel = appTransactionSummaryReadModel env
+      let txReadModel = env.transactionSummaryReadModel
       maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
-          transactionSummaryDataFromAccountId txData `shouldBe` unsafeAccountId extUuid
-          transactionSummaryDataToAccountId txData `shouldBe` unsafeAccountId regUuid
-          transactionSummaryDataAmount txData `shouldBe` unsafeMoney 500
-          transactionSummaryDataReason txData `shouldBe` "Salary"
-          transactionSummaryDataStatus txData `shouldBe` Completed
+          txData.fromAccountId `shouldBe` unsafeAccountId extUuid
+          txData.toAccountId `shouldBe` unsafeAccountId regUuid
+          txData.amount `shouldBe` unsafeMoney 500
+          txData.reason `shouldBe` "Salary"
+          txData.status `shouldBe` Completed
 
 -- -----------------------------------------------------------------------------
 -- Expense Flow (Regular -> External)
@@ -307,8 +308,8 @@ expenseFlowSpec =
   describe "Expense Flow (Regular -> External)" $ do
     it "allows transfer to external account" $ do
       env <- createTestAppEnv
-      let writer = appEventStoreWriter env
-          reader = appEventStoreReader env
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
 
       userUuid <- UUID.nextRandom
       regUuid <- UUID.nextRandom
@@ -319,10 +320,10 @@ expenseFlowSpec =
         applyAccountCommand writer reader regUuid
           $ CreateAccountAccountCommand
             CreateAccount
-              { createAccountName = "Checking",
-                createAccountInitialBalance = unsafeMoney 1000,
-                createAccountCreatedBy = unsafeUserId userUuid,
-                createAccountType = RegularAccount
+              { name = "Checking",
+                initialBalance = unsafeMoney 1000,
+                createdBy = unsafeUserId userUuid,
+                accountType = RegularAccount
               }
 
       -- Create external account (expense destination)
@@ -330,26 +331,26 @@ expenseFlowSpec =
         applyAccountCommand writer reader extUuid
           $ CreateAccountAccountCommand
             CreateAccount
-              { createAccountName = "External",
-                createAccountInitialBalance = unsafeMoney 0,
-                createAccountCreatedBy = unsafeUserId userUuid,
-                createAccountType = ExternalAccount
+              { name = "External",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = ExternalAccount
               }
 
       -- Transfer from regular to external (expense flow)
       txUuid <- initiateAndCompleteTransfer env regUuid extUuid userUuid 300 "Groceries"
 
       -- Verify transaction completed with correct data
-      let txReadModel = appTransactionSummaryReadModel env
+      let txReadModel = env.transactionSummaryReadModel
       maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
-          transactionSummaryDataFromAccountId txData `shouldBe` unsafeAccountId regUuid
-          transactionSummaryDataToAccountId txData `shouldBe` unsafeAccountId extUuid
-          transactionSummaryDataAmount txData `shouldBe` unsafeMoney 300
-          transactionSummaryDataReason txData `shouldBe` "Groceries"
-          transactionSummaryDataStatus txData `shouldBe` Completed
+          txData.fromAccountId `shouldBe` unsafeAccountId regUuid
+          txData.toAccountId `shouldBe` unsafeAccountId extUuid
+          txData.amount `shouldBe` unsafeMoney 300
+          txData.reason `shouldBe` "Groceries"
+          txData.status `shouldBe` Completed
 
 -- -----------------------------------------------------------------------------
 -- Authorization
@@ -367,15 +368,15 @@ authorizationSpec =
       -- Owner on source, Editor on target -> Authorized
       let sourceOwnerData =
             AccountAuthData
-              { accountAuthDataCreatedBy = userId,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = [AccountAccess userId Owner]
+              { createdBy = userId,
+                accountType = RegularAccount,
+                accessList = [AccountAccess userId Owner]
               }
           targetEditorData =
             AccountAuthData
-              { accountAuthDataCreatedBy = otherUser,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = [AccountAccess userId Editor]
+              { createdBy = otherUser,
+                accountType = RegularAccount,
+                accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceOwnerData targetEditorData srcId tgtId
         `shouldBe` TransferAuthorized
@@ -383,9 +384,9 @@ authorizationSpec =
       -- Editor on source, Editor on target -> Authorized
       let sourceEditorData =
             AccountAuthData
-              { accountAuthDataCreatedBy = otherUser,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = [AccountAccess userId Editor]
+              { createdBy = otherUser,
+                accountType = RegularAccount,
+                accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceEditorData targetEditorData srcId tgtId
         `shouldBe` TransferAuthorized
@@ -393,9 +394,9 @@ authorizationSpec =
       -- Owner on both -> Authorized
       let targetOwnerData =
             AccountAuthData
-              { accountAuthDataCreatedBy = userId,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = [AccountAccess userId Owner]
+              { createdBy = userId,
+                accountType = RegularAccount,
+                accessList = [AccountAccess userId Owner]
               }
       canTransfer userId sourceOwnerData targetOwnerData srcId tgtId
         `shouldBe` TransferAuthorized
@@ -409,15 +410,15 @@ authorizationSpec =
       -- Viewer on source -> Denied (InsufficientRoleOnSource)
       let sourceViewerData =
             AccountAuthData
-              { accountAuthDataCreatedBy = otherUser,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = [AccountAccess userId Viewer]
+              { createdBy = otherUser,
+                accountType = RegularAccount,
+                accessList = [AccountAccess userId Viewer]
               }
           targetEditorData =
             AccountAuthData
-              { accountAuthDataCreatedBy = otherUser,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = [AccountAccess userId Editor]
+              { createdBy = otherUser,
+                accountType = RegularAccount,
+                accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceViewerData targetEditorData srcId tgtId
         `shouldBe` TransferDenied (InsufficientRoleOnSource Viewer)
@@ -425,15 +426,15 @@ authorizationSpec =
       -- No access to target -> Denied (NoAccessToTarget)
       let sourceOwnerData =
             AccountAuthData
-              { accountAuthDataCreatedBy = userId,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = [AccountAccess userId Owner]
+              { createdBy = userId,
+                accountType = RegularAccount,
+                accessList = [AccountAccess userId Owner]
               }
           targetNoAccessData =
             AccountAuthData
-              { accountAuthDataCreatedBy = otherUser,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = []
+              { createdBy = otherUser,
+                accountType = RegularAccount,
+                accessList = []
               }
       canTransfer userId sourceOwnerData targetNoAccessData srcId tgtId
         `shouldBe` TransferDenied NoAccessToTarget
@@ -441,9 +442,9 @@ authorizationSpec =
       -- No access to source -> Denied (NoAccessToSource)
       let sourceNoAccessData =
             AccountAuthData
-              { accountAuthDataCreatedBy = otherUser,
-                accountAuthDataType = RegularAccount,
-                accountAuthDataAccessList = []
+              { createdBy = otherUser,
+                accountType = RegularAccount,
+                accessList = []
               }
       canTransfer userId sourceNoAccessData targetEditorData srcId tgtId
         `shouldBe` TransferDenied NoAccessToSource
@@ -466,13 +467,13 @@ processManagerDrivenSpec =
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 200 "PM test transfer"
 
       -- Verify transaction reached Completed status
-      let txReadModel = appTransactionSummaryReadModel env
+      let txReadModel = env.transactionSummaryReadModel
       maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model after PM processing"
         Just txData -> do
-          transactionSummaryDataStatus txData `shouldBe` Completed
-          transactionSummaryDataAmount txData `shouldBe` unsafeMoney 200
+          txData.status `shouldBe` Completed
+          txData.amount `shouldBe` unsafeMoney 200
 
     it "updates both account balances correctly" $ do
       (env, acct1Uuid, acct2Uuid, _userUuid) <- setupRegularAccountsWithPM
@@ -480,25 +481,25 @@ processManagerDrivenSpec =
       -- Source: 1000, Target: 500. Transfer 200.
       _ <- initiateTransferOnly env acct1Uuid acct2Uuid _userUuid 200 "Balance test"
 
-      let acctReadModel = appAccountSummaryReadModel env
+      let acctReadModel = env.accountSummaryReadModel
       -- Source should be 1000 - 200 = 800
       maybeSrc <- getAccountSummary acctReadModel (unsafeAccountId acct1Uuid)
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found in read model"
         Just srcData ->
-          accountSummaryDataBalance srcData `shouldBe` unsafeMoney 800
+          srcData.balance `shouldBe` unsafeMoney 800
 
       -- Target should be 500 + 200 = 700
       maybeTgt <- getAccountSummary acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found in read model"
         Just tgtData ->
-          accountSummaryDataBalance tgtData `shouldBe` unsafeMoney 700
+          tgtData.balance `shouldBe` unsafeMoney 700
 
     it "external account can go negative" $ do
       env <- createTestAppEnvWithProcessManager
-      let writer = appEventStoreWriter env
-          reader = appEventStoreReader env
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
 
       userUuid <- UUID.nextRandom
       extUuid <- UUID.nextRandom
@@ -509,10 +510,10 @@ processManagerDrivenSpec =
         applyAccountCommand writer reader extUuid
           $ CreateAccountAccountCommand
             CreateAccount
-              { createAccountName = "External",
-                createAccountInitialBalance = unsafeMoney 0,
-                createAccountCreatedBy = unsafeUserId userUuid,
-                createAccountType = ExternalAccount
+              { name = "External",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = ExternalAccount
               }
 
       -- Create regular account
@@ -520,28 +521,28 @@ processManagerDrivenSpec =
         applyAccountCommand writer reader regUuid
           $ CreateAccountAccountCommand
             CreateAccount
-              { createAccountName = "Wallet",
-                createAccountInitialBalance = unsafeMoney 0,
-                createAccountCreatedBy = unsafeUserId userUuid,
-                createAccountType = RegularAccount
+              { name = "Wallet",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = RegularAccount
               }
 
       -- Income: External(0) -> Regular(0), amount 500
       -- External should go to -500
       _ <- initiateTransferOnly env extUuid regUuid userUuid 500 "Salary"
 
-      let acctReadModel = appAccountSummaryReadModel env
+      let acctReadModel = env.accountSummaryReadModel
       maybeExt <- getAccountSummary acctReadModel (unsafeAccountId extUuid)
       case maybeExt of
         Nothing -> expectationFailure "External account not found in read model"
         Just extData ->
-          accountSummaryDataBalance extData `shouldBe` unsafeMoney (-500)
+          extData.balance `shouldBe` unsafeMoney (-500)
 
       maybeReg <- getAccountSummary acctReadModel (unsafeAccountId regUuid)
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found in read model"
         Just regData ->
-          accountSummaryDataBalance regData `shouldBe` unsafeMoney 500
+          regData.balance `shouldBe` unsafeMoney 500
 
     it "fails transfer when regular account has insufficient funds" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
@@ -550,26 +551,26 @@ processManagerDrivenSpec =
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 5000 "Too much"
 
       -- Transaction should be Failed
-      let txReadModel = appTransactionSummaryReadModel env
+      let txReadModel = env.transactionSummaryReadModel
       maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model"
         Just txData ->
-          transactionSummaryDataStatus txData `shouldBe` Failed "Insufficient funds"
+          txData.status `shouldBe` Failed "Insufficient funds"
 
       -- Balances should be unchanged
-      let acctReadModel = appAccountSummaryReadModel env
+      let acctReadModel = env.accountSummaryReadModel
       maybeSrc <- getAccountSummary acctReadModel (unsafeAccountId acct1Uuid)
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found"
         Just srcData ->
-          accountSummaryDataBalance srcData `shouldBe` unsafeMoney 1000
+          srcData.balance `shouldBe` unsafeMoney 1000
 
       maybeTgt <- getAccountSummary acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found"
         Just tgtData ->
-          accountSummaryDataBalance tgtData `shouldBe` unsafeMoney 500
+          tgtData.balance `shouldBe` unsafeMoney 500
 
     it "handles multiple sequential transfers correctly" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
@@ -581,15 +582,15 @@ processManagerDrivenSpec =
 
       -- Source: 1000 - 100 - 200 + 50 = 750
       -- Target: 500 + 100 + 200 - 50 = 750
-      let acctReadModel = appAccountSummaryReadModel env
+      let acctReadModel = env.accountSummaryReadModel
       maybeSrc <- getAccountSummary acctReadModel (unsafeAccountId acct1Uuid)
       case maybeSrc of
         Nothing -> expectationFailure "Source not found"
         Just srcData ->
-          accountSummaryDataBalance srcData `shouldBe` unsafeMoney 750
+          srcData.balance `shouldBe` unsafeMoney 750
 
       maybeTgt <- getAccountSummary acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target not found"
         Just tgtData ->
-          accountSummaryDataBalance tgtData `shouldBe` unsafeMoney 750
+          tgtData.balance `shouldBe` unsafeMoney 750

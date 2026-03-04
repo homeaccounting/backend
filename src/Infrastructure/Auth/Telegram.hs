@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 -- |
 -- Module      : Infrastructure.Auth.Telegram
@@ -73,17 +73,17 @@ import GHC.Generics (Generic)
 -- | Configuration for Telegram authentication.
 data TelegramConfig = TelegramConfig
   { -- | Telegram Bot token (from @BotFather)
-    telegramBotToken :: Text,
+    botToken :: Text,
     -- | Bot username (without @)
-    telegramBotUsername :: Text,
+    botUsername :: Text,
     -- | Maximum age of auth data in seconds (default: 86400 = 24 hours)
-    telegramAuthMaxAge :: NominalDiffTime,
+    authMaxAge :: NominalDiffTime,
     -- | Webhook URL for receiving bot updates (production)
-    telegramWebhookUrl :: Maybe Text,
+    webhookUrl :: Maybe Text,
     -- | Use polling instead of webhook (development)
-    telegramUsePolling :: Bool,
+    usePolling :: Bool,
     -- | Polling timeout in seconds (default: 30)
-    telegramPollingTimeout :: Int
+    pollingTimeout :: Int
   }
   deriving (Show, Eq, Generic)
 
@@ -101,14 +101,14 @@ instance FromJSON TelegramConfig where
 
 -- | Default Telegram configuration.
 defaultTelegramConfig :: Text -> Text -> TelegramConfig
-defaultTelegramConfig botToken botUsername =
+defaultTelegramConfig botToken' botUsername' =
   TelegramConfig
-    { telegramBotToken = botToken,
-      telegramBotUsername = botUsername,
-      telegramAuthMaxAge = 86400, -- 24 hours
-      telegramWebhookUrl = Nothing,
-      telegramUsePolling = True,
-      telegramPollingTimeout = 30
+    { botToken = botToken',
+      botUsername = botUsername',
+      authMaxAge = 86400, -- 24 hours
+      webhookUrl = Nothing,
+      usePolling = True,
+      pollingTimeout = 30
     }
 
 -- -----------------------------------------------------------------------------
@@ -121,19 +121,19 @@ defaultTelegramConfig botToken botUsername =
 -- The hash field is used to verify the data integrity.
 data TelegramAuthData = TelegramAuthData
   { -- | Telegram user ID
-    telegramAuthId :: Int64,
+    id :: Int64,
     -- | User's first name
-    telegramAuthFirstName :: Text,
+    firstName :: Text,
     -- | User's last name (optional)
-    telegramAuthLastName :: Maybe Text,
+    lastName :: Maybe Text,
     -- | Username without @ (optional)
-    telegramAuthUsername :: Maybe Text,
+    username :: Maybe Text,
     -- | URL to user's profile photo (optional)
-    telegramAuthPhotoUrl :: Maybe Text,
+    photoUrl :: Maybe Text,
     -- | Unix timestamp when auth was performed
-    telegramAuthDate :: Int64,
+    authDate :: Int64,
     -- | HMAC-SHA256 hash of the data
-    telegramAuthHash :: Text
+    hash :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -194,15 +194,15 @@ verifyTelegramAuthWithTime ::
   Either TelegramAuthError ()
 verifyTelegramAuthWithTime config authData now = do
   -- Check auth data age
-  let authTime = posixSecondsToUTCTime $ fromIntegral $ telegramAuthDate authData
-      maxAge = telegramAuthMaxAge config
+  let authTime = posixSecondsToUTCTime $ fromIntegral authData.authDate
+      maxAge = config.authMaxAge
       maxTime = addUTCTime maxAge authTime
 
   if now > maxTime
     then Left AuthDataExpired
     else -- Verify hash
-      let expectedHash = computeTelegramHash (telegramBotToken config) authData
-       in if constantTimeCompare (encodeUtf8 expectedHash) (encodeUtf8 $ telegramAuthHash authData)
+      let expectedHash = computeTelegramHash config.botToken authData
+       in if constantTimeCompare (encodeUtf8 expectedHash) (encodeUtf8 authData.hash)
             then Right ()
             else Left InvalidHash
 
@@ -213,25 +213,25 @@ verifyTelegramAuthWithTime config authData now = do
 --   2. Compute secret_key = SHA256(bot_token)
 --   3. hash = HMAC-SHA256(data_check_string, secret_key)
 computeTelegramHash :: Text -> TelegramAuthData -> Text
-computeTelegramHash botToken authData =
+computeTelegramHash botToken' authData =
   let -- Build key=value pairs (excluding hash)
       pairs =
         sortBy (comparing fst) $
           filter (not . T.null . snd) $
-            [ ("auth_date", T.pack $ show $ telegramAuthDate authData),
-              ("first_name", telegramAuthFirstName authData),
-              ("id", T.pack $ show $ telegramAuthId authData)
+            [ ("auth_date", T.pack $ show authData.authDate),
+              ("first_name", authData.firstName),
+              ("id", T.pack $ show authData.id)
             ]
-              ++ maybe [] (\x -> [("last_name", x)]) (telegramAuthLastName authData)
-              ++ maybe [] (\x -> [("photo_url", x)]) (telegramAuthPhotoUrl authData)
-              ++ maybe [] (\x -> [("username", x)]) (telegramAuthUsername authData)
+              ++ maybe [] (\x -> [("last_name", x)]) authData.lastName
+              ++ maybe [] (\x -> [("photo_url", x)]) authData.photoUrl
+              ++ maybe [] (\x -> [("username", x)]) authData.username
 
       -- Create data-check-string
       dataCheckString = T.intercalate "\n" $ map (\(k, v) -> k <> "=" <> v) pairs
 
       -- Compute secret key = SHA256(bot_token)
       secretKey :: ByteString
-      secretKey = convert $ hashWith SHA256 (encodeUtf8 botToken)
+      secretKey = convert $ hashWith SHA256 (encodeUtf8 botToken')
 
       -- Compute HMAC-SHA256
       hmacResult :: HMAC SHA256
@@ -269,7 +269,7 @@ toHex = BS.concatMap toHexByte
 -- >>> result <- authenticateViaTelegram config authData
 -- >>> case result of
 -- >>>   Right identity -> do
--- >>>     maybeUser <- findUserByTelegramId (telegramId identity)
+-- >>>     maybeUser <- findUserByTelegramId identity.id
 -- >>>     case maybeUser of
 -- >>>       Just user -> loginUser user
 -- >>>       Nothing -> createNewUser identity
@@ -287,9 +287,9 @@ authenticateViaTelegram config authData = do
       return $
         Right
           TelegramIdentity
-            { telegramId = TelegramId $ telegramAuthId authData,
-              telegramUsername = telegramAuthUsername authData,
-              telegramFirstName = telegramAuthFirstName authData
+            { id = TelegramId authData.id,
+              username = authData.username,
+              firstName = authData.firstName
             }
 
 -- -----------------------------------------------------------------------------

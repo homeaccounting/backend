@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- |
@@ -69,15 +70,15 @@ import Domain.Core.Types (PasswordHash (..))
 --   - Parallelism: 1
 data PasswordHashConfig = PasswordHashConfig
   { -- | Memory cost in KiB (default: 65536 = 64 MiB)
-    passwordHashMemory :: Word32,
+    memory :: Word32,
     -- | Number of iterations (default: 3)
-    passwordHashIterations :: Word32,
+    iterations :: Word32,
     -- | Degree of parallelism (default: 4)
-    passwordHashParallelism :: Word32,
+    parallelism :: Word32,
     -- | Output hash length in bytes (default: 32)
-    passwordHashLength :: Word32,
+    hashLength :: Word32,
     -- | Salt length in bytes (default: 16)
-    passwordHashSaltLength :: Int
+    saltLength :: Int
   }
   deriving (Show, Eq)
 
@@ -92,11 +93,11 @@ data PasswordHashConfig = PasswordHashConfig
 defaultPasswordHashConfig :: PasswordHashConfig
 defaultPasswordHashConfig =
   PasswordHashConfig
-    { passwordHashMemory = 65536, -- 64 MiB
-      passwordHashIterations = 3,
-      passwordHashParallelism = 4,
-      passwordHashLength = 32,
-      passwordHashSaltLength = 16
+    { memory = 65536, -- 64 MiB
+      iterations = 3,
+      parallelism = 4,
+      hashLength = 32,
+      saltLength = 16
     }
 
 -- -----------------------------------------------------------------------------
@@ -125,21 +126,21 @@ hashPassword = hashPasswordWithConfig defaultPasswordHashConfig
 -- specific security or performance requirements.
 --
 -- Example:
--- >>> let config = defaultPasswordHashConfig { passwordHashMemory = 131072 }
+-- >>> let config = defaultPasswordHashConfig { memory = 131072 }
 -- >>> hash <- hashPasswordWithConfig config "myPassword"
 hashPasswordWithConfig :: (MonadIO m) => PasswordHashConfig -> Text -> m PasswordHash
 hashPasswordWithConfig config password = liftIO $ do
-  salt <- getRandomBytes (passwordHashSaltLength config)
+  salt <- getRandomBytes config.saltLength
   let passwordBytes = encodeUtf8 password
       options =
         Options
-          { iterations = passwordHashIterations config,
-            memory = passwordHashMemory config,
-            parallelism = passwordHashParallelism config,
+          { iterations = config.iterations,
+            memory = config.memory,
+            parallelism = config.parallelism,
             variant = Argon2id,
             version = Version13
           }
-  case hash options passwordBytes salt (fromIntegral $ passwordHashLength config) of
+  case hash options passwordBytes salt (fromIntegral config.hashLength) of
     CryptoPassed hashOutput ->
       -- Combine salt + hash for storage
       let combined = salt <> hashOutput
@@ -158,26 +159,26 @@ hashPasswordWithConfig config password = liftIO $ do
 -- >>> let isValid = verifyPassword "myPassword" storedHash
 -- >>> if isValid then grantAccess else denyAccess
 verifyPassword :: Text -> PasswordHash -> Bool
-verifyPassword password (PasswordHash stored) =
-  let saltLength = passwordHashSaltLength defaultPasswordHashConfig
-      hashLength = fromIntegral $ passwordHashLength defaultPasswordHashConfig
-   in if BS.length stored < saltLength + hashLength
-        then False -- Invalid hash format
-        else
-          let salt = BS.take saltLength stored
-              storedHash = BS.drop saltLength stored
-              passwordBytes = encodeUtf8 password
-              options =
-                Options
-                  { iterations = passwordHashIterations defaultPasswordHashConfig,
-                    memory = passwordHashMemory defaultPasswordHashConfig,
-                    parallelism = passwordHashParallelism defaultPasswordHashConfig,
-                    variant = Argon2id,
-                    version = Version13
-                  }
-           in case hash options passwordBytes salt hashLength of
-                CryptoPassed computedHash -> constantTimeCompare storedHash computedHash
-                CryptoFailed _ -> False -- Hash computation failed
+verifyPassword password (PasswordHash stored)
+  | BS.length stored < saltLen + hashLen = False
+  | otherwise =
+      let salt = BS.take saltLen stored
+          storedHash = BS.drop saltLen stored
+          passwordBytes = encodeUtf8 password
+          options =
+            Options
+              { iterations = defaultPasswordHashConfig.iterations,
+                memory = defaultPasswordHashConfig.memory,
+                parallelism = defaultPasswordHashConfig.parallelism,
+                variant = Argon2id,
+                version = Version13
+              }
+       in case hash options passwordBytes salt hashLen of
+            CryptoPassed computedHash -> constantTimeCompare storedHash computedHash
+            CryptoFailed _ -> False
+  where
+    saltLen = defaultPasswordHashConfig.saltLength
+    hashLen = fromIntegral defaultPasswordHashConfig.hashLength
 
 -- | Constant-time comparison to prevent timing attacks.
 --

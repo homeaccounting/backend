@@ -46,13 +46,13 @@ module Domain.Account.CommandHandler
   )
 where
 
-import Control.Lens ((^.))
 import qualified Data.Text as T
 import Domain.Account.Commands
 import Domain.Account.Events
 import Domain.Account.Projection
-import Domain.Core.Types (AccountAccess (..), AccountRole (..), AccountType (..), Money, subtractMoney)
+import Domain.Core.Types (AccountType (..), subtractMoney)
 import Eventium (CommandHandler (..))
+import Optics ((^.))
 import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
@@ -135,81 +135,81 @@ constructSumType
 handleAccountCommand :: Account -> AccountCommand -> Either AccountError [AccountEvent]
 -- Handle CreateAccount command
 handleAccountCommand account (CreateAccountAccountCommand CreateAccount {..})
-  | not (T.null (account ^. accountName)) = Left AccountAlreadyExists
-  | T.null createAccountName = Left AccountNameEmpty
+  | not (T.null (account ^. #name)) = Left AccountAlreadyExists
+  | T.null name = Left AccountNameEmpty
   | otherwise =
       Right
         [ AccountCreatedAccountEvent
             AccountCreated
-              { accountCreatedName = createAccountName,
-                accountCreatedInitialBalance = createAccountInitialBalance,
-                accountCreatedBy = createAccountCreatedBy,
-                accountCreatedType = createAccountType
+              { name = name,
+                initialBalance = initialBalance,
+                by = createdBy,
+                accountType = accountType
               }
         ]
 -- Handle ShareAccount command
 handleAccountCommand account (ShareAccountAccountCommand ShareAccount {..})
-  | T.null (account ^. accountName) = Left AccountDoesNotExist
-  | account ^. accountType == ExternalAccount = Left ExternalAccountCannotBeShared
-  | not (isOwner shareAccountGrantedBy account) = Left NotAccountOwner
-  | shareAccountUserId == shareAccountGrantedBy = Left CannotShareWithSelf
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | account ^. #accountType == ExternalAccount = Left ExternalAccountCannotBeShared
+  | not (isOwner grantedBy account) = Left NotAccountOwner
+  | userId == grantedBy = Left CannotShareWithSelf
   | otherwise =
       Right
         [ AccountAccessGrantedAccountEvent
             AccountAccessGranted
-              { accountAccessGrantedUserId = shareAccountUserId,
-                accountAccessGrantedRole = shareAccountRole,
-                accountAccessGrantedBy = shareAccountGrantedBy
+              { userId = userId,
+                role = role,
+                by = grantedBy
               }
         ]
 -- Handle RevokeAccountAccess command
 handleAccountCommand account (RevokeAccountAccessAccountCommand RevokeAccountAccess {..})
-  | T.null (account ^. accountName) = Left AccountDoesNotExist
-  | not (isOwner revokeAccountAccessRevokedBy account) = Left NotAccountOwner
-  | isOwner revokeAccountAccessUserId account = Left CannotRevokeOwner
-  | not (hasAccess revokeAccountAccessUserId account) = Left UserHasNoAccess
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | not (isOwner revokedBy account) = Left NotAccountOwner
+  | isOwner userId account = Left CannotRevokeOwner
+  | not (hasAccess userId account) = Left UserHasNoAccess
   | otherwise =
       Right
         [ AccountAccessRevokedAccountEvent
             AccountAccessRevoked
-              { accountAccessRevokedUserId = revokeAccountAccessUserId,
-                accountAccessRevokedBy = revokeAccountAccessRevokedBy
+              { userId = userId,
+                by = revokedBy
               }
         ]
 -- Handle DebitAccount command (internal, issued by TransferManager saga)
 handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
-  | T.null (account ^. accountName) = Left AccountDoesNotExist
-  | account ^. accountType == ExternalAccount =
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | account ^. #accountType == ExternalAccount =
       Right
         [ AccountDebitedAccountEvent
             AccountDebited
-              { accountDebitedAmount = debitAccountAmount,
-                accountDebitedTransactionId = debitAccountTransactionId,
-                accountDebitedReason = debitAccountReason
+              { amount = amount,
+                transactionId = transactionId,
+                reason = reason
               }
         ]
   | otherwise =
-      case subtractMoney (account ^. accountBalance) debitAccountAmount of
+      case subtractMoney (account ^. #balance) amount of
         Right _ ->
           Right
             [ AccountDebitedAccountEvent
                 AccountDebited
-                  { accountDebitedAmount = debitAccountAmount,
-                    accountDebitedTransactionId = debitAccountTransactionId,
-                    accountDebitedReason = debitAccountReason
+                  { amount = amount,
+                    transactionId = transactionId,
+                    reason = reason
                   }
             ]
         Left _ -> Left InsufficientFunds
 -- Handle CreditAccount command (internal, issued by TransferManager saga)
 handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
-  | T.null (account ^. accountName) = Left AccountDoesNotExist
+  | T.null (account ^. #name) = Left AccountDoesNotExist
   | otherwise =
       Right
         [ AccountCreditedAccountEvent
             AccountCredited
-              { accountCreditedAmount = creditAccountAmount,
-                accountCreditedTransactionId = creditAccountTransactionId,
-                accountCreditedReason = creditAccountReason
+              { amount = amount,
+                transactionId = transactionId,
+                reason = reason
               }
         ]
 

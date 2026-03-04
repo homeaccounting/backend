@@ -1,5 +1,5 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -60,11 +60,10 @@ import Domain.Core.Types
   ( AccountType (..),
     OAuthIdentity (..),
     OAuthProvider (..),
-    TelegramIdentity,
+    TelegramIdentity (..),
     UserId,
     mkAccountId,
     mkUserId,
-    telegramId,
     unUserId,
     unsafeMoney,
   )
@@ -75,7 +74,7 @@ import Domain.User.Commands
     RegisterUser (..),
     RegisterViaTelegram (..),
   )
-import Domain.User.Projection (_userPasswordHash)
+import Domain.User.Projection (User (..))
 import Infrastructure.App
   ( AppM,
     HasAuthConfig (..),
@@ -102,16 +101,16 @@ import qualified RIO.Text as T
 
 -- | Result of a successful authentication operation.
 data AuthResult = AuthResult
-  { authResultToken :: Text,
-    authResultUserId :: UserId,
-    authResultEmail :: Maybe Text,
-    authResultExpiresIn :: Int
+  { token :: Text,
+    userId :: UserId,
+    email :: Maybe Text,
+    expiresIn :: Int
   }
 
 -- | Result of initiating an OAuth flow.
 data OAuthRedirectResult = OAuthRedirectResult
-  { oauthRedirectResultUrl :: Text,
-    oauthRedirectResultState :: Text
+  { url :: Text,
+    state :: Text
   }
 
 -- -----------------------------------------------------------------------------
@@ -166,9 +165,9 @@ register email password = do
               let registerCmd =
                     RegisterUserUserCommand
                       RegisterUser
-                        { registerUserEmail = email,
-                          registerUserPasswordHash = passwordHash,
-                          registerUserExternalAccountId = externalAccountId
+                        { email = email,
+                          passwordHash = passwordHash,
+                          externalAccountId = externalAccountId
                         }
 
               result1 <- liftIO $ applyUserCommand writer reader userUuid registerCmd
@@ -181,10 +180,10 @@ register email password = do
                   let createAccountCmd =
                         CreateAccountAccountCommand
                           CreateAccount
-                            { createAccountName = "External",
-                              createAccountInitialBalance = unsafeMoney 0,
-                              createAccountCreatedBy = userId,
-                              createAccountType = ExternalAccount
+                            { name = "External",
+                              initialBalance = unsafeMoney 0,
+                              createdBy = userId,
+                              accountType = ExternalAccount
                             }
 
                   result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
@@ -220,7 +219,7 @@ login email password = do
       logWarn "User not found for email"
       return $ Left $ NotFound "User" email
     Just (userId, userSummary) ->
-      if not (userSummaryDataHasPassword userSummary)
+      if not userSummary.hasPassword
         then do
           -- 2. Check user has password
           logWarn "User has no password set"
@@ -231,7 +230,7 @@ login email password = do
           let userUuid = unUserId userId
           userAggregate <- liftIO $ loadUserAggregate reader userUuid
 
-          case _userPasswordHash userAggregate of
+          case userAggregate.passwordHash of
             Nothing -> do
               logError "User has password flag but no hash in aggregate"
               return $ Left $ AccountError "Invalid email or password"
@@ -240,7 +239,7 @@ login email password = do
               if verifyPassword password storedHash
                 then do
                   -- 5. Generate JWT token
-                  let userEmail = fromMaybe email (userSummaryDataEmail userSummary)
+                  let userEmail = fromMaybe email userSummary.email
                   generateAuthResult userId (Just userEmail)
                 else do
                   logWarn "Password verification failed"
@@ -294,21 +293,21 @@ handleOAuthCallback provider code state = do
       -- 2. Find or create user by OAuth identity
       let oauthIdentity =
             OAuthIdentity
-              { oauthProvider = provider,
-                oauthSubject = oauthUserInfoSubject userInfo
+              { provider = provider,
+                subject = userInfo.subject
               }
 
       userReadModel <- view userSummaryReadModelL
-      maybeUser <- getUserByOAuthIdentity userReadModel provider (oauthUserInfoSubject userInfo)
+      maybeUser <- getUserByOAuthIdentity userReadModel provider userInfo.subject
 
       case maybeUser of
         Just (uid, summary) -> do
           logInfo "Existing user found via OAuth"
-          generateAuthResult uid (userSummaryDataEmail summary)
+          generateAuthResult uid summary.email
         Nothing -> do
           -- Create new user with OAuth identity
           logInfo "Creating new user via OAuth"
-          case oauthUserInfoEmail userInfo of
+          case userInfo.email of
             Just email -> do
               createUserViaOAuth email oauthIdentity
             Nothing -> do
@@ -327,12 +326,12 @@ linkOAuth userId provider oauthCode = do
   -- Check OAuth not already linked to another user
   userReadModel <- view userSummaryReadModelL
   let oauthIdentity = OAuthIdentity provider oauthCode
-  maybeExisting <- getUserByOAuthIdentity userReadModel provider (oauthSubject oauthIdentity)
+  maybeExisting <- getUserByOAuthIdentity userReadModel provider oauthIdentity.subject
 
   case maybeExisting of
     Just _ -> return $ Left $ AccountError "OAuth account already linked to another user"
     Nothing -> do
-      let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {linkOAuthAccountIdentity = oauthIdentity}
+      let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
       let userUuid = unUserId userId
@@ -368,12 +367,12 @@ authenticateTelegram authData = do
     Right identity -> do
       -- 2. Find or create user by Telegram ID
       userReadModel <- view userSummaryReadModelL
-      maybeUser <- getUserByTelegramId userReadModel (telegramId identity)
+      maybeUser <- getUserByTelegramId userReadModel identity.id
 
       case maybeUser of
         Just (uid, summary) -> do
           logInfo "Existing user found via Telegram"
-          generateAuthResult uid (userSummaryDataEmail summary)
+          generateAuthResult uid summary.email
         Nothing -> do
           -- Create new user via Telegram
           logInfo "Creating new user via Telegram"
@@ -398,17 +397,17 @@ linkTelegram userId authData = do
     Right identity -> do
       -- Check Telegram not already linked to another user
       userReadModel <- view userSummaryReadModelL
-      maybeExisting <- getUserByTelegramId userReadModel (Domain.Core.Types.telegramId identity)
+      maybeExisting <- getUserByTelegramId userReadModel identity.id
 
       case maybeExisting of
         Just _ -> return $ Left $ AccountError "Telegram account already linked to another user"
         Nothing -> do
-          let linkCmd = LinkTelegramAccountUserCommand LinkTelegramAccount {linkTelegramAccountIdentity = identity}
+          let linkCmd = LinkTelegramAccountUserCommand LinkTelegramAccount {identity = identity}
           writer <- view eventStoreWriterL
           reader <- view eventStoreReaderL
           let userUuid = unUserId userId
-          result <- liftIO $ applyUserCommand writer reader userUuid linkCmd
-          case result of
+          result' <- liftIO $ applyUserCommand writer reader userUuid linkCmd
+          case result' of
             Left err -> do
               logError $ "Link Telegram rejected: " <> displayShow err
               return $ Left $ AccountError "Link Telegram rejected by domain"
@@ -441,10 +440,10 @@ refreshToken token = do
           return
             $ Right
               AuthResult
-                { authResultToken = newToken,
-                  authResultUserId = jwtUserId claims,
-                  authResultEmail = Just (jwtEmail claims),
-                  authResultExpiresIn = jwtExpirySeconds jwtConfig
+                { token = newToken,
+                  userId = claims.userId,
+                  email = Just claims.email,
+                  expiresIn = jwtConfig.expirySeconds
                 }
 
 -- -----------------------------------------------------------------------------
@@ -473,10 +472,10 @@ generateAuthResult userId email = do
       return
         $ Right
           AuthResult
-            { authResultToken = token,
-              authResultUserId = userId,
-              authResultEmail = email,
-              authResultExpiresIn = jwtExpirySeconds jwtConfig
+            { token = token,
+              userId = userId,
+              email = email,
+              expiresIn = jwtConfig.expirySeconds
             }
 
 -- | Create a new user via OAuth (with email + external account + OAuth identity).
@@ -495,13 +494,13 @@ createUserViaOAuth email oauthIdentity = do
           reader <- view eventStoreReaderL
 
           -- Register user with placeholder password (OAuth-only)
-          passwordHash <- hashPassword "OAUTH_USER_NO_PASSWORD"
+          pwHash <- hashPassword "OAUTH_USER_NO_PASSWORD"
           let registerCmd =
                 RegisterUserUserCommand
                   RegisterUser
-                    { registerUserEmail = email,
-                      registerUserPasswordHash = passwordHash,
-                      registerUserExternalAccountId = externalAccountId
+                    { email = email,
+                      passwordHash = pwHash,
+                      externalAccountId = externalAccountId
                     }
           result1 <- liftIO $ applyUserCommand writer reader userUuid registerCmd
           case result1 of
@@ -513,10 +512,10 @@ createUserViaOAuth email oauthIdentity = do
               let createAccountCmd =
                     CreateAccountAccountCommand
                       CreateAccount
-                        { createAccountName = "External",
-                          createAccountInitialBalance = unsafeMoney 0,
-                          createAccountCreatedBy = uid,
-                          createAccountType = ExternalAccount
+                        { name = "External",
+                          initialBalance = unsafeMoney 0,
+                          createdBy = uid,
+                          accountType = ExternalAccount
                         }
               result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
               case result2 of
@@ -525,7 +524,7 @@ createUserViaOAuth email oauthIdentity = do
                   return $ Left $ AccountError "External account creation rejected by domain"
                 Right _ -> do
                   -- Link OAuth identity
-                  let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {linkOAuthAccountIdentity = oauthIdentity}
+                  let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
                   result3 <- liftIO $ applyUserCommand writer reader userUuid linkCmd
                   case result3 of
                     Left err -> do
@@ -536,7 +535,7 @@ createUserViaOAuth email oauthIdentity = do
 
 -- | Create a new user via Telegram (with external account + Telegram identity).
 createUserViaTelegram :: TelegramIdentity -> AppM (Either DomainError AuthResult)
-createUserViaTelegram identity = do
+createUserViaTelegram telegramIdentity = do
   userUuid <- liftIO UUID.nextRandom
   externalAccountUuid <- liftIO UUID.nextRandom
 
@@ -553,8 +552,8 @@ createUserViaTelegram identity = do
           let registerCmd =
                 RegisterViaTelegramUserCommand
                   RegisterViaTelegram
-                    { registerViaTelegramIdentity = identity,
-                      registerViaTelegramExternalAccountId = externalAccountId
+                    { identity = telegramIdentity,
+                      externalAccountId = externalAccountId
                     }
           result1 <- liftIO $ applyUserCommand writer reader userUuid registerCmd
           case result1 of
@@ -566,10 +565,10 @@ createUserViaTelegram identity = do
               let createAccountCmd =
                     CreateAccountAccountCommand
                       CreateAccount
-                        { createAccountName = "External",
-                          createAccountInitialBalance = unsafeMoney 0,
-                          createAccountCreatedBy = uid,
-                          createAccountType = ExternalAccount
+                        { name = "External",
+                          initialBalance = unsafeMoney 0,
+                          createdBy = uid,
+                          accountType = ExternalAccount
                         }
               result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
               case result2 of

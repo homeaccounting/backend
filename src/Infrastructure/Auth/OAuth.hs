@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 -- |
 -- Module      : Infrastructure.Auth.OAuth
@@ -77,19 +77,19 @@ import qualified Network.HTTP.Types.URI as URI
 -- | Configuration for a single OAuth provider.
 data OAuthProviderConfig = OAuthProviderConfig
   { -- | OAuth client ID
-    oauthClientId :: Text,
+    clientId :: Text,
     -- | OAuth client secret
-    oauthClientSecret :: Text,
+    clientSecret :: Text,
     -- | Redirect URI for OAuth callback
-    oauthRedirectUri :: Text,
+    redirectUri :: Text,
     -- | Authorization URL (provider-specific)
-    oauthAuthorizeUrl :: Text,
+    authorizeUrl :: Text,
     -- | Token exchange URL (provider-specific)
-    oauthTokenUrl :: Text,
+    tokenUrl :: Text,
     -- | User info URL (provider-specific)
-    oauthUserInfoUrl :: Text,
+    userInfoUrl :: Text,
     -- | OAuth scopes to request
-    oauthScopes :: [Text]
+    scopes :: [Text]
   }
   deriving (Show, Eq, Generic)
 
@@ -108,9 +108,9 @@ instance FromJSON OAuthProviderConfig where
 
 -- | Configuration for all OAuth providers.
 data OAuthConfig = OAuthConfig
-  { oauthGoogle :: Maybe OAuthProviderConfig,
-    oauthGitHub :: Maybe OAuthProviderConfig,
-    oauthMicrosoft :: Maybe OAuthProviderConfig
+  { google :: Maybe OAuthProviderConfig,
+    gitHub :: Maybe OAuthProviderConfig,
+    microsoft :: Maybe OAuthProviderConfig
   }
   deriving (Show, Eq, Generic)
 
@@ -127,39 +127,39 @@ instance FromJSON OAuthConfig where
 --
 -- Note: Client IDs and secrets must be provided!
 defaultGoogleConfig :: Text -> Text -> Text -> OAuthProviderConfig
-defaultGoogleConfig clientId clientSecret redirectUri =
+defaultGoogleConfig clientId' clientSecret' redirectUri' =
   OAuthProviderConfig
-    { oauthClientId = clientId,
-      oauthClientSecret = clientSecret,
-      oauthRedirectUri = redirectUri,
-      oauthAuthorizeUrl = "https://accounts.google.com/o/oauth2/v2/auth",
-      oauthTokenUrl = "https://oauth2.googleapis.com/token",
-      oauthUserInfoUrl = "https://www.googleapis.com/oauth2/v2/userinfo",
-      oauthScopes = ["openid", "email", "profile"]
+    { clientId = clientId',
+      clientSecret = clientSecret',
+      redirectUri = redirectUri',
+      authorizeUrl = "https://accounts.google.com/o/oauth2/v2/auth",
+      tokenUrl = "https://oauth2.googleapis.com/token",
+      userInfoUrl = "https://www.googleapis.com/oauth2/v2/userinfo",
+      scopes = ["openid", "email", "profile"]
     }
 
 defaultGitHubConfig :: Text -> Text -> Text -> OAuthProviderConfig
-defaultGitHubConfig clientId clientSecret redirectUri =
+defaultGitHubConfig clientId' clientSecret' redirectUri' =
   OAuthProviderConfig
-    { oauthClientId = clientId,
-      oauthClientSecret = clientSecret,
-      oauthRedirectUri = redirectUri,
-      oauthAuthorizeUrl = "https://github.com/login/oauth/authorize",
-      oauthTokenUrl = "https://github.com/login/oauth/access_token",
-      oauthUserInfoUrl = "https://api.github.com/user",
-      oauthScopes = ["read:user", "user:email"]
+    { clientId = clientId',
+      clientSecret = clientSecret',
+      redirectUri = redirectUri',
+      authorizeUrl = "https://github.com/login/oauth/authorize",
+      tokenUrl = "https://github.com/login/oauth/access_token",
+      userInfoUrl = "https://api.github.com/user",
+      scopes = ["read:user", "user:email"]
     }
 
 defaultMicrosoftConfig :: Text -> Text -> Text -> OAuthProviderConfig
-defaultMicrosoftConfig clientId clientSecret redirectUri =
+defaultMicrosoftConfig clientId' clientSecret' redirectUri' =
   OAuthProviderConfig
-    { oauthClientId = clientId,
-      oauthClientSecret = clientSecret,
-      oauthRedirectUri = redirectUri,
-      oauthAuthorizeUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-      oauthTokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-      oauthUserInfoUrl = "https://graph.microsoft.com/v1.0/me",
-      oauthScopes = ["openid", "email", "profile"]
+    { clientId = clientId',
+      clientSecret = clientSecret',
+      redirectUri = redirectUri',
+      authorizeUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      tokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      userInfoUrl = "https://graph.microsoft.com/v1.0/me",
+      scopes = ["openid", "email", "profile"]
     }
 
 -- -----------------------------------------------------------------------------
@@ -169,13 +169,13 @@ defaultMicrosoftConfig clientId clientSecret redirectUri =
 -- | User information returned by OAuth provider.
 data OAuthUserInfo = OAuthUserInfo
   { -- | User's unique ID from the provider
-    oauthUserInfoSubject :: Text,
+    subject :: Text,
     -- | User's email (may be Nothing if not provided)
-    oauthUserInfoEmail :: Maybe Text,
+    email :: Maybe Text,
     -- | User's display name
-    oauthUserInfoName :: Maybe Text,
+    name :: Maybe Text,
     -- | URL to user's profile picture
-    oauthUserInfoPicture :: Maybe Text
+    picture :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -234,14 +234,14 @@ getAuthorizationUrl config provider = do
     Just providerConfig -> do
       state <- generateOAuthState
       let params =
-            [ ("client_id", encodeUtf8 $ oauthClientId providerConfig),
-              ("redirect_uri", encodeUtf8 $ oauthRedirectUri providerConfig),
-              ("scope", encodeUtf8 $ T.intercalate " " $ oauthScopes providerConfig),
+            [ ("client_id", encodeUtf8 providerConfig.clientId),
+              ("redirect_uri", encodeUtf8 providerConfig.redirectUri),
+              ("scope", encodeUtf8 $ T.intercalate " " providerConfig.scopes),
               ("state", encodeUtf8 state),
               ("response_type", "code")
             ]
           queryString = decodeUtf8 $ URI.renderSimpleQuery True params
-          url = oauthAuthorizeUrl providerConfig <> queryString
+          url = providerConfig.authorizeUrl <> queryString
       return $ Right (url, state)
 
 -- | Handle OAuth callback and fetch user info.
@@ -294,14 +294,14 @@ exchangeCodeForToken providerConfig authCode =
     do
       manager <- newTlsManager
       let params =
-            [ ("client_id", encodeUtf8 $ oauthClientId providerConfig),
-              ("client_secret", encodeUtf8 $ oauthClientSecret providerConfig),
+            [ ("client_id", encodeUtf8 providerConfig.clientId),
+              ("client_secret", encodeUtf8 providerConfig.clientSecret),
               ("code", encodeUtf8 authCode),
-              ("redirect_uri", encodeUtf8 $ oauthRedirectUri providerConfig),
+              ("redirect_uri", encodeUtf8 providerConfig.redirectUri),
               ("grant_type", "authorization_code")
             ]
 
-      requestResult <- parseRequest $ T.unpack $ oauthTokenUrl providerConfig
+      requestResult <- parseRequest $ T.unpack providerConfig.tokenUrl
       case requestResult of
         request -> do
           let postRequest = urlEncodedBody params request
@@ -338,7 +338,7 @@ fetchUserInfo provider providerConfig accessToken =
   liftIO $
     do
       manager <- newTlsManager
-      requestResult <- parseRequest $ T.unpack $ oauthUserInfoUrl providerConfig
+      requestResult <- parseRequest $ T.unpack providerConfig.userInfoUrl
       case requestResult of
         request -> do
           let authRequest =
@@ -372,24 +372,24 @@ parseGoogleUserInfo body = do
   case obj of
     Aeson.Object v -> do
       subjectValue <- Aeson.lookup "id" v
-      subject <- case subjectValue of
+      subjectVal <- case subjectValue of
         Aeson.String s -> Just s
         _ -> Nothing
-      let email = case Aeson.lookup "email" v of
+      let emailVal = case Aeson.lookup "email" v of
             Just (Aeson.String e) -> Just e
             _ -> Nothing
-          name = case Aeson.lookup "name" v of
+          nameVal = case Aeson.lookup "name" v of
             Just (Aeson.String n) -> Just n
             _ -> Nothing
-          picture = case Aeson.lookup "picture" v of
+          pictureVal = case Aeson.lookup "picture" v of
             Just (Aeson.String p) -> Just p
             _ -> Nothing
       return
         OAuthUserInfo
-          { oauthUserInfoSubject = subject,
-            oauthUserInfoEmail = email,
-            oauthUserInfoName = name,
-            oauthUserInfoPicture = picture
+          { subject = subjectVal,
+            email = emailVal,
+            name = nameVal,
+            picture = pictureVal
           }
     _ -> Nothing
 
@@ -399,26 +399,26 @@ parseGitHubUserInfo body = do
   case obj of
     Aeson.Object v -> do
       subjectValue <- Aeson.lookup "id" v
-      subject <- case subjectValue of
+      subjectVal <- case subjectValue of
         Aeson.Number n -> Just $ T.pack $ show (round n :: Integer)
         _ -> Nothing
-      let email = case Aeson.lookup "email" v of
+      let emailVal = case Aeson.lookup "email" v of
             Just (Aeson.String e) -> Just e
             _ -> Nothing
-          name = case Aeson.lookup "name" v of
+          nameVal = case Aeson.lookup "name" v of
             Just (Aeson.String n) -> Just n
             _ -> case Aeson.lookup "login" v of
               Just (Aeson.String l) -> Just l
               _ -> Nothing
-          picture = case Aeson.lookup "avatar_url" v of
+          pictureVal = case Aeson.lookup "avatar_url" v of
             Just (Aeson.String p) -> Just p
             _ -> Nothing
       return
         OAuthUserInfo
-          { oauthUserInfoSubject = subject,
-            oauthUserInfoEmail = email,
-            oauthUserInfoName = name,
-            oauthUserInfoPicture = picture
+          { subject = subjectVal,
+            email = emailVal,
+            name = nameVal,
+            picture = pictureVal
           }
     _ -> Nothing
 
@@ -428,23 +428,23 @@ parseMicrosoftUserInfo body = do
   case obj of
     Aeson.Object v -> do
       subjectValue <- Aeson.lookup "id" v
-      subject <- case subjectValue of
+      subjectVal <- case subjectValue of
         Aeson.String s -> Just s
         _ -> Nothing
-      let email = case Aeson.lookup "mail" v of
+      let emailVal = case Aeson.lookup "mail" v of
             Just (Aeson.String e) -> Just e
             _ -> case Aeson.lookup "userPrincipalName" v of
               Just (Aeson.String u) -> Just u
               _ -> Nothing
-          name = case Aeson.lookup "displayName" v of
+          nameVal = case Aeson.lookup "displayName" v of
             Just (Aeson.String n) -> Just n
             _ -> Nothing
       return
         OAuthUserInfo
-          { oauthUserInfoSubject = subject,
-            oauthUserInfoEmail = email,
-            oauthUserInfoName = name,
-            oauthUserInfoPicture = Nothing -- Microsoft Graph doesn't return picture URL directly
+          { subject = subjectVal,
+            email = emailVal,
+            name = nameVal,
+            picture = Nothing -- Microsoft Graph doesn't return picture URL directly
           }
     _ -> Nothing
 
@@ -477,6 +477,6 @@ validateOAuthState expected actual =
 
 -- | Get provider-specific configuration.
 getProviderConfig :: OAuthConfig -> OAuthProvider -> Maybe OAuthProviderConfig
-getProviderConfig config Google = oauthGoogle config
-getProviderConfig config GitHub = oauthGitHub config
-getProviderConfig config Microsoft = oauthMicrosoft config
+getProviderConfig config Google = config.google
+getProviderConfig config GitHub = config.gitHub
+getProviderConfig config Microsoft = config.microsoft

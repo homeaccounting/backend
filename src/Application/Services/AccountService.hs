@@ -1,5 +1,5 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -193,11 +193,11 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = do
         Nothing -> return $ Left $ NotFound "Account" (tshow accountUuid)
         Just summary
           -- Check if user is the owner
-          | accountSummaryDataCreatedBy summary /= requestingUserId -> do
+          | summary.createdBy /= requestingUserId -> do
               logWarn "User is not account owner"
               return $ Left $ AccountError "Only account owner can share access"
           -- Check account is not External
-          | accountSummaryDataType summary == ExternalAccount -> do
+          | summary.accountType == ExternalAccount -> do
               logWarn "Cannot share External account"
               return $ Left $ AccountError "External accounts cannot be shared"
           | otherwise -> do
@@ -213,9 +213,9 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = do
                       let shareCmd =
                             ShareAccountAccountCommand
                               ShareAccount
-                                { shareAccountUserId = targetUserId,
-                                  shareAccountRole = role,
-                                  shareAccountGrantedBy = requestingUserId
+                                { userId = targetUserId,
+                                  role = role,
+                                  grantedBy = requestingUserId
                                 }
 
                       writer <- view eventStoreWriterL
@@ -256,7 +256,7 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = do
         Nothing -> return $ Left $ NotFound "Account" (tshow accountUuid)
         Just summary
           -- Check if user is the owner
-          | accountSummaryDataCreatedBy summary /= requestingUserId -> do
+          | summary.createdBy /= requestingUserId -> do
               logWarn "User is not account owner"
               return $ Left $ AccountError "Only account owner can revoke access"
           | otherwise -> do
@@ -265,7 +265,7 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = do
                 Left _err -> return $ Left $ ValidationErr $ mkValidationError "userId" "Invalid user ID" (tshow targetUserUuid)
                 Right targetUserId
                   -- Cannot revoke owner's own access
-                  | targetUserId == accountSummaryDataCreatedBy summary -> do
+                  | targetUserId == summary.createdBy -> do
                       logWarn "Cannot revoke owner's access"
                       return $ Left $ AccountError "Cannot revoke owner's access"
                   | otherwise -> do
@@ -273,8 +273,8 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = do
                       let revokeCmd =
                             RevokeAccountAccessAccountCommand
                               RevokeAccountAccess
-                                { revokeAccountAccessUserId = targetUserId,
-                                  revokeAccountAccessRevokedBy = requestingUserId
+                                { userId = targetUserId,
+                                  revokedBy = requestingUserId
                                 }
 
                       writer <- view eventStoreWriterL

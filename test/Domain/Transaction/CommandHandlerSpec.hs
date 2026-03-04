@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -14,13 +16,13 @@
 --   - State machine enforcement
 module Domain.Transaction.CommandHandlerSpec (spec) where
 
-import Control.Lens ((^.))
 import Data.Either (isLeft)
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types
 import Domain.Transaction
 import Domain.Transaction.CommandHandler
 import Eventium (latestProjection)
+import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import TestSupport.Generators ()
@@ -51,44 +53,44 @@ testUserId = mockUserId (read "11111111-1111-1111-1111-111111111111")
 
 -- | Create a pending transaction
 pendingTransaction :: AccountId -> AccountId -> Money -> Transaction
-pendingTransaction fromId toId amount =
+pendingTransaction fromId toId amt =
   applyEvents
     [ TransferInitiatedTransactionEvent
         $ TransferInitiated
-          { transferInitiatedFromAccountId = fromId,
-            transferInitiatedToAccountId = toId,
-            transferInitiatedAmount = amount,
-            transferInitiatedReason = "Test transfer",
-            transferInitiatedBy = testUserId
+          { fromAccountId = fromId,
+            toAccountId = toId,
+            amount = amt,
+            reason = "Test transfer",
+            by = testUserId
           }
     ]
 
 -- | Create completed transaction
 completedTransaction :: AccountId -> AccountId -> Money -> Transaction
-completedTransaction fromId toId amount =
+completedTransaction fromId toId amt =
   applyEvents
     [ TransferInitiatedTransactionEvent
         $ TransferInitiated
-          { transferInitiatedFromAccountId = fromId,
-            transferInitiatedToAccountId = toId,
-            transferInitiatedAmount = amount,
-            transferInitiatedReason = "Test transfer",
-            transferInitiatedBy = testUserId
+          { fromAccountId = fromId,
+            toAccountId = toId,
+            amount = amt,
+            reason = "Test transfer",
+            by = testUserId
           },
       TransferCompletedTransactionEvent TransferCompleted
     ]
 
 -- | Create failed transaction
 failedTransaction :: AccountId -> AccountId -> Money -> Transaction
-failedTransaction fromId toId amount =
+failedTransaction fromId toId amt =
   applyEvents
     [ TransferInitiatedTransactionEvent
         $ TransferInitiated
-          { transferInitiatedFromAccountId = fromId,
-            transferInitiatedToAccountId = toId,
-            transferInitiatedAmount = amount,
-            transferInitiatedReason = "Test transfer",
-            transferInitiatedBy = testUserId
+          { fromAccountId = fromId,
+            toAccountId = toId,
+            amount = amt,
+            reason = "Test transfer",
+            by = testUserId
           },
       TransferFailedTransactionEvent $ TransferFailed "Insufficient funds"
     ]
@@ -108,10 +110,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
         let command =
               InitiateTransferTransactionCommand
                 $ InitiateTransfer
-                  { initiateTransferFromAccountId = fromId,
-                    initiateTransferToAccountId = toId,
-                    initiateTransferAmount = mockMoney 500,
-                    initiateTransferReason = "Payment"
+                  { fromAccountId = fromId,
+                    toAccountId = toId,
+                    amount = mockMoney 500,
+                    reason = "Payment"
                   }
         let result = handleTransactionCommand transaction command
 
@@ -120,10 +122,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
             length events `shouldBe` 1
             case head events of
               TransferInitiatedTransactionEvent initiated -> do
-                transferInitiatedFromAccountId initiated `shouldBe` fromId
-                transferInitiatedToAccountId initiated `shouldBe` toId
-                transferInitiatedAmount initiated `shouldBe` mockMoney 500
-                transferInitiatedReason initiated `shouldBe` "Payment"
+                initiated.fromAccountId `shouldBe` fromId
+                initiated.toAccountId `shouldBe` toId
+                initiated.amount `shouldBe` mockMoney 500
+                initiated.reason `shouldBe` "Payment"
               _ -> expectationFailure "Expected TransferInitiated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -134,17 +136,17 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
         let command =
               InitiateTransferTransactionCommand
                 $ InitiateTransfer
-                  { initiateTransferFromAccountId = fromId,
-                    initiateTransferToAccountId = toId,
-                    initiateTransferAmount = mockMoney 500,
-                    initiateTransferReason = "Test"
+                  { fromAccountId = fromId,
+                    toAccountId = toId,
+                    amount = mockMoney 500,
+                    reason = "Test"
                   }
         let result = handleTransactionCommand transaction command
 
         case result of
           Right events -> do
             let newTransaction = applyEvents events
-            newTransaction ^. transactionStatus `shouldBe` Pending
+            newTransaction ^. #status `shouldBe` Pending
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
     describe "When source equals target" $ do
@@ -154,10 +156,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
         let command =
               InitiateTransferTransactionCommand
                 $ InitiateTransfer
-                  { initiateTransferFromAccountId = accountId,
-                    initiateTransferToAccountId = accountId,
-                    initiateTransferAmount = mockMoney 500,
-                    initiateTransferReason = "Self-transfer"
+                  { fromAccountId = accountId,
+                    toAccountId = accountId,
+                    amount = mockMoney 500,
+                    reason = "Self-transfer"
                   }
         let result = handleTransactionCommand transaction command
 
@@ -171,10 +173,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
         let command =
               InitiateTransferTransactionCommand
                 $ InitiateTransfer
-                  { initiateTransferFromAccountId = fromId,
-                    initiateTransferToAccountId = toId,
-                    initiateTransferAmount = mockMoney 0,
-                    initiateTransferReason = "Zero transfer"
+                  { fromAccountId = fromId,
+                    toAccountId = toId,
+                    amount = mockMoney 0,
+                    reason = "Zero transfer"
                   }
         let result = handleTransactionCommand transaction command
 
@@ -191,10 +193,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
         let command =
               InitiateTransferTransactionCommand
                 $ InitiateTransfer
-                  { initiateTransferFromAccountId = fromId2,
-                    initiateTransferToAccountId = toId2,
-                    initiateTransferAmount = mockMoney 200,
-                    initiateTransferReason = "Second attempt"
+                  { fromAccountId = fromId2,
+                    toAccountId = toId2,
+                    amount = mockMoney 200,
+                    reason = "Second attempt"
                   }
         let result = handleTransactionCommand transaction command
 
@@ -233,7 +235,7 @@ completeTransferSpec = describe "CompleteTransfer Command" $ do
         case result of
           Right events -> do
             let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) "Test" testUserId] <> events
-            newTransaction ^. transactionStatus `shouldBe` Completed
+            newTransaction ^. #status `shouldBe` Completed
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given completed transaction" $ do
@@ -278,7 +280,7 @@ failTransferSpec = describe "FailTransfer Command" $ do
             length events `shouldBe` 1
             case head events of
               TransferFailedTransactionEvent failed ->
-                transferFailedReason failed `shouldBe` "Insufficient funds"
+                failed.reason `shouldBe` "Insufficient funds"
               _ -> expectationFailure "Expected TransferFailed event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -292,7 +294,7 @@ failTransferSpec = describe "FailTransfer Command" $ do
         case result of
           Right events -> do
             let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) "Test" testUserId] <> events
-            newTransaction ^. transactionStatus `shouldBe` Failed "Error"
+            newTransaction ^. #status `shouldBe` Failed "Error"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given completed transaction" $ do

@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -174,9 +175,9 @@ import Web.Middleware.Auth (AuthenticatedUser, authHandler)
 --  - Timeout: 30 seconds for in-flight requests
 runServer :: AppEnv -> IO ()
 runServer env = do
-  let config = appConfig env
-      port = serverPort (appServer config)
-      host = serverHost (appServer config)
+  let cfg = env.config
+      port = cfg.server.port
+      host = cfg.server.host
 
   -- Log startup
   runAppM env $ do
@@ -280,7 +281,7 @@ buildApplication env =
       -- Core application (innermost)
   where
     -- Create authentication context with JWT handler
-    jwtConfig = appJWTConfig env
+    jwtConfig = env.jwtConfig
     authContext = authHandler jwtConfig S.:. S.EmptyContext
 
     servantApp = S.serveWithContext api authContext (hoistedServer env)

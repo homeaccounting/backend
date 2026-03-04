@@ -1,6 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -109,18 +109,18 @@ transactionServer =
 -- | Handler for POST /api/transactions - Create a new transaction (transfer).
 initiateTransferHandler :: AuthenticatedUser -> TransferRequest -> AppM TransactionResponse
 initiateTransferHandler user request = do
-  let userId = authUserId user
+  let userId = user.authUserId
   -- 1. Convert account UUIDs to AccountIds (Web layer validation)
-  case mkAccountId (transferRequestFromAccountId request) of
+  case mkAccountId request.fromAccountId of
     Left err ->
       throwDomainError $ ValidationErr $ mkValidationError "fromAccountId" err err
-    Right fromAccountId ->
-      case mkAccountId (transferRequestToAccountId request) of
+    Right fromAccId ->
+      case mkAccountId request.toAccountId of
         Left err ->
           throwDomainError $ ValidationErr $ mkValidationError "toAccountId" err err
-        Right toAccountId -> do
+        Right toAccId -> do
           -- 2. Convert DTO to domain command
-          case toInitiateTransferCommand userId fromAccountId toAccountId request of
+          case toInitiateTransferCommand userId fromAccId toAccId request of
             Left err ->
               throwDomainError $ ValidationErr $ mkValidationError "request" err err
             Right transferCmd -> do

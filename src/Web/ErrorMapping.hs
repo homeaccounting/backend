@@ -59,11 +59,11 @@ mapDomainError (ValidationErr ve) =
     { errBody =
         encode $
           ValidationErrorResponse
-            { validationErrorResponseMessage = "Validation failed",
-              validationErrorResponseFieldErrors =
+            { message = "Validation failed",
+              fieldErrors =
                 Map.singleton
-                  (validationField ve)
-                  (validationMessage ve)
+                  ve.validationField
+                  ve.validationMessage
             }
     }
 mapDomainError (AccountError msg) =
@@ -71,9 +71,9 @@ mapDomainError (AccountError msg) =
     { errBody =
         encode $
           ErrorResponse
-            { errorResponseMessage = msg,
-              errorResponseCode = "ACCOUNT_ERROR",
-              errorResponseDetails = Nothing
+            { message = msg,
+              code = "ACCOUNT_ERROR",
+              details = Nothing
             }
     }
 mapDomainError (TransactionError msg) =
@@ -81,9 +81,9 @@ mapDomainError (TransactionError msg) =
     { errBody =
         encode $
           ErrorResponse
-            { errorResponseMessage = msg,
-              errorResponseCode = "TRANSACTION_ERROR",
-              errorResponseDetails = Nothing
+            { message = msg,
+              code = "TRANSACTION_ERROR",
+              details = Nothing
             }
     }
 mapDomainError (UserError msg) =
@@ -91,9 +91,9 @@ mapDomainError (UserError msg) =
     { errBody =
         encode $
           ErrorResponse
-            { errorResponseMessage = msg,
-              errorResponseCode = "USER_ERROR",
-              errorResponseDetails = Nothing
+            { message = msg,
+              code = "USER_ERROR",
+              details = Nothing
             }
     }
 mapDomainError (InsufficientFunds srcAmount reqAmount) =
@@ -101,9 +101,9 @@ mapDomainError (InsufficientFunds srcAmount reqAmount) =
     { errBody =
         encode $
           ErrorResponse
-            { errorResponseMessage = "Insufficient funds",
-              errorResponseCode = "INSUFFICIENT_FUNDS",
-              errorResponseDetails =
+            { message = "Insufficient funds",
+              code = "INSUFFICIENT_FUNDS",
+              details =
                 Just $
                   Map.fromList
                     [ ("sourceAmount", tshow srcAmount),
@@ -116,9 +116,9 @@ mapDomainError (NotFound etype eid) =
     { errBody =
         encode $
           ErrorResponse
-            { errorResponseMessage = etype <> " not found",
-              errorResponseCode = "NOT_FOUND",
-              errorResponseDetails = Just $ Map.singleton "entityId" eid
+            { message = etype <> " not found",
+              code = "NOT_FOUND",
+              details = Just $ Map.singleton "entityId" eid
             }
     }
 
@@ -150,8 +150,8 @@ throwValidation field msg =
       { errBody =
           encode $
             ValidationErrorResponse
-              { validationErrorResponseMessage = "Validation failed",
-                validationErrorResponseFieldErrors = Map.singleton field msg
+              { message = "Validation failed",
+                fieldErrors = Map.singleton field msg
               }
       }
 
@@ -168,9 +168,9 @@ throwNotFound etype eid =
       { errBody =
           encode $
             ErrorResponse
-              { errorResponseMessage = etype <> " not found",
-                errorResponseCode = "NOT_FOUND",
-                errorResponseDetails = Just $ Map.singleton "entityId" eid
+              { message = etype <> " not found",
+                code = "NOT_FOUND",
+                details = Just $ Map.singleton "entityId" eid
               }
       }
 

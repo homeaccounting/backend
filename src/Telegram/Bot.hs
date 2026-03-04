@@ -54,7 +54,7 @@ initBot _config = liftIO $ newTVarIO emptyBotState
 -- Uses long polling with timeout for efficiency.
 runBotPolling :: TelegramConfig -> TVar BotState -> AppM ()
 runBotPolling config botState = do
-  logInfo $ "Starting bot polling for @" <> display (telegramBotUsername config)
+  logInfo $ "Starting bot polling for @" <> display config.botUsername
 
   maybeClientEnv <- view telegramClientEnvL
   case maybeClientEnv of
@@ -63,7 +63,7 @@ runBotPolling config botState = do
       liftIO $ threadDelay 5000000 -- Wait 5 seconds before retrying
       runBotPolling config botState
     Just clientEnv ->
-      pollingLoop clientEnv botState (telegramPollingTimeout config) Nothing
+      pollingLoop clientEnv botState config.pollingTimeout Nothing
 
 -- | Polling loop that fetches and processes updates.
 pollingLoop :: ClientEnv -> TVar BotState -> Int -> Maybe Int -> AppM ()

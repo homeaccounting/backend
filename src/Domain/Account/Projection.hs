@@ -27,12 +27,8 @@ module Domain.Account.Projection
   ( -- * Account Aggregate
     Account (..),
 
-    -- * Lens Accessors
-    accountBalance,
-    accountName,
-    accountCreatedBy,
-    accountType,
-    accountAccessList,
+    -- * Optics Labels (via OverloadedLabels)
+    -- $labels
 
     -- * Event Sum Type
     AccountEvent (..),
@@ -50,19 +46,17 @@ module Domain.Account.Projection
   )
 where
 
-import Control.Lens (makeLenses, (%~), (&), (.~), (^.))
-import Data.Aeson.TH (deriveJSON)
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import qualified Data.UUID as UUID
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
-    AccountCreated (AccountCreated),
+    AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
     accountEvents,
   )
-import qualified Domain.Account.Events as Events
 import Domain.Core.Types
   ( AccountAccess (..),
     AccountRole (..),
@@ -75,7 +69,7 @@ import Domain.Core.Types
     unsafeUserId,
   )
 import Eventium (Projection (..))
-import Eventium.Json (unPrefixLower)
+import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
 import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
@@ -89,11 +83,11 @@ import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOpt
 -- events through the projection.
 --
 -- Fields:
---   - _accountBalance: Current account balance
---   - _accountName: Human-readable name for the account
---   - _accountCreatedBy: User who created the account (Owner)
---   - _accountType: Regular or External account
---   - _accountAccessList: List of users with access and their roles
+--   - balance: Current account balance
+--   - name: Human-readable name for the account
+--   - createdBy: User who created the account (Owner)
+--   - accountType: Regular or External account
+--   - accessList: List of users with access and their roles
 --
 -- Invariants:
 --   - Regular account balance is always non-negative
@@ -104,27 +98,27 @@ import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOpt
 --
 -- Example:
 -- >>> let account = Account (Money 1000.0) "Checking" userId RegularAccount [AccountAccess userId Owner]
--- >>> account ^. accountBalance
+-- >>> account ^. #balance
 -- Money 1000.0
 data Account = Account
   { -- | Current balance of the account
-    _accountBalance :: Money,
+    balance :: Money,
     -- | Name of the account
-    _accountName :: Text,
+    name :: Text,
     -- | User who created the account
-    _accountCreatedBy :: UserId,
+    createdBy :: UserId,
     -- | Type of account (Regular or External)
-    _accountType :: AccountType,
+    accountType :: AccountType,
     -- | List of users with access and their roles
-    _accountAccessList :: [AccountAccess]
+    accessList :: [AccountAccess]
   }
   deriving (Show, Eq)
 
--- Generate lens accessors for Account fields
-makeLenses ''Account
+-- Generate optics labels for Account fields (accessed via #fieldName)
+makeFieldLabelsNoPrefix ''Account
 
--- Derive JSON instances for Account
-deriveJSON (unPrefixLower "_account") ''Account
+-- Derive JSON instances for Account (fields already unprefixed)
+deriveJSON defaultOptions ''Account
 
 -- | Default initial state for an Account aggregate.
 --
@@ -137,42 +131,42 @@ accountDefault :: Account
 accountDefault = case mkMoney 0 of
   Right m ->
     Account
-      { _accountBalance = m,
-        _accountName = "",
-        _accountCreatedBy = unsafeUserId UUID.nil,
-        _accountType = RegularAccount,
-        _accountAccessList = []
+      { balance = m,
+        name = "",
+        createdBy = unsafeUserId UUID.nil,
+        accountType = RegularAccount,
+        accessList = []
       }
   Left _ -> error "accountDefault: mkMoney 0 should never fail"
 
 -- | Check if a user is the owner of the account.
 isOwner :: UserId -> Account -> Bool
-isOwner userId account = _accountCreatedBy account == userId
+isOwner uid account = account.createdBy == uid
 
 -- | Check if a user has any access to the account.
 hasAccess :: UserId -> Account -> Bool
-hasAccess userId account =
-  any (\access -> accessUserId access == userId) (_accountAccessList account)
+hasAccess uid account =
+  any (\a -> a.userId == uid) (account ^. #accessList)
 
 -- | Get a user's role on the account, if any.
 getUserRole :: UserId -> Account -> Maybe AccountRole
-getUserRole userId account =
-  accessRole <$> findAccess userId (_accountAccessList account)
+getUserRole uid account =
+  (.role) <$> findAccess uid (account ^. #accessList)
   where
-    findAccess uid = foldr (\a acc -> if accessUserId a == uid then Just a else acc) Nothing
+    findAccess theUid = foldr (\a acc -> if a.userId == theUid then Just a else acc) Nothing
 
 -- | Check if a user can modify the account (Editor or Owner role).
 canModify :: UserId -> Account -> Bool
-canModify userId account =
-  case getUserRole userId account of
+canModify uid account =
+  case getUserRole uid account of
     Just Owner -> True
     Just Editor -> True
     _ -> False
 
 -- | Check if a user can manage the account (Owner only).
 canManage :: UserId -> Account -> Bool
-canManage userId account =
-  case getUserRole userId account of
+canManage uid account =
+  case getUserRole uid account of
     Just Owner -> True
     _ -> False
 
@@ -224,35 +218,40 @@ handleAccountEvent :: Account -> AccountEvent -> Account
 handleAccountEvent account (AccountCreatedAccountEvent created) =
   -- Initialize a new account with name, balance, owner, and type
   -- Creator automatically gets Owner role in access list
-  let ownerId = Events.accountCreatedBy created
+  let ownerId = created.by
    in account
-        & accountName .~ Events.accountCreatedName created
-        & accountBalance .~ Events.accountCreatedInitialBalance created
-        & accountCreatedBy .~ ownerId
-        & accountType .~ Events.accountCreatedType created
-        & accountAccessList .~ [AccountAccess ownerId Owner]
+        & #name
+        .~ created.name
+        & #balance
+        .~ created.initialBalance
+        & #createdBy
+        .~ ownerId
+        & #accountType
+        .~ created.accountType
+        & #accessList
+        .~ [AccountAccess ownerId Owner]
 handleAccountEvent account (AccountAccessGrantedAccountEvent AccountAccessGranted {..}) =
   -- Add or update user access in the access list
   -- If user already has access, replace their role
-  let existingList = _accountAccessList account
-      withoutUser = filter (\a -> accessUserId a /= accountAccessGrantedUserId) existingList
-      newAccess = AccountAccess accountAccessGrantedUserId accountAccessGrantedRole
-   in account & accountAccessList .~ (newAccess : withoutUser)
+  let existingList = account ^. #accessList
+      withoutUser = filter (\a -> a.userId /= userId) existingList
+      newAccess = AccountAccess userId role
+   in account & #accessList .~ (newAccess : withoutUser)
 handleAccountEvent account (AccountAccessRevokedAccountEvent AccountAccessRevoked {..}) =
   -- Remove user from access list
-  let existingList = _accountAccessList account
-      withoutUser = filter (\a -> accessUserId a /= accountAccessRevokedUserId) existingList
-   in account & accountAccessList .~ withoutUser
+  let existingList = account ^. #accessList
+      withoutUser = filter (\a -> a.userId /= userId) existingList
+   in account & #accessList .~ withoutUser
 handleAccountEvent account (AccountDebitedAccountEvent AccountDebited {..}) =
   -- Subtract the debited amount from balance.
   -- The command handler already validated sufficiency, so we use
   -- subtractMoneyAllowNegative which handles External accounts too.
-  let newBalance = subtractMoneyAllowNegative (account ^. accountBalance) accountDebitedAmount
-   in account & accountBalance .~ newBalance
+  let newBalance = subtractMoneyAllowNegative (account ^. #balance) amount
+   in account & #balance .~ newBalance
 handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
   -- Add the credited amount to balance. Credits always succeed.
-  let newBalance = addMoney (account ^. accountBalance) accountCreditedAmount
-   in account & accountBalance .~ newBalance
+  let newBalance = addMoney (account ^. #balance) amount
+   in account & #balance .~ newBalance
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition
@@ -272,7 +271,7 @@ handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
 -- Usage with eventium:
 -- >>> let events = [AccountCreatedAccountEvent (AccountCreated "Savings" (Money 1000.0) userId RegularAccount)]
 -- >>> latestProjection accountProjection events
--- Account {_accountBalance = Money 1000.0, _accountName = "Savings", ...}
+-- Account {balance = Money 1000.0, name = "Savings", ...}
 --
 -- Mathematical Properties:
 --   - Identity: latestProjection p [] == projectionSeed p

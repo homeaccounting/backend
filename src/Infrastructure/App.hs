@@ -129,15 +129,15 @@ import Telegram.Types (BotState)
 -- Reader monad.
 --
 -- Fields:
---  - appLogFunc: RIO's structured logging function
---  - appConfig: Application configuration (database, server, etc.)
---  - appDatabaseConfig: Database configuration (for RIO pattern consistency)
---  - appDbPool: PostgreSQL connection pool
---  - appEventStoreWriter: Event store writer with event bus
---  - appEventStoreReader: Event store reader for loading aggregates
---  - appGlobalEventStoreReader: Global event reader for read models
---  - appAccountSummaryReadModel: In-memory account summary read model
---  - appTransactionSummaryReadModel: In-memory transaction summary read model
+--  - logFunc: RIO's structured logging function
+--  - config: Application configuration (database, server, etc.)
+--  - databaseConfig: Database configuration (for RIO pattern consistency)
+--  - dbPool: PostgreSQL connection pool
+--  - eventStoreWriter: Event store writer with event bus
+--  - eventStoreReader: Event store reader for loading aggregates
+--  - globalEventStoreReader: Global event reader for read models
+--  - accountSummaryReadModel: In-memory account summary read model
+--  - transactionSummaryReadModel: In-memory transaction summary read model
 --
 -- Design Notes:
 --  - All fields are strict (!) for performance
@@ -148,35 +148,35 @@ import Telegram.Types (BotState)
 -- also maybe it worth to group dependencies like: configs, eventStore, readModels to simplify AppEnv
 data AppEnv = AppEnv
   { -- | Structured logging function (RIO requirement)
-    appLogFunc :: !LogFunc,
+    logFunc :: !LogFunc,
     -- | Application configuration
-    appConfig :: !AppConfig,
+    config :: !AppConfig,
     -- | Database configuration (for HasDatabaseConfig pattern)
-    appDatabaseConfig :: !DatabaseConfig,
+    databaseConfig :: !DatabaseConfig,
     -- | PostgreSQL connection pool (lazy to support in-memory tests)
-    appDbPool :: ConnectionPool,
+    dbPool :: ConnectionPool,
     -- | Event store writer (with synchronous event bus)
-    appEventStoreWriter :: !(AccountingVersionedEventStoreWriter IO),
+    eventStoreWriter :: !(AccountingVersionedEventStoreWriter IO),
     -- | Event store reader for loading aggregate state
-    appEventStoreReader :: !(AccountingVersionedEventStoreReader IO),
+    eventStoreReader :: !(AccountingVersionedEventStoreReader IO),
     -- | Global event store reader for read models
-    appGlobalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
+    globalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
     -- | In-memory account summary read model (STM)
-    appAccountSummaryReadModel :: !(TVar AccountSummaryReadModel),
+    accountSummaryReadModel :: !(TVar AccountSummaryReadModel),
     -- | In-memory transaction summary read model (STM)
-    appTransactionSummaryReadModel :: !(TVar TransactionSummaryReadModel),
+    transactionSummaryReadModel :: !(TVar TransactionSummaryReadModel),
     -- | In-memory user summary read model (STM)
-    appUserSummaryReadModel :: !(TVar UserSummaryReadModel),
+    userSummaryReadModel :: !(TVar UserSummaryReadModel),
     -- | JWT authentication configuration
-    appJWTConfig :: !JWTConfig,
+    jwtConfig :: !JWTConfig,
     -- | OAuth authentication configuration
-    appOAuthConfig :: !OAuthConfig,
+    oauthConfig :: !OAuthConfig,
     -- | Telegram authentication configuration
-    appTelegramConfig :: !TelegramConfig,
+    telegramConfig :: !TelegramConfig,
     -- | Telegram bot state (conversation tracking)
-    appBotState :: !(TVar BotState),
+    botState :: !(TVar BotState),
     -- | Telegram API client environment (Nothing if bot token is empty)
-    appTelegramClientEnv :: !(Maybe ClientEnv)
+    telegramClientEnv :: !(Maybe ClientEnv)
   }
 
 -- | Initialize the application environment.
@@ -212,21 +212,21 @@ initializeAppEnv ::
   AppEnv
 initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv =
   AppEnv
-    { appLogFunc = logFunc,
-      appConfig = config,
-      appDatabaseConfig = dbConfig,
-      appDbPool = pool,
-      appEventStoreWriter = writer,
-      appEventStoreReader = reader,
-      appGlobalEventStoreReader = globalReader,
-      appAccountSummaryReadModel = accountReadModel,
-      appTransactionSummaryReadModel = transactionReadModel,
-      appUserSummaryReadModel = userReadModel,
-      appJWTConfig = jwtConfig,
-      appOAuthConfig = oauthConfig,
-      appTelegramConfig = telegramConfig,
-      appBotState = botState,
-      appTelegramClientEnv = telegramClientEnv
+    { logFunc = logFunc,
+      config = config,
+      databaseConfig = dbConfig,
+      dbPool = pool,
+      eventStoreWriter = writer,
+      eventStoreReader = reader,
+      globalEventStoreReader = globalReader,
+      accountSummaryReadModel = accountReadModel,
+      transactionSummaryReadModel = transactionReadModel,
+      userSummaryReadModel = userReadModel,
+      jwtConfig = jwtConfig,
+      oauthConfig = oauthConfig,
+      telegramConfig = telegramConfig,
+      botState = botState,
+      telegramClientEnv = telegramClientEnv
     }
 
 -- -----------------------------------------------------------------------------
@@ -271,7 +271,7 @@ class HasDbPool env where
   dbPoolL :: Lens' env ConnectionPool
 
 instance HasDbPool AppEnv where
-  dbPoolL = lens appDbPool (\x y -> x {appDbPool = y})
+  dbPoolL = lens (.dbPool) (\x y -> x {dbPool = y})
 
 -- | Type class for environments that have event store access.
 --
@@ -288,9 +288,9 @@ class HasEventStore env where
   globalEventStoreReaderL :: Lens' env (AccountingGlobalEventStoreReader IO)
 
 instance HasEventStore AppEnv where
-  eventStoreWriterL = lens appEventStoreWriter (\x y -> x {appEventStoreWriter = y})
-  eventStoreReaderL = lens appEventStoreReader (\x y -> x {appEventStoreReader = y})
-  globalEventStoreReaderL = lens appGlobalEventStoreReader (\x y -> x {appGlobalEventStoreReader = y})
+  eventStoreWriterL = lens (.eventStoreWriter) (\x y -> x {eventStoreWriter = y})
+  eventStoreReaderL = lens (.eventStoreReader) (\x y -> x {eventStoreReader = y})
+  globalEventStoreReaderL = lens (.globalEventStoreReader) (\x y -> x {globalEventStoreReader = y})
 
 -- | Type class for environments that have read model access.
 --
@@ -307,9 +307,9 @@ class HasReadModel env where
   userSummaryReadModelL :: Lens' env (TVar UserSummaryReadModel)
 
 instance HasReadModel AppEnv where
-  accountSummaryReadModelL = lens appAccountSummaryReadModel (\x y -> x {appAccountSummaryReadModel = y})
-  transactionSummaryReadModelL = lens appTransactionSummaryReadModel (\x y -> x {appTransactionSummaryReadModel = y})
-  userSummaryReadModelL = lens appUserSummaryReadModel (\x y -> x {appUserSummaryReadModel = y})
+  accountSummaryReadModelL = lens (.accountSummaryReadModel) (\x y -> x {accountSummaryReadModel = y})
+  transactionSummaryReadModelL = lens (.transactionSummaryReadModel) (\x y -> x {transactionSummaryReadModel = y})
+  userSummaryReadModelL = lens (.userSummaryReadModel) (\x y -> x {userSummaryReadModel = y})
 
 -- | Type class for environments that have auth configuration access.
 --
@@ -326,23 +326,23 @@ class HasAuthConfig env where
   telegramConfigL :: Lens' env TelegramConfig
 
 instance HasAuthConfig AppEnv where
-  jwtConfigL = lens appJWTConfig (\x y -> x {appJWTConfig = y})
-  oauthConfigL = lens appOAuthConfig (\x y -> x {appOAuthConfig = y})
-  telegramConfigL = lens appTelegramConfig (\x y -> x {appTelegramConfig = y})
+  jwtConfigL = lens (.jwtConfig) (\x y -> x {jwtConfig = y})
+  oauthConfigL = lens (.oauthConfig) (\x y -> x {oauthConfig = y})
+  telegramConfigL = lens (.telegramConfig) (\x y -> x {telegramConfig = y})
 
 -- | Type class for environments that have Telegram bot state.
 class HasBotState env where
   botStateL :: Lens' env (TVar BotState)
 
 instance HasBotState AppEnv where
-  botStateL = lens appBotState (\x y -> x {appBotState = y})
+  botStateL = lens (.botState) (\x y -> x {botState = y})
 
 -- | Type class for environments that have a Telegram API client.
 class HasTelegramClient env where
   telegramClientEnvL :: Lens' env (Maybe ClientEnv)
 
 instance HasTelegramClient AppEnv where
-  telegramClientEnvL = lens appTelegramClientEnv (\x y -> x {appTelegramClientEnv = y})
+  telegramClientEnvL = lens (.telegramClientEnv) (\x y -> x {telegramClientEnv = y})
 
 -- | Type class for environments that have application configuration.
 --
@@ -352,12 +352,12 @@ instance HasTelegramClient AppEnv where
 -- >>> getServerPort :: (MonadReader env m, HasAppConfig env) => m Int
 -- >>> getServerPort = do
 -- >>>   config <- view appConfigL
--- >>>   return $ serverPort $ appServer config
+-- >>>   return config.server.port
 class HasAppConfig env where
   appConfigL :: Lens' env AppConfig
 
 instance HasAppConfig AppEnv where
-  appConfigL = lens appConfig (\x y -> x {appConfig = y})
+  appConfigL = lens (.config) (\x y -> x {config = y})
 
 -- | Type class for environments that have database configuration.
 --
@@ -374,7 +374,7 @@ class HasDatabaseConfig env where
   databaseConfigL :: Lens' env DatabaseConfig
 
 instance HasDatabaseConfig AppEnv where
-  databaseConfigL = lens appDatabaseConfig (\x y -> x {appDatabaseConfig = y})
+  databaseConfigL = lens (.databaseConfig) (\x y -> x {databaseConfig = y})
 
 -- -----------------------------------------------------------------------------
 -- RIO Integration
@@ -387,7 +387,7 @@ instance HasDatabaseConfig AppEnv where
 --  - Structured logging with context
 --  - Automatic log level filtering
 instance HasLogFunc AppEnv where
-  logFuncL = lens appLogFunc (\x y -> x {appLogFunc = y})
+  logFuncL = lens (.logFunc) (\x y -> x {logFunc = y})
 
 -- -----------------------------------------------------------------------------
 -- Running the Application

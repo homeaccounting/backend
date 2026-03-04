@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 -- |
 -- Module      : Application.ReadModels.AccountSummary
@@ -96,17 +96,17 @@ import Safe (maximumDef)
 --   - Access list for RBAC
 data AccountSummaryData = AccountSummaryData
   { -- | Human-readable account name
-    accountSummaryDataName :: Text,
+    name :: Text,
     -- | Current account balance
-    accountSummaryDataBalance :: Money,
+    balance :: Money,
     -- | User who created the account (Owner)
-    accountSummaryDataCreatedBy :: UserId,
+    createdBy :: UserId,
     -- | Account type (Regular or External)
-    accountSummaryDataType :: AccountType,
+    accountType :: AccountType,
     -- | Access control list (users and their roles)
-    accountSummaryDataAccessList :: [AccountAccess],
+    accessList :: [AccountAccess],
     -- | Version number from event stream for optimistic concurrency
-    accountSummaryDataVersion :: Int
+    version :: Int
   }
   deriving (Show, Eq, Generic)
 
@@ -120,9 +120,9 @@ instance FromJSON AccountSummaryData
 -- what role they have on the account.
 data AccountSummaryWithRole = AccountSummaryWithRole
   { -- | The account summary data
-    accountSummaryWithRoleData :: AccountSummaryData,
+    summaryData :: AccountSummaryData,
     -- | The requesting user's role on this account
-    accountSummaryWithRoleUserRole :: AccountRole
+    userRole :: AccountRole
   }
   deriving (Show, Eq, Generic)
 
@@ -135,8 +135,8 @@ instance FromJSON AccountSummaryWithRole
 -- This is wrapped in a TVar for concurrent access and includes the latest
 -- sequence number for reliable event processing.
 data AccountSummaryReadModel = AccountSummaryReadModel
-  { accountSummaryLatestSequence :: SequenceNumber,
-    accountSummaryData :: Map AccountId AccountSummaryData
+  { latestSequence :: SequenceNumber,
+    summaryData :: Map AccountId AccountSummaryData
   }
   deriving (Show, Eq)
 
@@ -158,8 +158,8 @@ createAccountSummaryReadModel =
   liftIO $
     newTVarIO $
       AccountSummaryReadModel
-        { accountSummaryLatestSequence = -1,
-          accountSummaryData = Map.empty
+        { latestSequence = -1,
+          summaryData = Map.empty
         }
 
 -- -----------------------------------------------------------------------------
@@ -194,13 +194,13 @@ handleAccountSummaryEvents ::
 handleAccountSummaryEvents readModelTVar events = do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
-  let newSeq = maximumDef (accountSummaryLatestSequence currentModel) (streamEventPosition <$> events)
-      updatedData = foldl processEvent (accountSummaryData currentModel) events
+  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
+      updatedData = foldl processEvent currentModel.summaryData events
 
   liftIO . atomically . writeTVar readModelTVar $
     currentModel
-      { accountSummaryLatestSequence = newSeq,
-        accountSummaryData = updatedData
+      { latestSequence = newSeq,
+        summaryData = updatedData
       }
 
 -- | Processes a single event and updates the account summary map.
@@ -213,24 +213,24 @@ processEvent ::
   GlobalStreamEvent AccountingEvent ->
   Map AccountId AccountSummaryData
 processEvent summaries globalEvent =
-  let versionedEvent = streamEventPayload globalEvent
-      streamUuid = streamEventKey versionedEvent
-      payload = streamEventPayload versionedEvent
+  let versionedEvent = globalEvent.payload
+      streamUuid = versionedEvent.key
+      payload = versionedEvent.payload
    in case payload of
         AccountCreatedEvent evt ->
           case mkAccountIdSafe streamUuid of
             Nothing -> summaries
             Just accountId ->
-              let initialAccess = AccountAccess (accountCreatedBy evt) Owner
+              let initialAccess = AccountAccess evt.by Owner
                in Map.insert
                     accountId
                     AccountSummaryData
-                      { accountSummaryDataName = accountCreatedName evt,
-                        accountSummaryDataBalance = accountCreatedInitialBalance evt,
-                        accountSummaryDataCreatedBy = accountCreatedBy evt,
-                        accountSummaryDataType = accountCreatedType evt,
-                        accountSummaryDataAccessList = [initialAccess],
-                        accountSummaryDataVersion = 1
+                      { name = evt.name,
+                        balance = evt.initialBalance,
+                        createdBy = evt.by,
+                        accountType = evt.accountType,
+                        accessList = [initialAccess],
+                        version = 1
                       }
                     summaries
         AccountAccessGrantedEvent evt ->
@@ -239,12 +239,12 @@ processEvent summaries globalEvent =
             Just accountId ->
               Map.adjust
                 ( \summary ->
-                    let existingList = accountSummaryDataAccessList summary
-                        withoutUser = filter (\a -> accessUserId a /= accountAccessGrantedUserId evt) existingList
-                        newAccess = AccountAccess (accountAccessGrantedUserId evt) (accountAccessGrantedRole evt)
+                    let existingList = summary.accessList
+                        withoutUser = filter (\a -> a.userId /= evt.userId) existingList
+                        newAccess = AccountAccess evt.userId evt.role
                      in summary
-                          { accountSummaryDataAccessList = newAccess : withoutUser,
-                            accountSummaryDataVersion = accountSummaryDataVersion summary + 1
+                          { accessList = newAccess : withoutUser,
+                            version = summary.version + 1
                           }
                 )
                 accountId
@@ -255,11 +255,11 @@ processEvent summaries globalEvent =
             Just accountId ->
               Map.adjust
                 ( \summary ->
-                    let existingList = accountSummaryDataAccessList summary
-                        withoutUser = filter (\a -> accessUserId a /= accountAccessRevokedUserId evt) existingList
+                    let existingList = summary.accessList
+                        withoutUser = filter (\a -> a.userId /= evt.userId) existingList
                      in summary
-                          { accountSummaryDataAccessList = withoutUser,
-                            accountSummaryDataVersion = accountSummaryDataVersion summary + 1
+                          { accessList = withoutUser,
+                            version = summary.version + 1
                           }
                 )
                 accountId
@@ -271,9 +271,9 @@ processEvent summaries globalEvent =
               Map.adjust
                 ( \summary ->
                     summary
-                      { accountSummaryDataBalance =
-                          subtractMoneyAllowNegative (accountSummaryDataBalance summary) (accountDebitedAmount evt),
-                        accountSummaryDataVersion = accountSummaryDataVersion summary + 1
+                      { balance =
+                          subtractMoneyAllowNegative summary.balance evt.amount,
+                        version = summary.version + 1
                       }
                 )
                 accountId
@@ -285,9 +285,9 @@ processEvent summaries globalEvent =
               Map.adjust
                 ( \summary ->
                     summary
-                      { accountSummaryDataBalance =
-                          accountSummaryDataBalance summary `addMoney` accountCreditedAmount evt,
-                        accountSummaryDataVersion = accountSummaryDataVersion summary + 1
+                      { balance =
+                          summary.balance `addMoney` evt.amount,
+                        version = summary.version + 1
                       }
                 )
                 accountId
@@ -306,7 +306,7 @@ processEvent summaries globalEvent =
 -- Example:
 -- >>> maybeSummary <- getAccountSummary readModel accountId
 -- >>> case maybeSummary of
--- >>>   Just summary -> print (accountSummaryDataBalance summary)
+-- >>>   Just summary -> print (summary.balance)
 -- >>>   Nothing -> putStrLn "Account not found"
 getAccountSummary ::
   (MonadIO m) =>
@@ -315,7 +315,7 @@ getAccountSummary ::
   m (Maybe AccountSummaryData)
 getAccountSummary readModelTVar accountId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup accountId (accountSummaryData model)
+  return $ Map.lookup accountId model.summaryData
 
 -- | Retrieves the account summary for a specific user.
 --
@@ -335,17 +335,17 @@ getAccountSummaryForUser ::
   m (Maybe AccountSummaryWithRole)
 getAccountSummaryForUser readModelTVar accountId userId = do
   model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup accountId (accountSummaryData model) of
+  case Map.lookup accountId model.summaryData of
     Nothing -> return Nothing
     Just summary ->
-      case getUserRole userId (accountSummaryDataAccessList summary) of
+      case getUserRole userId summary.accessList of
         Nothing -> return Nothing -- User doesn't have access
         Just role ->
           return $
             Just
               AccountSummaryWithRole
-                { accountSummaryWithRoleData = summary,
-                  accountSummaryWithRoleUserRole = role
+                { summaryData = summary,
+                  userRole = role
                 }
 
 -- | Retrieves all account summaries in the read model.
@@ -362,7 +362,7 @@ getAllAccountSummaries ::
   m (Map AccountId AccountSummaryData)
 getAllAccountSummaries readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ accountSummaryData model
+  return model.summaryData
 
 -- | Retrieves all accounts accessible to a specific user.
 --
@@ -379,11 +379,11 @@ getAccessibleAccounts ::
   m [(AccountId, AccountSummaryData, AccountRole)]
 getAccessibleAccounts readModelTVar userId = do
   model <- liftIO $ readTVarIO readModelTVar
-  let allAccounts = Map.toList (accountSummaryData model)
+  let allAccounts = Map.toList model.summaryData
       accessibleAccounts =
         [ (accountId, summary, role)
           | (accountId, summary) <- allAccounts,
-            Just role <- [getUserRole userId (accountSummaryDataAccessList summary)]
+            Just role <- [getUserRole userId summary.accessList]
         ]
   return accessibleAccounts
 
@@ -401,7 +401,7 @@ accountExists ::
   m Bool
 accountExists readModelTVar accountId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member accountId (accountSummaryData model)
+  return $ Map.member accountId model.summaryData
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -422,11 +422,11 @@ accountSummaryToMap = getAllAccountSummaries
 
 -- | Get a user's role from an access list.
 getUserRole :: UserId -> [AccountAccess] -> Maybe AccountRole
-getUserRole userId accessList =
-  accessRole <$> findAccess
+getUserRole uid accessList =
+  (.role) <$> findAccess
   where
     findAccess = foldr matchUser Nothing accessList
     matchUser acc result =
-      if accessUserId acc == userId
+      if acc.userId == uid
         then Just acc
         else result

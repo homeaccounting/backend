@@ -1,7 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 -- |
 -- Module      : Infrastructure.Eventium
@@ -107,10 +105,12 @@ import Eventium
   ( CommandDispatcher,
     CommandHandlerError (..),
     EventHandler (..),
+    EventStoreReader (..),
     GlobalEventStoreReader,
     RejectionReason (..),
     StreamEvent (..),
     StreamProjection (..),
+    TypeEmbedding (..),
     UUID,
     VersionedEventStoreReader,
     VersionedEventStoreWriter,
@@ -121,9 +121,7 @@ import Eventium
     codecGlobalEventStoreReader,
     codecVersionedEventStoreReader,
     commandHandlerDispatcher,
-    embed,
     emptyMetadata,
-    getEvents,
     latestProjection,
     mkAggregateHandler,
     mkAggregateHandlerWith,
@@ -234,7 +232,7 @@ accountingEventStoreWriter config extraHandlers =
 -- | Event logger handler — logs all events as pretty-printed JSON.
 eventLoggerHandler :: (MonadIO m) => AccountingEventHandler m
 eventLoggerHandler = EventHandler $ \versionedEvent ->
-  liftIO $ printEventJSON (streamEventKey versionedEvent, streamEventPayload versionedEvent)
+  liftIO $ printEventJSON (versionedEvent.key, versionedEvent.payload)
 
 -- | Transfer process manager event handler.
 --
@@ -339,7 +337,7 @@ applyAccountCommand writer reader accountId cmd =
     reader
     accountAccountingCommandHandler
     accountId
-    (embed accountCommandEmbedding cmd)
+    (accountCommandEmbedding.embed cmd)
 
 -- | Apply a Transaction command.
 applyTransactionCommand ::
@@ -355,7 +353,7 @@ applyTransactionCommand writer reader txId cmd =
     reader
     transactionAccountingCommandHandler
     txId
-    (embed transactionCommandEmbedding cmd)
+    (transactionCommandEmbedding.embed cmd)
 
 -- | Apply a User command.
 applyUserCommand ::
@@ -371,7 +369,7 @@ applyUserCommand writer reader userId cmd =
     reader
     userAccountingCommandHandler
     userId
-    (embed userCommandEmbedding cmd)
+    (userCommandEmbedding.embed cmd)
 
 -- -----------------------------------------------------------------------------
 -- Aggregate Loading
@@ -387,8 +385,8 @@ loadUserAggregate ::
   UUID ->
   m User
 loadUserAggregate reader userId = do
-  events <- getEvents reader (allEvents userId)
-  pure $ latestProjection userAccountingProjection (streamEventPayload <$> events)
+  events <- reader.getEvents (allEvents userId)
+  pure $ latestProjection userAccountingProjection ((.payload) <$> events)
 
 -- -----------------------------------------------------------------------------
 -- Event Store Lifting Helpers

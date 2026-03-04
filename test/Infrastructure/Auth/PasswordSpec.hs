@@ -42,13 +42,13 @@ spec = describe "Password Hashing" $ do
 
   describe "Configuration" $ do
     it "default config uses 64 MiB memory" $ do
-      passwordHashMemory defaultPasswordHashConfig `shouldBe` 65536
+      defaultPasswordHashConfig.memory `shouldBe` 65536
 
     it "default config uses 3 iterations" $ do
-      passwordHashIterations defaultPasswordHashConfig `shouldBe` 3
+      defaultPasswordHashConfig.iterations `shouldBe` 3
 
     it "default config uses 4 parallel lanes" $ do
-      passwordHashParallelism defaultPasswordHashConfig `shouldBe` 4
+      defaultPasswordHashConfig.parallelism `shouldBe` 4
 
     -- Note: Custom config verification only works if the config matches default
     -- because verifyPassword uses hardcoded default config. This is a known limitation.

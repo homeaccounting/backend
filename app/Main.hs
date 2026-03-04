@@ -214,7 +214,7 @@ getConfigPath args = case args of
 -- >>> -- LogOptions configured based on appLogging config
 createLogOptions :: AppConfig -> IO LogOptions
 createLogOptions config = do
-  let minLevel = convertLogLevel (Config.logLevel $ appLogging config)
+  let minLevel = convertLogLevel config.logging.level
   baseOptions <- logOptionsHandle stdout True
   return
     $ setLogMinLevel minLevel
@@ -247,11 +247,11 @@ initializeEnvironment logFunc config = do
 
   -- 1. Initialize database connection pool
   logInfo "Creating database connection pool..."
-  let dbConfigForPool = convertDatabaseConfig (appDatabase config)
+  let dbConfigForPool = convertDatabaseConfig config.database
   pool <- liftIO $ createConnectionPool dbConfigForPool
   logInfo
     $ "Database pool created (size: "
-    <> displayShow (Config.dbPoolSize $ appDatabase config)
+    <> displayShow config.database.poolSize
     <> ")"
 
   -- 2. Run database migrations and initialization
@@ -287,23 +287,23 @@ initializeEnvironment logFunc config = do
 
   -- 5. Auth configurations (loaded from YAML config)
   logInfo "Auth configurations loaded from config file"
-  let jwtConfig = appAuth config
-      oauthConfig = appOAuth config
-      telegramConfig = appTelegram config
+  let jwtConfig = config.auth
+      oauthConfig = config.oauth
+      telegramConfig = config.telegram
 
   -- 5b. Initialize Telegram bot
   logInfo "Initializing Telegram bot..."
   botState <- liftIO $ initBot telegramConfig
-  logInfo $ "Telegram bot initialized (polling: " <> displayShow (telegramUsePolling telegramConfig) <> ")"
+  logInfo $ "Telegram bot initialized (polling: " <> displayShow telegramConfig.usePolling <> ")"
 
   -- 5c. Create Telegram API client environment
   telegramClientEnv <-
-    if T.null (telegramBotToken telegramConfig)
+    if T.null telegramConfig.botToken
       then do
         logWarn "Telegram bot token is empty, bot will be disabled"
         return Nothing
       else do
-        cEnv <- liftIO $ createTelegramClientEnv (telegramBotToken telegramConfig)
+        cEnv <- liftIO $ createTelegramClientEnv telegramConfig.botToken
         logInfo "Telegram API client environment created"
         return (Just cEnv)
 
@@ -313,7 +313,7 @@ initializeEnvironment logFunc config = do
   logInfo "Process managers registered via event bus"
 
   -- 7. Build application environment
-  let configDbConfig = appDatabase config -- Config.DatabaseConfig for AppEnv
+  let configDbConfig = config.database -- Config.DatabaseConfig for AppEnv
       env =
         initializeAppEnv
           logFunc
@@ -340,7 +340,7 @@ appEnvironment :: AppConfig -> Text
 appEnvironment config =
   -- This would come from config if we add it
   -- For now, infer from database name
-  let dbName = Config.dbDatabase (appDatabase config)
+  let dbName = config.database.database
    in if "_dev" `T.isSuffixOf` dbName
         then "development"
         else
@@ -378,14 +378,14 @@ applicationMain = do
 
   -- Display configuration info
   config <- view appConfigL
-  logInfo $ "Server Port: " <> displayShow (Config.serverPort $ appServer config)
-  logInfo $ "Database: " <> displayText (Config.dbDatabase $ appDatabase config)
+  logInfo $ "Server Port: " <> displayShow config.server.port
+  logInfo $ "Database: " <> displayText config.database.database
 
   -- Get the application environment
   env <- ask
-  let telegramCfg = appTelegram config
+  let telegramCfg = config.telegram
 
-  if telegramUsePolling telegramCfg
+  if telegramCfg.usePolling
     then do
       logInfo "Telegram bot: polling mode"
       botState <- view botStateL

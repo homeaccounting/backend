@@ -79,8 +79,8 @@ import Domain.Account as X
 import Domain.Transaction as X
 import Domain.User as X
 import Eventium (CommandHandler, Projection, TypeEmbedding (..), embeddedCommandHandler, embeddedProjection)
-import Eventium.TH (mkSumTypeEmbedding)
 import Eventium.Json (dropSuffix)
+import Eventium.TH (mkSumTypeEmbedding)
 import SumTypesX.TH (SumTypeOptions (..), SumTypeTagOptions (ConstructTagName), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------

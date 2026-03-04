@@ -39,9 +39,9 @@ module Domain.Account.Commands
   )
 where
 
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types (AccountRole, AccountType, Money, TransactionId, UserId)
-import Eventium.Json.TH (deriveJSONUnPrefixLower)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -83,13 +83,13 @@ accountCommands =
 -- >>> CreateAccount "Savings Account" (Money 1000.0) userId RegularAccount
 data CreateAccount = CreateAccount
   { -- | Human-readable name for the account (e.g., "Checking", "Savings")
-    createAccountName :: Text,
+    name :: Text,
     -- | Initial balance when creating the account (must be non-negative)
-    createAccountInitialBalance :: Money,
+    initialBalance :: Money,
     -- | User who is creating the account (becomes Owner)
-    createAccountCreatedBy :: UserId,
+    createdBy :: UserId,
     -- | Type of account (Regular or External)
-    createAccountType :: AccountType
+    accountType :: AccountType
   }
   deriving (Show, Eq)
 
@@ -110,11 +110,11 @@ data CreateAccount = CreateAccount
 -- >>> ShareAccount targetUserId Editor grantingUserId
 data ShareAccount = ShareAccount
   { -- | User to grant access to
-    shareAccountUserId :: UserId,
+    userId :: UserId,
     -- | Role to grant (Owner, Editor, or Viewer)
-    shareAccountRole :: AccountRole,
+    role :: AccountRole,
     -- | User who is granting access (must be Owner)
-    shareAccountGrantedBy :: UserId
+    grantedBy :: UserId
   }
   deriving (Show, Eq)
 
@@ -133,9 +133,9 @@ data ShareAccount = ShareAccount
 -- >>> RevokeAccountAccess targetUserId revokingUserId
 data RevokeAccountAccess = RevokeAccountAccess
   { -- | User to revoke access from
-    revokeAccountAccessUserId :: UserId,
+    userId :: UserId,
     -- | User who is revoking access (must be Owner)
-    revokeAccountAccessRevokedBy :: UserId
+    revokedBy :: UserId
   }
   deriving (Show, Eq)
 
@@ -156,11 +156,11 @@ data RevokeAccountAccess = RevokeAccountAccess
 -- >>> DebitAccount (Money 200) txId "Transfer to Savings"
 data DebitAccount = DebitAccount
   { -- | Amount to debit (always positive)
-    debitAccountAmount :: Money,
+    amount :: Money,
     -- | Transaction ID for saga correlation
-    debitAccountTransactionId :: TransactionId,
+    transactionId :: TransactionId,
     -- | Reason for the debit
-    debitAccountReason :: Text
+    reason :: Text
   }
   deriving (Show, Eq)
 
@@ -179,11 +179,11 @@ data DebitAccount = DebitAccount
 -- >>> CreditAccount (Money 200) txId "Transfer from Checking"
 data CreditAccount = CreditAccount
   { -- | Amount to credit (always positive)
-    creditAccountAmount :: Money,
+    amount :: Money,
     -- | Transaction ID for saga correlation
-    creditAccountTransactionId :: TransactionId,
+    transactionId :: TransactionId,
     -- | Reason for the credit
-    creditAccountReason :: Text
+    reason :: Text
   }
   deriving (Show, Eq)
 
@@ -191,9 +191,9 @@ data CreditAccount = CreditAccount
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- Derive JSON instances for all commands using the unprefixed lowercase pattern
-deriveJSONUnPrefixLower ''CreateAccount
-deriveJSONUnPrefixLower ''ShareAccount
-deriveJSONUnPrefixLower ''RevokeAccountAccess
-deriveJSONUnPrefixLower ''DebitAccount
-deriveJSONUnPrefixLower ''CreditAccount
+-- Derive JSON instances for all commands using default options (fields already unprefixed)
+deriveJSON defaultOptions ''CreateAccount
+deriveJSON defaultOptions ''ShareAccount
+deriveJSON defaultOptions ''RevokeAccountAccess
+deriveJSON defaultOptions ''DebitAccount
+deriveJSON defaultOptions ''CreditAccount

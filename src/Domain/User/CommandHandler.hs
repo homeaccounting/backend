@@ -51,6 +51,7 @@ import Domain.User.Commands
 import Domain.User.Events
 import Domain.User.Projection
 import Eventium (CommandHandler (..))
+import Optics ((^.))
 import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
@@ -117,87 +118,86 @@ constructSumType
 handleUserCommand :: User -> UserCommand -> Either UserError [UserEvent]
 -- Handle RegisterUser command
 handleUserCommand user (RegisterUserUserCommand RegisterUser {..})
-  | _userIsRegistered user = Left UserAlreadyRegistered
+  | user ^. #isRegistered = Left UserAlreadyRegistered
   | otherwise =
       Right
         [ UserRegisteredUserEvent
             UserRegistered
-              { userRegisteredEmail = registerUserEmail,
-                userRegisteredPasswordHash = registerUserPasswordHash,
-                userRegisteredExternalAccountId = registerUserExternalAccountId
+              { email = email,
+                passwordHash = passwordHash,
+                externalAccountId = externalAccountId
               }
         ]
 -- Handle RegisterViaTelegram command
 handleUserCommand user (RegisterViaTelegramUserCommand RegisterViaTelegram {..})
-  | _userIsRegistered user = Left UserAlreadyRegistered
+  | user ^. #isRegistered = Left UserAlreadyRegistered
   | otherwise =
       Right
         [ UserRegisteredViaTelegramUserEvent
             UserRegisteredViaTelegram
-              { userRegisteredViaTelegramIdentity = registerViaTelegramIdentity,
-                userRegisteredViaTelegramExternalAccountId = registerViaTelegramExternalAccountId
+              { identity = identity,
+                externalAccountId = externalAccountId
               }
         ]
 -- Handle LinkOAuthAccount command
 handleUserCommand user (LinkOAuthAccountUserCommand LinkOAuthAccount {..})
-  | not (_userIsRegistered user) = Left UserNotRegistered
-  | hasOAuthProvider (oauthProvider linkOAuthAccountIdentity) (_userOAuthIdentities user) = Left OAuthAlreadyLinked
+  | not (user ^. #isRegistered) = Left UserNotRegistered
+  | hasOAuthProvider identity.provider (user ^. #oauthIdentities) = Left OAuthAlreadyLinked
   | otherwise =
       Right
         [ OAuthAccountLinkedUserEvent
             OAuthAccountLinked
-              { oAuthAccountLinkedIdentity = linkOAuthAccountIdentity
+              { identity = identity
               }
         ]
   where
-    hasOAuthProvider provider identities =
-      any (\i -> oauthProvider i == provider) identities
+    hasOAuthProvider theProvider =
+      any (\i -> i.provider == theProvider)
 -- Handle LinkTelegramAccount command
 handleUserCommand user (LinkTelegramAccountUserCommand LinkTelegramAccount {..})
-  | not (_userIsRegistered user) = Left UserNotRegistered
-  | Just _ <- _userTelegramIdentity user = Left TelegramAlreadyLinked
+  | not (user ^. #isRegistered) = Left UserNotRegistered
+  | Just _ <- user ^. #telegramIdentity = Left TelegramAlreadyLinked
   | otherwise =
       Right
         [ TelegramAccountLinkedUserEvent
             TelegramAccountLinked
-              { telegramAccountLinkedIdentity = linkTelegramAccountIdentity
+              { identity = identity
               }
         ]
 -- Handle UnlinkOAuthAccount command
 handleUserCommand user (UnlinkOAuthAccountUserCommand UnlinkOAuthAccount {..})
-  | not (_userIsRegistered user) = Left UserNotRegistered
+  | not (user ^. #isRegistered) = Left UserNotRegistered
   | loginMethodCount user <= 1 = Left CannotRemoveLastLoginMethod
-  | not (hasOAuthIdentity unlinkOAuthAccountIdentity (_userOAuthIdentities user)) = Left OAuthNotLinked
+  | not (hasOAuthIdentity identity (user ^. #oauthIdentities)) = Left OAuthNotLinked
   | otherwise =
       Right
         [ OAuthAccountUnlinkedUserEvent
             OAuthAccountUnlinked
-              { oAuthAccountUnlinkedIdentity = unlinkOAuthAccountIdentity
+              { identity = identity
               }
         ]
   where
-    hasOAuthIdentity target identities =
+    hasOAuthIdentity target =
       any
         ( \i ->
-            oauthProvider i == oauthProvider target
-              && oauthSubject i == oauthSubject target
+            i.provider == target.provider
+              && i.subject == target.subject
         )
-        identities
 -- Handle UnlinkTelegramAccount command
 handleUserCommand user (UnlinkTelegramAccountUserCommand UnlinkTelegramAccount)
-  | not (_userIsRegistered user) = Left UserNotRegistered
+  | not (user ^. #isRegistered) = Left UserNotRegistered
   | loginMethodCount user <= 1 = Left CannotRemoveLastLoginMethod
-  | Nothing <- _userTelegramIdentity user = Left TelegramNotLinked
+  | Nothing <- user ^. #telegramIdentity = Left TelegramNotLinked
   | otherwise =
       Right [TelegramAccountUnlinkedUserEvent TelegramAccountUnlinked]
 -- Handle ChangePassword command
 handleUserCommand user (ChangePasswordUserCommand ChangePassword {..})
-  | not (_userIsRegistered user) = Left UserNotRegistered
+  | not (user ^. #isRegistered) = Left UserNotRegistered
   | otherwise =
       Right
         [ PasswordChangedUserEvent
             PasswordChanged
-              { passwordChangedNewHash = changePasswordNewHash
+              { newHash = newHash
               }
         ]
 

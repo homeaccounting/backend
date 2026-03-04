@@ -189,9 +189,9 @@ createTestAppEnv = do
 
   -- Lift event stores from STM to IO
   -- This wraps each operation with `atomically`
-  let baseWriter = liftSTMWriter (inMemoryWriter stores)
-      reader = liftSTMReader (inMemoryReader stores)
-      globalReader = liftSTMGlobalReader (inMemoryGlobalReader stores)
+  let baseWriter = liftSTMWriter stores.inMemoryWriter
+      reader = liftSTMReader stores.inMemoryReader
+      globalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
 
       -- Wrap writer with event bus to update read models synchronously
       writer = publishingEventStoreWriter baseWriter (synchronousPublisher (accountHandler <> transactionHandler <> userHandler))
@@ -200,65 +200,65 @@ createTestAppEnv = do
   let testJWTConfig = defaultJWTConfig
       testOAuthConfig =
         OAuthConfig
-          { oauthGoogle = Nothing,
-            oauthGitHub = Nothing,
-            oauthMicrosoft = Nothing
+          { google = Nothing,
+            gitHub = Nothing,
+            microsoft = Nothing
           }
       testTelegramConfig =
         TelegramConfig
-          { telegramBotToken = "test_token",
-            telegramBotUsername = "test_bot",
-            telegramAuthMaxAge = 86400,
-            telegramWebhookUrl = Nothing,
-            telegramUsePolling = False,
-            telegramPollingTimeout = 30
+          { botToken = "test_token",
+            botUsername = "test_bot",
+            authMaxAge = 86400,
+            webhookUrl = Nothing,
+            usePolling = False,
+            pollingTimeout = 30
           }
 
   -- Create test configuration
   let config =
         AppConfig
-          { appServer =
+          { server =
               ServerConfig
-                { serverPort = 8080,
-                  serverHost = T.pack "127.0.0.1"
+                { port = 8080,
+                  host = T.pack "127.0.0.1"
                 },
-            appDatabase =
+            database =
               DatabaseConfig
-                { dbHost = T.pack "localhost",
-                  dbPort = 5432,
-                  dbUser = T.pack "test",
-                  dbPassword = T.pack "test",
-                  dbDatabase = T.pack "test",
-                  dbPoolSize = 1,
-                  dbConnectionTimeout = 10
+                { host = T.pack "localhost",
+                  port = 5432,
+                  user = T.pack "test",
+                  password = T.pack "test",
+                  database = T.pack "test",
+                  poolSize = 1,
+                  connectionTimeout = 10
                 },
-            appLogging =
+            logging =
               LoggingConfig
-                { logLevel = LogInfo,
-                  logFormat = LogText
+                { level = LogInfo,
+                  format = LogText
                 },
-            appCors =
+            cors =
               CorsConfig
-                { corsEnabled = True,
-                  corsAllowedOrigins = T.pack <$> ["*"],
-                  corsAllowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
-                  corsAllowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
-                  corsMaxAge = Just 3600
+                { enabled = True,
+                  allowedOrigins = T.pack <$> ["*"],
+                  allowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
+                  allowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
+                  maxAge = Just 3600
                 },
-            appEventStore =
+            eventStore =
               EventStoreConfig
-                { esSnapshotFrequency = 100
+                { snapshotFrequency = 100
                 },
-            appProcessManagers =
+            processManagers =
               ProcessManagerConfig
-                { pmPollIntervalMs = 1000
+                { pollIntervalMs = 1000
                 },
-            appAuth = testJWTConfig,
-            appOAuth = testOAuthConfig,
-            appTelegram = testTelegramConfig
+            auth = testJWTConfig,
+            oauth = testOAuthConfig,
+            telegram = testTelegramConfig
           }
 
-      dbConfig = appDatabase config
+      dbConfig = config.database
 
   -- Build the AppEnv
   -- Note: We don't have a real connection pool, but handlers don't need it
@@ -268,21 +268,21 @@ createTestAppEnv = do
 
   return
     AppEnv
-      { appLogFunc = logFunc,
-        appConfig = config,
-        appDatabaseConfig = dbConfig,
-        appDbPool = error "Database pool should not be accessed in in-memory tests! Use event store abstractions instead.",
-        appEventStoreWriter = writer,
-        appEventStoreReader = reader,
-        appGlobalEventStoreReader = globalReader,
-        appAccountSummaryReadModel = accountReadModel,
-        appTransactionSummaryReadModel = transactionReadModel,
-        appUserSummaryReadModel = userReadModel,
-        appJWTConfig = testJWTConfig,
-        appOAuthConfig = testOAuthConfig,
-        appTelegramConfig = testTelegramConfig,
-        appBotState = botState,
-        appTelegramClientEnv = Nothing
+      { logFunc = logFunc,
+        config = config,
+        databaseConfig = dbConfig,
+        dbPool = error "Database pool should not be accessed in in-memory tests! Use event store abstractions instead.",
+        eventStoreWriter = writer,
+        eventStoreReader = reader,
+        globalEventStoreReader = globalReader,
+        accountSummaryReadModel = accountReadModel,
+        transactionSummaryReadModel = transactionReadModel,
+        userSummaryReadModel = userReadModel,
+        jwtConfig = testJWTConfig,
+        oauthConfig = testOAuthConfig,
+        telegramConfig = testTelegramConfig,
+        botState = botState,
+        telegramClientEnv = Nothing
       }
 
 -- | Create a test AppEnv with the Transfer Process Manager enabled.
@@ -306,9 +306,9 @@ createTestAppEnvWithProcessManager = do
   (transactionReadModel, transactionHandler) <- createTransactionSummaryEventHandler
   (userReadModel, userHandler) <- createUserSummaryEventHandler
 
-  let baseWriter = liftSTMWriter (inMemoryWriter stores)
-      reader = liftSTMReader (inMemoryReader stores)
-      globalReader = liftSTMGlobalReader (inMemoryGlobalReader stores)
+  let baseWriter = liftSTMWriter stores.inMemoryWriter
+      reader = liftSTMReader stores.inMemoryReader
+      globalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
 
       -- CRITICAL: Read model handlers FIRST, then process manager LAST.
       -- See accountingEventStoreWriter for the depth-first dispatch explanation.
@@ -320,84 +320,84 @@ createTestAppEnvWithProcessManager = do
   let testJWTConfig = defaultJWTConfig
       testOAuthConfig =
         OAuthConfig
-          { oauthGoogle = Nothing,
-            oauthGitHub = Nothing,
-            oauthMicrosoft = Nothing
+          { google = Nothing,
+            gitHub = Nothing,
+            microsoft = Nothing
           }
       testTelegramConfig =
         TelegramConfig
-          { telegramBotToken = "test_token",
-            telegramBotUsername = "test_bot",
-            telegramAuthMaxAge = 86400,
-            telegramWebhookUrl = Nothing,
-            telegramUsePolling = False,
-            telegramPollingTimeout = 30
+          { botToken = "test_token",
+            botUsername = "test_bot",
+            authMaxAge = 86400,
+            webhookUrl = Nothing,
+            usePolling = False,
+            pollingTimeout = 30
           }
 
   let config =
         AppConfig
-          { appServer =
+          { server =
               ServerConfig
-                { serverPort = 8080,
-                  serverHost = T.pack "127.0.0.1"
+                { port = 8080,
+                  host = T.pack "127.0.0.1"
                 },
-            appDatabase =
+            database =
               DatabaseConfig
-                { dbHost = T.pack "localhost",
-                  dbPort = 5432,
-                  dbUser = T.pack "test",
-                  dbPassword = T.pack "test",
-                  dbDatabase = T.pack "test",
-                  dbPoolSize = 1,
-                  dbConnectionTimeout = 10
+                { host = T.pack "localhost",
+                  port = 5432,
+                  user = T.pack "test",
+                  password = T.pack "test",
+                  database = T.pack "test",
+                  poolSize = 1,
+                  connectionTimeout = 10
                 },
-            appLogging =
+            logging =
               LoggingConfig
-                { logLevel = LogInfo,
-                  logFormat = LogText
+                { level = LogInfo,
+                  format = LogText
                 },
-            appCors =
+            cors =
               CorsConfig
-                { corsEnabled = True,
-                  corsAllowedOrigins = T.pack <$> ["*"],
-                  corsAllowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
-                  corsAllowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
-                  corsMaxAge = Just 3600
+                { enabled = True,
+                  allowedOrigins = T.pack <$> ["*"],
+                  allowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
+                  allowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
+                  maxAge = Just 3600
                 },
-            appEventStore =
+            eventStore =
               EventStoreConfig
-                { esSnapshotFrequency = 100
+                { snapshotFrequency = 100
                 },
-            appProcessManagers =
+            processManagers =
               ProcessManagerConfig
-                { pmPollIntervalMs = 1000
+                { pollIntervalMs = 1000
                 },
-            appAuth = testJWTConfig,
-            appOAuth = testOAuthConfig,
-            appTelegram = testTelegramConfig
+            auth = testJWTConfig,
+            oauth = testOAuthConfig,
+            telegram = testTelegramConfig
           }
 
-      dbConfig = appDatabase config
+      dbConfig = config.database
 
   botState <- RIO.newTVarIO (BotState mempty)
 
   return
     AppEnv
-      { appLogFunc = logFunc,
-        appConfig = config,
-        appDatabaseConfig = dbConfig,
-        appDbPool = error "Database pool should not be accessed in in-memory tests!",
-        appEventStoreWriter = writer,
-        appEventStoreReader = reader,
-        appGlobalEventStoreReader = globalReader,
-        appAccountSummaryReadModel = accountReadModel,
-        appTransactionSummaryReadModel = transactionReadModel,
-        appUserSummaryReadModel = userReadModel,
-        appJWTConfig = testJWTConfig,
-        appOAuthConfig = testOAuthConfig,
-        appTelegramConfig = testTelegramConfig,
-        appBotState = botState,
-        appTelegramClientEnv = Nothing
+      { logFunc = logFunc,
+        config = config,
+        databaseConfig = dbConfig,
+        dbPool = error "Database pool should not be accessed in in-memory tests!",
+        eventStoreWriter = writer,
+        eventStoreReader = reader,
+        globalEventStoreReader = globalReader,
+        accountSummaryReadModel = accountReadModel,
+        transactionSummaryReadModel = transactionReadModel,
+        userSummaryReadModel = userReadModel,
+        jwtConfig = testJWTConfig,
+        oauthConfig = testOAuthConfig,
+        telegramConfig = testTelegramConfig,
+        botState = botState,
+        telegramClientEnv = Nothing
       }
 
 -- -----------------------------------------------------------------------------

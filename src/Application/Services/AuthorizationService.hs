@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 -- |
 -- Module      : Application.Services.AuthorizationService
@@ -120,9 +121,9 @@ instance FromJSON TransferDenialReason
 
 -- | Account data needed for authorization checks.
 data AccountAuthData = AccountAuthData
-  { accountAuthDataCreatedBy :: UserId,
-    accountAuthDataType :: AccountType,
-    accountAuthDataAccessList :: [AccountAccess]
+  { createdBy :: UserId,
+    accountType :: AccountType,
+    accessList :: [AccountAccess]
   }
   deriving (Show, Eq)
 
@@ -148,11 +149,11 @@ canAccessAccount ::
   AccountAuthData ->
   AccountAccessResult
 canAccessAccount userId accountData =
-  case getUserRoleFromAccessList userId (accountAuthDataAccessList accountData) of
+  case getUserRoleFromAccessList userId accountData.accessList of
     Just role -> AccessGranted role
     Nothing ->
       -- Check if user is creator (should already be in access list, but as fallback)
-      if accountAuthDataCreatedBy accountData == userId
+      if accountData.createdBy == userId
         then AccessGranted Owner
         else AccessDenied
 
@@ -253,11 +254,11 @@ getUserAccessibleAccounts ::
   m [(AccountId, AccountRole)]
 getUserAccessibleAccounts userId readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
-  let allAccounts = Map.toList (accountAccessData model)
+  let allAccounts = Map.toList model.accounts
       accessibleAccounts =
         [ (accountId, role)
           | (accountId, authData) <- allAccounts,
-            Just role <- [getUserRoleFromAccessList userId (accountAuthDataAccessList authData)]
+            Just role <- [getUserRoleFromAccessList userId authData.accessList]
         ]
   return accessibleAccounts
 
@@ -274,7 +275,7 @@ checkAccountAccess ::
   m (Maybe (AccountRole, AccountAuthData))
 checkAccountAccess userId accountId readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup accountId (accountAccessData model) of
+  case Map.lookup accountId model.accounts of
     Nothing -> return Nothing -- Account doesn't exist
     Just authData ->
       case canAccessAccount userId authData of
@@ -287,12 +288,12 @@ checkAccountAccess userId accountId readModelTVar = do
 
 -- | Get a user's role from an access list.
 getUserRoleFromAccessList :: UserId -> [AccountAccess] -> Maybe AccountRole
-getUserRoleFromAccessList userId accessList =
-  accessRole <$> findAccess
+getUserRoleFromAccessList uid accessList =
+  (.role) <$> findAccess
   where
     findAccess = foldr matchUser Nothing accessList
     matchUser acc result =
-      if accessUserId acc == userId
+      if acc.userId == uid
         then Just acc
         else result
 
@@ -308,6 +309,6 @@ getUserRoleFromAccessList userId accessList =
 -- This stores the authorization-relevant data for all accounts,
 -- updated by listening to the event stream.
 data AccountAccessReadModel = AccountAccessReadModel
-  { accountAccessData :: Map.Map AccountId AccountAuthData
+  { accounts :: Map.Map AccountId AccountAuthData
   }
   deriving (Show, Eq)

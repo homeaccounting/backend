@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -80,15 +81,15 @@ import qualified Text.Read as Read
 -- Contains all configuration sections for the application including server,
 -- database, logging, CORS, event store, and process manager settings.
 data AppConfig = AppConfig
-  { appServer :: !ServerConfig,
-    appDatabase :: !DatabaseConfig,
-    appLogging :: !LoggingConfig,
-    appCors :: !CorsConfig,
-    appEventStore :: !EventStoreConfig,
-    appProcessManagers :: !ProcessManagerConfig,
-    appAuth :: !JWTConfig,
-    appOAuth :: !OAuthConfig,
-    appTelegram :: !TelegramConfig
+  { server :: !ServerConfig,
+    database :: !DatabaseConfig,
+    logging :: !LoggingConfig,
+    cors :: !CorsConfig,
+    eventStore :: !EventStoreConfig,
+    processManagers :: !ProcessManagerConfig,
+    auth :: !JWTConfig,
+    oauth :: !OAuthConfig,
+    telegram :: !TelegramConfig
   }
   deriving (Show, Eq, Generic)
 
@@ -115,8 +116,8 @@ instance ToJSON AppConfig
 --  - serverHost: Network interface to bind to (e.g., "0.0.0.0", "127.0.0.1")
 --  - serverPort: TCP port to listen on (1-65535)
 data ServerConfig = ServerConfig
-  { serverHost :: !Text,
-    serverPort :: !Int
+  { host :: !Text,
+    port :: !Int
   }
   deriving (Show, Eq, Generic)
 
@@ -141,13 +142,13 @@ instance ToJSON ServerConfig
 --  - dbPoolSize: Maximum number of connections in pool
 --  - dbConnectionTimeout: Connection timeout in seconds
 data DatabaseConfig = DatabaseConfig
-  { dbHost :: !Text,
-    dbPort :: !Int,
-    dbUser :: !Text,
-    dbPassword :: !Text,
-    dbDatabase :: !Text,
-    dbPoolSize :: !Int,
-    dbConnectionTimeout :: !Int
+  { host :: !Text,
+    port :: !Int,
+    user :: !Text,
+    password :: !Text,
+    database :: !Text,
+    poolSize :: !Int,
+    connectionTimeout :: !Int
   }
   deriving (Show, Eq, Generic)
 
@@ -168,8 +169,8 @@ instance ToJSON DatabaseConfig
 --
 -- Defines logging level and output format.
 data LoggingConfig = LoggingConfig
-  { logLevel :: !LogLevel,
-    logFormat :: !LogFormat
+  { level :: !LogLevel,
+    format :: !LogFormat
   }
   deriving (Show, Eq, Generic)
 
@@ -230,11 +231,11 @@ instance ToJSON LogFormat where
 --
 -- Cross-Origin Resource Sharing settings for the HTTP server.
 data CorsConfig = CorsConfig
-  { corsEnabled :: !Bool,
-    corsAllowedOrigins :: ![Text],
-    corsAllowedMethods :: ![Text],
-    corsAllowedHeaders :: ![Text],
-    corsMaxAge :: !(Maybe Int)
+  { enabled :: !Bool,
+    allowedOrigins :: ![Text],
+    allowedMethods :: ![Text],
+    allowedHeaders :: ![Text],
+    maxAge :: !(Maybe Int)
   }
   deriving (Show, Eq, Generic)
 
@@ -253,7 +254,7 @@ instance ToJSON CorsConfig
 --
 -- Settings for the event sourcing event store.
 data EventStoreConfig = EventStoreConfig
-  { esSnapshotFrequency :: !Int
+  { snapshotFrequency :: !Int
   }
   deriving (Show, Eq, Generic)
 
@@ -268,7 +269,7 @@ instance ToJSON EventStoreConfig
 --
 -- Settings for process managers (sagas) that coordinate across aggregates.
 data ProcessManagerConfig = ProcessManagerConfig
-  { pmPollIntervalMs :: !Int
+  { pollIntervalMs :: !Int
   }
   deriving (Show, Eq, Generic)
 
@@ -445,35 +446,35 @@ substituteEnvVars = go
 validateConfig :: AppConfig -> Either Text ()
 validateConfig config = do
   -- Validate server config
-  let serverPortValue = serverPort (appServer config)
+  let serverPortValue = config.server.port
   when (serverPortValue < 1 || serverPortValue > 65535) $
     Left $
       "Invalid server port: " <> T.pack (show serverPortValue) <> " (must be 1-65535)"
 
   -- Validate database config
-  let dbPortValue = dbPort (appDatabase config)
+  let dbPortValue = config.database.port
   when (dbPortValue < 1 || dbPortValue > 65535) $
     Left $
       "Invalid database port: " <> T.pack (show dbPortValue) <> " (must be 1-65535)"
 
-  let poolSize = dbPoolSize (appDatabase config)
-  when (poolSize < 1) $
+  let poolSizeValue = config.database.poolSize
+  when (poolSizeValue < 1) $
     Left $
-      "Invalid database pool size: " <> T.pack (show poolSize) <> " (must be positive)"
+      "Invalid database pool size: " <> T.pack (show poolSizeValue) <> " (must be positive)"
 
-  let connTimeout = dbConnectionTimeout (appDatabase config)
+  let connTimeout = config.database.connectionTimeout
   when (connTimeout < 1) $
     Left $
       "Invalid database connection timeout: " <> T.pack (show connTimeout) <> " (must be positive)"
 
   -- Validate event store config
-  let snapshotFreq = esSnapshotFrequency (appEventStore config)
+  let snapshotFreq = config.eventStore.snapshotFrequency
   when (snapshotFreq < 1) $
     Left $
       "Invalid snapshot frequency: " <> T.pack (show snapshotFreq) <> " (must be positive)"
 
   -- Validate process manager config
-  let pollInterval = pmPollIntervalMs (appProcessManagers config)
+  let pollInterval = config.processManagers.pollIntervalMs
   when (pollInterval < 1) $
     Left $
       "Invalid poll interval: " <> T.pack (show pollInterval) <> " (must be positive)"

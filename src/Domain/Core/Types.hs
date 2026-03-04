@@ -86,6 +86,10 @@ newtype Money = Money
   }
   deriving (Show, Eq, Ord, Generic)
 
+-- | Extract the rational value from a Money.
+unMoney :: Money -> Rational
+unMoney (Money r) = r
+
 -- | JSON serialization for Money.
 -- Serializes as a decimal number with appropriate precision.
 instance ToJSON Money where
@@ -177,6 +181,10 @@ newtype AccountId = AccountId
   }
   deriving (Show, Eq, Ord, Generic)
 
+-- | Extract the UUID from an AccountId.
+unAccountId :: AccountId -> UUID
+unAccountId (AccountId uuid) = uuid
+
 instance ToJSON AccountId where
   toJSON = toJSON . unAccountId
 
@@ -232,6 +240,10 @@ newtype TransactionId = TransactionId
   { unTransactionId :: UUID
   }
   deriving (Show, Eq, Ord, Generic)
+
+-- | Extract the UUID from a TransactionId.
+unTransactionId :: TransactionId -> UUID
+unTransactionId (TransactionId uuid) = uuid
 
 instance ToJSON TransactionId where
   toJSON = toJSON . unTransactionId
@@ -289,6 +301,10 @@ newtype UserId = UserId
   }
   deriving (Show, Eq, Ord, Generic)
 
+-- | Extract the UUID from a UserId.
+unUserId :: UserId -> UUID
+unUserId (UserId uuid) = uuid
+
 instance ToJSON UserId where
   toJSON = toJSON . unUserId
 
@@ -335,6 +351,10 @@ newtype TelegramId = TelegramId
   }
   deriving (Show, Eq, Ord, Generic)
 
+-- | Extract the Int64 from a TelegramId.
+unTelegramId :: TelegramId -> Int64
+unTelegramId (TelegramId i) = i
+
 instance ToJSON TelegramId where
   toJSON = toJSON . unTelegramId
 
@@ -378,8 +398,8 @@ instance FromJSON AccountRole
 
 -- | Access record linking a user to an account with a specific role.
 data AccountAccess = AccountAccess
-  { accessUserId :: UserId,
-    accessRole :: AccountRole
+  { userId :: UserId,
+    role :: AccountRole
   }
   deriving (Show, Eq, Generic)
 
@@ -405,9 +425,9 @@ instance FromJSON OAuthProvider
 -- | OAuth identity linking a user to an OAuth provider.
 data OAuthIdentity = OAuthIdentity
   { -- | The OAuth provider
-    oauthProvider :: OAuthProvider,
+    provider :: OAuthProvider,
     -- | The unique subject identifier from the provider
-    oauthSubject :: Text
+    subject :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -422,11 +442,11 @@ instance FromJSON OAuthIdentity
 -- | Telegram identity for a user.
 data TelegramIdentity = TelegramIdentity
   { -- | Telegram user ID
-    telegramId :: TelegramId,
+    id :: TelegramId,
     -- | Optional Telegram username (without @)
-    telegramUsername :: Maybe Text,
+    username :: Maybe Text,
     -- | User's first name from Telegram
-    telegramFirstName :: Text
+    firstName :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -446,6 +466,10 @@ newtype PasswordHash = PasswordHash
   { unPasswordHash :: ByteString
   }
   deriving (Show, Eq, Generic)
+
+-- | Extract the ByteString from a PasswordHash.
+unPasswordHash :: PasswordHash -> ByteString
+unPasswordHash (PasswordHash bs) = bs
 
 -- | JSON serialization for PasswordHash (base64 encoded).
 instance ToJSON PasswordHash where

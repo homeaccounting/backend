@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 
 -- |
 -- Module      : Infrastructure.Auth.JWT
@@ -29,7 +29,7 @@
 -- >>> token <- generateToken jwtConfig userId "user@example.com"
 -- >>> claims <- verifyToken jwtConfig token
 -- >>> case claims of
--- >>>   Just c -> print (jwtUserId c)
+-- >>>   Just c -> print (c.userId)
 -- >>>   Nothing -> print "Invalid token"
 module Infrastructure.Auth.JWT
   ( -- * JWT Claims
@@ -81,11 +81,11 @@ import GHC.Generics (Generic)
 -- in addition to the standard JWT claims (exp, iat, sub).
 data JWTClaims = JWTClaims
   { -- | User ID (from the 'sub' claim)
-    jwtUserId :: UserId,
+    userId :: UserId,
     -- | User's email address
-    jwtEmail :: Text,
+    email :: Text,
     -- | Token expiration time
-    jwtExpiry :: UTCTime
+    expiry :: UTCTime
   }
   deriving (Show, Eq, Generic)
 
@@ -95,24 +95,24 @@ instance FromJSON JWTClaims
 
 -- | Internal representation of JWT payload for encoding/decoding.
 data JWTPayload = JWTPayload
-  { payloadSub :: Text, -- User ID as UUID string
-    payloadEmail :: Text,
-    payloadExp :: Integer, -- Unix timestamp
-    payloadIat :: Integer, -- Unix timestamp
-    payloadIss :: Text,
-    payloadAud :: Text
+  { sub :: Text, -- User ID as UUID string
+    email :: Text,
+    exp :: Integer, -- Unix timestamp
+    iat :: Integer, -- Unix timestamp
+    iss :: Text,
+    aud :: Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON JWTPayload where
-  toJSON JWTPayload {..} =
+  toJSON p =
     object
-      [ "sub" .= payloadSub,
-        "email" .= payloadEmail,
-        "exp" .= payloadExp,
-        "iat" .= payloadIat,
-        "iss" .= payloadIss,
-        "aud" .= payloadAud
+      [ "sub" .= p.sub,
+        "email" .= p.email,
+        "exp" .= p.exp,
+        "iat" .= p.iat,
+        "iss" .= p.iss,
+        "aud" .= p.aud
       ]
 
 instance FromJSON JWTPayload where
@@ -132,17 +132,17 @@ instance FromJSON JWTPayload where
 -- | Configuration for JWT token generation and verification.
 --
 -- Fields use simple types ('Text', 'Int') for easy YAML deserialisation.
--- The 'jwtSecret' is converted to 'ByteString' at usage sites via
+-- The 'secret' is converted to 'ByteString' at usage sites via
 -- 'encodeUtf8'.
 data JWTConfig = JWTConfig
   { -- | Secret key for signing tokens (should be at least 256 bits)
-    jwtSecret :: Text,
+    secret :: Text,
     -- | Token validity duration in seconds (default: 3600 = 1 hour)
-    jwtExpirySeconds :: Int,
+    expirySeconds :: Int,
     -- | Token issuer (typically the application URL)
-    jwtIssuer :: Text,
+    issuer :: Text,
     -- | Token audience (typically the application name)
-    jwtAudience :: Text
+    audience :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -162,10 +162,10 @@ instance FromJSON JWTConfig where
 defaultJWTConfig :: JWTConfig
 defaultJWTConfig =
   JWTConfig
-    { jwtSecret = "CHANGE_THIS_TO_A_SECURE_SECRET_KEY_AT_LEAST_32_BYTES",
-      jwtExpirySeconds = 3600, -- 1 hour
-      jwtIssuer = "accounting-api",
-      jwtAudience = "accounting-app"
+    { secret = "CHANGE_THIS_TO_A_SECURE_SECRET_KEY_AT_LEAST_32_BYTES",
+      expirySeconds = 3600, -- 1 hour
+      issuer = "accounting-api",
+      audience = "accounting-app"
     }
 
 -- -----------------------------------------------------------------------------
@@ -217,17 +217,17 @@ generateToken ::
   m (Either JWTError Text)
 generateToken config userId email = liftIO $ do
   now <- getCurrentTime
-  let expiry = addUTCTime (secondsToNominalDiffTime $ fromIntegral $ jwtExpirySeconds config) now
+  let expiryTime = addUTCTime (secondsToNominalDiffTime $ fromIntegral config.expirySeconds) now
       payload =
         JWTPayload
-          { payloadSub = T.pack $ UUID.toString $ unUserId userId,
-            payloadEmail = email,
-            payloadExp = round $ utcTimeToPOSIXSeconds expiry,
-            payloadIat = round $ utcTimeToPOSIXSeconds now,
-            payloadIss = jwtIssuer config,
-            payloadAud = jwtAudience config
+          { sub = T.pack $ UUID.toString $ unUserId userId,
+            email = email,
+            exp = round $ utcTimeToPOSIXSeconds expiryTime,
+            iat = round $ utcTimeToPOSIXSeconds now,
+            iss = config.issuer,
+            aud = config.audience
           }
-  return $ Right $ encodeJWT (encodeUtf8 $ jwtSecret config) payload
+  return $ Right $ encodeJWT (encodeUtf8 config.secret) payload
 
 -- | Verify a JWT token and extract its claims.
 --
@@ -242,7 +242,7 @@ generateToken config userId email = liftIO $ do
 -- Example:
 -- >>> claims <- verifyToken config token
 -- >>> case claims of
--- >>>   Just c -> proceedWithUser (jwtUserId c)
+-- >>>   Just c -> proceedWithUser (c.userId)
 -- >>>   Nothing -> return401Unauthorized
 verifyToken ::
   (MonadIO m) =>
@@ -251,30 +251,24 @@ verifyToken ::
   m (Maybe JWTClaims)
 verifyToken config token = liftIO $ do
   now <- getCurrentTime
-  case decodeJWT (encodeUtf8 $ jwtSecret config) token of
+  case decodeJWT (encodeUtf8 config.secret) token of
     Nothing -> return Nothing
     Just payload -> do
       -- Check expiration
-      let expiryTime = posixSecondsToUTCTime $ fromInteger $ payloadExp payload
-      if now > expiryTime
+      let expiryTime = posixSecondsToUTCTime $ fromInteger payload.exp
+      if now > expiryTime || payload.iss /= config.issuer || payload.aud /= config.audience
         then return Nothing
-        else -- Check issuer
-          if payloadIss payload /= jwtIssuer config
-            then return Nothing
-            else -- Check audience
-              if payloadAud payload /= jwtAudience config
-                then return Nothing
-                else -- Extract claims
-                  case UUID.fromText (payloadSub payload) >>= mkUserIdSafe of
-                    Nothing -> return Nothing
-                    Just userId ->
-                      return $
-                        Just
-                          JWTClaims
-                            { jwtUserId = userId,
-                              jwtEmail = payloadEmail payload,
-                              jwtExpiry = expiryTime
-                            }
+        else -- Extract claims
+          case UUID.fromText payload.sub >>= mkUserIdSafe of
+            Nothing -> return Nothing
+            Just userId ->
+              return $
+                Just
+                  JWTClaims
+                    { userId = userId,
+                      email = payload.email,
+                      expiry = expiryTime
+                    }
 
 -- | Refresh an existing valid token.
 --
@@ -295,7 +289,7 @@ refreshToken config token = do
   maybeClaims <- verifyToken config token
   case maybeClaims of
     Nothing -> return $ Left TokenExpired
-    Just claims -> generateToken config (jwtUserId claims) (jwtEmail claims)
+    Just claims -> generateToken config claims.userId claims.email
 
 -- -----------------------------------------------------------------------------
 -- Internal JWT Encoding/Decoding

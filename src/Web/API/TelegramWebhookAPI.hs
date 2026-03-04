@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
@@ -171,13 +172,9 @@ handleWebhookUpdate TelegramUpdate {..} = do
 
   -- Delegate message processing to Telegram.Commands
   -- TODO: Wire up to Telegram.Commands.handleCommand / handleMessage
-  case updateMessage of
-    Just msg -> logMessageInfo msg
-    Nothing -> return ()
+  forM_ updateMessage logMessageInfo
 
-  case updateCallbackQuery of
-    Just query -> logCallbackInfo query
-    Nothing -> return ()
+  forM_ updateCallbackQuery logCallbackInfo
 
   -- Always return 200 OK to acknowledge receipt
   return NoContent
@@ -191,7 +188,7 @@ logMessageInfo TelegramMessage {..} = do
       case messageText of
         Nothing -> logDebug "Received message without text"
         Just text -> do
-          logInfo $ "Message from " <> displayShow (userId sender) <> ": " <> display text
+          logInfo $ "Message from " <> displayShow sender.userId <> ": " <> display text
           if T.isPrefixOf "/" text
             then logInfo $ "Command received: " <> display text
             else logDebug "Non-command message received"
@@ -199,7 +196,7 @@ logMessageInfo TelegramMessage {..} = do
 -- | Log callback info (placeholder until Telegram.Commands is wired in).
 logCallbackInfo :: TelegramCallbackQuery -> AppM ()
 logCallbackInfo TelegramCallbackQuery {..} = do
-  logInfo $ "Callback query from " <> displayShow (userId callbackQueryFrom)
+  logInfo $ "Callback query from " <> displayShow callbackQueryFrom.userId
   case callbackQueryData of
     Nothing -> logWarn "Callback query without data"
     Just dat -> logInfo $ "Callback data: " <> display dat
