@@ -107,6 +107,7 @@ import Eventium
     EventHandler (..),
     EventStoreReader (..),
     GlobalEventStoreReader,
+    QueryRange,
     RejectionReason (..),
     StreamEvent (..),
     StreamProjection (..),
@@ -140,6 +141,14 @@ import Eventium.Store.Postgresql
     sqlGlobalEventStoreReader,
   )
 import Infrastructure.Database (runDbDirect)
+
+-- | Extract the embedding function from a 'TypeEmbedding'.
+embedWith :: TypeEmbedding a b -> a -> b
+embedWith (TypeEmbedding e _) = e
+
+-- | Extract the query function from an 'EventStoreReader'.
+readEvents :: EventStoreReader key position m event -> (QueryRange key position -> m [event])
+readEvents (EventStoreReader f) = f
 
 -- -----------------------------------------------------------------------------
 -- Type Aliases
@@ -337,7 +346,7 @@ applyAccountCommand writer reader accountId cmd =
     reader
     accountAccountingCommandHandler
     accountId
-    (accountCommandEmbedding.embed cmd)
+    (embedWith accountCommandEmbedding cmd)
 
 -- | Apply a Transaction command.
 applyTransactionCommand ::
@@ -353,7 +362,7 @@ applyTransactionCommand writer reader txId cmd =
     reader
     transactionAccountingCommandHandler
     txId
-    (transactionCommandEmbedding.embed cmd)
+    (embedWith transactionCommandEmbedding cmd)
 
 -- | Apply a User command.
 applyUserCommand ::
@@ -369,7 +378,7 @@ applyUserCommand writer reader userId cmd =
     reader
     userAccountingCommandHandler
     userId
-    (userCommandEmbedding.embed cmd)
+    (embedWith userCommandEmbedding cmd)
 
 -- -----------------------------------------------------------------------------
 -- Aggregate Loading
@@ -385,7 +394,7 @@ loadUserAggregate ::
   UUID ->
   m User
 loadUserAggregate reader userId = do
-  events <- reader.getEvents (allEvents userId)
+  events <- readEvents reader (allEvents userId)
   pure $ latestProjection userAccountingProjection ((.payload) <$> events)
 
 -- -----------------------------------------------------------------------------

@@ -69,8 +69,8 @@ import Domain.Core.Types
     unsafeUserId,
   )
 import Eventium (Projection (..))
+import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
-import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- Account Aggregate State
@@ -189,7 +189,7 @@ canManage uid account =
 -- Domain.Account.Events.
 constructSumType
   "AccountEvent"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = AppendTypeNameToTags})
+  (withTagOptions AppendTypeNameToTags defaultSumTypeOptions)
   accountEvents
 
 -- Derive Show and Eq instances for the generated AccountEvent type

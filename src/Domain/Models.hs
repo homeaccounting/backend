@@ -81,7 +81,7 @@ import Domain.User as X
 import Eventium (CommandHandler, Projection, TypeEmbedding (..), embeddedCommandHandler, embeddedProjection)
 import Eventium.Json (dropSuffix)
 import Eventium.TH (mkSumTypeEmbedding)
-import SumTypesX.TH (SumTypeOptions (..), SumTypeTagOptions (ConstructTagName), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
+import Eventium.TH.SumType (SumTypeTagOptions (ConstructTagName), constructSumType, defaultSumTypeOptions, withTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- Unified Event Type
@@ -108,7 +108,7 @@ import SumTypesX.TH (SumTypeOptions (..), SumTypeTagOptions (ConstructTagName), 
 -- This follows the eventium pattern for multi-aggregate systems.
 constructSumType
   "AccountingEvent"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = ConstructTagName (++ "Event")})
+  (withTagOptions (ConstructTagName (++ "Event")) defaultSumTypeOptions)
   (accountEvents ++ transactionEvents ++ userEvents)
 
 -- Derive Show and Eq for the unified event type
@@ -145,7 +145,7 @@ deriveJSON (defaultOptions {constructorTagModifier = dropSuffix "Event"}) ''Acco
 -- This follows the eventium pattern for multi-aggregate systems.
 constructSumType
   "AccountingCommand"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = ConstructTagName (++ "Command")})
+  (withTagOptions (ConstructTagName (++ "Command")) defaultSumTypeOptions)
   (accountCommands ++ transactionCommands ++ userCommands)
 
 -- Derive Show and Eq for the unified command type

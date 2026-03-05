@@ -51,8 +51,8 @@ import Domain.User.Commands
 import Domain.User.Events
 import Domain.User.Projection
 import Eventium (CommandHandler (..))
+import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
-import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- Command Errors
@@ -89,7 +89,7 @@ data UserError
 -- Domain.User.Commands.
 constructSumType
   "UserCommand"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = AppendTypeNameToTags})
+  (withTagOptions AppendTypeNameToTags defaultSumTypeOptions)
   userCommands
 
 -- -----------------------------------------------------------------------------

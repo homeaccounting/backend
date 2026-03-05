@@ -11,8 +11,8 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         
-        # Use GHC 9.6.7 as specified in requirements
-        hPkgs = pkgs.haskell.packages.ghc967;
+        # Use GHC 9.10.3 to match eventium
+        hPkgs = pkgs.haskell.packages.ghc9103;
         
         # Build the accounting package
         accountingPackage = hPkgs.callCabal2nix "accounting" ./. {

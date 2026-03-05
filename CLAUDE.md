@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Haskell backend for a home accounting application. Uses **CQRS + Event Sourcing** with **Domain-Driven Design**, built on the Servant web framework with PostgreSQL via the Eventium event store library.
 
-- **GHC**: 9.6.7
+- **GHC**: 9.10.3
 - **Build**: Cabal 3.10+ with Hpack (package.yaml → accounting.cabal)
 - **Prelude**: RIO (NoImplicitPrelude is enabled)
 - **Database**: PostgreSQL 15 (Docker Compose), schema auto-created by eventium-postgresql

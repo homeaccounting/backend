@@ -63,11 +63,15 @@ import Eventium
     Projection (..),
     RejectionReason (..),
     StreamEvent (..),
+    TypeEmbedding (..),
     UUID,
     VersionedStreamEvent,
   )
-import Eventium.TypeEmbedding (TypeEmbedding (..))
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
+
+-- | Extract the embedding function from a 'TypeEmbedding'.
+embedWith :: TypeEmbedding a b -> a -> b
+embedWith (TypeEmbedding e _) = e
 
 -- -----------------------------------------------------------------------------
 -- Transfer Manager State
@@ -196,7 +200,8 @@ reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt
           | td.phase == AwaitingDebit ->
               [ IssueCommandWithCompensation
                   (unAccountId evt.fromAccountId)
-                  ( accountCommandEmbedding.embed
+                  ( embedWith
+                      accountCommandEmbedding
                       ( DebitAccountAccountCommand
                           DebitAccount
                             { amount = evt.amount,
@@ -208,7 +213,8 @@ reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt
                   ( \(RejectionReason rejReason) ->
                       [ IssueCommand
                           (unTransactionId txId)
-                          ( transactionCommandEmbedding.embed
+                          ( embedWith
+                              transactionCommandEmbedding
                               ( FailTransferTransactionCommand
                                   FailTransfer {reason = rejReason}
                               )
@@ -224,7 +230,8 @@ reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
     Just TransferData {..} ->
       [ IssueCommand
           (unAccountId targetAccount)
-          ( accountCommandEmbedding.embed
+          ( embedWith
+              accountCommandEmbedding
               ( CreditAccountAccountCommand
                   CreditAccount
                     { amount = amount,
@@ -235,7 +242,8 @@ reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
           ),
         IssueCommand
           (unTransactionId evt.transactionId)
-          ( transactionCommandEmbedding.embed
+          ( embedWith
+              transactionCommandEmbedding
               (CompleteTransferTransactionCommand CompleteTransfer)
           )
       ]

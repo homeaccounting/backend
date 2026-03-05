@@ -35,7 +35,6 @@ dependencies:
   - postgresql-simple >= 0.6 && < 0.8
   - persistent >= 2.13 && < 2.15
   - persistent-postgresql >= 2.13 && < 2.14
-  - persistent-template >= 2.12 && < 2.13
 
   # Core utilities
   - text >= 1.2 && < 2.2
@@ -60,8 +59,7 @@ dependencies:
   - optics-th >= 0.4 && < 0.5
 
   # Template Haskell & code generation
-  - template-haskell >= 2.16 && < 2.22
-  - x-sum-type-boilerplate >= 0.1 && < 0.2
+  - template-haskell >= 2.16 && < 2.23
 
   # WAI & middleware
   - wai >= 3.2 && < 3.3

@@ -52,9 +52,9 @@ import Data.UUID (nil)
 import Domain.Core.Types (AccountId, Money, UserId, mkAccountId, mkMoney, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
+import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import GHC.Generics (Generic)
 import Optics (makeFieldLabelsNoPrefix, (&), (.~), (^.))
-import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- Transaction Status
@@ -187,7 +187,7 @@ transactionDefault =
 -- Domain.Transaction.Events.
 constructSumType
   "TransactionEvent"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = AppendTypeNameToTags})
+  (withTagOptions AppendTypeNameToTags defaultSumTypeOptions)
   transactionEvents
 
 -- Derive Show and Eq instances for the generated TransactionEvent type

@@ -56,8 +56,8 @@ import Domain.Core.Types
   )
 import Domain.User.Events
 import Eventium (Projection (..))
+import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
-import SumTypesX.TH (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- User Aggregate State
@@ -175,7 +175,7 @@ loginMethodCount user =
 -- Domain.User.Events.
 constructSumType
   "UserEvent"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = AppendTypeNameToTags})
+  (withTagOptions AppendTypeNameToTags defaultSumTypeOptions)
   userEvents
 
 -- Derive Show and Eq instances for the generated UserEvent type

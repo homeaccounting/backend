@@ -6,12 +6,7 @@ packages:
 -- See cabal.project.local.example for template
 
 -- Use system ghc for better integration with IDEs
-with-compiler: ghc-9.6.7
-
--- Fix HLS dependency resolution issues
--- Allow newer Cabal versions for setup dependencies in entropy package
--- This resolves the conflict between entropy:setup.Cabal bounds and GHC 9.6.7
-allow-newer: entropy:Cabal
+with-compiler: ghc-9.10.3
 
 -- Prevent hashable 1.5.0 which has breaking changes with uuid
 constraints:

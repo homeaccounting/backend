@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.7"]
+        ghc: ["9.10.3"]
         cabal: ["3.10.3.0"]
 
     steps:

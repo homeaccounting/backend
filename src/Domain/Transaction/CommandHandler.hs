@@ -45,8 +45,8 @@ import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
 import Eventium (CommandHandler (..))
+import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
-import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- Command Errors
@@ -79,7 +79,7 @@ data TransactionError
 -- handler function.
 constructSumType
   "TransactionCommand"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = AppendTypeNameToTags})
+  (withTagOptions AppendTypeNameToTags defaultSumTypeOptions)
   transactionCommands
 
 -- -----------------------------------------------------------------------------

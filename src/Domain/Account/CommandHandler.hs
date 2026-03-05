@@ -52,8 +52,8 @@ import Domain.Account.Events
 import Domain.Account.Projection
 import Domain.Core.Types (AccountType (..), subtractMoney)
 import Eventium (CommandHandler (..))
+import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
-import SumTypesX.TH (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, sumTypeOptionsTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- Command Errors
@@ -97,7 +97,7 @@ data AccountError
 -- handler function.
 constructSumType
   "AccountCommand"
-  (defaultSumTypeOptions {sumTypeOptionsTagOptions = AppendTypeNameToTags})
+  (withTagOptions AppendTypeNameToTags defaultSumTypeOptions)
   accountCommands
 
 -- -----------------------------------------------------------------------------
