@@ -101,11 +101,11 @@ main() {
     print_info "Registering user: $TEST_EMAIL"
     REGISTER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
-    AUTH_TOKEN=$(echo "$REGISTER_RESPONSE" | jq -r '.authToken')
-    USER_ID=$(echo "$REGISTER_RESPONSE" | jq -r '.authUserId')
-    EXPIRES_IN=$(echo "$REGISTER_RESPONSE" | jq -r '.authExpiresIn')
+    AUTH_TOKEN=$(echo "$REGISTER_RESPONSE" | jq -r '.token')
+    USER_ID=$(echo "$REGISTER_RESPONSE" | jq -r '.userId')
+    EXPIRES_IN=$(echo "$REGISTER_RESPONSE" | jq -r '.expiresIn')
 
     echo "$REGISTER_RESPONSE" | jq '.'
 
@@ -126,9 +126,9 @@ main() {
     print_info "Logging in as: $TEST_EMAIL"
     LOGIN_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/login" \
         -H "Content-Type: application/json" \
-        -d "{\"loginEmail\": \"$TEST_EMAIL\", \"loginPassword\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
-    AUTH_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.authToken')
+    AUTH_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.token')
 
     echo "$LOGIN_RESPONSE" | jq '.'
     print_success "Login successful"
@@ -144,8 +144,8 @@ main() {
 
     echo "$PROFILE_RESPONSE" | jq '.'
 
-    PROFILE_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.profileEmail')
-    HAS_PASSWORD=$(echo "$PROFILE_RESPONSE" | jq -r '.profileHasPassword')
+    PROFILE_EMAIL=$(echo "$PROFILE_RESPONSE" | jq -r '.email')
+    HAS_PASSWORD=$(echo "$PROFILE_RESPONSE" | jq -r '.hasPassword')
 
     print_success "Profile retrieved"
     print_info "Email: $PROFILE_EMAIL"
@@ -160,10 +160,10 @@ main() {
     SAVINGS_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"accountName": "Savings Account", "initialBalance": 1000.0}')
+        -d '{"name": "Savings Account", "initialBalance": 1000.0}')
 
-    SAVINGS_ID=$(echo "$SAVINGS_RESPONSE" | jq -r '.accountId')
-    SAVINGS_BALANCE=$(echo "$SAVINGS_RESPONSE" | jq -r '.currentBalance')
+    SAVINGS_ID=$(echo "$SAVINGS_RESPONSE" | jq -r '.id')
+    SAVINGS_BALANCE=$(echo "$SAVINGS_RESPONSE" | jq -r '.balance')
 
     echo "$SAVINGS_RESPONSE" | jq '.'
     print_success "Savings Account created"
@@ -179,10 +179,10 @@ main() {
     CHECKING_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"accountName": "Checking Account", "initialBalance": 500.0}')
+        -d '{"name": "Checking Account", "initialBalance": 500.0}')
 
-    CHECKING_ID=$(echo "$CHECKING_RESPONSE" | jq -r '.accountId')
-    CHECKING_BALANCE=$(echo "$CHECKING_RESPONSE" | jq -r '.currentBalance')
+    CHECKING_ID=$(echo "$CHECKING_RESPONSE" | jq -r '.id')
+    CHECKING_BALANCE=$(echo "$CHECKING_RESPONSE" | jq -r '.balance')
 
     echo "$CHECKING_RESPONSE" | jq '.'
     print_success "Checking Account created"
@@ -277,9 +277,9 @@ EOF
     print_info "Registering a second user: $SECOND_EMAIL"
     SECOND_REGISTER=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"registerEmail\": \"$SECOND_EMAIL\", \"registerPassword\": \"$SECOND_PASSWORD\"}")
+        -d "{\"email\": \"$SECOND_EMAIL\", \"password\": \"$SECOND_PASSWORD\"}")
 
-    SECOND_USER_ID=$(echo "$SECOND_REGISTER" | jq -r '.authUserId')
+    SECOND_USER_ID=$(echo "$SECOND_REGISTER" | jq -r '.userId')
     print_success "Second user registered: $SECOND_USER_ID"
 
     print_info "Sharing Savings Account with second user (role: viewer)..."
@@ -287,7 +287,7 @@ EOF
         "${API_BASE_URL}/api/accounts/${SAVINGS_ID}/share" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"shareUserId\": \"$SECOND_USER_ID\", \"shareRole\": \"viewer\"}")
+        -d "{\"userId\": \"$SECOND_USER_ID\", \"role\": \"viewer\"}")
 
     SHARE_CODE=$(echo "$SHARE_RESPONSE" | tail -n1)
     SHARE_BODY=$(echo "$SHARE_RESPONSE" | sed '$d')
@@ -308,13 +308,13 @@ EOF
     print_info "Retrieving final Savings Account balance..."
     FINAL_SAVINGS=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SAVINGS_ID}" \
         -H "Authorization: Bearer $AUTH_TOKEN")
-    FINAL_SAVINGS_BALANCE=$(echo "$FINAL_SAVINGS" | jq -r '.currentBalance')
+    FINAL_SAVINGS_BALANCE=$(echo "$FINAL_SAVINGS" | jq -r '.balance')
     echo "$FINAL_SAVINGS" | jq '.'
 
     print_info "Retrieving final Checking Account balance..."
     FINAL_CHECKING=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${CHECKING_ID}" \
         -H "Authorization: Bearer $AUTH_TOKEN")
-    FINAL_CHECKING_BALANCE=$(echo "$FINAL_CHECKING" | jq -r '.currentBalance')
+    FINAL_CHECKING_BALANCE=$(echo "$FINAL_CHECKING" | jq -r '.balance')
     echo "$FINAL_CHECKING" | jq '.'
 
     # ============================================================

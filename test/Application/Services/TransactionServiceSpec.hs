@@ -12,7 +12,7 @@
 --   - Returns appropriate DomainErrors for invalid operations
 module Application.Services.TransactionServiceSpec (spec) where
 
-import Application.ReadModels.TransactionSummary (TransactionSummaryData (..))
+import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.TransactionService
 import Data.UUID (UUID)
@@ -24,8 +24,8 @@ import Domain.Transaction.Commands (InitiateTransfer (..))
 import Infrastructure.App (AppEnv, AppM, runAppM)
 import RIO
 import Test.Hspec
-import TestSupport.Helpers (fromRight', mockMoney, mockUserId, shouldBeLeft, shouldBeRight)
-import TestSupport.InMemoryEventStore (createTestAppEnv)
+import Testkit.Helpers (fromRight', mockMoney, mockUserId, shouldBeLeft, shouldBeRight)
+import Testkit.InMemoryEventStore (createTestAppEnv)
 
 -- -----------------------------------------------------------------------------
 -- Test Data
@@ -73,7 +73,9 @@ spec = describe "TransactionService" $ do
                 toAccountId = toAccId,
                 amount = mockMoney 100,
                 reason = "Test transfer",
-                initiatedBy = testUserId1
+                initiatedBy = testUserId1,
+                transferType = InternalTransfer,
+                category = InternalCat InternalOther
               }
       result <- runAppM env $ initiateTransfer transferCmd
       shouldBeRight result
@@ -92,7 +94,9 @@ spec = describe "TransactionService" $ do
                 toAccountId = toAccId,
                 amount = mockMoney 250,
                 reason = "Retrieve test",
-                initiatedBy = testUserId1
+                initiatedBy = testUserId1,
+                transferType = InternalTransfer,
+                category = InternalCat InternalOther
               }
       createResult <- runAppM env $ initiateTransfer transferCmd
       let (txId, _) = fromRight' createResult
@@ -121,7 +125,9 @@ spec = describe "TransactionService" $ do
                 toAccountId = toAccId,
                 amount = mockMoney amt,
                 reason = rsn,
-                initiatedBy = testUserId1
+                initiatedBy = testUserId1,
+                transferType = InternalTransfer,
+                category = InternalCat InternalOther
               }
       result1 <- runAppM env $ initiateTransfer (mkTransferCmd 100 "First")
       result2 <- runAppM env $ initiateTransfer (mkTransferCmd 200 "Second")

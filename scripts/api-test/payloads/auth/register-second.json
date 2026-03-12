@@ -1,4 +1,4 @@
 {
-  "registerEmail": "seconduser@example.com",
-  "registerPassword": "SecurePass456!"
+  "email": "seconduser@example.com",
+  "password": "SecurePass456!"
 }

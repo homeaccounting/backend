@@ -71,9 +71,9 @@ ensure_authenticated() {
 
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
+            -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
-        AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.authToken')
+        AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
 
         if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
             echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
@@ -104,8 +104,8 @@ test_get_profile() {
 
     echo "$BODY" | jq '.'
 
-    PROFILE_EMAIL=$(echo "$BODY" | jq -r '.profileEmail')
-    HAS_PASSWORD=$(echo "$BODY" | jq -r '.profileHasPassword')
+    PROFILE_EMAIL=$(echo "$BODY" | jq -r '.email')
+    HAS_PASSWORD=$(echo "$BODY" | jq -r '.hasPassword')
 
     if [ "$HTTP_CODE" = "200" ]; then
         print_success "Profile retrieved successfully"
@@ -146,7 +146,7 @@ test_update_profile() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${API_BASE_URL}/api/users/me" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
         -H "Content-Type: application/json" \
-        -d '{"updateEmail": "newemail@example.com"}')
+        -d '{"email": "newemail@example.com"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

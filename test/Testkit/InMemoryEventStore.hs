@@ -2,7 +2,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : TestSupport.InMemoryEventStore
+-- Module      : Testkit.InMemoryEventStore
 -- Description : In-memory event store setup for testing
 --
 -- This module provides utilities for creating in-memory event stores
@@ -23,7 +23,7 @@
 -- >>>   writer <- view eventStoreWriterL
 -- >>>   reader <- view eventStoreReaderL
 -- >>>   ...
-module TestSupport.InMemoryEventStore
+module Testkit.InMemoryEventStore
   ( -- * Test Environment Creation
     createTestAppEnv,
     createTestAppEnvWithProcessManager,
@@ -35,9 +35,9 @@ module TestSupport.InMemoryEventStore
 where
 
 import Application.ProcessManagers (transferProcessManager)
-import Application.ReadModels.AccountSummary (createAccountSummaryReadModel)
-import Application.ReadModels.TransactionSummary (createTransactionSummaryReadModel)
-import Application.ReadModels.UserSummary ()
+import Application.ReadModels.Account (createAccountReadModel)
+import Application.ReadModels.Transaction (createTransactionReadModel)
+import Application.ReadModels.User ()
 import Control.Concurrent.STM (TVar, atomically)
 import Domain.Models (AccountingEvent)
 import Eventium (EventHandler (..), EventStoreReader (..), EventStoreWriter (..), VersionedStreamEvent, processManagerEventHandler, publishingEventStoreWriter, synchronousPublisher)
@@ -72,10 +72,9 @@ import Infrastructure.Eventium
     AccountingGlobalEventStoreReader,
     AccountingVersionedEventStoreReader,
     AccountingVersionedEventStoreWriter,
+    ReadModels (..),
     commandDispatcher,
-    createAccountSummaryEventHandler,
-    createTransactionSummaryEventHandler,
-    createUserSummaryEventHandler,
+    createReadModelHandlers,
   )
 import RIO hiding (atomically, newTVarIO)
 import qualified RIO
@@ -183,9 +182,7 @@ createTestAppEnv = do
   stores <- createInMemoryEventStores
 
   -- Create read models first (before lifting writers)
-  (accountReadModel, accountHandler) <- createAccountSummaryEventHandler
-  (transactionReadModel, transactionHandler) <- createTransactionSummaryEventHandler
-  (userReadModel, userHandler) <- createUserSummaryEventHandler
+  (readModels, readModelHandlers) <- createReadModelHandlers
 
   -- Lift event stores from STM to IO
   -- This wraps each operation with `atomically`
@@ -194,7 +191,7 @@ createTestAppEnv = do
       globalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
 
       -- Wrap writer with event bus to update read models synchronously
-      writer = publishingEventStoreWriter baseWriter (synchronousPublisher (accountHandler <> transactionHandler <> userHandler))
+      writer = publishingEventStoreWriter baseWriter (synchronousPublisher (mconcat readModelHandlers))
 
   -- Create test auth configs
   let testJWTConfig = defaultJWTConfig
@@ -275,9 +272,9 @@ createTestAppEnv = do
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
-        accountSummaryReadModel = accountReadModel,
-        transactionSummaryReadModel = transactionReadModel,
-        userSummaryReadModel = userReadModel,
+        accountReadModel = readModels.account,
+        transactionReadModel = readModels.transaction,
+        userReadModel = readModels.user,
         jwtConfig = testJWTConfig,
         oauthConfig = testOAuthConfig,
         telegramConfig = testTelegramConfig,
@@ -302,9 +299,7 @@ createTestAppEnvWithProcessManager = do
 
   stores <- createInMemoryEventStores
 
-  (accountReadModel, accountHandler) <- createAccountSummaryEventHandler
-  (transactionReadModel, transactionHandler) <- createTransactionSummaryEventHandler
-  (userReadModel, userHandler) <- createUserSummaryEventHandler
+  (readModels, readModelHandlers) <- createReadModelHandlers
 
   let baseWriter = liftSTMWriter stores.inMemoryWriter
       reader = liftSTMReader stores.inMemoryReader
@@ -314,7 +309,7 @@ createTestAppEnvWithProcessManager = do
       -- See accountingEventStoreWriter for the depth-first dispatch explanation.
       publishingWriter = publishingEventStoreWriter baseWriter (synchronousPublisher combinedHandler)
       pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher publishingWriter reader)
-      combinedHandler = accountHandler <> transactionHandler <> userHandler <> pmHandler
+      combinedHandler = mconcat readModelHandlers <> pmHandler
       writer = publishingWriter
 
   let testJWTConfig = defaultJWTConfig
@@ -390,9 +385,9 @@ createTestAppEnvWithProcessManager = do
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
-        accountSummaryReadModel = accountReadModel,
-        transactionSummaryReadModel = transactionReadModel,
-        userSummaryReadModel = userReadModel,
+        accountReadModel = readModels.account,
+        transactionReadModel = readModels.transaction,
+        userReadModel = readModels.user,
         jwtConfig = testJWTConfig,
         oauthConfig = testOAuthConfig,
         telegramConfig = testTelegramConfig,

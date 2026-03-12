@@ -21,18 +21,18 @@ Create a new user account with email and password.
 curl -X POST $API_BASE/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
-    "registerEmail": "user@example.com",
-    "registerPassword": "SecurePass123!"
+    "email": "user@example.com",
+    "password": "SecurePass123!"
   }' | jq
 ```
 
 **Expected Response (200 OK):**
 ```json
 {
-  "authToken": "***REMOVED***",
-  "authUserId": "550e8400-e29b-41d4-a716-446655440000",
-  "authEmail": "user@example.com",
-  "authExpiresIn": 3600
+  "token": "***REMOVED***",
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "expiresIn": 3600
 }
 ```
 
@@ -45,18 +45,18 @@ Authenticate with email and password.
 curl -X POST $API_BASE/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "loginEmail": "user@example.com",
-    "loginPassword": "SecurePass123!"
+    "email": "user@example.com",
+    "password": "SecurePass123!"
   }' | jq
 ```
 
 **Expected Response (200 OK):**
 ```json
 {
-  "authToken": "***REMOVED***",
-  "authUserId": "550e8400-e29b-41d4-a716-446655440000",
-  "authEmail": "user@example.com",
-  "authExpiresIn": 3600
+  "token": "***REMOVED***",
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "expiresIn": 3600
 }
 ```
 
@@ -69,7 +69,7 @@ Refresh an existing JWT token.
 curl -X POST $API_BASE/api/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{
-    "refreshToken": "***REMOVED***_HERE"
+    "token": "***REMOVED***_HERE"
   }' | jq
 ```
 
@@ -86,8 +86,8 @@ curl -X GET $API_BASE/api/auth/oauth/google | jq
 **Expected Response (200 OK):**
 ```json
 {
-  "oauthRedirectUrl": "https://accounts.google.com/o/oauth2/v2/auth?...",
-  "oauthState": "random-state-string"
+  "redirectUrl": "https://accounts.google.com/o/oauth2/v2/auth?...",
+  "state": "random-state-string"
 }
 ```
 
@@ -110,9 +110,9 @@ curl -X POST $API_BASE/api/auth/link-oauth \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
-    "linkOAuthProvider": "Google",
-    "linkOAuthCode": "AUTH_CODE",
-    "linkOAuthState": "STATE"
+    "provider": "Google",
+    "code": "AUTH_CODE",
+    "state": "STATE"
   }' | jq
 ```
 
@@ -125,13 +125,13 @@ Authenticate via Telegram login widget.
 curl -X POST $API_BASE/api/auth/telegram \
   -H "Content-Type: application/json" \
   -d '{
-    "telegramAuthId": 123456789,
-    "telegramAuthFirstName": "John",
-    "telegramAuthLastName": "Doe",
-    "telegramAuthUsername": "johndoe",
-    "telegramAuthPhotoUrl": null,
-    "telegramAuthAuthDate": 1700000000,
-    "telegramAuthHash": "abc123hash"
+    "id": 123456789,
+    "firstName": "John",
+    "lastName": "Doe",
+    "username": "johndoe",
+    "photoUrl": null,
+    "authDate": 1700000000,
+    "hash": "abc123hash"
   }' | jq
 ```
 
@@ -145,14 +145,14 @@ curl -X POST $API_BASE/api/auth/link-telegram \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
-    "linkTelegramAuthData": {
-      "telegramAuthId": 123456789,
-      "telegramAuthFirstName": "John",
-      "telegramAuthLastName": "Doe",
-      "telegramAuthUsername": "johndoe",
-      "telegramAuthPhotoUrl": null,
-      "telegramAuthAuthDate": 1700000000,
-      "telegramAuthHash": "abc123hash"
+    "authData": {
+      "id": 123456789,
+      "firstName": "John",
+      "lastName": "Doe",
+      "username": "johndoe",
+      "photoUrl": null,
+      "authDate": 1700000000,
+      "hash": "abc123hash"
     }
   }' | jq
 ```
@@ -176,12 +176,12 @@ curl -X GET $API_BASE/api/users/me \
 **Expected Response (200 OK):**
 ```json
 {
-  "profileUserId": "550e8400-e29b-41d4-a716-446655440000",
-  "profileEmail": "user@example.com",
-  "profileHasPassword": true,
-  "profileOAuthIdentities": [],
-  "profileTelegramIdentity": null,
-  "profileExternalAccountId": "650e8400-e29b-41d4-a716-446655440001"
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "hasPassword": true,
+  "oauthIdentities": [],
+  "telegramIdentity": null,
+  "externalAccountId": "650e8400-e29b-41d4-a716-446655440001"
 }
 ```
 
@@ -195,7 +195,7 @@ curl -X PUT $API_BASE/api/users/me \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
-    "updateEmail": "newemail@example.com"
+    "email": "newemail@example.com"
   }' | jq
 ```
 
@@ -255,7 +255,7 @@ curl -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
-    "accountName": "Savings Account",
+    "name": "Savings Account",
     "initialBalance": 1000.0
   }' | jq
 ```
@@ -263,9 +263,9 @@ curl -X POST $API_BASE/api/accounts \
 **Expected Response (201 Created):**
 ```json
 {
-  "accountId": "550e8400-e29b-41d4-a716-446655440000",
-  "accountName": "Savings Account",
-  "currentBalance": 1000.0,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Savings Account",
+  "balance": 1000.0,
   "version": 1
 }
 ```
@@ -288,9 +288,9 @@ curl -X GET $API_BASE/api/accounts/550e8400-e29b-41d4-a716-446655440000 | jq
 **Expected Response (200 OK):**
 ```json
 {
-  "accountId": "550e8400-e29b-41d4-a716-446655440000",
-  "accountName": "Savings Account",
-  "currentBalance": 1000.0,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Savings Account",
+  "balance": 1000.0,
   "version": 1
 }
 ```
@@ -309,15 +309,15 @@ curl -X GET $API_BASE/api/accounts | jq
 {
   "accounts": [
     {
-      "accountId": "550e8400-e29b-41d4-a716-446655440000",
-      "accountName": "Savings Account",
-      "currentBalance": 1000.0,
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Savings Account",
+      "balance": 1000.0,
       "version": 1
     },
     {
-      "accountId": "650e8400-e29b-41d4-a716-446655440001",
-      "accountName": "Checking Account",
-      "currentBalance": 500.0,
+      "id": "650e8400-e29b-41d4-a716-446655440001",
+      "name": "Checking Account",
+      "balance": 500.0,
       "version": 1
     }
   ],
@@ -336,8 +336,8 @@ curl -X POST $API_BASE/api/accounts/{account-id}/share \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
-    "shareUserId": "TARGET_USER_UUID",
-    "shareRole": "editor"
+    "userId": "TARGET_USER_UUID",
+    "role": "editor"
   }' | jq
 ```
 
@@ -466,7 +466,7 @@ Missing or invalid JWT token on a protected endpoint.
 
 ```json
 {
-  "errorMessage": "Missing or invalid authentication token"
+  "message": "Missing or invalid authentication token"
 }
 ```
 
@@ -474,7 +474,7 @@ Missing or invalid JWT token on a protected endpoint.
 ```bash
 curl -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
-  -d '{"accountName": "Test", "initialBalance": 100.0}' | jq
+  -d '{"name": "Test", "initialBalance": 100.0}' | jq
 ```
 
 ### 400 Bad Request - Validation Error
@@ -496,10 +496,10 @@ Account or transaction does not exist.
 
 ```json
 {
-  "errorMessage": "Account not found",
-  "errorCode": "ACCOUNT_NOT_FOUND",
+  "message": "Account not found",
+  "code": "ACCOUNT_NOT_FOUND",
   "details": {
-    "accountId": "550e8400-e29b-41d4-a716-446655440000"
+    "id": "550e8400-e29b-41d4-a716-446655440000"
   }
 }
 ```
@@ -515,8 +515,8 @@ Unexpected server error.
 
 ```json
 {
-  "errorMessage": "Internal error",
-  "errorCode": "INTERNAL_ERROR",
+  "message": "Internal error",
+  "code": "INTERNAL_ERROR",
   "details": null
 }
 ```
@@ -532,9 +532,9 @@ Here's a complete workflow demonstrating all operations:
 echo "Registering user..."
 REGISTER=$(curl -s -X POST $API_BASE/api/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"registerEmail": "demo@example.com", "registerPassword": "Demo123!"}')
-TOKEN=$(echo $REGISTER | jq -r '.authToken')
-USER_ID=$(echo $REGISTER | jq -r '.authUserId')
+  -d '{"email": "demo@example.com", "password": "Demo123!"}')
+TOKEN=$(echo $REGISTER | jq -r '.token')
+USER_ID=$(echo $REGISTER | jq -r '.userId')
 echo "Token: ${TOKEN:0:20}..."
 echo "User ID: $USER_ID"
 
@@ -548,15 +548,15 @@ echo -e "\nCreating accounts..."
 SAVINGS=$(curl -s -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"accountName": "Savings", "initialBalance": 1000.0}')
-SAVINGS_ID=$(echo $SAVINGS | jq -r '.accountId')
+  -d '{"name": "Savings", "initialBalance": 1000.0}')
+SAVINGS_ID=$(echo $SAVINGS | jq -r '.id')
 echo "Savings ID: $SAVINGS_ID"
 
 CHECKING=$(curl -s -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"accountName": "Checking", "initialBalance": 500.0}')
-CHECKING_ID=$(echo $CHECKING | jq -r '.accountId')
+  -d '{"name": "Checking", "initialBalance": 500.0}')
+CHECKING_ID=$(echo $CHECKING | jq -r '.id')
 echo "Checking ID: $CHECKING_ID"
 
 # 4. List all accounts
@@ -618,7 +618,7 @@ curl -s -X GET $API_BASE/api/accounts | jq '.'
 
 ```bash
 # Get just the balance
-curl -s -X GET $API_BASE/api/accounts/550e8400-e29b-41d4-a716-446655440000 | jq -r '.currentBalance'
+curl -s -X GET $API_BASE/api/accounts/550e8400-e29b-41d4-a716-446655440000 | jq -r '.balance'
 ```
 
 ### Use Variables
@@ -627,13 +627,13 @@ curl -s -X GET $API_BASE/api/accounts/550e8400-e29b-41d4-a716-446655440000 | jq 
 # Save token from registration
 TOKEN=$(curl -s -X POST $API_BASE/api/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"registerEmail": "test@ex.com", "registerPassword": "Pass123!"}' | jq -r '.authToken')
+  -d '{"email": "test@ex.com", "password": "Pass123!"}' | jq -r '.token')
 
 # Use token for subsequent requests
 curl -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"accountName": "Test", "initialBalance": 100.0}' | jq
+  -d '{"name": "Test", "initialBalance": 100.0}' | jq
 ```
 
 ### Check HTTP Status Code

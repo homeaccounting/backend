@@ -32,17 +32,19 @@ module Telegram.Commands
   )
 where
 
-import Application.ReadModels.AccountSummary
-  ( AccountSummaryData (..),
-    getAllAccountSummaries,
+import Application.ReadModels.Account
+  ( AccountData (..),
+    getAllAccounts,
   )
-import Application.ReadModels.UserSummary
+import Application.ReadModels.User
   ( getUserByTelegramId,
   )
+import Application.Services.AuthService (findOrCreateTelegramBotUser)
 import Domain.Core.Types
   ( AccountType (..),
     Money,
     TelegramId (..),
+    TelegramIdentity (..),
     addMoney,
     unMoney,
     unsafeMoney,
@@ -61,11 +63,12 @@ import Telegram.Types
 -- -----------------------------------------------------------------------------
 
 -- | Handle a command message (starts with /).
-handleCommand :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-handleCommand botState telegramId chatId text = do
+handleCommand :: TVar BotState -> TelegramIdentity -> Int64 -> Text -> AppM ()
+handleCommand botState tgIdentity chatId text = do
   let (cmd, args) = parseCommand text
+      telegramId = (.id) tgIdentity
   case cmd of
-    "/start" -> handleStart botState telegramId chatId args
+    "/start" -> handleStart botState tgIdentity chatId args
     "/login" -> handleLogin botState telegramId chatId args
     "/accounts" -> handleAccounts botState telegramId chatId
     "/balance" -> handleBalance botState telegramId chatId args
@@ -107,22 +110,30 @@ handleCallbackQuery _botState _telegramId _chatId callbackQueryId _callbackData 
 -- -----------------------------------------------------------------------------
 
 -- | Handle /start command.
-handleStart :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
-handleStart _botState _telegramId chatId _args = do
-  sendMsg chatId
-    $ T.unlines
-      [ "Welcome to HomeAccounting Bot!",
-        "",
-        "I can help you track your finances directly from Telegram.",
-        "",
-        "Available commands:",
-        "/accounts - View your accounts",
-        "/balance - Check balances",
-        "/income - Record income",
-        "/expense - Record expense",
-        "/transfer - Transfer between accounts",
-        "/help - Show all commands"
-      ]
+--
+-- Auto-registers the user if they don't have an account yet.
+handleStart :: TVar BotState -> TelegramIdentity -> Int64 -> Maybe Text -> AppM ()
+handleStart _botState tgIdentity chatId _args = do
+  result <- findOrCreateTelegramBotUser tgIdentity
+  case result of
+    Left err -> do
+      logError $ "Failed to register Telegram user: " <> displayShow err
+      sendMsg chatId "Failed to create your account. Please try again later."
+    Right (_userId, isNew) ->
+      sendMsg chatId
+        $ T.unlines
+          [ if isNew
+              then "Welcome to HomeAccounting Bot!\n\nYour account has been created successfully."
+              else "Welcome back to HomeAccounting Bot!",
+            "",
+            "Available commands:",
+            "/accounts - View your accounts",
+            "/balance - Check balances",
+            "/income - Record income",
+            "/expense - Record expense",
+            "/transfer - Transfer between accounts",
+            "/help - Show all commands"
+          ]
 
 -- | Handle /login command.
 handleLogin :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
@@ -132,14 +143,14 @@ handleLogin _botState _telegramId chatId _args = do
 -- | Handle /accounts command.
 handleAccounts :: TVar BotState -> TelegramId -> Int64 -> AppM ()
 handleAccounts _botState telegramId chatId = do
-  userReadModel <- view userSummaryReadModelL
+  userReadModel <- view userReadModelL
   maybeUser <- getUserByTelegramId userReadModel telegramId
 
   case maybeUser of
     Nothing -> sendMsg chatId "You don't have an account yet. Use /start to create one."
     Just (userId, _userData) -> do
-      accountReadModel <- view accountSummaryReadModelL
-      allAccounts <- getAllAccountSummaries accountReadModel
+      accountReadModel <- view accountReadModelL
+      allAccounts <- getAllAccounts accountReadModel
 
       let userAccounts = Map.toList $ Map.filter (\acc -> acc.createdBy == userId) allAccounts
 
@@ -154,14 +165,14 @@ handleAccounts _botState telegramId chatId = do
 -- | Handle /balance command.
 handleBalance :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
 handleBalance _botState telegramId chatId _args = do
-  userReadModel <- view userSummaryReadModelL
+  userReadModel <- view userReadModelL
   maybeUser <- getUserByTelegramId userReadModel telegramId
 
   case maybeUser of
     Nothing -> sendMsg chatId "You don't have an account yet. Use /start to create one."
     Just (userId, _userData) -> do
-      accountReadModel <- view accountSummaryReadModelL
-      allAccounts <- getAllAccountSummaries accountReadModel
+      accountReadModel <- view accountReadModelL
+      allAccounts <- getAllAccounts accountReadModel
 
       let userAccounts = Map.toList $ Map.filter (\acc -> acc.createdBy == userId) allAccounts
 

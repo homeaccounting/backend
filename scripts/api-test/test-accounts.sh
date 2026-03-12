@@ -63,9 +63,9 @@ ensure_authenticated() {
 
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
+            -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
-        AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.authToken')
+        AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
 
         if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
             echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
@@ -87,10 +87,10 @@ register_second_user() {
 
     RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"registerEmail\": \"$SECOND_EMAIL\", \"registerPassword\": \"$SECOND_PASSWORD\"}")
+        -d "{\"email\": \"$SECOND_EMAIL\", \"password\": \"$SECOND_PASSWORD\"}")
 
-    SECOND_TOKEN=$(echo "$RESPONSE" | jq -r '.authToken')
-    SECOND_USER_ID=$(echo "$RESPONSE" | jq -r '.authUserId')
+    SECOND_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+    SECOND_USER_ID=$(echo "$RESPONSE" | jq -r '.userId')
 
     if [ -n "$SECOND_TOKEN" ] && [ "$SECOND_TOKEN" != "null" ]; then
         echo "$SECOND_USER_ID" > /tmp/test_second_user_id.txt
@@ -120,7 +120,7 @@ test_create_account() {
 
     echo "$BODY" | jq '.'
 
-    ACCOUNT_ID=$(echo "$BODY" | jq -r '.accountId')
+    ACCOUNT_ID=$(echo "$BODY" | jq -r '.id')
 
     if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "null" ]; then
         print_success "Account created with ID: $ACCOUNT_ID (HTTP $HTTP_CODE)"
@@ -138,7 +138,7 @@ test_create_account_unauthorized() {
     print_info "Attempting to create account without token..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
-        -d '{"accountName": "Unauthorized Account", "initialBalance": 100.0}')
+        -d '{"name": "Unauthorized Account", "initialBalance": 100.0}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -170,7 +170,7 @@ test_get_account() {
         -H "Authorization: Bearer $AUTH_TOKEN")
     echo "$RESPONSE" | jq '.'
 
-    if echo "$RESPONSE" | jq -e '.accountId' > /dev/null 2>&1; then
+    if echo "$RESPONSE" | jq -e '.id' > /dev/null 2>&1; then
         print_success "Account retrieved successfully"
     else
         print_error "Failed to retrieve account"
@@ -221,7 +221,7 @@ test_share_account() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}/share" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"shareUserId\": \"$SECOND_USER_ID\", \"shareRole\": \"editor\"}")
+        -d "{\"userId\": \"$SECOND_USER_ID\", \"role\": \"editor\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

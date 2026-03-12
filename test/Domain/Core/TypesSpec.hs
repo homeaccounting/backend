@@ -21,7 +21,7 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types
 import RIO
 import Test.Hspec
-import TestSupport.Helpers
+import Testkit.Helpers
 
 spec :: Spec
 spec = do

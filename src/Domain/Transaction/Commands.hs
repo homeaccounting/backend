@@ -32,7 +32,7 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, Money, UserId)
+import Domain.Core.Types (AccountId, Money, TransferCategory, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -86,7 +86,11 @@ data InitiateTransfer = InitiateTransfer
     -- | Reason or description for the transfer
     reason :: Text,
     -- | User who initiated the transfer (for audit trail)
-    initiatedBy :: UserId
+    initiatedBy :: UserId,
+    -- | Type of transfer (Income, Expense, InternalTransfer)
+    transferType :: TransferType,
+    -- | Category of the transfer
+    category :: TransferCategory
   }
   deriving (Show, Eq)
 

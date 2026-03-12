@@ -31,14 +31,14 @@ import Domain.Core.Types (AccountId, Money, unAccountId)
 
 -- | Inline keyboard markup.
 data InlineKeyboard = InlineKeyboard
-  { inlineKeyboardRows :: [[InlineButton]]
+  { rows :: [[InlineButton]]
   }
   deriving (Show, Eq)
 
 -- | Single inline keyboard button.
 data InlineButton = InlineButton
-  { inlineButtonText :: Text,
-    inlineButtonCallbackData :: Text
+  { text :: Text,
+    callbackData :: Text
   }
   deriving (Show, Eq)
 
@@ -58,15 +58,15 @@ accountSelectionKeyboard ::
   InlineKeyboard
 accountSelectionKeyboard accounts context =
   InlineKeyboard
-    { inlineKeyboardRows =
+    { rows =
         map makeAccountButton accounts
           ++ [[cancelButton]]
     }
   where
     makeAccountButton (accountId, name, balance) =
       [ InlineButton
-          { inlineButtonText = name <> " (" <> showMoney balance <> ")",
-            inlineButtonCallbackData = "acc:" <> shortId accountId <> ":" <> context
+          { text = name <> " (" <> showMoney balance <> ")",
+            callbackData = "acc:" <> shortId accountId <> ":" <> context
           }
       ]
     shortId accountId = T.take 8 $ T.pack $ UUID.toString $ unAccountId accountId
@@ -76,7 +76,7 @@ accountSelectionKeyboard accounts context =
 confirmCancelKeyboard :: InlineKeyboard
 confirmCancelKeyboard =
   InlineKeyboard
-    { inlineKeyboardRows =
+    { rows =
         [ [ InlineButton "Confirm" "confirm",
             InlineButton "Cancel" "cancel"
           ]
@@ -87,7 +87,7 @@ confirmCancelKeyboard =
 cancelKeyboard :: InlineKeyboard
 cancelKeyboard =
   InlineKeyboard
-    { inlineKeyboardRows = [[cancelButton]]
+    { rows = [[cancelButton]]
     }
 
 -- | Cancel button.

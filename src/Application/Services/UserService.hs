@@ -32,11 +32,10 @@ module Application.Services.UserService
   )
 where
 
-import Application.ReadModels.UserSummary
-  ( UserSummaryData (..),
-    getUserSummary,
+import Application.ReadModels.User
+  ( UserData (..),
+    getUser,
   )
-import Data.Text (Text)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( OAuthIdentity (..),
@@ -68,15 +67,15 @@ import qualified RIO.Text as T
 -- | Get a user's profile data.
 --
 -- Queries the read model for the user summary.
--- Returns the UserId and UserSummaryData on success.
+-- Returns the UserId and UserData on success.
 getProfile ::
   UserId ->
-  AppM (Either DomainError (UserId, UserSummaryData))
+  AppM (Either DomainError (UserId, UserData))
 getProfile userId = do
   logInfo "Getting user profile"
 
-  userReadModel <- view userSummaryReadModelL
-  maybeUserData <- getUserSummary userReadModel userId
+  userReadModel <- view userReadModelL
+  maybeUserData <- getUser userReadModel userId
 
   case maybeUserData of
     Nothing -> do
@@ -159,8 +158,8 @@ unlinkOAuth userId providerText = do
       return $ Left $ ValidationErr $ mkValidationError "provider" "Unknown OAuth provider" providerText
     Just provider -> do
       -- 2. Get user data
-      userReadModel <- view userSummaryReadModelL
-      maybeUserData <- getUserSummary userReadModel userId
+      userReadModel <- view userReadModelL
+      maybeUserData <- getUser userReadModel userId
 
       case maybeUserData of
         Nothing -> return $ Left $ NotFound "User" (tshow userId)
@@ -212,8 +211,8 @@ unlinkTelegram userId = do
   logInfo "Unlinking Telegram account"
 
   -- 1. Get user data
-  userReadModel <- view userSummaryReadModelL
-  maybeUserData <- getUserSummary userReadModel userId
+  userReadModel <- view userReadModelL
+  maybeUserData <- getUser userReadModel userId
 
   case maybeUserData of
     Nothing -> return $ Left $ NotFound "User" (tshow userId)
@@ -253,8 +252,8 @@ unlinkTelegram userId = do
 -- | Count the number of login methods for a user.
 --
 -- Used to prevent unlinking the last login method.
-countLoginMethods :: UserSummaryData -> Int
-countLoginMethods UserSummaryData {..} =
+countLoginMethods :: UserData -> Int
+countLoginMethods UserData {..} =
   (if hasPassword then 1 else 0)
     + length oauthIdentities
     + (if isJust telegramIdentity then 1 else 0)

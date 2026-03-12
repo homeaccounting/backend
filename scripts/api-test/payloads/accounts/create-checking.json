@@ -1,4 +1,4 @@
 {
-  "accountName": "Checking Account",
+  "name": "Checking Account",
   "initialBalance": 500.0
 }

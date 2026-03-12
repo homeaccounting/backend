@@ -26,13 +26,13 @@
 --   5. Test authorization via pure AuthorizationService functions
 module Integration.TransferWorkflowSpec (spec) where
 
-import Application.ReadModels.AccountSummary
-  ( AccountSummaryData (..),
-    getAccountSummary,
+import Application.ReadModels.Account
+  ( AccountData (..),
+    getAccount,
   )
-import Application.ReadModels.TransactionSummary
-  ( TransactionSummaryData (..),
-    getTransactionSummary,
+import Application.ReadModels.Transaction
+  ( TransactionData (..),
+    getTransaction,
   )
 import Application.Services.AuthorizationService
   ( AccountAuthData (..),
@@ -40,6 +40,7 @@ import Application.Services.AuthorizationService
     TransferDenialReason (..),
     canTransfer,
   )
+import Data.Either (isLeft)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
@@ -49,6 +50,11 @@ import Domain.Core.Types
   ( AccountAccess (..),
     AccountRole (..),
     AccountType (..),
+    ExpenseCategory (..),
+    IncomeCategory (..),
+    InternalCategory (..),
+    TransferCategory (..),
+    TransferType (..),
     unsafeAccountId,
     unsafeMoney,
     unsafeTransactionId,
@@ -66,7 +72,7 @@ import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
 import RIO
 import Test.Hspec
-import TestSupport.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
 -- Test Helpers
@@ -171,7 +177,9 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             toAccountId = unsafeAccountId toUuid,
             amount = unsafeMoney amt,
             reason = rsn,
-            initiatedBy = unsafeUserId userUuid
+            initiatedBy = unsafeUserId userUuid,
+            transferType = InternalTransfer,
+            category = InternalCat InternalOther
           }
 
   -- Step 2: Complete the transfer (simulates TransferManager behavior)
@@ -205,7 +213,9 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             toAccountId = unsafeAccountId toUuid,
             amount = unsafeMoney amt,
             reason = rsn,
-            initiatedBy = unsafeUserId userUuid
+            initiatedBy = unsafeUserId userUuid,
+            transferType = InternalTransfer,
+            category = InternalCat InternalOther
           }
 
   return txUuid
@@ -221,6 +231,7 @@ spec = describe "Transfer Workflow Integration" $ do
   expenseFlowSpec
   authorizationSpec
   processManagerDrivenSpec
+  categorizedTransferSpec
 
 -- -----------------------------------------------------------------------------
 -- Successful Transfer
@@ -236,8 +247,8 @@ successfulTransferSpec =
       txUuid <- initiateAndCompleteTransfer env acct1Uuid acct2Uuid userUuid 200 "Test transfer"
 
       -- Verify transaction in read model
-      let txReadModel = env.transactionSummaryReadModel
-      maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model"
         Just txData -> do
@@ -288,8 +299,8 @@ incomeFlowSpec =
       txUuid <- initiateAndCompleteTransfer env extUuid regUuid userUuid 500 "Salary"
 
       -- Verify transaction completed with correct data
-      let txReadModel = env.transactionSummaryReadModel
-      maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
@@ -341,8 +352,8 @@ expenseFlowSpec =
       txUuid <- initiateAndCompleteTransfer env regUuid extUuid userUuid 300 "Groceries"
 
       -- Verify transaction completed with correct data
-      let txReadModel = env.transactionSummaryReadModel
-      maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
@@ -467,8 +478,8 @@ processManagerDrivenSpec =
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 200 "PM test transfer"
 
       -- Verify transaction reached Completed status
-      let txReadModel = env.transactionSummaryReadModel
-      maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model after PM processing"
         Just txData -> do
@@ -481,16 +492,16 @@ processManagerDrivenSpec =
       -- Source: 1000, Target: 500. Transfer 200.
       _ <- initiateTransferOnly env acct1Uuid acct2Uuid _userUuid 200 "Balance test"
 
-      let acctReadModel = env.accountSummaryReadModel
+      let acctReadModel = env.accountReadModel
       -- Source should be 1000 - 200 = 800
-      maybeSrc <- getAccountSummary acctReadModel (unsafeAccountId acct1Uuid)
+      maybeSrc <- getAccount acctReadModel (unsafeAccountId acct1Uuid)
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found in read model"
         Just srcData ->
           srcData.balance `shouldBe` unsafeMoney 800
 
       -- Target should be 500 + 200 = 700
-      maybeTgt <- getAccountSummary acctReadModel (unsafeAccountId acct2Uuid)
+      maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found in read model"
         Just tgtData ->
@@ -531,14 +542,14 @@ processManagerDrivenSpec =
       -- External should go to -500
       _ <- initiateTransferOnly env extUuid regUuid userUuid 500 "Salary"
 
-      let acctReadModel = env.accountSummaryReadModel
-      maybeExt <- getAccountSummary acctReadModel (unsafeAccountId extUuid)
+      let acctReadModel = env.accountReadModel
+      maybeExt <- getAccount acctReadModel (unsafeAccountId extUuid)
       case maybeExt of
         Nothing -> expectationFailure "External account not found in read model"
         Just extData ->
           extData.balance `shouldBe` unsafeMoney (-500)
 
-      maybeReg <- getAccountSummary acctReadModel (unsafeAccountId regUuid)
+      maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found in read model"
         Just regData ->
@@ -551,22 +562,22 @@ processManagerDrivenSpec =
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 5000 "Too much"
 
       -- Transaction should be Failed
-      let txReadModel = env.transactionSummaryReadModel
-      maybeTx <- getTransactionSummary txReadModel (unsafeTransactionId txUuid)
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model"
         Just txData ->
           txData.status `shouldBe` Failed "Insufficient funds"
 
       -- Balances should be unchanged
-      let acctReadModel = env.accountSummaryReadModel
-      maybeSrc <- getAccountSummary acctReadModel (unsafeAccountId acct1Uuid)
+      let acctReadModel = env.accountReadModel
+      maybeSrc <- getAccount acctReadModel (unsafeAccountId acct1Uuid)
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found"
         Just srcData ->
           srcData.balance `shouldBe` unsafeMoney 1000
 
-      maybeTgt <- getAccountSummary acctReadModel (unsafeAccountId acct2Uuid)
+      maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found"
         Just tgtData ->
@@ -582,15 +593,220 @@ processManagerDrivenSpec =
 
       -- Source: 1000 - 100 - 200 + 50 = 750
       -- Target: 500 + 100 + 200 - 50 = 750
-      let acctReadModel = env.accountSummaryReadModel
-      maybeSrc <- getAccountSummary acctReadModel (unsafeAccountId acct1Uuid)
+      let acctReadModel = env.accountReadModel
+      maybeSrc <- getAccount acctReadModel (unsafeAccountId acct1Uuid)
       case maybeSrc of
         Nothing -> expectationFailure "Source not found"
         Just srcData ->
           srcData.balance `shouldBe` unsafeMoney 750
 
-      maybeTgt <- getAccountSummary acctReadModel (unsafeAccountId acct2Uuid)
+      maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target not found"
         Just tgtData ->
           tgtData.balance `shouldBe` unsafeMoney 750
+
+-- -----------------------------------------------------------------------------
+-- Categorized Transfer Tests (Income, Expense, Internal with categories)
+-- -----------------------------------------------------------------------------
+
+categorizedTransferSpec :: Spec
+categorizedTransferSpec =
+  describe "Categorized Transfers (type + category)" $ do
+    it "income flow with Salary category completes correctly" $ do
+      env <- createTestAppEnvWithProcessManager
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
+
+      userUuid <- UUID.nextRandom
+      extUuid <- UUID.nextRandom
+      regUuid <- UUID.nextRandom
+
+      -- Create external account (income source)
+      _ <-
+        applyAccountCommand writer reader extUuid
+          $ CreateAccountAccountCommand
+            CreateAccount
+              { name = "External",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = ExternalAccount
+              }
+
+      -- Create regular account (income destination)
+      _ <-
+        applyAccountCommand writer reader regUuid
+          $ CreateAccountAccountCommand
+            CreateAccount
+              { name = "Wallet",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = RegularAccount
+              }
+
+      -- Initiate income transfer with Income type and Salary category
+      txUuid <- UUID.nextRandom
+      _ <-
+        applyTransactionCommand writer reader txUuid
+          $ InitiateTransferTransactionCommand
+            InitiateTransfer
+              { fromAccountId = unsafeAccountId extUuid,
+                toAccountId = unsafeAccountId regUuid,
+                amount = unsafeMoney 3000,
+                reason = "Monthly salary",
+                initiatedBy = unsafeUserId userUuid,
+                transferType = Income,
+                category = IncomeCat Salary
+              }
+
+      -- Verify transaction read model has correct type and category
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      case maybeTx of
+        Nothing -> expectationFailure "Income transaction not found in read model"
+        Just txData -> do
+          txData.transferType `shouldBe` Income
+          txData.category `shouldBe` IncomeCat Salary
+          txData.status `shouldBe` Completed
+
+      -- Verify account balances
+      let acctReadModel = env.accountReadModel
+      maybeExt <- getAccount acctReadModel (unsafeAccountId extUuid)
+      case maybeExt of
+        Nothing -> expectationFailure "External account not found"
+        Just extData ->
+          extData.balance `shouldBe` unsafeMoney (-3000)
+
+      maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
+      case maybeReg of
+        Nothing -> expectationFailure "Regular account not found"
+        Just regData ->
+          regData.balance `shouldBe` unsafeMoney 3000
+
+    it "expense flow with Food category completes correctly" $ do
+      env <- createTestAppEnvWithProcessManager
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
+
+      userUuid <- UUID.nextRandom
+      regUuid <- UUID.nextRandom
+      extUuid <- UUID.nextRandom
+
+      -- Create regular account (expense source) with balance
+      _ <-
+        applyAccountCommand writer reader regUuid
+          $ CreateAccountAccountCommand
+            CreateAccount
+              { name = "Checking",
+                initialBalance = unsafeMoney 5000,
+                createdBy = unsafeUserId userUuid,
+                accountType = RegularAccount
+              }
+
+      -- Create external account (expense destination)
+      _ <-
+        applyAccountCommand writer reader extUuid
+          $ CreateAccountAccountCommand
+            CreateAccount
+              { name = "External",
+                initialBalance = unsafeMoney 0,
+                createdBy = unsafeUserId userUuid,
+                accountType = ExternalAccount
+              }
+
+      -- Initiate expense transfer with Expense type and Food category
+      txUuid <- UUID.nextRandom
+      _ <-
+        applyTransactionCommand writer reader txUuid
+          $ InitiateTransferTransactionCommand
+            InitiateTransfer
+              { fromAccountId = unsafeAccountId regUuid,
+                toAccountId = unsafeAccountId extUuid,
+                amount = unsafeMoney 150,
+                reason = "Grocery shopping",
+                initiatedBy = unsafeUserId userUuid,
+                transferType = Expense,
+                category = ExpenseCat Food
+              }
+
+      -- Verify transaction read model has correct type and category
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      case maybeTx of
+        Nothing -> expectationFailure "Expense transaction not found in read model"
+        Just txData -> do
+          txData.transferType `shouldBe` Expense
+          txData.category `shouldBe` ExpenseCat Food
+          txData.status `shouldBe` Completed
+
+      -- Verify account balances
+      let acctReadModel = env.accountReadModel
+      maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
+      case maybeReg of
+        Nothing -> expectationFailure "Regular account not found"
+        Just regData ->
+          regData.balance `shouldBe` unsafeMoney 4850
+
+      maybeExt <- getAccount acctReadModel (unsafeAccountId extUuid)
+      case maybeExt of
+        Nothing -> expectationFailure "External account not found"
+        Just extData ->
+          extData.balance `shouldBe` unsafeMoney 150
+
+    it "internal transfer with Savings category completes correctly" $ do
+      (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
+
+      -- Initiate internal transfer with Savings category
+      txUuid <- UUID.nextRandom
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
+      _ <-
+        applyTransactionCommand writer reader txUuid
+          $ InitiateTransferTransactionCommand
+            InitiateTransfer
+              { fromAccountId = unsafeAccountId acct1Uuid,
+                toAccountId = unsafeAccountId acct2Uuid,
+                amount = unsafeMoney 300,
+                reason = "Move to savings",
+                initiatedBy = unsafeUserId userUuid,
+                transferType = InternalTransfer,
+                category = InternalCat Savings
+              }
+
+      -- Verify transaction read model has correct type and category
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      case maybeTx of
+        Nothing -> expectationFailure "Internal transfer not found in read model"
+        Just txData -> do
+          txData.transferType `shouldBe` InternalTransfer
+          txData.category `shouldBe` InternalCat Savings
+          txData.status `shouldBe` Completed
+
+    it "rejects transfer with mismatched type and category" $ do
+      (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
+
+      -- Attempt Income type with ExpenseCat Food (mismatch)
+      txUuid <- UUID.nextRandom
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
+      result <-
+        applyTransactionCommand writer reader txUuid
+          $ InitiateTransferTransactionCommand
+            InitiateTransfer
+              { fromAccountId = unsafeAccountId acct1Uuid,
+                toAccountId = unsafeAccountId acct2Uuid,
+                amount = unsafeMoney 100,
+                reason = "Mismatched category",
+                initiatedBy = unsafeUserId userUuid,
+                transferType = Income,
+                category = ExpenseCat Food
+              }
+
+      -- Should be rejected
+      result `shouldSatisfy` isLeft
+
+      -- Transaction should not exist in read model
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx `shouldBe` Nothing

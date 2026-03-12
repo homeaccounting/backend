@@ -18,7 +18,7 @@ import Domain.Core.Types
 import RIO
 import Test.Hspec
 import Test.QuickCheck
-import TestSupport.Generators ()
+import Testkit.Generators ()
 
 spec :: Spec
 spec = do

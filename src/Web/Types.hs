@@ -51,6 +51,9 @@ module Web.Types
 
     -- * Transaction Request DTOs
     TransferRequest (..),
+    IncomeRequest (..),
+    ExpenseRequest (..),
+    InternalTransferRequest (..),
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
@@ -68,25 +71,32 @@ module Web.Types
     toInitiateTransferCommand,
 
     -- ** From Domain Types
-    fromAccountSummary,
+    fromAccountData,
     fromTransaction,
-    fromTransactionSummary,
+    fromTransactionData,
     fromTransactionStatus,
+
+    -- * Category Parsing
+    parseIncomeCategory,
+    parseExpenseCategory,
+    parseInternalCategory,
+
+    -- * Serialization Helpers
+    transferTypeToText,
+    transferCategoryToText,
   )
 where
 
 -- For read model integration
-import Application.ReadModels.AccountSummary (AccountSummaryData (..))
-import Application.ReadModels.TransactionSummary (TransactionSummaryData (..))
-import Data.Aeson (FromJSON, ToJSON, object, (.=))
-import qualified Data.Aeson as Aeson
+import Application.ReadModels.Account (AccountData (..))
+import Application.ReadModels.Transaction (TransactionData (..))
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.UUID (UUID)
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountType (..), Money, TransactionId, UserId, mkMoney, unAccountId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountType (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, mkMoney, unAccountId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -98,7 +108,7 @@ import GHC.Generics (Generic)
 -- | Request to create a new account.
 --
 -- Fields:
---  - accountName: Human-readable name for the account
+--  - name: Human-readable name for the account
 --  - initialBalance: Starting balance (must be non-negative)
 --
 -- Validation:
@@ -108,7 +118,7 @@ import GHC.Generics (Generic)
 -- Example JSON:
 -- @
 -- {
---  "accountName": "Savings Account",
+--  "name": "Savings Account",
 --  "initialBalance": 1000.50
 -- }
 -- @
@@ -119,18 +129,9 @@ data CreateAccountRequest
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON CreateAccountRequest where
-  toJSON CreateAccountRequest {..} =
-    object
-      [ "accountName" .= name,
-        "initialBalance" .= initialBalance
-      ]
+instance ToJSON CreateAccountRequest
 
-instance FromJSON CreateAccountRequest where
-  parseJSON = Aeson.withObject "CreateAccountRequest" $ \v ->
-    CreateAccountRequest
-      <$> v Aeson..: "accountName"
-      <*> v Aeson..: "initialBalance"
+instance FromJSON CreateAccountRequest
 
 -- | Request to credit (add money to) an account.
 --
@@ -150,17 +151,17 @@ instance FromJSON CreateAccountRequest where
 -- | Response containing account information.
 --
 -- Fields:
---  - accountId: Unique identifier (UUID)
---  - accountName: Human-readable name
---  - currentBalance: Current account balance
+--  - id: Unique identifier (UUID)
+--  - name: Human-readable name
+--  - balance: Current account balance
 --  - version: Event stream version (for optimistic locking)
 --
 -- Example JSON:
 -- @
 -- {
---  "accountId": "550e8400-e29b-41d4-a716-446655440000",
---  "accountName": "Savings Account",
---  "currentBalance": 1500.50,
+--  "id": "550e8400-e29b-41d4-a716-446655440000",
+--  "name": "Savings Account",
+--  "balance": 1500.50,
 --  "version": 5
 -- }
 -- @
@@ -173,22 +174,9 @@ data AccountResponse
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountResponse where
-  toJSON AccountResponse {..} =
-    object
-      [ "accountId" .= id,
-        "accountName" .= name,
-        "currentBalance" .= balance,
-        "version" .= version
-      ]
+instance ToJSON AccountResponse
 
-instance FromJSON AccountResponse where
-  parseJSON = Aeson.withObject "AccountResponse" $ \v ->
-    AccountResponse
-      <$> v Aeson..: "accountId"
-      <*> v Aeson..: "accountName"
-      <*> v Aeson..: "currentBalance"
-      <*> v Aeson..: "version"
+instance FromJSON AccountResponse
 
 -- | Response containing a list of accounts.
 --
@@ -199,15 +187,15 @@ instance FromJSON AccountResponse where
 -- {
 --  "accounts": [
 --    {
---      "accountId": "550e8400-e29b-41d4-a716-446655440000",
---      "accountName": "Savings",
---      "currentBalance": 1500.50,
+--      "id": "550e8400-e29b-41d4-a716-446655440000",
+--      "name": "Savings",
+--      "balance": 1500.50,
 --      "version": 5
 --    },
 --    {
---      "accountId": "650e8400-e29b-41d4-a716-446655440001",
---      "accountName": "Checking",
---      "currentBalance": 750.25,
+--      "id": "650e8400-e29b-41d4-a716-446655440001",
+--      "name": "Checking",
+--      "balance": 750.25,
 --      "version": 3
 --    }
 --  ],
@@ -221,18 +209,9 @@ data AccountListResponse
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountListResponse where
-  toJSON AccountListResponse {..} =
-    object
-      [ "accounts" .= accounts,
-        "totalCount" .= totalCount
-      ]
+instance ToJSON AccountListResponse
 
-instance FromJSON AccountListResponse where
-  parseJSON = Aeson.withObject "AccountListResponse" $ \v ->
-    AccountListResponse
-      <$> v Aeson..: "accounts"
-      <*> v Aeson..: "totalCount"
+instance FromJSON AccountListResponse
 
 -- -----------------------------------------------------------------------------
 -- Transaction Request DTOs
@@ -271,22 +250,52 @@ data TransferRequest
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON TransferRequest where
-  toJSON TransferRequest {..} =
-    object
-      [ "fromAccountId" .= fromAccountId,
-        "toAccountId" .= toAccountId,
-        "amount" .= amount,
-        "reason" .= reason
-      ]
+instance ToJSON TransferRequest
 
-instance FromJSON TransferRequest where
-  parseJSON = Aeson.withObject "TransferRequest" $ \v ->
-    TransferRequest
-      <$> v Aeson..: "fromAccountId"
-      <*> v Aeson..: "toAccountId"
-      <*> v Aeson..: "amount"
-      <*> v Aeson..: "reason"
+instance FromJSON TransferRequest
+
+-- | Request to record an income transaction (External -> Regular account).
+data IncomeRequest
+  = IncomeRequest
+  { accountId :: UUID,
+    amount :: Double,
+    category :: Text,
+    reason :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON IncomeRequest
+
+instance FromJSON IncomeRequest
+
+-- | Request to record an expense transaction (Regular -> External account).
+data ExpenseRequest
+  = ExpenseRequest
+  { accountId :: UUID,
+    amount :: Double,
+    category :: Text,
+    reason :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ExpenseRequest
+
+instance FromJSON ExpenseRequest
+
+-- | Request to initiate an internal transfer (Regular -> Regular account).
+data InternalTransferRequest
+  = InternalTransferRequest
+  { fromAccountId :: UUID,
+    toAccountId :: UUID,
+    amount :: Double,
+    category :: Text,
+    reason :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON InternalTransferRequest
+
+instance FromJSON InternalTransferRequest
 
 -- -----------------------------------------------------------------------------
 -- Transaction Response DTOs
@@ -295,7 +304,7 @@ instance FromJSON TransferRequest where
 -- | Response containing transaction details.
 --
 -- Fields:
---  - transactionId: Unique identifier (UUID)
+--  - id: Unique identifier (UUID)
 --  - fromAccountId: Source account UUID
 --  - toAccountId: Destination account UUID
 --  - amount: Transfer amount
@@ -306,7 +315,7 @@ instance FromJSON TransferRequest where
 -- Example JSON (successful):
 -- @
 -- {
---  "transactionId": "750e8400-e29b-41d4-a716-446655440002",
+--  "id": "750e8400-e29b-41d4-a716-446655440002",
 --  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
 --  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
 --  "amount": 300.00,
@@ -319,7 +328,7 @@ instance FromJSON TransferRequest where
 -- Example JSON (failed):
 -- @
 -- {
---  "transactionId": "750e8400-e29b-41d4-a716-446655440002",
+--  "id": "750e8400-e29b-41d4-a716-446655440002",
 --  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
 --  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
 --  "amount": 500.00,
@@ -336,32 +345,15 @@ data TransactionResponse
     amount :: Double,
     reason :: Text,
     status :: Text,
-    failureReason :: Maybe Text
+    failureReason :: Maybe Text,
+    transferType :: Text,
+    category :: Text
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON TransactionResponse where
-  toJSON TransactionResponse {..} =
-    object
-      [ "transactionId" .= id,
-        "fromAccountId" .= fromAccountId,
-        "toAccountId" .= toAccountId,
-        "amount" .= amount,
-        "reason" .= reason,
-        "status" .= status,
-        "failureReason" .= failureReason
-      ]
+instance ToJSON TransactionResponse
 
-instance FromJSON TransactionResponse where
-  parseJSON = Aeson.withObject "TransactionResponse" $ \v ->
-    TransactionResponse
-      <$> v Aeson..: "transactionId"
-      <*> v Aeson..: "fromAccountId"
-      <*> v Aeson..: "toAccountId"
-      <*> v Aeson..: "amount"
-      <*> v Aeson..: "reason"
-      <*> v Aeson..: "status"
-      <*> v Aeson..: "failureReason"
+instance FromJSON TransactionResponse
 
 -- | Simplified response for transaction status queries.
 --
@@ -370,7 +362,7 @@ instance FromJSON TransactionResponse where
 -- Example JSON:
 -- @
 -- {
---  "transactionId": "750e8400-e29b-41d4-a716-446655440002",
+--  "id": "750e8400-e29b-41d4-a716-446655440002",
 --  "status": "Completed"
 -- }
 -- @
@@ -381,18 +373,9 @@ data TransactionStatusResponse
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON TransactionStatusResponse where
-  toJSON TransactionStatusResponse {..} =
-    object
-      [ "transactionId" .= id,
-        "status" .= status
-      ]
+instance ToJSON TransactionStatusResponse
 
-instance FromJSON TransactionStatusResponse where
-  parseJSON = Aeson.withObject "TransactionStatusResponse" $ \v ->
-    TransactionStatusResponse
-      <$> v Aeson..: "transactionId"
-      <*> v Aeson..: "status"
+instance FromJSON TransactionStatusResponse
 
 -- -----------------------------------------------------------------------------
 -- Error Response DTOs
@@ -401,15 +384,15 @@ instance FromJSON TransactionStatusResponse where
 -- | Generic error response for API errors.
 --
 -- Fields:
---  - errorMessage: Human-readable error description
---  - errorCode: Machine-readable error code
+--  - message: Human-readable error description
+--  - code: Machine-readable error code
 --  - details: Additional error context (optional)
 --
 -- Example JSON:
 -- @
 -- {
---  "errorMessage": "Account not found",
---  "errorCode": "ACCOUNT_NOT_FOUND",
+--  "message": "Account not found",
+--  "code": "ACCOUNT_NOT_FOUND",
 --  "details": {
 --    "accountId": "550e8400-e29b-41d4-a716-446655440000"
 --  }
@@ -423,20 +406,9 @@ data ErrorResponse
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON ErrorResponse where
-  toJSON ErrorResponse {..} =
-    object
-      [ "errorMessage" .= message,
-        "errorCode" .= code,
-        "details" .= details
-      ]
+instance ToJSON ErrorResponse
 
-instance FromJSON ErrorResponse where
-  parseJSON = Aeson.withObject "ErrorResponse" $ \v ->
-    ErrorResponse
-      <$> v Aeson..: "errorMessage"
-      <*> v Aeson..: "errorCode"
-      <*> v Aeson..: "details"
+instance FromJSON ErrorResponse
 
 -- | Validation error response with field-specific errors.
 --
@@ -445,9 +417,9 @@ instance FromJSON ErrorResponse where
 -- Example JSON:
 -- @
 -- {
---  "validationMessage": "Request validation failed",
+--  "message": "Request validation failed",
 --  "fieldErrors": {
---    "accountName": "Account name cannot be empty",
+--    "name": "Account name cannot be empty",
 --    "initialBalance": "Initial balance must be non-negative"
 --  }
 -- }
@@ -459,18 +431,9 @@ data ValidationErrorResponse
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON ValidationErrorResponse where
-  toJSON ValidationErrorResponse {..} =
-    object
-      [ "validationMessage" .= message,
-        "fieldErrors" .= fieldErrors
-      ]
+instance ToJSON ValidationErrorResponse
 
-instance FromJSON ValidationErrorResponse where
-  parseJSON = Aeson.withObject "ValidationErrorResponse" $ \v ->
-    ValidationErrorResponse
-      <$> v Aeson..: "validationMessage"
-      <*> v Aeson..: "fieldErrors"
+instance FromJSON ValidationErrorResponse
 
 -- -----------------------------------------------------------------------------
 -- Conversion Functions: Request DTOs → Domain Commands
@@ -566,7 +529,8 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
     Left "Transfer reason should not be empty"
 
   -- Create domain command with user who initiated
-  return $ InitiateTransfer fromId toId domainAmount reason initiatedBy
+  -- Default to InternalTransfer / InternalOther (will be replaced by dedicated endpoints)
+  return $ InitiateTransfer fromId toId domainAmount reason initiatedBy InternalTransfer (InternalCat InternalOther)
   where
     when :: Bool -> Either Text () -> Either Text ()
     when True action = action
@@ -576,14 +540,14 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
 -- Conversion Functions: Domain Types → Response DTOs
 -- -----------------------------------------------------------------------------
 
--- | Converts AccountSummaryData (read model) to AccountResponse.
+-- | Converts AccountData (read model) to AccountResponse.
 --
 -- Example:
--- >>> let summary = AccountSummaryData "Savings" (Money 1500.0) 5
--- >>> fromAccountSummary accountId summary
+-- >>> let summary = AccountData "Savings" (Money 1500.0) 5
+-- >>> fromAccountData accountId summary
 -- AccountResponse accountId "Savings" 1500.0 5
-fromAccountSummary :: AccountId -> AccountSummaryData -> AccountResponse
-fromAccountSummary accountId AccountSummaryData {..} =
+fromAccountData :: AccountId -> AccountData -> AccountResponse
+fromAccountData accountId AccountData {..} =
   AccountResponse
     { id = unAccountId accountId,
       name = name,
@@ -591,17 +555,17 @@ fromAccountSummary accountId AccountSummaryData {..} =
       version = version
     }
 
--- | Converts TransactionSummaryData (read model) to TransactionResponse.
+-- | Converts TransactionData (read model) to TransactionResponse.
 --
 -- This is the preferred conversion function as it uses the read model
 -- instead of requiring event replay.
 --
 -- Example:
--- >>> let summary = TransactionSummaryData fromId toId (Money 300.0) "Rent" Completed
--- >>> fromTransactionSummary txId summary
+-- >>> let summary = TransactionData fromId toId (Money 300.0) "Rent" Completed
+-- >>> fromTransactionData txId summary
 -- TransactionResponse txId fromId toId 300.0 "Rent" "Completed" Nothing
-fromTransactionSummary :: TransactionId -> TransactionSummaryData -> TransactionResponse
-fromTransactionSummary txId TransactionSummaryData {..} =
+fromTransactionData :: TransactionId -> TransactionData -> TransactionResponse
+fromTransactionData txId TransactionData {..} =
   TransactionResponse
     { id = unTransactionId txId,
       fromAccountId = unAccountId fromAccountId,
@@ -611,13 +575,15 @@ fromTransactionSummary txId TransactionSummaryData {..} =
       status = fromTransactionStatus status,
       failureReason = case status of
         Failed failReason -> Just failReason
-        _ -> Nothing
+        _ -> Nothing,
+      transferType = transferTypeToText transferType,
+      category = transferCategoryToText category
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
 --
 -- Note: This function is kept for backward compatibility but prefer
--- using 'fromTransactionSummary' with the read model instead.
+-- using 'fromTransactionData' with the read model instead.
 --
 -- Example:
 -- >>> let transaction = Transaction fromId toId (Money 300.0) "Rent" Completed
@@ -634,7 +600,9 @@ fromTransaction txId tx =
       status = fromTransactionStatus tx.status,
       failureReason = case tx.status of
         Failed failReason -> Just failReason
-        _ -> Nothing
+        _ -> Nothing,
+      transferType = transferTypeToText tx.transferType,
+      category = transferCategoryToText tx.category
     }
 
 -- | Converts TransactionStatus to Text representation.
@@ -652,3 +620,63 @@ fromTransactionStatus :: TransactionStatus -> Text
 fromTransactionStatus Pending = "Pending"
 fromTransactionStatus Completed = "Completed"
 fromTransactionStatus (Failed _) = "Failed"
+
+-- -----------------------------------------------------------------------------
+-- Transfer Type / Category Serialization
+-- -----------------------------------------------------------------------------
+
+-- | Convert TransferType to lowercase text for JSON responses.
+transferTypeToText :: TransferType -> Text
+transferTypeToText Income = "income"
+transferTypeToText Expense = "expense"
+transferTypeToText InternalTransfer = "transfer"
+
+-- | Convert TransferCategory to lowercase text for JSON responses.
+transferCategoryToText :: TransferCategory -> Text
+transferCategoryToText (IncomeCat Salary) = "salary"
+transferCategoryToText (IncomeCat Freelance) = "freelance"
+transferCategoryToText (IncomeCat Investment) = "investment"
+transferCategoryToText (IncomeCat IncomeGift) = "gift"
+transferCategoryToText (IncomeCat IncomeOther) = "other"
+transferCategoryToText (ExpenseCat Food) = "food"
+transferCategoryToText (ExpenseCat Transport) = "transport"
+transferCategoryToText (ExpenseCat Utilities) = "utilities"
+transferCategoryToText (ExpenseCat Rent) = "rent"
+transferCategoryToText (ExpenseCat Entertainment) = "entertainment"
+transferCategoryToText (ExpenseCat ExpenseOther) = "other"
+transferCategoryToText (InternalCat Rebalance) = "rebalance"
+transferCategoryToText (InternalCat Savings) = "savings"
+transferCategoryToText (InternalCat InternalOther) = "other"
+
+-- -----------------------------------------------------------------------------
+-- Category Parsing
+-- -----------------------------------------------------------------------------
+
+-- | Parse a text string into an IncomeCategory.
+parseIncomeCategory :: Text -> Either Text IncomeCategory
+parseIncomeCategory t = case T.toLower t of
+  "salary" -> Right Salary
+  "freelance" -> Right Freelance
+  "investment" -> Right Investment
+  "gift" -> Right IncomeGift
+  "other" -> Right IncomeOther
+  _ -> Left $ "Unknown income category: " <> t
+
+-- | Parse a text string into an ExpenseCategory.
+parseExpenseCategory :: Text -> Either Text ExpenseCategory
+parseExpenseCategory t = case T.toLower t of
+  "food" -> Right Food
+  "transport" -> Right Transport
+  "utilities" -> Right Utilities
+  "rent" -> Right Rent
+  "entertainment" -> Right Entertainment
+  "other" -> Right ExpenseOther
+  _ -> Left $ "Unknown expense category: " <> t
+
+-- | Parse a text string into an InternalCategory.
+parseInternalCategory :: Text -> Either Text InternalCategory
+parseInternalCategory t = case T.toLower t of
+  "rebalance" -> Right Rebalance
+  "savings" -> Right Savings
+  "other" -> Right InternalOther
+  _ -> Left $ "Unknown internal category: " <> t

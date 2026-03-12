@@ -14,8 +14,10 @@
 --
 -- API Endpoints:
 --
---   POST   /api/transactions             - Create a new transaction (transfer)
---   GET    /api/transactions/:id         - Get transaction status
+--   POST   /api/transactions/income    - Record an income transaction
+--   POST   /api/transactions/expense   - Record an expense transaction
+--   POST   /api/transactions/transfer  - Initiate an internal transfer
+--   GET    /api/transactions/:id       - Get transaction status
 --
 -- Handler Responsibilities (HTTP concerns only):
 --   1. Extract data from HTTP request (path params, body, auth)
@@ -23,16 +25,6 @@
 --   3. Delegate to TransactionService
 --   4. Convert domain types to DTOs (response building)
 --   5. Map service errors to HTTP errors
---
--- Transfer Flow:
---
---   1. Client creates transfer (POST /api/transactions)
---   2. TransactionService validates and issues InitiateTransfer command
---   3. TransferManager process manager handles the saga:
---      - Debit source account
---      - Credit target account
---      - Complete or fail transfer
---   4. Client can poll status (GET /api/transactions/:id)
 module Web.API.TransactionAPI
   ( -- * API Type
     TransactionAPI,
@@ -42,7 +34,9 @@ module Web.API.TransactionAPI
     transactionServer,
 
     -- * Individual Handlers (exported for testing)
-    initiateTransferHandler,
+    incomeHandler,
+    expenseHandler,
+    transferHandler,
     getTransactionHandler,
   )
 where
@@ -57,10 +51,15 @@ import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
-  ( TransactionResponse,
-    TransferRequest (..),
-    fromTransactionSummary,
-    toInitiateTransferCommand,
+  ( ExpenseRequest (..),
+    IncomeRequest (..),
+    InternalTransferRequest (..),
+    TransactionResponse,
+    fromTransactionData,
+    parseExpenseCategory,
+    parseIncomeCategory,
+    parseInternalCategory,
+    toDomainMoney,
   )
 
 -- -----------------------------------------------------------------------------
@@ -75,12 +74,27 @@ import Web.Types
 --  - Handler receives AuthenticatedUser automatically on success
 --  - Returns 401 Unauthorized if token is missing/invalid
 type TransactionAPI =
-  -- POST /api/transactions - Create a new transaction (transfer)
+  -- POST /api/transactions/income - Record an income transaction
   AuthProtect "jwt"
     :> "api"
     :> "transactions"
-    :> ReqBody '[JSON] TransferRequest
+    :> "income"
+    :> ReqBody '[JSON] IncomeRequest
     :> Post '[JSON] TransactionResponse
+    -- POST /api/transactions/expense - Record an expense transaction
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> "expense"
+      :> ReqBody '[JSON] ExpenseRequest
+      :> Post '[JSON] TransactionResponse
+    -- POST /api/transactions/transfer - Initiate an internal transfer
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> "transfer"
+      :> ReqBody '[JSON] InternalTransferRequest
+      :> Post '[JSON] TransactionResponse
     -- GET /api/transactions/:id - Get transaction status (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -99,42 +113,99 @@ transactionAPI = Proxy
 -- | Transaction API server implementation.
 transactionServer :: ServerT TransactionAPI AppM
 transactionServer =
-  initiateTransferHandler
+  incomeHandler
+    :<|> expenseHandler
+    :<|> transferHandler
     :<|> getTransactionHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
 -- -----------------------------------------------------------------------------
 
--- | Handler for POST /api/transactions - Create a new transaction (transfer).
-initiateTransferHandler :: AuthenticatedUser -> TransferRequest -> AppM TransactionResponse
-initiateTransferHandler user request = do
-  let userId = user.authUserId
-  -- 1. Convert account UUIDs to AccountIds (Web layer validation)
-  case mkAccountId request.fromAccountId of
+-- | Handler for POST /api/transactions/income - Record an income transaction.
+incomeHandler :: AuthenticatedUser -> IncomeRequest -> AppM TransactionResponse
+incomeHandler user request = do
+  let userId = user.userId
+  -- 1. Parse category
+  case parseIncomeCategory request.category of
     Left err ->
-      throwDomainError $ ValidationErr $ mkValidationError "fromAccountId" err err
-    Right fromAccId ->
-      case mkAccountId request.toAccountId of
+      throwDomainError $ ValidationErr $ mkValidationError "category" err err
+    Right incomeCat ->
+      -- 2. Parse accountId
+      case mkAccountId request.accountId of
         Left err ->
-          throwDomainError $ ValidationErr $ mkValidationError "toAccountId" err err
-        Right toAccId -> do
-          -- 2. Convert DTO to domain command
-          case toInitiateTransferCommand userId fromAccId toAccId request of
+          throwDomainError $ ValidationErr $ mkValidationError "accountId" err err
+        Right accountId -> do
+          -- 3. Parse amount
+          case toDomainMoney request.amount of
             Left err ->
-              throwDomainError $ ValidationErr $ mkValidationError "request" err err
-            Right transferCmd -> do
-              -- 3. Delegate to service
-              result <- TransactionService.initiateTransfer transferCmd
+              throwDomainError $ ValidationErr $ mkValidationError "amount" err err
+            Right money -> do
+              -- 4. Delegate to service
+              result <- TransactionService.initiateIncome userId accountId money incomeCat request.reason
               case result of
-                -- 4. Convert domain result to response DTO
-                Right (txId, summary) -> return $ fromTransactionSummary txId summary
+                Right (txId, summary) -> return $ fromTransactionData txId summary
                 Left err -> throwDomainError err
+
+-- | Handler for POST /api/transactions/expense - Record an expense transaction.
+expenseHandler :: AuthenticatedUser -> ExpenseRequest -> AppM TransactionResponse
+expenseHandler user request = do
+  let userId = user.userId
+  -- 1. Parse category
+  case parseExpenseCategory request.category of
+    Left err ->
+      throwDomainError $ ValidationErr $ mkValidationError "category" err err
+    Right expenseCat ->
+      -- 2. Parse accountId
+      case mkAccountId request.accountId of
+        Left err ->
+          throwDomainError $ ValidationErr $ mkValidationError "accountId" err err
+        Right accountId -> do
+          -- 3. Parse amount
+          case toDomainMoney request.amount of
+            Left err ->
+              throwDomainError $ ValidationErr $ mkValidationError "amount" err err
+            Right money -> do
+              -- 4. Delegate to service
+              result <- TransactionService.initiateExpense userId accountId money expenseCat request.reason
+              case result of
+                Right (txId, summary) -> return $ fromTransactionData txId summary
+                Left err -> throwDomainError err
+
+-- | Handler for POST /api/transactions/transfer - Initiate an internal transfer.
+transferHandler :: AuthenticatedUser -> InternalTransferRequest -> AppM TransactionResponse
+transferHandler user request = do
+  let userId = user.userId
+  -- 1. Parse category
+  case parseInternalCategory request.category of
+    Left err ->
+      throwDomainError $ ValidationErr $ mkValidationError "category" err err
+    Right internalCat ->
+      -- 2. Parse fromAccountId
+      case mkAccountId request.fromAccountId of
+        Left err ->
+          throwDomainError $ ValidationErr $ mkValidationError "fromAccountId" err err
+        Right fromAccId ->
+          -- 3. Parse toAccountId
+          case mkAccountId request.toAccountId of
+            Left err ->
+              throwDomainError $ ValidationErr $ mkValidationError "toAccountId" err err
+            Right toAccId -> do
+              -- 4. Parse amount
+              case toDomainMoney request.amount of
+                Left err ->
+                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
+                Right money -> do
+                  -- 5. Delegate to service
+                  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money internalCat request.reason
+                  case result of
+                    Right (txId, summary) -> return $ fromTransactionData txId summary
+                    Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions/:id - Get transaction status.
 getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse
 getTransactionHandler _user transactionUuid = do
   result <- TransactionService.getTransaction transactionUuid
   case result of
-    Right (txId, summary) -> return $ fromTransactionSummary txId summary
+    Right (txId, summary) -> return $ fromTransactionData txId summary
     Left err -> throwDomainError err

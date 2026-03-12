@@ -32,13 +32,12 @@ where
 
 import Data.Aeson (encode)
 import qualified Data.Map.Strict as Map
-import Data.Text (Text)
 import Domain.Core.Errors
   ( DomainError (..),
     ValidationError (..),
   )
 import RIO
-import Servant.Server (ServerError, err400, err404, err422, err500, errBody)
+import Servant.Server (ServerError, err400, err404, err422, errBody)
 import Web.Types (ErrorResponse (..), ValidationErrorResponse (..))
 
 -- -----------------------------------------------------------------------------

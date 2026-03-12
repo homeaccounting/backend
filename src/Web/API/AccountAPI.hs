@@ -50,22 +50,19 @@ where
 
 import qualified Application.Services.AccountService as AccountService
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Text (Text)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types (AccountType (..))
-import GHC.Generics (Generic)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
-import Servant.API (NoContent (..))
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
   ( AccountListResponse (..),
     AccountResponse,
     CreateAccountRequest,
-    fromAccountSummary,
+    fromAccountData,
     toCreateAccountCommand,
   )
 
@@ -130,8 +127,8 @@ type AccountAPI =
 
 -- | Share account request.
 data ShareAccountRequest = ShareAccountRequest
-  { shareUserId :: UUID,
-    shareRole :: Text -- "owner", "editor", or "viewer"
+  { userId :: UUID,
+    role :: Text -- "owner", "editor", or "viewer"
   }
   deriving (Show, Eq, Generic)
 
@@ -163,7 +160,7 @@ accountServer =
 -- | Handler for POST /api/accounts - Create a new account.
 createAccountHandler :: AuthenticatedUser -> CreateAccountRequest -> AppM AccountResponse
 createAccountHandler user request = do
-  let userId = user.authUserId
+  let userId = user.userId
       accountType = RegularAccount
   -- 1. Convert DTO to domain command (Web layer responsibility)
   case toCreateAccountCommand userId accountType request of
@@ -173,7 +170,7 @@ createAccountHandler user request = do
       result <- AccountService.createAccount createCmd
       case result of
         -- 3. Convert domain result to response DTO
-        Right (accountId, summary) -> return $ fromAccountSummary accountId summary
+        Right (accountId, summary) -> return $ fromAccountData accountId summary
         Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts/:id - Get account by ID.
@@ -181,23 +178,23 @@ getAccountHandler :: AuthenticatedUser -> UUID -> AppM AccountResponse
 getAccountHandler _user accountUuid = do
   result <- AccountService.getAccount accountUuid
   case result of
-    Right (accountId, summary) -> return $ fromAccountSummary accountId summary
+    Right (accountId, summary) -> return $ fromAccountData accountId summary
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts - List accounts accessible to the authenticated user.
 listAccountsHandler :: AuthenticatedUser -> AppM AccountListResponse
 listAccountsHandler user = do
-  let userId = user.authUserId
+  let userId = user.userId
   accountsList <- AccountService.listAccountsForUser userId
-  let responses = map (uncurry fromAccountSummary) accountsList
+  let responses = map (uncurry fromAccountData) accountsList
       totalCount = length responses
   return $ AccountListResponse responses totalCount
 
 -- | Handler for POST /api/accounts/:id/share - Share account with another user.
 shareAccountHandler :: AuthenticatedUser -> UUID -> ShareAccountRequest -> AppM NoContent
 shareAccountHandler user accountUuid ShareAccountRequest {..} = do
-  let userId = user.authUserId
-  result <- AccountService.shareAccount userId accountUuid shareUserId shareRole
+  let currentUserId = user.userId
+  result <- AccountService.shareAccount currentUserId accountUuid userId role
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -205,7 +202,7 @@ shareAccountHandler user accountUuid ShareAccountRequest {..} = do
 -- | Handler for DELETE /api/accounts/:id/access/:userId - Revoke user's access.
 revokeAccountAccessHandler :: AuthenticatedUser -> UUID -> UUID -> AppM NoContent
 revokeAccountAccessHandler user accountUuid targetUserUuid = do
-  let userId = user.authUserId
+  let userId = user.userId
   result <- AccountService.revokeAccountAccess userId accountUuid targetUserUuid
   case result of
     Right () -> return NoContent

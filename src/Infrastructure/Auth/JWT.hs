@@ -50,7 +50,7 @@ module Infrastructure.Auth.JWT
 where
 
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Crypto.Hash (SHA256 (..), hashWith)
+import Crypto.Hash (SHA256 (..))
 import Crypto.MAC.HMAC (HMAC (..), hmac)
 import Data.Aeson (FromJSON (..), ToJSON (..), decode, encode, object, withObject, (.:), (.=))
 import qualified Data.Aeson as Aeson
@@ -64,11 +64,10 @@ import qualified Data.List
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime, secondsToNominalDiffTime)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime, secondsToNominalDiffTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
-import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import Domain.Core.Types (UserId (..), mkUserIdSafe, unUserId)
+import Domain.Core.Types (UserId, mkUserIdSafe, unUserId)
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------
@@ -350,8 +349,8 @@ base64UrlDecode bs =
 constantTimeCompare :: ByteString -> ByteString -> Bool
 constantTimeCompare a b =
   BS.length a == BS.length b
-    && (0 == foldl' xorByte 0 (BS.zipWith xorBytes a b))
+    && (0 == strictFoldl xorByte 0 (BS.zipWith xorBytes a b))
   where
     xorByte acc byte = acc .|. byte
     xorBytes x y = x `xor` y
-    foldl' = Data.List.foldl'
+    strictFoldl = Data.List.foldl'

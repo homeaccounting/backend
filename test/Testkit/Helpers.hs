@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : TestSupport.Helpers
+-- Module      : Testkit.Helpers
 -- Description : Test helper functions and utilities
 --
 -- This module provides helper functions for testing, including:
@@ -12,7 +12,7 @@
 --
 -- Usage:
 --   Import this module in test files to access helper functions.
-module TestSupport.Helpers
+module Testkit.Helpers
   ( -- * Mock Constructors
     mockMoney,
     mockAccountId,
@@ -46,7 +46,7 @@ import Test.Hspec
 -- | Create a Money value without validation.
 --
 -- WARNING: Only use in tests where you need invalid values or want to bypass validation.
--- For valid test data, use the generators in TestSupport.Generators.
+-- For valid test data, use the generators in Testkit.Generators.
 --
 -- >>> mockMoney 100
 -- Money (100 % 1)

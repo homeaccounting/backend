@@ -52,7 +52,6 @@ import Control.Concurrent.STM (TVar, readTVarIO)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
-import Data.Text (Text)
 import Domain.Core.Types
   ( AccountAccess (..),
     AccountId,
@@ -257,8 +256,8 @@ getUserAccessibleAccounts userId readModelTVar = do
   let allAccounts = Map.toList model.accounts
       accessibleAccounts =
         [ (accountId, role)
-          | (accountId, authData) <- allAccounts,
-            Just role <- [getUserRoleFromAccessList userId authData.accessList]
+        | (accountId, authData) <- allAccounts,
+          Just role <- [getUserRoleFromAccessList userId authData.accessList]
         ]
   return accessibleAccounts
 

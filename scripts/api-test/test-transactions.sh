@@ -63,9 +63,9 @@ ensure_authenticated() {
 
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
+            -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
-        AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.authToken')
+        AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
 
         if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
             echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
@@ -91,9 +91,9 @@ setup_accounts() {
     SOURCE_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"accountName": "Transfer Test - Source", "initialBalance": 1000.0}')
+        -d '{"name": "Transfer Test - Source", "initialBalance": 1000.0}')
 
-    SOURCE_ACCOUNT_ID=$(echo "$SOURCE_RESPONSE" | jq -r '.accountId')
+    SOURCE_ACCOUNT_ID=$(echo "$SOURCE_RESPONSE" | jq -r '.id')
     echo "$SOURCE_RESPONSE" | jq '.'
 
     if [ -n "$SOURCE_ACCOUNT_ID" ] && [ "$SOURCE_ACCOUNT_ID" != "null" ]; then
@@ -108,9 +108,9 @@ setup_accounts() {
     TARGET_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"accountName": "Transfer Test - Target", "initialBalance": 500.0}')
+        -d '{"name": "Transfer Test - Target", "initialBalance": 500.0}')
 
-    TARGET_ACCOUNT_ID=$(echo "$TARGET_RESPONSE" | jq -r '.accountId')
+    TARGET_ACCOUNT_ID=$(echo "$TARGET_RESPONSE" | jq -r '.id')
     echo "$TARGET_RESPONSE" | jq '.'
 
     if [ -n "$TARGET_ACCOUNT_ID" ] && [ "$TARGET_ACCOUNT_ID" != "null" ]; then
@@ -258,7 +258,7 @@ test_verify_balances() {
     print_info "Checking source account balance..."
     SOURCE_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SOURCE_ACCOUNT_ID}" \
         -H "Authorization: Bearer $AUTH_TOKEN")
-    SOURCE_BALANCE=$(echo "$SOURCE_RESPONSE" | jq -r '.currentBalance')
+    SOURCE_BALANCE=$(echo "$SOURCE_RESPONSE" | jq -r '.balance')
     echo "$SOURCE_RESPONSE" | jq '.'
     print_info "Source account balance: \$${SOURCE_BALANCE}"
 
@@ -266,7 +266,7 @@ test_verify_balances() {
     print_info "Checking target account balance..."
     TARGET_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${TARGET_ACCOUNT_ID}" \
         -H "Authorization: Bearer $AUTH_TOKEN")
-    TARGET_BALANCE=$(echo "$TARGET_RESPONSE" | jq -r '.currentBalance')
+    TARGET_BALANCE=$(echo "$TARGET_RESPONSE" | jq -r '.balance')
     echo "$TARGET_RESPONSE" | jq '.'
     print_info "Target account balance: \$${TARGET_BALANCE}"
 

@@ -38,20 +38,20 @@ module Application.Services.AuthService
     authenticateTelegram,
     linkTelegram,
     refreshToken,
+    findOrCreateTelegramBotUser,
 
     -- * Helpers re-exported for AuthAPI types
     parseOAuthProvider,
   )
 where
 
-import Application.ReadModels.UserSummary
-  ( UserSummaryData (..),
+import Application.ReadModels.User
+  ( UserData (..),
     emailExists,
     getUserByEmail,
     getUserByOAuthIdentity,
     getUserByTelegramId,
   )
-import Data.Text (Text)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..))
@@ -84,12 +84,10 @@ import Infrastructure.App
 import Infrastructure.Auth.JWT (JWTClaims (..), JWTConfig (..))
 import qualified Infrastructure.Auth.JWT as JWT
 import Infrastructure.Auth.OAuth
-  ( OAuthConfig,
-    OAuthUserInfo (..),
+  ( OAuthUserInfo (..),
   )
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.Password (hashPassword, verifyPassword)
-import Infrastructure.Auth.Telegram (TelegramConfig)
 import qualified Infrastructure.Auth.Telegram as TelegramAuth
 import Infrastructure.Eventium (applyAccountCommand, applyUserCommand, loadUserAggregate)
 import RIO hiding (Handler)
@@ -134,7 +132,7 @@ register email password = do
   logInfo "Processing registration request"
 
   -- 1. Check email doesn't exist
-  userReadModel <- view userSummaryReadModelL
+  userReadModel <- view userReadModelL
   exists <- emailExists userReadModel email
   if exists
     then do
@@ -211,7 +209,7 @@ login email password = do
   logInfo "Processing login request"
 
   -- 1. Find user by email
-  userReadModel <- view userSummaryReadModelL
+  userReadModel <- view userReadModelL
   maybeUser <- getUserByEmail userReadModel email
 
   case maybeUser of
@@ -297,7 +295,7 @@ handleOAuthCallback provider code state = do
                 subject = userInfo.subject
               }
 
-      userReadModel <- view userSummaryReadModelL
+      userReadModel <- view userReadModelL
       maybeUser <- getUserByOAuthIdentity userReadModel provider userInfo.subject
 
       case maybeUser of
@@ -324,7 +322,7 @@ linkOAuth userId provider oauthCode = do
   logInfo "Processing link OAuth request"
 
   -- Check OAuth not already linked to another user
-  userReadModel <- view userSummaryReadModelL
+  userReadModel <- view userReadModelL
   let oauthIdentity = OAuthIdentity provider oauthCode
   maybeExisting <- getUserByOAuthIdentity userReadModel provider oauthIdentity.subject
 
@@ -366,7 +364,7 @@ authenticateTelegram authData = do
       return $ Left $ AccountError "Telegram authentication failed"
     Right identity -> do
       -- 2. Find or create user by Telegram ID
-      userReadModel <- view userSummaryReadModelL
+      userReadModel <- view userReadModelL
       maybeUser <- getUserByTelegramId userReadModel identity.id
 
       case maybeUser of
@@ -396,7 +394,7 @@ linkTelegram userId authData = do
       return $ Left $ AccountError "Telegram authentication failed"
     Right identity -> do
       -- Check Telegram not already linked to another user
-      userReadModel <- view userSummaryReadModelL
+      userReadModel <- view userReadModelL
       maybeExisting <- getUserByTelegramId userReadModel identity.id
 
       case maybeExisting of
@@ -445,6 +443,30 @@ refreshToken token = do
                   email = Just claims.email,
                   expiresIn = jwtConfig.expirySeconds
                 }
+
+-- | Find or create a user from Telegram bot interaction.
+--
+-- Unlike 'authenticateTelegram', this skips HMAC verification since the
+-- bot authenticates via its token. Used by the Telegram bot /start command.
+--
+-- Returns @(UserId, Bool)@ where the 'Bool' is 'True' when a new user
+-- was created and 'False' when an existing user was found.
+findOrCreateTelegramBotUser ::
+  TelegramIdentity ->
+  AppM (Either DomainError (UserId, Bool))
+findOrCreateTelegramBotUser tgIdent = do
+  userReadModel <- view userReadModelL
+  maybeUser <- getUserByTelegramId userReadModel tgIdent.id
+  case maybeUser of
+    Just (uid, _) -> return $ Right (uid, False)
+    Nothing -> do
+      logInfo "Creating new user via Telegram bot"
+      result <- createUserViaTelegram tgIdent
+      case result of
+        Left err -> do
+          logError $ "findOrCreateTelegramBotUser: failed for TelegramId " <> displayShow tgIdent.id
+          return $ Left err
+        Right authResult -> return $ Right (authResult.userId, True)
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions

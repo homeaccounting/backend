@@ -43,17 +43,15 @@ module Web.API.UserAPI
   )
 where
 
-import Application.ReadModels.UserSummary (UserSummaryData (..))
+import Application.ReadModels.User (UserData (..))
 import qualified Application.Services.UserService as UserService
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Text (Text)
 import Domain.Core.Types
   ( AccountId,
     OAuthIdentity,
     TelegramIdentity,
     UserId,
   )
-import GHC.Generics (Generic)
 import Infrastructure.App (AppM)
 import RIO hiding (Handler)
 import Servant
@@ -112,7 +110,7 @@ type UserAPI =
 
 -- | Update profile request.
 data UpdateProfileRequest = UpdateProfileRequest
-  { updateEmail :: Maybe Text
+  { email :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -137,12 +135,12 @@ instance FromJSON ChangePasswordRequest
 
 -- | User profile response.
 data UserProfileResponse = UserProfileResponse
-  { profileUserId :: UserId,
-    profileEmail :: Maybe Text,
-    profileHasPassword :: Bool,
-    profileOAuthIdentities :: [OAuthIdentity],
-    profileTelegramIdentity :: Maybe TelegramIdentity,
-    profileExternalAccountId :: AccountId
+  { userId :: UserId,
+    email :: Maybe Text,
+    hasPassword :: Bool,
+    oauthIdentities :: [OAuthIdentity],
+    telegramIdentity :: Maybe TelegramIdentity,
+    externalAccountId :: AccountId
   }
   deriving (Show, Eq, Generic)
 
@@ -170,9 +168,9 @@ userServer =
 -- | Handler for GET /api/users/me - Get current user profile.
 handleGetProfile :: AuthenticatedUser -> AppM UserProfileResponse
 handleGetProfile user = do
-  result <- UserService.getProfile user.authUserId
+  result <- UserService.getProfile user.userId
   case result of
-    Right (userId, userData) -> return $ userDataToProfileResponse userId userData
+    Right (uid, userData) -> return $ userDataToProfileResponse uid userData
     Left err -> throwDomainError err
 
 -- | Handler for PUT /api/users/me - Update profile.
@@ -180,22 +178,22 @@ handleGetProfile user = do
 -- Note: Email update is not yet implemented at the domain level.
 handleUpdateProfile :: AuthenticatedUser -> UpdateProfileRequest -> AppM UserProfileResponse
 handleUpdateProfile user UpdateProfileRequest {..} =
-  case updateEmail of
+  case email of
     Just _newEmail -> do
       -- TODO: Implement UpdateUserEmail command
       logWarn "Email update not yet implemented"
       throwIO err501 {errBody = "Email update not yet implemented"}
     Nothing -> do
       -- No changes, return current profile
-      result <- UserService.getProfile user.authUserId
+      result <- UserService.getProfile user.userId
       case result of
-        Right (userId, userData) -> return $ userDataToProfileResponse userId userData
+        Right (uid, userData) -> return $ userDataToProfileResponse uid userData
         Left err -> throwDomainError err
 
 -- | Handler for POST /api/users/me/change-password - Change password.
 handleChangePassword :: AuthenticatedUser -> ChangePasswordRequest -> AppM NoContent
 handleChangePassword user ChangePasswordRequest {..} = do
-  result <- UserService.changePassword user.authUserId currentPassword newPassword
+  result <- UserService.changePassword user.userId currentPassword newPassword
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -203,7 +201,7 @@ handleChangePassword user ChangePasswordRequest {..} = do
 -- | Handler for DELETE /api/users/me/oauth/:provider - Unlink OAuth provider.
 handleUnlinkOAuth :: AuthenticatedUser -> Text -> AppM NoContent
 handleUnlinkOAuth user providerText = do
-  result <- UserService.unlinkOAuth user.authUserId providerText
+  result <- UserService.unlinkOAuth user.userId providerText
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -211,7 +209,7 @@ handleUnlinkOAuth user providerText = do
 -- | Handler for DELETE /api/users/me/telegram - Unlink Telegram.
 handleUnlinkTelegram :: AuthenticatedUser -> AppM NoContent
 handleUnlinkTelegram user = do
-  result <- UserService.unlinkTelegram user.authUserId
+  result <- UserService.unlinkTelegram user.userId
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -221,13 +219,13 @@ handleUnlinkTelegram user = do
 -- -----------------------------------------------------------------------------
 
 -- | Convert user summary data to profile response DTO.
-userDataToProfileResponse :: UserId -> UserSummaryData -> UserProfileResponse
-userDataToProfileResponse userId UserSummaryData {..} =
+userDataToProfileResponse :: UserId -> UserData -> UserProfileResponse
+userDataToProfileResponse uid UserData {..} =
   UserProfileResponse
-    { profileUserId = userId,
-      profileEmail = email,
-      profileHasPassword = hasPassword,
-      profileOAuthIdentities = oauthIdentities,
-      profileTelegramIdentity = telegramIdentity,
-      profileExternalAccountId = externalAccountId
+    { userId = uid,
+      email = email,
+      hasPassword = hasPassword,
+      oauthIdentities = oauthIdentities,
+      telegramIdentity = telegramIdentity,
+      externalAccountId = externalAccountId
     }

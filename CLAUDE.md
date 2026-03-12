@@ -107,7 +107,7 @@ Tests live in `test/` and use Hspec with hspec-discover. Three categories:
 | `*PropertySpec.hs`    | Property    | QuickCheck invariants and type class laws |
 | `*IntegrationSpec.hs` | Integration | End-to-end workflows with event store     |
 
-Test support modules in `test/TestSupport/`: generators (`Generators.hs`), helpers (`Helpers.hs`), in-memory event store (`InMemoryEventStore.hs`).
+Test support modules in `test/Testkit/`: generators (`Generators.hs`), helpers (`Helpers.hs`), in-memory event store (`InMemoryEventStore.hs`).
 
 ### Running specific tests
 
@@ -129,13 +129,13 @@ cabal test all --test-option='--rerun'
 - Domain logic invariants must be proven through QuickCheck properties
 - Properties verified at compile-time by LiquidHaskell should NOT have redundant runtime tests
 - Test error handling explicitly: verify `Left` results carry correct `errorContext` and messages
-- Use mock constructors from `TestSupport/Helpers.hs` to bypass validation in non-validation tests
+- Use mock constructors from `Testkit/Helpers.hs` to bypass validation in non-validation tests
 
 ## Code Style
 
 - **Formatter**: ormolu (mandatory, no manual overrides)
 - **Linter**: hlint — no suppressions allowed without explicit approval and documented rationale
-- **GHC warnings**: `-Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -Wpartial-fields`
+- **GHC warnings**: `-Wall -Wcompat -Widentities -Wincomplete-record-updates -Wredundant-constraints`. CI builds use `-Werror` via `cabal build -fci`
 - **Required extensions**: `NoImplicitPrelude`, `StrictData`, `GADTs`, `KindSignatures`, `DataKinds`, `TypeFamilies`, `NoFieldSelectors`, `DuplicateRecordFields`, `OverloadedRecordDot`
 - Never export data constructors or field selectors directly — use smart constructors and accessor functions
 - Total functions only; no partial functions

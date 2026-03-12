@@ -218,10 +218,10 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 
 ```json
 {
-  "authToken": "***REMOVED***",
-  "authUserId": "550e8400-e29b-41d4-a716-446655440000",
-  "authEmail": "user@example.com",
-  "authExpiresIn": 3600
+  "token": "***REMOVED***",
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "expiresIn": 3600
 }
 ```
 
@@ -229,9 +229,9 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 
 ```json
 {
-  "accountId": "550e8400-e29b-41d4-a716-446655440000",
-  "accountName": "Savings Account",
-  "currentBalance": 1000.0,
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Savings Account",
+  "balance": 1000.0,
   "version": 1
 }
 ```
@@ -254,12 +254,12 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 
 ```json
 {
-  "profileUserId": "550e8400-e29b-41d4-a716-446655440000",
-  "profileEmail": "user@example.com",
-  "profileHasPassword": true,
-  "profileOAuthIdentities": [],
-  "profileTelegramIdentity": null,
-  "profileExternalAccountId": "650e8400-e29b-41d4-a716-446655440001"
+  "userId": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "hasPassword": true,
+  "oauthIdentities": [],
+  "telegramIdentity": null,
+  "externalAccountId": "650e8400-e29b-41d4-a716-446655440001"
 }
 ```
 
@@ -267,7 +267,7 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 
 ```json
 {
-  "errorMessage": "Missing or invalid authentication token"
+  "message": "Missing or invalid authentication token"
 }
 ```
 
@@ -286,10 +286,10 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 
 ```json
 {
-  "errorMessage": "Account not found",
-  "errorCode": "ACCOUNT_NOT_FOUND",
+  "message": "Account not found",
+  "code": "ACCOUNT_NOT_FOUND",
   "details": {
-    "accountId": "550e8400-e29b-41d4-a716-446655440000"
+    "id": "550e8400-e29b-41d4-a716-446655440000"
   }
 }
 ```
@@ -340,5 +340,5 @@ sudo apt-get install jq
 - Transfers are processed asynchronously by the TransferManager process
 - Transaction status will be "Pending" initially, then "Completed" or "Failed"
 - You may need to poll the transaction status endpoint to see the final result
-- JWT tokens expire after the configured duration (check `authExpiresIn` in the response)
+- JWT tokens expire after the configured duration (check `expiresIn` in the response)
 - Test scripts store credentials and tokens in `/tmp/test_*.txt` files for reuse

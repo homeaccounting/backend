@@ -1,4 +1,4 @@
 {
-  "shareUserId": "REPLACE_WITH_TARGET_USER_UUID",
-  "shareRole": "editor"
+  "userId": "REPLACE_WITH_TARGET_USER_UUID",
+  "role": "editor"
 }

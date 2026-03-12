@@ -123,9 +123,9 @@ case "${1:-help}" in
         echo -e "${YELLOW}Registering user: $EMAIL${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"registerEmail\": \"$EMAIL\", \"registerPassword\": \"$PASSWORD\"}")
+            -d "{\"email\": \"$EMAIL\", \"password\": \"$PASSWORD\"}")
         check_jq "$RESPONSE"
-        TOKEN=$(echo "$RESPONSE" | jq -r '.authToken' 2>/dev/null)
+        TOKEN=$(echo "$RESPONSE" | jq -r '.token' 2>/dev/null)
         if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
             echo "$TOKEN" > /tmp/test_auth_token.txt
             echo "$EMAIL" > /tmp/test_auth_email.txt
@@ -144,9 +144,9 @@ case "${1:-help}" in
         echo -e "${YELLOW}Logging in as: $EMAIL${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/login" \
             -H "Content-Type: application/json" \
-            -d "{\"loginEmail\": \"$EMAIL\", \"loginPassword\": \"$PASSWORD\"}")
+            -d "{\"email\": \"$EMAIL\", \"password\": \"$PASSWORD\"}")
         check_jq "$RESPONSE"
-        TOKEN=$(echo "$RESPONSE" | jq -r '.authToken' 2>/dev/null)
+        TOKEN=$(echo "$RESPONSE" | jq -r '.token' 2>/dev/null)
         if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
             echo "$TOKEN" > /tmp/test_auth_token.txt
             echo "$EMAIL" > /tmp/test_auth_email.txt
@@ -185,9 +185,9 @@ case "${1:-help}" in
         echo -e "${YELLOW}Logging in via Telegram (ID: $TG_ID, @$TG_USERNAME)${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/telegram" \
             -H "Content-Type: application/json" \
-            -d "{\"telegramAuthId\": $TG_ID, \"telegramAuthFirstName\": \"$TG_NAME\", \"telegramAuthLastName\": null, \"telegramAuthUsername\": \"$TG_USERNAME\", \"telegramAuthPhotoUrl\": null, \"telegramAuthAuthDate\": $TG_AUTH_DATE, \"telegramAuthHash\": \"$TG_HASH\"}")
+            -d "{\"id\": $TG_ID, \"firstName\": \"$TG_NAME\", \"lastName\": null, \"username\": \"$TG_USERNAME\", \"photoUrl\": null, \"authDate\": $TG_AUTH_DATE, \"hash\": \"$TG_HASH\"}")
         check_jq "$RESPONSE"
-        TOKEN=$(echo "$RESPONSE" | jq -r '.authToken' 2>/dev/null)
+        TOKEN=$(echo "$RESPONSE" | jq -r '.token' 2>/dev/null)
         if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
             echo "$TOKEN" > /tmp/test_auth_token.txt
             echo "$TG_ID" > /tmp/test_telegram_id.txt
@@ -221,7 +221,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"accountName\": \"$NAME\", \"initialBalance\": $BALANCE}")
+            -d "{\"name\": \"$NAME\", \"initialBalance\": $BALANCE}")
         check_jq "$RESPONSE"
         ;;
 
@@ -257,7 +257,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}/share" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"shareUserId\": \"$TARGET_USER_ID\", \"shareRole\": \"$ROLE\"}")
+            -d "{\"userId\": \"$TARGET_USER_ID\", \"role\": \"$ROLE\"}")
         if [ -z "$RESPONSE" ]; then
             echo -e "${GREEN}✓ Account shared (204 No Content)${NC}"
         else

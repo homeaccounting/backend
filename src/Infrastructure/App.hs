@@ -99,9 +99,9 @@ module Infrastructure.App
 where
 
 -- Local imports
-import Application.ReadModels.AccountSummary (AccountSummaryReadModel)
-import Application.ReadModels.TransactionSummary (TransactionSummaryReadModel)
-import Application.ReadModels.UserSummary (UserSummaryReadModel)
+import Application.ReadModels.Account (AccountReadModel)
+import Application.ReadModels.Transaction (TransactionReadModel)
+import Application.ReadModels.User (UserReadModel)
 import Control.Monad.Logger (LoggingT, runStdoutLoggingT)
 import Database.Persist.Postgresql (ConnectionPool, SqlBackend, runSqlPool)
 import Infrastructure.Auth.JWT (JWTConfig)
@@ -114,7 +114,6 @@ import Infrastructure.Eventium
     AccountingVersionedEventStoreWriter,
   )
 import RIO
-import qualified RIO.Text as T
 import Servant.Client (ClientEnv)
 import Telegram.Types (BotState)
 
@@ -136,8 +135,8 @@ import Telegram.Types (BotState)
 --  - eventStoreWriter: Event store writer with event bus
 --  - eventStoreReader: Event store reader for loading aggregates
 --  - globalEventStoreReader: Global event reader for read models
---  - accountSummaryReadModel: In-memory account summary read model
---  - transactionSummaryReadModel: In-memory transaction summary read model
+--  - accountReadModel: In-memory account summary read model
+--  - transactionReadModel: In-memory transaction summary read model
 --
 -- Design Notes:
 --  - All fields are strict (!) for performance
@@ -162,11 +161,11 @@ data AppEnv = AppEnv
     -- | Global event store reader for read models
     globalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
     -- | In-memory account summary read model (STM)
-    accountSummaryReadModel :: !(TVar AccountSummaryReadModel),
+    accountReadModel :: !(TVar AccountReadModel),
     -- | In-memory transaction summary read model (STM)
-    transactionSummaryReadModel :: !(TVar TransactionSummaryReadModel),
+    transactionReadModel :: !(TVar TransactionReadModel),
     -- | In-memory user summary read model (STM)
-    userSummaryReadModel :: !(TVar UserSummaryReadModel),
+    userReadModel :: !(TVar UserReadModel),
     -- | JWT authentication configuration
     jwtConfig :: !JWTConfig,
     -- | OAuth authentication configuration
@@ -201,9 +200,9 @@ initializeAppEnv ::
   AccountingVersionedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
   AccountingGlobalEventStoreReader IO ->
-  TVar AccountSummaryReadModel ->
-  TVar TransactionSummaryReadModel ->
-  TVar UserSummaryReadModel ->
+  TVar AccountReadModel ->
+  TVar TransactionReadModel ->
+  TVar UserReadModel ->
   JWTConfig ->
   OAuthConfig ->
   TelegramConfig ->
@@ -219,9 +218,9 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       eventStoreWriter = writer,
       eventStoreReader = reader,
       globalEventStoreReader = globalReader,
-      accountSummaryReadModel = accountReadModel,
-      transactionSummaryReadModel = transactionReadModel,
-      userSummaryReadModel = userReadModel,
+      accountReadModel = accountReadModel,
+      transactionReadModel = transactionReadModel,
+      userReadModel = userReadModel,
       jwtConfig = jwtConfig,
       oauthConfig = oauthConfig,
       telegramConfig = telegramConfig,
@@ -294,22 +293,22 @@ instance HasEventStore AppEnv where
 
 -- | Type class for environments that have read model access.
 --
--- Provides lenses to access account, transaction, and user summary read models.
+-- Provides lenses to access account, transaction, and user read models.
 --
 -- Example:
--- >>> getAccount :: (MonadReader env m, HasReadModel env, MonadIO m) => AccountId -> m (Maybe AccountSummaryData)
+-- >>> getAccount :: (MonadReader env m, HasReadModel env, MonadIO m) => AccountId -> m (Maybe AccountData)
 -- >>> getAccount accountId = do
--- >>>   readModel <- view accountSummaryReadModelL
--- >>>   liftIO $ getAccountSummary readModel accountId
+-- >>>   readModel <- view accountReadModelL
+-- >>>   liftIO $ getAccount readModel accountId
 class HasReadModel env where
-  accountSummaryReadModelL :: Lens' env (TVar AccountSummaryReadModel)
-  transactionSummaryReadModelL :: Lens' env (TVar TransactionSummaryReadModel)
-  userSummaryReadModelL :: Lens' env (TVar UserSummaryReadModel)
+  accountReadModelL :: Lens' env (TVar AccountReadModel)
+  transactionReadModelL :: Lens' env (TVar TransactionReadModel)
+  userReadModelL :: Lens' env (TVar UserReadModel)
 
 instance HasReadModel AppEnv where
-  accountSummaryReadModelL = lens (.accountSummaryReadModel) (\x y -> x {accountSummaryReadModel = y})
-  transactionSummaryReadModelL = lens (.transactionSummaryReadModel) (\x y -> x {transactionSummaryReadModel = y})
-  userSummaryReadModelL = lens (.userSummaryReadModel) (\x y -> x {userSummaryReadModel = y})
+  accountReadModelL = lens (.accountReadModel) (\x y -> x {accountReadModel = y})
+  transactionReadModelL = lens (.transactionReadModel) (\x y -> x {transactionReadModel = y})
+  userReadModelL = lens (.userReadModel) (\x y -> x {userReadModel = y})
 
 -- | Type class for environments that have auth configuration access.
 --

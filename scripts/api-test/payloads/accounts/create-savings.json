@@ -1,4 +1,4 @@
 {
-  "accountName": "Savings Account",
+  "name": "Savings Account",
   "initialBalance": 1000.0
 }

@@ -49,7 +49,6 @@ module Infrastructure.Database
     convertDatabaseConfig,
 
     -- * Connection Pool (Initialization)
-    ConnectionPool,
     createConnectionPool,
     createConnectionPoolNoLogging,
 
@@ -77,12 +76,10 @@ module Infrastructure.Database
 where
 
 import Control.Monad (void)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger
-  ( LogLevel (..),
-    LoggingT,
+  ( LoggingT,
     NoLoggingT (..),
-    filterLogger,
     runNoLoggingT,
     runStdoutLoggingT,
   )

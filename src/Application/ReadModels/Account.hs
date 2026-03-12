@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 
 -- |
--- Module      : Application.ReadModels.AccountSummary
+-- Module      : Application.ReadModels.Account
 -- Description : Read model for optimized account queries
 --
 -- This module implements a read model that provides efficient queries for account
@@ -11,8 +11,8 @@
 -- stream and maintains a denormalized view optimized for common query patterns.
 --
 -- Key Components:
---   - AccountSummaryData: Denormalized account information (with ownership and RBAC)
---   - AccountSummaryReadModel: Map of account IDs to summary data
+--   - AccountData: Denormalized account information (with ownership and RBAC)
+--   - AccountReadModel: Map of account IDs to summary data
 --   - Event handlers: Update the read model when events occur
 --   - Query functions: Efficient lookups by account ID
 --
@@ -27,26 +27,26 @@
 --   - Rebuilt from the event stream if corrupted
 --   - Extended with additional denormalized fields
 --   - Backed by in-memory or persistent storage
-module Application.ReadModels.AccountSummary
+module Application.ReadModels.Account
   ( -- * Read Model Types
-    AccountSummaryData (..),
-    AccountSummaryReadModel,
+    AccountData (..),
+    AccountReadModel,
 
     -- * Read Model Creation
-    createAccountSummaryReadModel,
+    createAccountReadModel,
 
     -- * Event Handler
-    handleAccountSummaryEvents,
+    handleAccountEvents,
 
     -- * Query Functions
-    getAccountSummary,
-    getAccountSummaryForUser,
-    getAllAccountSummaries,
+    getAccount,
+    getAccountForUser,
+    getAllAccounts,
     getAccessibleAccounts,
     accountExists,
 
     -- * Helper Functions
-    accountSummaryToMap,
+    accountToMap,
   )
 where
 
@@ -94,7 +94,7 @@ import Safe (maximumDef)
 --   - Ownership (createdBy)
 --   - Account type (Regular or External)
 --   - Access list for RBAC
-data AccountSummaryData = AccountSummaryData
+data AccountData = AccountData
   { -- | Human-readable account name
     name :: Text,
     -- | Current account balance
@@ -110,33 +110,33 @@ data AccountSummaryData = AccountSummaryData
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountSummaryData
+instance ToJSON AccountData
 
-instance FromJSON AccountSummaryData
+instance FromJSON AccountData
 
 -- | Account summary with the requesting user's role included.
 --
 -- This is returned when querying for a specific user, indicating
 -- what role they have on the account.
-data AccountSummaryWithRole = AccountSummaryWithRole
+data AccountWithRole = AccountWithRole
   { -- | The account summary data
-    summaryData :: AccountSummaryData,
+    summaryData :: AccountData,
     -- | The requesting user's role on this account
     userRole :: AccountRole
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountSummaryWithRole
+instance ToJSON AccountWithRole
 
-instance FromJSON AccountSummaryWithRole
+instance FromJSON AccountWithRole
 
 -- | The read model state: a map from account IDs to their summary data.
 --
 -- This is wrapped in a TVar for concurrent access and includes the latest
 -- sequence number for reliable event processing.
-data AccountSummaryReadModel = AccountSummaryReadModel
+data AccountReadModel = AccountReadModel
   { latestSequence :: SequenceNumber,
-    summaryData :: Map AccountId AccountSummaryData
+    summaryData :: Map AccountId AccountData
   }
   deriving (Show, Eq)
 
@@ -151,13 +151,13 @@ data AccountSummaryReadModel = AccountSummaryReadModel
 --   - Empty map of account summaries
 --
 -- Example:
--- >>> readModel <- createAccountSummaryReadModel
--- >>> summary <- getAccountSummary readModel someAccountId
-createAccountSummaryReadModel :: (MonadIO m) => m (TVar AccountSummaryReadModel)
-createAccountSummaryReadModel =
+-- >>> readModel <- createAccountReadModel
+-- >>> summary <- getAccount readModel someAccountId
+createAccountReadModel :: (MonadIO m) => m (TVar AccountReadModel)
+createAccountReadModel =
   liftIO $
     newTVarIO $
-      AccountSummaryReadModel
+      AccountReadModel
         { latestSequence = -1,
           summaryData = Map.empty
         }
@@ -184,14 +184,14 @@ createAccountSummaryReadModel =
 -- The function is idempotent - replaying the same events produces the same result.
 --
 -- Example:
--- >>> handleAccountSummaryEvents readModelTVar events
--- >>> summary <- getAccountSummary readModelTVar accountId
-handleAccountSummaryEvents ::
+-- >>> handleAccountEvents readModelTVar events
+-- >>> summary <- getAccount readModelTVar accountId
+handleAccountEvents ::
   (MonadIO m) =>
-  TVar AccountSummaryReadModel ->
+  TVar AccountReadModel ->
   [GlobalStreamEvent AccountingEvent] ->
   m ()
-handleAccountSummaryEvents readModelTVar events = do
+handleAccountEvents readModelTVar events = do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
@@ -209,9 +209,9 @@ handleAccountSummaryEvents readModelTVar events = do
 -- where VersionedStreamEvent event = StreamEvent UUID EventVersion event
 -- So we need to unwrap twice to get the payload and stream key (UUID).
 processEvent ::
-  Map AccountId AccountSummaryData ->
+  Map AccountId AccountData ->
   GlobalStreamEvent AccountingEvent ->
-  Map AccountId AccountSummaryData
+  Map AccountId AccountData
 processEvent summaries globalEvent =
   let versionedEvent = globalEvent.payload
       streamUuid = versionedEvent.key
@@ -224,7 +224,7 @@ processEvent summaries globalEvent =
               let initialAccess = AccountAccess evt.by Owner
                in Map.insert
                     accountId
-                    AccountSummaryData
+                    AccountData
                       { name = evt.name,
                         balance = evt.initialBalance,
                         createdBy = evt.by,
@@ -304,16 +304,16 @@ processEvent summaries globalEvent =
 -- This is for internal/admin use - does not check access permissions.
 --
 -- Example:
--- >>> maybeSummary <- getAccountSummary readModel accountId
+-- >>> maybeSummary <- getAccount readModel accountId
 -- >>> case maybeSummary of
 -- >>>   Just summary -> print (summary.balance)
 -- >>>   Nothing -> putStrLn "Account not found"
-getAccountSummary ::
+getAccount ::
   (MonadIO m) =>
-  TVar AccountSummaryReadModel ->
+  TVar AccountReadModel ->
   AccountId ->
-  m (Maybe AccountSummaryData)
-getAccountSummary readModelTVar accountId = do
+  m (Maybe AccountData)
+getAccount readModelTVar accountId = do
   model <- liftIO $ readTVarIO readModelTVar
   return $ Map.lookup accountId model.summaryData
 
@@ -323,17 +323,17 @@ getAccountSummary readModelTVar accountId = do
 -- This hides account existence from unauthorized users.
 --
 -- Example:
--- >>> maybeSummary <- getAccountSummaryForUser readModel accountId userId
+-- >>> maybeSummary <- getAccountForUser readModel accountId userId
 -- >>> case maybeSummary of
 -- >>>   Just (summary, role) -> displayAccount summary role
 -- >>>   Nothing -> return404
-getAccountSummaryForUser ::
+getAccountForUser ::
   (MonadIO m) =>
-  TVar AccountSummaryReadModel ->
+  TVar AccountReadModel ->
   AccountId ->
   UserId ->
-  m (Maybe AccountSummaryWithRole)
-getAccountSummaryForUser readModelTVar accountId userId = do
+  m (Maybe AccountWithRole)
+getAccountForUser readModelTVar accountId userId = do
   model <- liftIO $ readTVarIO readModelTVar
   case Map.lookup accountId model.summaryData of
     Nothing -> return Nothing
@@ -343,30 +343,30 @@ getAccountSummaryForUser readModelTVar accountId userId = do
         Just role ->
           return $
             Just
-              AccountSummaryWithRole
+              AccountWithRole
                 { summaryData = summary,
                   userRole = role
                 }
 
 -- | Retrieves all account summaries in the read model.
 --
--- Returns a map from AccountId to AccountSummaryData for all known accounts.
+-- Returns a map from AccountId to AccountData for all known accounts.
 -- This is for internal/admin use.
 --
 -- Example:
--- >>> allSummaries <- getAllAccountSummaries readModel
+-- >>> allSummaries <- getAllAccounts readModel
 -- >>> mapM_ print (Map.toList allSummaries)
-getAllAccountSummaries ::
+getAllAccounts ::
   (MonadIO m) =>
-  TVar AccountSummaryReadModel ->
-  m (Map AccountId AccountSummaryData)
-getAllAccountSummaries readModelTVar = do
+  TVar AccountReadModel ->
+  m (Map AccountId AccountData)
+getAllAccounts readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
   return model.summaryData
 
 -- | Retrieves all accounts accessible to a specific user.
 --
--- Returns a list of (AccountId, AccountSummaryData, AccountRole) tuples
+-- Returns a list of (AccountId, AccountData, AccountRole) tuples
 -- for all accounts where the user has access.
 --
 -- Example:
@@ -374,29 +374,29 @@ getAllAccountSummaries readModelTVar = do
 -- >>> mapM_ (\(id, data, role) -> displayAccount id data role) accounts
 getAccessibleAccounts ::
   (MonadIO m) =>
-  TVar AccountSummaryReadModel ->
+  TVar AccountReadModel ->
   UserId ->
-  m [(AccountId, AccountSummaryData, AccountRole)]
+  m [(AccountId, AccountData, AccountRole)]
 getAccessibleAccounts readModelTVar userId = do
   model <- liftIO $ readTVarIO readModelTVar
   let allAccounts = Map.toList model.summaryData
       accessibleAccounts =
         [ (accountId, summary, role)
-          | (accountId, summary) <- allAccounts,
-            Just role <- [getUserRole userId summary.accessList]
+        | (accountId, summary) <- allAccounts,
+          Just role <- [getUserRole userId summary.accessList]
         ]
   return accessibleAccounts
 
 -- | Checks if an account exists in the read model.
 --
--- This is more efficient than checking if 'getAccountSummary' returns 'Just'.
+-- This is more efficient than checking if 'getAccount' returns 'Just'.
 --
 -- Example:
 -- >>> exists <- accountExists readModel accountId
 -- >>> if exists then proceedWithTransfer else rejectTransfer
 accountExists ::
   (MonadIO m) =>
-  TVar AccountSummaryReadModel ->
+  TVar AccountReadModel ->
   AccountId ->
   m Bool
 accountExists readModelTVar accountId = do
@@ -412,13 +412,13 @@ accountExists readModelTVar accountId = do
 -- This is useful for testing and debugging.
 --
 -- Example:
--- >>> summaryMap <- accountSummaryToMap readModel
+-- >>> summaryMap <- accountToMap readModel
 -- >>> print $ Map.size summaryMap
-accountSummaryToMap ::
+accountToMap ::
   (MonadIO m) =>
-  TVar AccountSummaryReadModel ->
-  m (Map AccountId AccountSummaryData)
-accountSummaryToMap = getAllAccountSummaries
+  TVar AccountReadModel ->
+  m (Map AccountId AccountData)
+accountToMap = getAllAccounts
 
 -- | Get a user's role from an access list.
 getUserRole :: UserId -> [AccountAccess] -> Maybe AccountRole

@@ -104,7 +104,7 @@ module Web.Server
   )
 where
 
-import Data.Text.Display (displayShow, displayText)
+import Data.Text.Display (displayText)
 import Infrastructure.App (AppEnv (..), AppM, runAppM)
 import Infrastructure.Config (AppConfig (..), ServerConfig (..))
 -- For HTTP status and responses
@@ -113,9 +113,6 @@ import Network.Wai
   ( Application,
     Middleware,
     Request,
-    Response,
-    pathInfo,
-    requestMethod,
     responseLBS,
   )
 import Network.Wai.Handler.Warp
@@ -133,11 +130,9 @@ import Network.Wai.Middleware.Cors
     cors,
     simpleCorsResourcePolicy,
   )
-import Network.Wai.Middleware.Gzip (def, gzip)
-import Network.Wai.Middleware.RequestLogger (logStdout, logStdoutDev)
+import Network.Wai.Middleware.Gzip (defaultGzipSettings, gzip)
+import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import RIO
-import qualified RIO.List as L
-import qualified RIO.Text as T
 import qualified Servant as S
 import Servant.Server (err500, errBody)
 import Servant.Server.Experimental.Auth (AuthHandler)
@@ -186,19 +181,6 @@ runServer env = do
     logInfo "========================================="
     logInfo $ "Port: " <> displayShow port
     logInfo $ "Host: " <> displayText host
-    logInfo ""
-    logInfo "Available Endpoints:"
-    logInfo "  Account API:"
-    logInfo "    POST   /api/accounts              - Create account"
-    logInfo "    GET    /api/accounts/:id          - Get account"
-    logInfo "    GET    /api/accounts              - List accounts"
-    logInfo "    POST   /api/accounts/:id/credit   - Credit account"
-    logInfo "    POST   /api/accounts/:id/debit    - Debit account"
-    logInfo ""
-    logInfo "  Transaction API:"
-    logInfo "    POST   /api/transactions          - Create transaction (transfer)"
-    logInfo "    GET    /api/transactions/:id      - Get transaction status"
-    logInfo ""
     logInfo "Server ready to accept requests..."
     logInfo "========================================="
 
@@ -273,7 +255,7 @@ makeServerSettings env port =
 buildApplication :: AppEnv -> Application
 buildApplication env =
   -- Middleware applied bottom-to-top (last applied is outermost)
-  gzip def
+  gzip defaultGzipSettings
     $ loggingMiddleware -- Compression (outermost)
     $ errorHandlingMiddleware env -- Request/response logging
     $ corsMiddleware -- Error handling

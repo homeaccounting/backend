@@ -25,25 +25,37 @@
 module Application.Services.TransactionService
   ( -- * Service Functions
     initiateTransfer,
+    initiateIncome,
+    initiateExpense,
+    initiateInternalTransfer,
     getTransaction,
   )
 where
 
-import Application.ReadModels.TransactionSummary
-  ( TransactionSummaryData,
-    getTransactionSummary,
-  )
+import Application.ReadModels.Account (AccountData (..))
+import qualified Application.ReadModels.Account as AccountRM
+import Application.ReadModels.Transaction (TransactionData)
+import qualified Application.ReadModels.Transaction as ReadModel
+import Application.ReadModels.User (UserData (..))
+import qualified Application.ReadModels.User as UserRM
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
-import Domain.Core.Errors (DomainError (..))
+import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
+    AccountType (..),
+    ExpenseCategory,
+    IncomeCategory,
+    InternalCategory,
+    Money,
     TransactionId,
+    TransferCategory (..),
+    TransferType (..),
     UserId,
     mkTransactionId,
   )
 import Domain.Transaction.CommandHandler (TransactionCommand (InitiateTransferTransactionCommand))
-import Domain.Transaction.Commands (InitiateTransfer)
+import Domain.Transaction.Commands (InitiateTransfer (..))
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),
@@ -71,10 +83,10 @@ import RIO
 --   - Credit the target account
 --   - Complete or fail the transaction
 --
--- Returns the TransactionId and TransactionSummaryData on success.
+-- Returns the TransactionId and TransactionData on success.
 initiateTransfer ::
   InitiateTransfer ->
-  AppM (Either DomainError (TransactionId, TransactionSummaryData))
+  AppM (Either DomainError (TransactionId, TransactionData))
 initiateTransfer transferCmd = do
   logInfo "Initiating money transfer..."
 
@@ -107,10 +119,10 @@ initiateTransfer transferCmd = do
 --   1. Convert UUID to TransactionId
 --   2. Query read model
 --
--- Returns the TransactionId and TransactionSummaryData on success.
+-- Returns the TransactionId and TransactionData on success.
 getTransaction ::
   UUID ->
-  AppM (Either DomainError (TransactionId, TransactionSummaryData))
+  AppM (Either DomainError (TransactionId, TransactionData))
 getTransaction transactionUuid = do
   logInfo $ "Getting transaction: " <> displayShow transactionUuid
 
@@ -121,6 +133,158 @@ getTransaction transactionUuid = do
       return $ Left $ NotFound "Transaction" (tshow transactionUuid)
     Right transactionId -> queryTransactionResult transactionId
 
+-- | Initiate an income transfer (External -> Regular account).
+--
+-- Looks up the user's External account and validates the target is a Regular
+-- account, then delegates to 'initiateTransfer'.
+initiateIncome ::
+  UserId ->
+  AccountId ->
+  Money ->
+  IncomeCategory ->
+  Text ->
+  AppM (Either DomainError (TransactionId, TransactionData))
+initiateIncome userId targetAccountId amount incomeCat reason = do
+  logInfo "Initiating income transfer..."
+
+  -- 1. Look up user's External account
+  userRM <- view userReadModelL
+  maybeUser <- UserRM.getUser userRM userId
+  case maybeUser of
+    Nothing -> do
+      logWarn $ "User not found: " <> displayShow userId
+      return $ Left $ NotFound "User" (tshow userId)
+    Just userData -> do
+      let externalAccId = userData.externalAccountId
+
+      -- 2. Validate target account exists and is Regular
+      accountRM <- view accountReadModelL
+      maybeTarget <- AccountRM.getAccount accountRM targetAccountId
+      case maybeTarget of
+        Nothing -> do
+          logWarn $ "Target account not found: " <> displayShow targetAccountId
+          return $ Left $ NotFound "Account" (tshow targetAccountId)
+        Just targetData ->
+          if targetData.accountType /= RegularAccount
+            then do
+              logWarn "Target account is not a regular account"
+              return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
+            else do
+              -- 3. Construct and delegate to initiateTransfer
+              let cmd =
+                    InitiateTransfer
+                      { fromAccountId = externalAccId,
+                        toAccountId = targetAccountId,
+                        amount = amount,
+                        reason = reason,
+                        initiatedBy = userId,
+                        transferType = Income,
+                        category = IncomeCat incomeCat
+                      }
+              initiateTransfer cmd
+
+-- | Initiate an expense transfer (Regular -> External account).
+--
+-- Looks up the user's External account and validates the source is a Regular
+-- account, then delegates to 'initiateTransfer'.
+initiateExpense ::
+  UserId ->
+  AccountId ->
+  Money ->
+  ExpenseCategory ->
+  Text ->
+  AppM (Either DomainError (TransactionId, TransactionData))
+initiateExpense userId sourceAccountId amount expenseCat reason = do
+  logInfo "Initiating expense transfer..."
+
+  -- 1. Look up user's External account
+  userRM <- view userReadModelL
+  maybeUser <- UserRM.getUser userRM userId
+  case maybeUser of
+    Nothing -> do
+      logWarn $ "User not found: " <> displayShow userId
+      return $ Left $ NotFound "User" (tshow userId)
+    Just userData -> do
+      let externalAccId = userData.externalAccountId
+
+      -- 2. Validate source account exists and is Regular
+      accountRM <- view accountReadModelL
+      maybeSource <- AccountRM.getAccount accountRM sourceAccountId
+      case maybeSource of
+        Nothing -> do
+          logWarn $ "Source account not found: " <> displayShow sourceAccountId
+          return $ Left $ NotFound "Account" (tshow sourceAccountId)
+        Just sourceData ->
+          if sourceData.accountType /= RegularAccount
+            then do
+              logWarn "Source account is not a regular account"
+              return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
+            else do
+              -- 3. Construct and delegate to initiateTransfer
+              let cmd =
+                    InitiateTransfer
+                      { fromAccountId = sourceAccountId,
+                        toAccountId = externalAccId,
+                        amount = amount,
+                        reason = reason,
+                        initiatedBy = userId,
+                        transferType = Expense,
+                        category = ExpenseCat expenseCat
+                      }
+              initiateTransfer cmd
+
+-- | Initiate an internal transfer (Regular -> Regular account).
+--
+-- Validates both accounts exist and are Regular, then delegates to
+-- 'initiateTransfer'.
+initiateInternalTransfer ::
+  UserId ->
+  AccountId ->
+  AccountId ->
+  Money ->
+  InternalCategory ->
+  Text ->
+  AppM (Either DomainError (TransactionId, TransactionData))
+initiateInternalTransfer userId sourceAccountId targetAccountId amount internalCat reason = do
+  logInfo "Initiating internal transfer..."
+
+  -- 1. Validate both accounts exist and are Regular
+  accountRM <- view accountReadModelL
+  maybeSource <- AccountRM.getAccount accountRM sourceAccountId
+  case maybeSource of
+    Nothing -> do
+      logWarn $ "Source account not found: " <> displayShow sourceAccountId
+      return $ Left $ NotFound "Account" (tshow sourceAccountId)
+    Just sourceData ->
+      if sourceData.accountType /= RegularAccount
+        then do
+          logWarn "Source account is not a regular account"
+          return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
+        else do
+          maybeTarget <- AccountRM.getAccount accountRM targetAccountId
+          case maybeTarget of
+            Nothing -> do
+              logWarn $ "Target account not found: " <> displayShow targetAccountId
+              return $ Left $ NotFound "Account" (tshow targetAccountId)
+            Just targetData ->
+              if targetData.accountType /= RegularAccount
+                then do
+                  logWarn "Target account is not a regular account"
+                  return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
+                else do
+                  -- 2. Construct and delegate to initiateTransfer
+                  let cmd =
+                        InitiateTransfer
+                          { fromAccountId = sourceAccountId,
+                            toAccountId = targetAccountId,
+                            amount = amount,
+                            reason = reason,
+                            initiatedBy = userId,
+                            transferType = InternalTransfer,
+                            category = InternalCat internalCat
+                          }
+                  initiateTransfer cmd
+
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
 -- -----------------------------------------------------------------------------
@@ -128,10 +292,10 @@ getTransaction transactionUuid = do
 -- | Query the read model for a transaction and return the result.
 queryTransactionResult ::
   TransactionId ->
-  AppM (Either DomainError (TransactionId, TransactionSummaryData))
+  AppM (Either DomainError (TransactionId, TransactionData))
 queryTransactionResult transactionId = do
-  readModel <- view transactionSummaryReadModelL
-  maybeSummary <- liftIO $ getTransactionSummary readModel transactionId
+  readModel <- view transactionReadModelL
+  maybeSummary <- liftIO $ ReadModel.getTransaction readModel transactionId
   case maybeSummary of
     Just summary -> do
       logInfo "Transaction found"

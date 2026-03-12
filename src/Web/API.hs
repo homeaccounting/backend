@@ -44,7 +44,7 @@ where
 
 import Infrastructure.App (AppM)
 import RIO
-import Servant (Proxy (..), ServerT, (:<|>) (..))
+import Servant (ServerT, (:<|>) (..))
 import Web.API.AccountAPI
 import Web.API.AuthAPI
 import Web.API.TelegramWebhookAPI

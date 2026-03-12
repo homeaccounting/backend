@@ -30,6 +30,9 @@ module Infrastructure.Auth.Telegram
   ( -- * Configuration
     TelegramConfig (..),
 
+    -- * Default Config
+    defaultTelegramConfig,
+
     -- * Auth Data
     TelegramAuthData (..),
 
@@ -61,9 +64,9 @@ import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
-import Data.Time (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime, getCurrentTime, secondsToNominalDiffTime)
+import Data.Time (NominalDiffTime, UTCTime, addUTCTime, getCurrentTime, secondsToNominalDiffTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Domain.Core.Types (TelegramId (..), TelegramIdentity (..), UserId)
+import Domain.Core.Types (TelegramId (..), TelegramIdentity (..))
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------

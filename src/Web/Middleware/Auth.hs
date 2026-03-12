@@ -47,7 +47,7 @@ module Web.Middleware.Auth
 where
 
 import Control.Exception (throwIO)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8)
@@ -71,9 +71,9 @@ import Servant.Server.Experimental.Auth (AuthHandler, AuthServerData, mkAuthHand
 -- | Authenticated user information extracted from JWT.
 data AuthenticatedUser = AuthenticatedUser
   { -- | User ID from JWT claims
-    authUserId :: UserId,
+    userId :: UserId,
     -- | User email from JWT claims
-    authUserEmail :: Text
+    email :: Text
   }
   deriving (Show, Eq)
 
@@ -209,6 +209,6 @@ extractBearerToken authHeader =
 claimsToUser :: JWTClaims -> AuthenticatedUser
 claimsToUser JWTClaims {..} =
   AuthenticatedUser
-    { authUserId = userId,
-      authUserEmail = email
+    { userId = userId,
+      email = email
     }

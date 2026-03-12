@@ -77,15 +77,7 @@ module Main (main) where
 -- Event Store
 
 -- Application
-import Data.Text.Display (displayShow, displayText)
-import Database.Persist.Postgresql (ConnectionPool, SqlPersistT)
-import Eventium.Store.Class
-  ( EventStoreReader (..),
-    EventStoreWriter (..),
-    GlobalEventStoreReader,
-    VersionedEventStoreReader,
-    VersionedEventStoreWriter,
-  )
+import Data.Text.Display (displayText)
 import Infrastructure.App
   ( AppEnv,
     AppM,
@@ -94,8 +86,6 @@ import Infrastructure.App
     initializeAppEnv,
     runAppM,
   )
-import Infrastructure.Auth.JWT (JWTConfig (..))
-import Infrastructure.Auth.OAuth (OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import Infrastructure.Config
   ( AppConfig (..),
@@ -108,22 +98,18 @@ import Infrastructure.Database
     createConnectionPool,
     defaultSqlEventStoreConfig,
     initializeDatabase,
-    runDbDirect,
   )
 import Infrastructure.Eventium
-  ( AccountingGlobalEventStoreReader,
-    AccountingVersionedEventStoreReader,
-    AccountingVersionedEventStoreWriter,
+  ( ReadModels (..),
     accountingEventStoreWriter,
     accountingGlobalEventStoreReader,
     accountingVersionedEventStoreReader,
-    createAccountSummaryEventHandler,
-    createTransactionSummaryEventHandler,
-    createUserSummaryEventHandler,
+    createReadModelHandlers,
     liftGlobalReader,
     liftIOEventHandler,
     liftVersionedReader,
     liftVersionedWriter,
+    replayReadModels,
   )
 import RIO
 import qualified RIO.Text as T
@@ -131,7 +117,7 @@ import qualified RIO.Text as T
 
 -- System
 import System.Environment (getArgs, lookupEnv)
-import System.IO (hPutStrLn, stderr)
+import System.IO (hPutStrLn)
 import Telegram.Api (createTelegramClientEnv)
 import Telegram.Bot (initBot, runBotPolling)
 import Web.Server (runServer)
@@ -261,9 +247,7 @@ initializeEnvironment logFunc config = do
 
   -- 3. Initialize read models (must happen before creating the writer)
   logInfo "Initializing read models..."
-  (accountSummaryReadModel, accountSummaryHandler) <- liftIO createAccountSummaryEventHandler
-  (transactionSummaryReadModel, transactionSummaryHandler) <- liftIO createTransactionSummaryEventHandler
-  (userSummaryReadModel, userSummaryHandler) <- liftIO createUserSummaryEventHandler
+  (readModels, readModelHandlers) <- liftIO createReadModelHandlers
   logInfo "Read models initialized"
 
   -- 4. Create event store readers/writers with read model handlers on the event bus
@@ -273,10 +257,7 @@ initializeEnvironment logFunc config = do
       sqlWriter =
         accountingEventStoreWriter
           eventStoreConfig
-          [ liftIOEventHandler accountSummaryHandler,
-            liftIOEventHandler transactionSummaryHandler,
-            liftIOEventHandler userSummaryHandler
-          ]
+          (map liftIOEventHandler readModelHandlers)
       sqlReader = accountingVersionedEventStoreReader eventStoreConfig
       sqlGlobalReader = accountingGlobalEventStoreReader eventStoreConfig
       -- Lift to IO by running through the connection pool
@@ -284,6 +265,12 @@ initializeEnvironment logFunc config = do
       reader = liftVersionedReader pool sqlReader
       globalReader = liftGlobalReader pool sqlGlobalReader
   logInfo "Event store configured with read model handlers"
+
+  -- 4b. Replay historical events into read models
+  -- Must run before server/bot starts to avoid concurrent writes to TVars.
+  logInfo "Replaying historical events into read models..."
+  eventCount <- liftIO $ replayReadModels globalReader readModels
+  logInfo $ "Read models populated from event store (" <> displayShow eventCount <> " events)"
 
   -- 5. Auth configurations (loaded from YAML config)
   logInfo "Auth configurations loaded from config file"
@@ -323,9 +310,9 @@ initializeEnvironment logFunc config = do
           writer
           reader
           globalReader
-          accountSummaryReadModel
-          transactionSummaryReadModel
-          userSummaryReadModel
+          readModels.account
+          readModels.transaction
+          readModels.user
           jwtConfig
           oauthConfig
           telegramConfig

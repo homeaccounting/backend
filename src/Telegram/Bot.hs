@@ -21,7 +21,7 @@ module Telegram.Bot
   )
 where
 
-import Domain.Core.Types (TelegramId (..))
+import Domain.Core.Types (TelegramId (..), TelegramIdentity (..))
 import Infrastructure.App (AppM, HasTelegramClient (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
@@ -119,8 +119,14 @@ processMessage botState message = do
     Nothing -> return () -- Ignore messages without user
     Just user -> do
       let telegramId = TelegramId (getUserIdInt user)
+          tgIdentity =
+            TelegramIdentity
+              { id = telegramId,
+                firstName = TG.userFirstName user,
+                username = TG.userUsername user
+              }
       case maybeText of
-        Just text | "/" `T.isPrefixOf` text -> handleCommand botState telegramId chatId text
+        Just text | "/" `T.isPrefixOf` text -> handleCommand botState tgIdentity chatId text
         Just text -> handleMessage botState telegramId chatId text
         Nothing -> return ()
 

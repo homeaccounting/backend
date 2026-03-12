@@ -9,6 +9,7 @@
 module Telegram.Types
   ( -- * Bot State
     BotState (..),
+    emptyBotState,
     ConversationState (..),
 
     -- * Callback Data
@@ -24,7 +25,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, Money, TelegramId, UserId)
+import Domain.Core.Types (AccountId, Money, TelegramId)
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------
@@ -54,40 +55,40 @@ data ConversationState
     TransferSelectSource
   | -- | Transfer flow: waiting for target account
     TransferSelectTarget
-      { transferSourceAccountId :: AccountId
+      { sourceAccountId :: AccountId
       }
   | -- | Transfer flow: waiting for amount
     TransferEnterAmount
-      { transferSourceAccountId :: AccountId,
-        transferTargetAccountId :: AccountId
+      { sourceAccountId :: AccountId,
+        targetAccountId :: AccountId
       }
   | -- | Transfer flow: waiting for reason
     TransferEnterReason
-      { transferSourceAccountId :: AccountId,
-        transferTargetAccountId :: AccountId,
-        transferAmount :: Money
+      { sourceAccountId :: AccountId,
+        targetAccountId :: AccountId,
+        amount :: Money
       }
   | -- | Income flow: waiting for account selection
     IncomeSelectAccount
   | -- | Income flow: waiting for amount
     IncomeEnterAmount
-      { incomeTargetAccountId :: AccountId
+      { targetAccountId :: AccountId
       }
   | -- | Income flow: waiting for reason
     IncomeEnterReason
-      { incomeTargetAccountId :: AccountId,
-        incomeAmount :: Money
+      { targetAccountId :: AccountId,
+        amount :: Money
       }
   | -- | Expense flow: waiting for account selection
     ExpenseSelectAccount
   | -- | Expense flow: waiting for amount
     ExpenseEnterAmount
-      { expenseSourceAccountId :: AccountId
+      { sourceAccountId :: AccountId
       }
   | -- | Expense flow: waiting for reason
     ExpenseEnterReason
-      { expenseSourceAccountId :: AccountId,
-        expenseAmount :: Money
+      { sourceAccountId :: AccountId,
+        amount :: Money
       }
   deriving (Show, Eq, Generic)
 
@@ -119,9 +120,9 @@ instance FromJSON CallbackData
 -- | Callback data for account selection buttons.
 data AccountSelectionCallback = AccountSelectionCallback
   { -- | Selected account ID (shortened for space)
-    selectAccountId :: Text,
+    accountId :: Text,
     -- | Context (transfer_src, transfer_tgt, income, expense)
-    selectContext :: Text
+    context :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -139,37 +140,37 @@ instance FromJSON AccountSelectionCallback
 data BotMessage
   = -- | Welcome message for new users
     WelcomeMessage
-      { welcomeUserName :: Text
+      { userName :: Text
       }
   | -- | List of accounts
     AccountListMessage
-      { accountListItems :: [(Text, Money)] -- (name, balance)
+      { items :: [(Text, Money)] -- (name, balance)
       }
   | -- | Account balance
     BalanceMessage
-      { balanceAccountName :: Text,
-        balanceAmount :: Money
+      { accountName :: Text,
+        amount :: Money
       }
   | -- | Transfer confirmation
     TransferConfirmMessage
-      { transferConfirmFrom :: Text,
-        transferConfirmTo :: Text,
-        transferConfirmAmount :: Money,
-        transferConfirmReason :: Text
+      { from :: Text,
+        to :: Text,
+        amount :: Money,
+        reason :: Text
       }
   | -- | Transfer success
     TransferSuccessMessage
-      { transferSuccessId :: Text
+      { transactionId :: Text
       }
   | -- | Error message
     ErrorMessage
-      { errorText :: Text
+      { text :: Text
       }
   | -- | Help message
     HelpMessage
   | -- | Prompt for account selection
     SelectAccountPrompt
-      { selectAccountPromptTitle :: Text
+      { title :: Text
       }
   | -- | Prompt for amount entry
     EnterAmountPrompt

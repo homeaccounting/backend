@@ -40,6 +40,14 @@ module Domain.Core.Types
     AccountRole (..),
     AccountAccess (..),
 
+    -- * Transfer Types
+    TransferType (..),
+    IncomeCategory (..),
+    ExpenseCategory (..),
+    InternalCategory (..),
+    TransferCategory (..),
+    validateTransferCategory,
+
     -- * OAuth Types
     OAuthProvider (..),
     OAuthIdentity (..),
@@ -49,6 +57,7 @@ module Domain.Core.Types
 
     -- * Password Types
     PasswordHash (..),
+    unPasswordHash,
   )
 where
 
@@ -406,6 +415,78 @@ data AccountAccess = AccountAccess
 instance ToJSON AccountAccess
 
 instance FromJSON AccountAccess
+
+-- -----------------------------------------------------------------------------
+-- Transfer Types
+-- -----------------------------------------------------------------------------
+
+-- | Type of transfer operation.
+data TransferType
+  = Income
+  | Expense
+  | InternalTransfer
+  deriving (Show, Eq, Generic)
+
+instance ToJSON TransferType
+
+instance FromJSON TransferType
+
+-- | Category for income transfers.
+data IncomeCategory
+  = Salary
+  | Freelance
+  | Investment
+  | IncomeGift
+  | IncomeOther
+  deriving (Show, Eq, Generic)
+
+instance ToJSON IncomeCategory
+
+instance FromJSON IncomeCategory
+
+-- | Category for expense transfers.
+data ExpenseCategory
+  = Food
+  | Transport
+  | Utilities
+  | Rent
+  | Entertainment
+  | ExpenseOther
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ExpenseCategory
+
+instance FromJSON ExpenseCategory
+
+-- | Category for internal (account-to-account) transfers.
+data InternalCategory
+  = Rebalance
+  | Savings
+  | InternalOther
+  deriving (Show, Eq, Generic)
+
+instance ToJSON InternalCategory
+
+instance FromJSON InternalCategory
+
+-- | Transfer category, scoped by transfer type.
+data TransferCategory
+  = IncomeCat IncomeCategory
+  | ExpenseCat ExpenseCategory
+  | InternalCat InternalCategory
+  deriving (Show, Eq, Generic)
+
+instance ToJSON TransferCategory
+
+instance FromJSON TransferCategory
+
+-- | Validate that a TransferCategory is consistent with its TransferType.
+validateTransferCategory :: TransferType -> TransferCategory -> Either Text ()
+validateTransferCategory Income (IncomeCat _) = Right ()
+validateTransferCategory Expense (ExpenseCat _) = Right ()
+validateTransferCategory InternalTransfer (InternalCat _) = Right ()
+validateTransferCategory transferType category =
+  Left $ T.pack $ "Category " <> show category <> " is not valid for transfer type " <> show transferType
 
 -- -----------------------------------------------------------------------------
 -- OAuth Types

@@ -40,7 +40,7 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import Domain.Core.Types (AccountId, Money, mkMoney, unAccountId, unMoney)
+import Domain.Core.Types (mkMoney, unAccountId, unMoney, validateTransferCategory)
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
@@ -58,6 +58,7 @@ data TransactionError
   | TransactionNotPending
   | TransferToSameAccount
   | TransferAmountNotPositive
+  | TransferCategoryMismatch
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -124,17 +125,21 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
             else
               if unMoney amount <= 0
                 then Left TransferAmountNotPositive
-                else
-                  Right
-                    [ TransferInitiatedTransactionEvent
-                        TransferInitiated
-                          { fromAccountId = fromAccountId,
-                            toAccountId = toAccountId,
-                            amount = amount,
-                            reason = reason,
-                            by = initiatedBy
-                          }
-                    ]
+                else case validateTransferCategory transferType category of
+                  Left _ -> Left TransferCategoryMismatch
+                  Right () ->
+                    Right
+                      [ TransferInitiatedTransactionEvent
+                          TransferInitiated
+                            { fromAccountId = fromAccountId,
+                              toAccountId = toAccountId,
+                              amount = amount,
+                              reason = reason,
+                              by = initiatedBy,
+                              transferType = transferType,
+                              category = category
+                            }
+                      ]
       | otherwise -> Left TransactionAlreadyInitiated
     _ -> Left TransactionAlreadyInitiated
 -- Handle CompleteTransfer command

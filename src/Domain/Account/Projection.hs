@@ -70,7 +70,7 @@ import Domain.Core.Types
   )
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, withTagOptions)
-import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
+import Optics (makeFieldLabelsNoPrefix, (&), (.~), (^.))
 
 -- -----------------------------------------------------------------------------
 -- Account Aggregate State

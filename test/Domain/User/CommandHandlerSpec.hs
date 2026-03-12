@@ -28,8 +28,8 @@ import Eventium (latestProjection)
 import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
-import TestSupport.Generators ()
-import TestSupport.Helpers
+import Testkit.Generators ()
+import Testkit.Helpers
 import Prelude (head, read)
 
 spec :: Spec

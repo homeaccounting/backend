@@ -56,14 +56,9 @@ import Data.Aeson
     (.:?),
   )
 import qualified Data.Aeson as Aeson
-import Data.Aeson.Types (Parser)
 import qualified Data.ByteString as BS
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
 import Data.Yaml (decodeEither', prettyPrintParseException)
 import GHC.Generics (Generic)
 import Infrastructure.Auth.JWT (JWTConfig (..))

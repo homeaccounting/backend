@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 
 -- |
--- Module      : Application.ReadModels.UserSummary
+-- Module      : Application.ReadModels.User
 -- Description : Read model for optimized user queries
 --
 -- This module implements a read model that provides efficient queries for user
@@ -11,8 +11,8 @@
 -- stream and maintains a denormalized view optimized for common query patterns.
 --
 -- Key Components:
---   - UserSummaryData: Denormalized user information
---   - UserSummaryReadModel: Map of user IDs to summary data, plus lookup indices
+--   - UserData: Denormalized user information
+--   - UserReadModel: Map of user IDs to summary data, plus lookup indices
 --   - Event handlers: Update the read model when events occur
 --   - Query functions: Efficient lookups by user ID, email, or Telegram ID
 --
@@ -26,20 +26,20 @@
 --   - Rebuilt from the event stream if corrupted
 --   - Extended with additional denormalized fields
 --   - Backed by in-memory or persistent storage
-module Application.ReadModels.UserSummary
+module Application.ReadModels.User
   ( -- * Read Model Types
-    UserSummaryData (..),
-    UserSummaryReadModel (..),
+    UserData (..),
+    UserReadModel (..),
 
     -- * Read Model Creation
-    createUserSummaryReadModel,
-    emptyUserSummaryReadModel,
+    createUserReadModel,
+    emptyUserReadModel,
 
     -- * Event Handler
-    handleUserSummaryEvents,
+    handleUserEvents,
 
     -- * Query Functions
-    getUserSummary,
+    getUser,
     getUserByEmail,
     getUserByTelegramId,
     getUserByOAuthIdentity,
@@ -48,7 +48,7 @@ module Application.ReadModels.UserSummary
     telegramIdLinked,
 
     -- * Helper Functions
-    userSummaryToMap,
+    userToMap,
   )
 where
 
@@ -71,9 +71,7 @@ import Domain.Models (AccountingEvent (..))
 import Domain.User.Events
   ( OAuthAccountLinked (..),
     OAuthAccountUnlinked (..),
-    PasswordChanged (..),
     TelegramAccountLinked (..),
-    TelegramAccountUnlinked (..),
     UserRegistered (..),
     UserRegisteredViaTelegram (..),
   )
@@ -89,7 +87,7 @@ import Safe (maximumDef)
 --
 -- This structure contains all the information needed for common user queries
 -- without requiring event replay. It's optimized for read operations.
-data UserSummaryData = UserSummaryData
+data UserData = UserData
   { -- | User's email address (primary identifier for web login)
     email :: Maybe Text,
     -- | Whether user has a password set
@@ -105,22 +103,22 @@ data UserSummaryData = UserSummaryData
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON UserSummaryData
+instance ToJSON UserData
 
-instance FromJSON UserSummaryData
+instance FromJSON UserData
 
 -- | The read model state with multiple indices for efficient lookups.
 --
 -- Maintains:
---   - Primary index: User ID -> UserSummaryData
+--   - Primary index: User ID -> UserData
 --   - Email index: Email -> User ID
 --   - Telegram index: Telegram ID -> User ID
 --   - OAuth index: (Provider, Subject) -> User ID
-data UserSummaryReadModel = UserSummaryReadModel
+data UserReadModel = UserReadModel
   { -- | Latest processed sequence number
     latestSequence :: SequenceNumber,
     -- | Primary data map: User ID -> Summary
-    summaryData :: Map UserId UserSummaryData,
+    summaryData :: Map UserId UserData,
     -- | Email index: Email -> User ID
     emailIndex :: Map Text UserId, -- TODO: type Email = Text
 
@@ -142,16 +140,16 @@ data UserSummaryReadModel = UserSummaryReadModel
 --   - Empty maps for all indices
 --
 -- Example:
--- >>> readModel <- createUserSummaryReadModel
--- >>> summary <- getUserSummary readModel someUserId
-createUserSummaryReadModel :: (MonadIO m) => m (TVar UserSummaryReadModel)
-createUserSummaryReadModel =
-  liftIO $ newTVarIO emptyUserSummaryReadModel
+-- >>> readModel <- createUserReadModel
+-- >>> summary <- getUser readModel someUserId
+createUserReadModel :: (MonadIO m) => m (TVar UserReadModel)
+createUserReadModel =
+  liftIO $ newTVarIO emptyUserReadModel
 
 -- | Empty user summary read model for initialization.
-emptyUserSummaryReadModel :: UserSummaryReadModel
-emptyUserSummaryReadModel =
-  UserSummaryReadModel
+emptyUserReadModel :: UserReadModel
+emptyUserReadModel =
+  UserReadModel
     { latestSequence = -1,
       summaryData = Map.empty,
       emailIndex = Map.empty,
@@ -181,12 +179,12 @@ emptyUserSummaryReadModel =
 --   - PasswordChanged: Updates password flag
 --
 -- The function is idempotent - replaying the same events produces the same result.
-handleUserSummaryEvents ::
+handleUserEvents ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   [GlobalStreamEvent AccountingEvent] ->
   m ()
-handleUserSummaryEvents readModelTVar events = do
+handleUserEvents readModelTVar events = do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
@@ -197,9 +195,9 @@ handleUserSummaryEvents readModelTVar events = do
 
 -- | Processes a single event and updates the user summary read model.
 processUserEvent ::
-  UserSummaryReadModel ->
+  UserReadModel ->
   GlobalStreamEvent AccountingEvent ->
-  UserSummaryReadModel
+  UserReadModel
 processUserEvent model globalEvent =
   let versionedEvent = globalEvent.payload
       streamUuid = versionedEvent.key
@@ -210,7 +208,7 @@ processUserEvent model globalEvent =
             Nothing -> model
             Just userId ->
               let summary =
-                    UserSummaryData
+                    UserData
                       { email = Just evt.email,
                         hasPassword = True,
                         oauthIdentities = [],
@@ -228,7 +226,7 @@ processUserEvent model globalEvent =
             Just userId ->
               let ident = evt.identity
                   summary =
-                    UserSummaryData
+                    UserData
                       { email = Nothing,
                         hasPassword = False,
                         oauthIdentities = [],
@@ -352,16 +350,16 @@ processUserEvent model globalEvent =
 -- Returns 'Nothing' if the user doesn't exist in the read model.
 --
 -- Example:
--- >>> maybeSummary <- getUserSummary readModel userId
+-- >>> maybeSummary <- getUser readModel userId
 -- >>> case maybeSummary of
 -- >>>   Just summary -> print (summary.email)
 -- >>>   Nothing -> putStrLn "User not found"
-getUserSummary ::
+getUser ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   UserId ->
-  m (Maybe UserSummaryData)
-getUserSummary readModelTVar userId = do
+  m (Maybe UserData)
+getUser readModelTVar userId = do
   model <- liftIO $ readTVarIO readModelTVar
   return $ Map.lookup userId model.summaryData
 
@@ -376,9 +374,9 @@ getUserSummary readModelTVar userId = do
 -- >>>   Nothing -> rejectLogin
 getUserByEmail ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   Text ->
-  m (Maybe (UserId, UserSummaryData))
+  m (Maybe (UserId, UserData))
 getUserByEmail readModelTVar emailAddr = do
   model <- liftIO $ readTVarIO readModelTVar
   case Map.lookup emailAddr model.emailIndex of
@@ -398,9 +396,9 @@ getUserByEmail readModelTVar emailAddr = do
 -- >>>   Nothing -> createNewUser
 getUserByTelegramId ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   TelegramId ->
-  m (Maybe (UserId, UserSummaryData))
+  m (Maybe (UserId, UserData))
 getUserByTelegramId readModelTVar tgId = do
   model <- liftIO $ readTVarIO readModelTVar
   case Map.lookup tgId model.telegramIndex of
@@ -420,10 +418,10 @@ getUserByTelegramId readModelTVar tgId = do
 -- >>>   Nothing -> promptToLinkOrCreate
 getUserByOAuthIdentity ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   OAuthProvider ->
   Text ->
-  m (Maybe (UserId, UserSummaryData))
+  m (Maybe (UserId, UserData))
 getUserByOAuthIdentity readModelTVar provider subjectVal = do
   model <- liftIO $ readTVarIO readModelTVar
   case Map.lookup (provider, subjectVal) model.oauthIndex of
@@ -435,7 +433,7 @@ getUserByOAuthIdentity readModelTVar provider subjectVal = do
 -- | Checks if a user exists in the read model.
 userExists ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   UserId ->
   m Bool
 userExists readModelTVar userId = do
@@ -445,7 +443,7 @@ userExists readModelTVar userId = do
 -- | Checks if an email is already registered.
 emailExists ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   Text ->
   m Bool
 emailExists readModelTVar emailAddr = do
@@ -455,7 +453,7 @@ emailExists readModelTVar emailAddr = do
 -- | Checks if a Telegram ID is already linked to a user.
 telegramIdLinked ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
+  TVar UserReadModel ->
   TelegramId ->
   m Bool
 telegramIdLinked readModelTVar tgId = do
@@ -469,10 +467,10 @@ telegramIdLinked readModelTVar tgId = do
 -- | Extracts the map of user summaries from the read model.
 --
 -- This is useful for testing and debugging.
-userSummaryToMap ::
+userToMap ::
   (MonadIO m) =>
-  TVar UserSummaryReadModel ->
-  m (Map UserId UserSummaryData)
-userSummaryToMap readModelTVar = do
+  TVar UserReadModel ->
+  m (Map UserId UserData)
+userToMap readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
   return model.summaryData

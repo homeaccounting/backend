@@ -71,15 +71,15 @@ test_register() {
     print_info "Registering user: $TEST_EMAIL"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.authToken')
-    AUTH_USER_ID=$(echo "$BODY" | jq -r '.authUserId')
+    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
+    AUTH_USER_ID=$(echo "$BODY" | jq -r '.userId')
 
     if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
         print_success "User registered successfully"
@@ -112,7 +112,7 @@ test_register_duplicate() {
     print_info "Attempting duplicate registration for: $TEST_EMAIL"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"registerEmail\": \"$TEST_EMAIL\", \"registerPassword\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -142,15 +142,15 @@ test_login() {
     print_info "Logging in as: $TEST_EMAIL"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/login" \
         -H "Content-Type: application/json" \
-        -d "{\"loginEmail\": \"$TEST_EMAIL\", \"loginPassword\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.authToken')
-    EXPIRES_IN=$(echo "$BODY" | jq -r '.authExpiresIn')
+    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
+    EXPIRES_IN=$(echo "$BODY" | jq -r '.expiresIn')
 
     if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
         print_success "Login successful"
@@ -182,7 +182,7 @@ test_login_wrong_password() {
     print_info "Attempting login with wrong password..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/login" \
         -H "Content-Type: application/json" \
-        -d "{\"loginEmail\": \"$TEST_EMAIL\", \"loginPassword\": \"WrongPassword!\"}")
+        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"WrongPassword!\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -212,14 +212,14 @@ test_refresh_token() {
     print_info "Refreshing token..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/refresh" \
         -H "Content-Type: application/json" \
-        -d "{\"refreshToken\": \"$AUTH_TOKEN\"}")
+        -d "{\"token\": \"$AUTH_TOKEN\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
-    NEW_TOKEN=$(echo "$BODY" | jq -r '.authToken')
+    NEW_TOKEN=$(echo "$BODY" | jq -r '.token')
 
     if [ -n "$NEW_TOKEN" ] && [ "$NEW_TOKEN" != "null" ]; then
         print_success "Token refreshed successfully"
@@ -242,7 +242,7 @@ test_oauth_initiate() {
 
     echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
 
-    REDIRECT_URL=$(echo "$BODY" | jq -r '.oauthRedirectUrl' 2>/dev/null)
+    REDIRECT_URL=$(echo "$BODY" | jq -r '.redirectUrl' 2>/dev/null)
 
     if [ -n "$REDIRECT_URL" ] && [ "$REDIRECT_URL" != "null" ]; then
         print_success "OAuth redirect URL received"
@@ -287,14 +287,14 @@ test_telegram_login() {
     print_info "Logging in via Telegram (ID: $TG_ID, @$TG_USERNAME)"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/telegram" \
         -H "Content-Type: application/json" \
-        -d "{\"telegramAuthId\": $TG_ID, \"telegramAuthFirstName\": \"$TG_NAME\", \"telegramAuthLastName\": null, \"telegramAuthUsername\": \"$TG_USERNAME\", \"telegramAuthPhotoUrl\": null, \"telegramAuthAuthDate\": $TG_AUTH_DATE, \"telegramAuthHash\": \"$TG_HASH\"}")
+        -d "{\"id\": $TG_ID, \"firstName\": \"$TG_NAME\", \"lastName\": null, \"username\": \"$TG_USERNAME\", \"photoUrl\": null, \"authDate\": $TG_AUTH_DATE, \"hash\": \"$TG_HASH\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.authToken')
+    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
 
     if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
         print_success "Telegram login successful"
@@ -312,7 +312,7 @@ test_unauthorized_access() {
     print_info "Attempting to create account without authentication..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
-        -d '{"accountName": "Test Account", "initialBalance": 100.0}')
+        -d '{"name": "Test Account", "initialBalance": 100.0}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

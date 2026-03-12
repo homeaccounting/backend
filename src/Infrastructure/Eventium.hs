@@ -59,10 +59,12 @@ module Infrastructure.Eventium
     -- * Aggregate Loading
     loadUserAggregate,
 
-    -- * Read Model Event Handlers
-    createAccountSummaryEventHandler,
-    createTransactionSummaryEventHandler,
-    createUserSummaryEventHandler,
+    -- * Read Models
+    ReadModels (..),
+    createReadModelHandlers,
+
+    -- * Read Model Replay
+    replayReadModels,
 
     -- * Utilities
     printEventJSON,
@@ -70,27 +72,26 @@ module Infrastructure.Eventium
 where
 
 import Application.ProcessManagers (transferProcessManager)
-import Application.ReadModels.AccountSummary
-  ( AccountSummaryReadModel,
-    createAccountSummaryReadModel,
-    handleAccountSummaryEvents,
+import Application.ReadModels.Account
+  ( AccountReadModel,
+    createAccountReadModel,
+    handleAccountEvents,
   )
-import Application.ReadModels.TransactionSummary
-  ( TransactionSummaryReadModel,
-    createTransactionSummaryReadModel,
-    handleTransactionSummaryEvents,
+import Application.ReadModels.Transaction
+  ( TransactionReadModel,
+    createTransactionReadModel,
+    handleTransactionEvents,
   )
-import Application.ReadModels.UserSummary
-  ( UserSummaryReadModel,
-    createUserSummaryReadModel,
-    handleUserSummaryEvents,
+import Application.ReadModels.User
+  ( UserReadModel,
+    createUserReadModel,
+    handleUserEvents,
   )
 import Control.Concurrent.STM (TVar)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (ToJSON)
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BSL
-import Data.Text (Text)
 import qualified Data.Text as T
 import Database.Persist.Sql
   ( ConnectionPool,
@@ -110,7 +111,6 @@ import Eventium
     QueryRange,
     RejectionReason (..),
     StreamEvent (..),
-    StreamProjection (..),
     TypeEmbedding (..),
     UUID,
     VersionedEventStoreReader,
@@ -292,41 +292,34 @@ liftIOEventHandler :: (MonadIO m) => EventHandler IO event -> EventHandler m eve
 liftIOEventHandler (EventHandler h) = EventHandler $ \e -> liftIO (h e)
 
 -- -----------------------------------------------------------------------------
--- Read Model Event Handlers
+-- Read Models
 -- -----------------------------------------------------------------------------
 
--- | Creates an event handler for the AccountSummary read model.
-createAccountSummaryEventHandler ::
-  (MonadIO m) =>
-  m (TVar AccountSummaryReadModel, AccountingEventHandler m)
-createAccountSummaryEventHandler = do
-  readModel <- createAccountSummaryReadModel
-  let handler = EventHandler $ \versionedEvent -> do
-        let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-        handleAccountSummaryEvents readModel [globalEvent]
-  return (readModel, handler)
+-- | Combined read model state for all bounded contexts.
+data ReadModels = ReadModels
+  { account :: TVar AccountReadModel,
+    transaction :: TVar TransactionReadModel,
+    user :: TVar UserReadModel
+  }
 
--- | Creates a transaction summary read model and its event handler.
-createTransactionSummaryEventHandler ::
+-- | Create all read models and their event bus handlers.
+createReadModelHandlers ::
   (MonadIO m) =>
-  m (TVar TransactionSummaryReadModel, AccountingEventHandler m)
-createTransactionSummaryEventHandler = do
-  readModel <- createTransactionSummaryReadModel
-  let handler = EventHandler $ \versionedEvent -> do
+  m (ReadModels, [AccountingEventHandler m])
+createReadModelHandlers = do
+  accountRM <- createAccountReadModel
+  transactionRM <- createTransactionReadModel
+  userRM <- createUserReadModel
+  let mkHandler handle rm = EventHandler $ \versionedEvent -> do
         let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-        handleTransactionSummaryEvents readModel [globalEvent]
-  return (readModel, handler)
-
--- | Creates a user summary read model and its event handler.
-createUserSummaryEventHandler ::
-  (MonadIO m) =>
-  m (TVar UserSummaryReadModel, AccountingEventHandler m)
-createUserSummaryEventHandler = do
-  readModel <- createUserSummaryReadModel
-  let handler = EventHandler $ \versionedEvent -> do
-        let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-        handleUserSummaryEvents readModel [globalEvent]
-  return (readModel, handler)
+        handle rm [globalEvent]
+      handlers =
+        [ mkHandler handleAccountEvents accountRM,
+          mkHandler handleTransactionEvents transactionRM,
+          mkHandler handleUserEvents userRM
+        ]
+      readModels = ReadModels accountRM transactionRM userRM
+  return (readModels, handlers)
 
 -- -----------------------------------------------------------------------------
 -- Command Handler Registry
@@ -425,6 +418,24 @@ liftGlobalReader pool = runEventStoreReaderUsing (runDbDirect pool)
 -- -----------------------------------------------------------------------------
 -- Utilities
 -- -----------------------------------------------------------------------------
+
+-- | Replay all historical events from the event store into read models.
+--
+-- This must be called on startup to populate in-memory read models
+-- from persisted events. Without this, read models start empty and
+-- cannot find previously created users/accounts.
+replayReadModels ::
+  (MonadIO m) =>
+  AccountingGlobalEventStoreReader m ->
+  ReadModels ->
+  m Int
+-- Must run before server/bot starts to avoid concurrent writes to TVars.
+replayReadModels globalReader' readModels = do
+  events <- readEvents globalReader' (allEvents ())
+  handleAccountEvents readModels.account events
+  handleTransactionEvents readModels.transaction events
+  handleUserEvents readModels.user events
+  pure (length events)
 
 -- | Print an event as pretty-printed JSON.
 printEventJSON :: (MonadIO m, ToJSON a) => a -> m ()

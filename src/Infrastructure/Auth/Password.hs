@@ -48,7 +48,6 @@ import Crypto.Random (getRandomBytes)
 import Data.Bits (xor, (.|.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base64 as B64
 import qualified Data.List
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)

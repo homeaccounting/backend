@@ -38,9 +38,6 @@ module Web.API.TelegramWebhookAPI
 where
 
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Int (Int64)
-import Domain.Core.Types (TelegramId (..))
-import GHC.Generics (Generic)
 import Infrastructure.App (AppM)
 import RIO hiding (Handler)
 import qualified RIO.Text as T

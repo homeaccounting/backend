@@ -46,10 +46,7 @@ where
 
 import qualified Application.Services.AuthService as AuthService
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Int (Int64)
-import Data.Text (Text)
 import Domain.Core.Types (OAuthProvider (..), UserId)
-import GHC.Generics (Generic)
 import Infrastructure.App (AppM)
 import qualified Infrastructure.Auth.Telegram as TelegramAuth
 import RIO hiding (Handler)
@@ -124,8 +121,8 @@ type AuthAPI =
 
 -- | Registration request.
 data RegisterRequest = RegisterRequest
-  { registerEmail :: Text,
-    registerPassword :: Text
+  { email :: Text,
+    password :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -135,8 +132,8 @@ instance FromJSON RegisterRequest
 
 -- | Login request.
 data LoginRequest = LoginRequest
-  { loginEmail :: Text,
-    loginPassword :: Text
+  { email :: Text,
+    password :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -162,9 +159,9 @@ instance FromJSON TelegramAuthRequest
 
 -- | Link OAuth account request.
 data LinkOAuthRequest = LinkOAuthRequest
-  { linkOAuthProvider :: OAuthProvider,
-    linkOAuthCode :: Text,
-    linkOAuthState :: Text
+  { provider :: OAuthProvider,
+    code :: Text,
+    state :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -174,7 +171,7 @@ instance FromJSON LinkOAuthRequest
 
 -- | Link Telegram account request.
 data LinkTelegramRequest = LinkTelegramRequest
-  { linkTelegramAuthData :: TelegramAuthRequest
+  { authData :: TelegramAuthRequest
   }
   deriving (Show, Eq, Generic)
 
@@ -184,7 +181,7 @@ instance FromJSON LinkTelegramRequest
 
 -- | Token refresh request.
 data RefreshTokenRequest = RefreshTokenRequest
-  { refreshToken :: Text
+  { token :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -198,10 +195,10 @@ instance FromJSON RefreshTokenRequest
 
 -- | Authentication response with JWT token.
 data AuthResponse = AuthResponse
-  { authToken :: Text,
-    authUserId :: UserId,
-    authEmail :: Maybe Text,
-    authExpiresIn :: Int -- seconds
+  { token :: Text,
+    userId :: UserId,
+    email :: Maybe Text,
+    expiresIn :: Int -- seconds
   }
   deriving (Show, Eq, Generic)
 
@@ -211,8 +208,8 @@ instance FromJSON AuthResponse
 
 -- | OAuth redirect response.
 data OAuthRedirectResponse = OAuthRedirectResponse
-  { oauthRedirectUrl :: Text,
-    oauthState :: Text
+  { redirectUrl :: Text,
+    state :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -243,7 +240,7 @@ authServer =
 -- | Handle registration.
 handleRegister :: RegisterRequest -> AppM AuthResponse
 handleRegister RegisterRequest {..} = do
-  result <- AuthService.register registerEmail registerPassword
+  result <- AuthService.register email password
   case result of
     Right r -> return $ toAuthResponse r
     Left err -> throwDomainError err
@@ -251,7 +248,7 @@ handleRegister RegisterRequest {..} = do
 -- | Handle login.
 handleLogin :: LoginRequest -> AppM AuthResponse
 handleLogin LoginRequest {..} = do
-  result <- AuthService.login loginEmail loginPassword
+  result <- AuthService.login email password
   case result of
     Right r -> return $ toAuthResponse r
     Left err -> throwDomainError err
@@ -264,7 +261,7 @@ handleOAuthInitiate providerText = do
     Just p -> return p
   result <- AuthService.initiateOAuth provider
   case result of
-    Right r -> return $ OAuthRedirectResponse r.url r.state
+    Right r -> return $ OAuthRedirectResponse {redirectUrl = r.url, state = r.state}
     Left err -> throwDomainError err
 
 -- | Handle OAuth callback.
@@ -287,7 +284,7 @@ handleOAuthCallbackEndpoint providerText maybeCode maybeState = do
 -- | Handle link OAuth to existing account.
 handleLinkOAuth :: AuthenticatedUser -> LinkOAuthRequest -> AppM NoContent
 handleLinkOAuth user LinkOAuthRequest {..} = do
-  result <- AuthService.linkOAuth user.authUserId linkOAuthProvider linkOAuthCode
+  result <- AuthService.linkOAuth user.userId provider code
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -304,8 +301,8 @@ handleTelegramAuth req = do
 -- | Handle link Telegram to existing account.
 handleLinkTelegram :: AuthenticatedUser -> LinkTelegramRequest -> AppM NoContent
 handleLinkTelegram user LinkTelegramRequest {..} = do
-  let authData = toTelegramAuthData linkTelegramAuthData
-  result <- AuthService.linkTelegram user.authUserId authData
+  let telegramAuthData = toTelegramAuthData authData
+  result <- AuthService.linkTelegram user.userId telegramAuthData
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
@@ -313,7 +310,7 @@ handleLinkTelegram user LinkTelegramRequest {..} = do
 -- | Handle token refresh.
 handleRefreshToken :: RefreshTokenRequest -> AppM AuthResponse
 handleRefreshToken RefreshTokenRequest {..} = do
-  result <- AuthService.refreshToken refreshToken
+  result <- AuthService.refreshToken token
   case result of
     Right r -> return $ toAuthResponse r
     Left err -> throwDomainError err
@@ -326,10 +323,10 @@ handleRefreshToken RefreshTokenRequest {..} = do
 toAuthResponse :: AuthService.AuthResult -> AuthResponse
 toAuthResponse r =
   AuthResponse
-    { authToken = r.token,
-      authUserId = r.userId,
-      authEmail = r.email,
-      authExpiresIn = r.expiresIn
+    { token = r.token,
+      userId = r.userId,
+      email = r.email,
+      expiresIn = r.expiresIn
     }
 
 -- | Convert TelegramAuthRequest to TelegramAuthData.

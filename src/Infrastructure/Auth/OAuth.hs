@@ -40,6 +40,11 @@ module Infrastructure.Auth.OAuth
     -- * User Info
     OAuthUserInfo (..),
 
+    -- * Default Configs
+    defaultGoogleConfig,
+    defaultGitHubConfig,
+    defaultMicrosoftConfig,
+
     -- * Errors
     OAuthError (..),
 
@@ -56,7 +61,6 @@ import Data.Aeson (FromJSON (..), ToJSON (..), withObject, (.!=), (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as Aeson (lookup)
 import Data.Bits (xor, (.|.))
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64.URL as B64URL
 import qualified Data.ByteString.Lazy as LBS
@@ -64,9 +68,9 @@ import qualified Data.List
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Domain.Core.Types (OAuthIdentity (..), OAuthProvider (..))
+import Domain.Core.Types (OAuthProvider (..))
 import GHC.Generics (Generic)
-import Network.HTTP.Client (Manager, Request (..), httpLbs, parseRequest, requestHeaders, responseBody, urlEncodedBody)
+import Network.HTTP.Client (Request (..), httpLbs, parseRequest, requestHeaders, responseBody, urlEncodedBody)
 import Network.HTTP.Client.TLS (newTlsManager)
 import qualified Network.HTTP.Types.URI as URI
 
@@ -240,8 +244,8 @@ getAuthorizationUrl config provider = do
               ("state", encodeUtf8 state),
               ("response_type", "code")
             ]
-          queryString = decodeUtf8 $ URI.renderSimpleQuery True params
-          url = providerConfig.authorizeUrl <> queryString
+          qs = decodeUtf8 $ URI.renderSimpleQuery True params
+          url = providerConfig.authorizeUrl <> qs
       return $ Right (url, state)
 
 -- | Handle OAuth callback and fetch user info.

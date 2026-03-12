@@ -64,7 +64,6 @@ import Eventium
     RejectionReason (..),
     StreamEvent (..),
     TypeEmbedding (..),
-    UUID,
     VersionedStreamEvent,
   )
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))

@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- |
--- Module      : TestSupport.Generators
+-- Module      : Testkit.Generators
 -- Description : QuickCheck generators for domain types
 --
 -- This module provides QuickCheck generators and Arbitrary instances for testing
@@ -13,7 +13,7 @@
 --   - Import this module in property tests
 --   - Use `arbitrary` to generate random valid values
 --   - Use custom generators for specific test scenarios
-module TestSupport.Generators
+module Testkit.Generators
   ( -- * Generators
     genMoney,
     genPositiveMoney,
@@ -27,6 +27,11 @@ module TestSupport.Generators
     genPasswordHash,
     genEmail,
     genNonEmptyText,
+    genIncomeCategory,
+    genExpenseCategory,
+    genInternalCategory,
+    genTransferType,
+    genTransferCategory,
 
     -- * Arbitrary Instances
   )
@@ -263,3 +268,47 @@ genEmail = do
   domainChars <- vectorOf domainLen $ elements ['a' .. 'z']
   tld <- elements ["com", "org", "net", "io", "dev"]
   pure $ T.pack localChars <> T.pack "@" <> T.pack domainChars <> T.pack "." <> T.pack tld
+
+-- -----------------------------------------------------------------------------
+-- Transfer Category Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a valid IncomeCategory.
+genIncomeCategory :: Gen IncomeCategory
+genIncomeCategory = elements [Salary, Freelance, Investment, IncomeGift, IncomeOther]
+
+instance Arbitrary IncomeCategory where
+  arbitrary = genIncomeCategory
+
+-- | Generate a valid ExpenseCategory.
+genExpenseCategory :: Gen ExpenseCategory
+genExpenseCategory = elements [Food, Transport, Utilities, Rent, Entertainment, ExpenseOther]
+
+instance Arbitrary ExpenseCategory where
+  arbitrary = genExpenseCategory
+
+-- | Generate a valid InternalCategory.
+genInternalCategory :: Gen InternalCategory
+genInternalCategory = elements [Rebalance, Savings, InternalOther]
+
+instance Arbitrary InternalCategory where
+  arbitrary = genInternalCategory
+
+-- | Generate a valid TransferType.
+genTransferType :: Gen TransferType
+genTransferType = elements [Income, Expense, InternalTransfer]
+
+instance Arbitrary TransferType where
+  arbitrary = genTransferType
+
+-- | Generate a valid TransferCategory.
+genTransferCategory :: Gen TransferCategory
+genTransferCategory =
+  oneof
+    [ IncomeCat <$> arbitrary,
+      ExpenseCat <$> arbitrary,
+      InternalCat <$> arbitrary
+    ]
+
+instance Arbitrary TransferCategory where
+  arbitrary = genTransferCategory

@@ -34,6 +34,7 @@ module Integration.WebAPISpec (spec) where
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Maybe (isJust)
 import Data.Text.Encoding (encodeUtf8)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
@@ -48,7 +49,7 @@ import qualified RIO.ByteString.Lazy as LBS
 import Test.Hspec
 import Test.Hspec.Wai
 import Test.Hspec.Wai.JSON
-import TestSupport.InMemoryEventStore (createTestAppEnv)
+import Testkit.InMemoryEventStore (createTestAppEnv)
 import Web.Server (buildApplication)
 
 -- -----------------------------------------------------------------------------
@@ -118,7 +119,7 @@ extractAccountId body = do
   obj <- decode body :: Maybe Aeson.Value
   case obj of
     Aeson.Object o -> do
-      case KeyMap.lookup "accountId" o of
+      case KeyMap.lookup "id" o of
         Just (Aeson.String aid) -> Just aid
         _ -> Nothing
     _ -> Nothing
@@ -153,30 +154,31 @@ unauthenticatedRequestsSpec =
       it "returns 401 without Authorization header" $ do
         let payload =
               object
-                [ "accountName" .= ("Test Account" :: Text),
+                [ "name" .= ("Test Account" :: Text),
                   "initialBalance" .= (100.0 :: Double)
                 ]
         postJSON "/api/accounts" (encode payload)
           `shouldRespondWith` 401
 
-    describe "POST /api/transactions" $ with mkApp $ do
+    describe "POST /api/transactions/transfer" $ with mkApp $ do
       it "returns 401 without Authorization header" $ do
         let payload =
               object
                 [ "fromAccountId" .= UUID.toText UUID.nil,
                   "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
+                  "category" .= ("rebalance" :: Text),
                   "reason" .= ("Test transfer" :: Text)
                 ]
-        postJSON "/api/transactions" (encode payload)
+        postJSON "/api/transactions/transfer" (encode payload)
           `shouldRespondWith` 401
 
     describe "POST /api/accounts/:id/share" $ with mkApp $ do
       it "returns 401 without Authorization header" $ do
         let payload =
               object
-                [ "shareUserId" .= UUID.toText (UUID.fromWords 1 2 3 4),
-                  "shareRole" .= ("editor" :: Text)
+                [ "userId" .= UUID.toText (UUID.fromWords 1 2 3 4),
+                  "role" .= ("editor" :: Text)
                 ]
         postJSON "/api/accounts/00000000-0000-0000-0000-000000000001/share" (encode payload)
           `shouldRespondWith` 401
@@ -190,7 +192,7 @@ unauthenticatedRequestsSpec =
 authenticatedRequestsSpec :: Spec
 authenticatedRequestsSpec =
   describe "Authenticated requests" $ do
-    describe "POST /api/transactions" $ with mkApp $ do
+    describe "POST /api/transactions/transfer" $ with mkApp $ do
       it "processes request with valid token (returns validation error, not auth error)" $ do
         -- Generate a valid token
         token <- liftIO generateTestToken
@@ -202,9 +204,10 @@ authenticatedRequestsSpec =
                 [ "fromAccountId" .= UUID.toText UUID.nil,
                   "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
+                  "category" .= ("rebalance" :: Text),
                   "reason" .= ("Test transfer" :: Text)
                 ]
-        response <- postJSONAuth "/api/transactions" token (encode payload)
+        response <- postJSONAuth "/api/transactions/transfer" token (encode payload)
         liftIO $ do
           -- Should get 400 (nil UUID is invalid) not 401
           statusCode (simpleStatus response) `shouldBe` 400
@@ -215,8 +218,8 @@ authenticatedRequestsSpec =
 
         let payload =
               object
-                [ "shareUserId" .= UUID.toText (UUID.fromWords 1 2 3 4),
-                  "shareRole" .= ("editor" :: Text)
+                [ "userId" .= UUID.toText (UUID.fromWords 1 2 3 4),
+                  "role" .= ("editor" :: Text)
                 ]
         response <- postJSONAuth "/api/accounts/00000000-0000-0000-0000-000000000001/share" token (encode payload)
         liftIO $ do
@@ -236,36 +239,38 @@ authenticatedRequestsSpec =
 invalidTokenSpec :: Spec
 invalidTokenSpec =
   describe "Invalid token requests" $ do
-    describe "POST /api/transactions with invalid token" $ with mkApp $ do
+    describe "POST /api/transactions/transfer with invalid token" $ with mkApp $ do
       it "returns 401" $ do
         let payload =
               object
                 [ "fromAccountId" .= UUID.toText UUID.nil,
                   "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
+                  "category" .= ("rebalance" :: Text),
                   "reason" .= ("Test transfer" :: Text)
                 ]
-        postJSONAuth "/api/transactions" invalidToken (encode payload)
+        postJSONAuth "/api/transactions/transfer" invalidToken (encode payload)
           `shouldRespondWith` 401
 
-    describe "POST /api/transactions with malformed Authorization header" $ with mkApp $ do
+    describe "POST /api/transactions/transfer with malformed Authorization header" $ with mkApp $ do
       it "returns 401 for Basic auth instead of Bearer" $ do
         let payload =
               object
                 [ "fromAccountId" .= UUID.toText UUID.nil,
                   "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
+                  "category" .= ("rebalance" :: Text),
                   "reason" .= ("Test transfer" :: Text)
                 ]
         -- Send with Basic auth instead of Bearer
         request
           "POST"
-          "/api/transactions"
+          "/api/transactions/transfer"
           [(hContentType, "application/json"), (hAuthorization, "Basic dXNlcjpwYXNz")]
           (encode payload)
           `shouldRespondWith` 401
 
-    describe "POST /api/transactions with expired token" $ with mkApp $ do
+    describe "POST /api/transactions/transfer with expired token" $ with mkApp $ do
       it "returns 401" $ do
         token <- liftIO generateExpiredToken
         let payload =
@@ -273,9 +278,10 @@ invalidTokenSpec =
                 [ "fromAccountId" .= UUID.toText UUID.nil,
                   "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
+                  "category" .= ("rebalance" :: Text),
                   "reason" .= ("Test transfer" :: Text)
                 ]
-        postJSONAuth "/api/transactions" token (encode payload)
+        postJSONAuth "/api/transactions/transfer" token (encode payload)
           `shouldRespondWith` 401
 
 -- -----------------------------------------------------------------------------
@@ -301,7 +307,7 @@ accountCreationSpec =
         token <- liftIO generateTestToken
         let payload =
               object
-                [ "accountName" .= ("Savings Account" :: Text),
+                [ "name" .= ("Savings Account" :: Text),
                   "initialBalance" .= (1000.0 :: Double)
                 ]
 
@@ -311,13 +317,14 @@ accountCreationSpec =
         liftIO $ do
           statusCode (simpleStatus response) `shouldBe` 201
           let body = simpleBody response
-          body `shouldSatisfy` LBS.isPrefixOf "{\"accountId\":"
+          let parsed = decode body :: Maybe Aeson.Value
+          parsed `shouldSatisfy` isJust
 
     describe "requires authentication" $ with mkApp $ do
       it "returns 401 without Authorization header" $ do
         let payload =
               object
-                [ "accountName" .= ("Test Account" :: Text),
+                [ "name" .= ("Test Account" :: Text),
                   "initialBalance" .= (100.0 :: Double)
                 ]
 
@@ -328,7 +335,7 @@ accountCreationSpec =
         token <- liftIO generateTestToken
         let payload =
               object
-                [ "accountName" .= ("" :: Text),
+                [ "name" .= ("" :: Text),
                   "initialBalance" .= (100.0 :: Double)
                 ]
 
@@ -339,7 +346,7 @@ accountCreationSpec =
         token <- liftIO generateTestToken
         let payload =
               object
-                [ "accountName" .= ("Test" :: Text),
+                [ "name" .= ("Test" :: Text),
                   "initialBalance" .= (-100.0 :: Double)
                 ]
 
@@ -355,7 +362,7 @@ accountRetrievalSpec =
         token <- liftIO generateTestToken
         let createPayload =
               object
-                [ "accountName" .= ("Checking" :: Text),
+                [ "name" .= ("Checking" :: Text),
                   "initialBalance" .= (500.0 :: Double)
                 ]
 
@@ -363,7 +370,8 @@ accountRetrievalSpec =
 
         -- Extract account ID from response
         let body = simpleBody createResp
-        liftIO $ body `shouldSatisfy` LBS.isPrefixOf "{\"accountId\":"
+        let parsed = decode body :: Maybe Aeson.Value
+        liftIO $ parsed `shouldSatisfy` isJust
 
     -- For now, we'll test with a known pattern
     -- In a real scenario, we'd parse JSON to get the ID
@@ -387,12 +395,12 @@ accountListingSpec =
         token <- liftIO generateTestToken
         let account1 =
               object
-                [ "accountName" .= ("Account 1" :: Text),
+                [ "name" .= ("Account 1" :: Text),
                   "initialBalance" .= (100.0 :: Double)
                 ]
         let account2 =
               object
-                [ "accountName" .= ("Account 2" :: Text),
+                [ "name" .= ("Account 2" :: Text),
                   "initialBalance" .= (200.0 :: Double)
                 ]
 
@@ -432,22 +440,22 @@ transactionAPISpec =
     transferInitiationSpec
     transferStatusSpec
 
--- | Test transaction creation via POST /api/transactions
+-- | Test transaction creation via POST /api/transactions/transfer
 transferInitiationSpec :: Spec
 transferInitiationSpec =
-  describe "POST /api/transactions" $ do
+  describe "POST /api/transactions/transfer" $ do
     describe "initiates a transfer between accounts" $ with mkApp $ do
       it "verifies infrastructure works" $ do
         -- Create two accounts (requires auth)
         token <- liftIO generateTestToken
         let account1 =
               object
-                [ "accountName" .= ("Source" :: Text),
+                [ "name" .= ("Source" :: Text),
                   "initialBalance" .= (1000.0 :: Double)
                 ]
         let account2 =
               object
-                [ "accountName" .= ("Destination" :: Text),
+                [ "name" .= ("Destination" :: Text),
                   "initialBalance" .= (0.0 :: Double)
                 ]
 
@@ -468,11 +476,12 @@ transferInitiationSpec =
                 [ "fromAccountId" .= UUID.toText sameUuid,
                   "toAccountId" .= UUID.toText sameUuid,
                   "amount" .= (100.0 :: Double),
+                  "category" .= ("rebalance" :: Text),
                   "reason" .= ("Test" :: Text)
                 ]
 
         -- Without authentication, returns 401
-        postJSON "/api/transactions" (encode payload)
+        postJSON "/api/transactions/transfer" (encode payload)
           `shouldRespondWith` 401
 
     describe "rejects transaction with zero amount" $ with mkApp $ do
@@ -484,11 +493,12 @@ transferInitiationSpec =
                 [ "fromAccountId" .= UUID.toText uuid1,
                   "toAccountId" .= UUID.toText uuid2,
                   "amount" .= (0.0 :: Double),
+                  "category" .= ("rebalance" :: Text),
                   "reason" .= ("Test" :: Text)
                 ]
 
         -- Without authentication, returns 401
-        postJSON "/api/transactions" (encode payload)
+        postJSON "/api/transactions/transfer" (encode payload)
           `shouldRespondWith` 401
 
 -- | Test transfer status retrieval via GET /api/transactions/:id
@@ -537,7 +547,7 @@ errorHandlingSpec =
         token <- liftIO generateTestToken
         let payload =
               object
-                [ "accountName" .= ("" :: Text),
+                [ "name" .= ("" :: Text),
                   "initialBalance" .= (100.0 :: Double)
                 ]
 

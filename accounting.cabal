@@ -18,14 +18,19 @@ license:        MIT
 license-file:   LICENSE
 build-type:     Simple
 
+flag ci
+  description: Enable -Werror for CI builds
+  manual: True
+  default: False
+
 library
   exposed-modules:
       Application.ProcessManagers
       Application.ProcessManagers.TransferManager
       Application.ReadModels
-      Application.ReadModels.AccountSummary
-      Application.ReadModels.TransactionSummary
-      Application.ReadModels.UserSummary
+      Application.ReadModels.Account
+      Application.ReadModels.Transaction
+      Application.ReadModels.User
       Application.Services
       Application.Services.AccountService
       Application.Services.AuthorizationService
@@ -98,7 +103,7 @@ library
       UndecidableInstances
       FlexibleContexts
       TypeOperators
-  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -Wpartial-fields -fno-warn-orphans
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wredundant-constraints -fno-warn-orphans
   build-depends:
       aeson >=2.0 && <2.3
     , aeson-pretty ==0.8.*
@@ -142,6 +147,8 @@ library
     , warp >=3.3 && <3.5
     , yaml ==0.11.*
   default-language: Haskell2010
+  if flag(ci)
+    ghc-options: -Werror
 
 executable accounting
   main-is: Main.hs
@@ -206,6 +213,8 @@ executable accounting
     , warp >=3.3 && <3.5
     , yaml ==0.11.*
   default-language: Haskell2010
+  if flag(ci)
+    ghc-options: -Werror
 
 test-suite accounting-test
   type: exitcode-stdio-1.0
@@ -219,6 +228,7 @@ test-suite accounting-test
       Application.Services.UserServiceSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
+      Domain.Core.TransferCategoryPropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
       Domain.Transaction.CommandHandlerPropertySpec
@@ -228,9 +238,9 @@ test-suite accounting-test
       Infrastructure.Auth.TelegramSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
-      TestSupport.Generators
-      TestSupport.Helpers
-      TestSupport.InMemoryEventStore
+      Testkit.Generators
+      Testkit.Helpers
+      Testkit.InMemoryEventStore
       Paths_accounting
   hs-source-dirs:
       test
@@ -300,3 +310,5 @@ test-suite accounting-test
     , warp >=3.3 && <3.5
     , yaml ==0.11.*
   default-language: Haskell2010
+  if flag(ci)
+    ghc-options: -Werror

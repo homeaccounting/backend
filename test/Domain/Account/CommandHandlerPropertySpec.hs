@@ -31,8 +31,8 @@ import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import Test.QuickCheck
-import TestSupport.Generators ()
-import TestSupport.Helpers
+import Testkit.Generators ()
+import Testkit.Helpers
 import Prelude (read)
 
 spec :: Spec

@@ -32,12 +32,8 @@ module Application.Services.AccountService
   )
 where
 
-import Application.ReadModels.AccountSummary
-  ( AccountSummaryData (..),
-    getAccessibleAccounts,
-    getAccountSummary,
-  )
-import Data.Text (Text)
+import Application.ReadModels.Account (AccountData (..))
+import qualified Application.ReadModels.Account as ReadModel
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
@@ -62,7 +58,6 @@ import Infrastructure.App
   )
 import Infrastructure.Eventium (applyAccountCommand)
 import RIO
-import qualified RIO.Map as Map
 import qualified RIO.Text as T
 
 -- -----------------------------------------------------------------------------
@@ -79,10 +74,10 @@ import qualified RIO.Text as T
 --   2. Execute CreateAccount command via event store
 --   3. Query read model for the created account
 --
--- Returns the AccountId and AccountSummaryData on success.
+-- Returns the AccountId and AccountData on success.
 createAccount ::
   CreateAccount ->
-  AppM (Either DomainError (AccountId, AccountSummaryData))
+  AppM (Either DomainError (AccountId, AccountData))
 createAccount createCmd = do
   logInfo "Creating new account..."
 
@@ -107,8 +102,8 @@ createAccount createCmd = do
           logInfo $ "Account created, " <> displayShow (length events) <> " event(s) emitted"
 
           -- 3. Query read model for current state
-          readModel <- view accountSummaryReadModelL
-          maybeSummary <- liftIO $ getAccountSummary readModel accountId
+          readModel <- view accountReadModelL
+          maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
 
           case maybeSummary of
             Just summary -> do
@@ -124,10 +119,10 @@ createAccount createCmd = do
 --   1. Convert UUID to AccountId
 --   2. Query read model
 --
--- Returns the AccountId and AccountSummaryData on success.
+-- Returns the AccountId and AccountData on success.
 getAccount ::
   UUID ->
-  AppM (Either DomainError (AccountId, AccountSummaryData))
+  AppM (Either DomainError (AccountId, AccountData))
 getAccount accountUuid = do
   logInfo $ "Getting account: " <> displayShow accountUuid
 
@@ -138,8 +133,8 @@ getAccount accountUuid = do
       return $ Left $ NotFound "Account" (tshow accountUuid)
     Right accountId -> do
       -- 2. Query read model
-      readModel <- view accountSummaryReadModelL
-      maybeSummary <- liftIO $ getAccountSummary readModel accountId
+      readModel <- view accountReadModelL
+      maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
 
       case maybeSummary of
         Just summary -> do
@@ -152,13 +147,13 @@ getAccount accountUuid = do
 -- | List accounts accessible to a given user.
 --
 -- Queries the read model for accounts where the user has access (owner, editor, or viewer).
--- Returns a list of (AccountId, AccountSummaryData) pairs.
-listAccountsForUser :: UserId -> AppM [(AccountId, AccountSummaryData)]
+-- Returns a list of (AccountId, AccountData) pairs.
+listAccountsForUser :: UserId -> AppM [(AccountId, AccountData)]
 listAccountsForUser userId = do
   logInfo $ "Listing accounts for user " <> displayShow userId
 
-  readModel <- view accountSummaryReadModelL
-  accountsList <- liftIO $ getAccessibleAccounts readModel userId
+  readModel <- view accountReadModelL
+  accountsList <- liftIO $ ReadModel.getAccessibleAccounts readModel userId
 
   let result = map (\(aid, summary, _role) -> (aid, summary)) accountsList
 
@@ -186,8 +181,8 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = do
     Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
     Right accountId -> do
       -- 2. Check account exists and user is Owner
-      readModel <- view accountSummaryReadModelL
-      maybeSummary <- liftIO $ getAccountSummary readModel accountId
+      readModel <- view accountReadModelL
+      maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
 
       case maybeSummary of
         Nothing -> return $ Left $ NotFound "Account" (tshow accountUuid)
@@ -249,8 +244,8 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = do
     Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
     Right accountId -> do
       -- 2. Check account exists and user is Owner
-      readModel <- view accountSummaryReadModelL
-      maybeSummary <- liftIO $ getAccountSummary readModel accountId
+      readModel <- view accountReadModelL
+      maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
 
       case maybeSummary of
         Nothing -> return $ Left $ NotFound "Account" (tshow accountUuid)

@@ -13,7 +13,7 @@
 --   - Returns appropriate DomainErrors for invalid operations
 module Application.Services.UserServiceSpec (spec) where
 
-import Application.ReadModels.UserSummary (UserSummaryData (..))
+import Application.ReadModels.User (UserData (..))
 import Application.Services.UserService
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -29,7 +29,7 @@ import Infrastructure.App (AppEnv, HasEventStore (..), runAppM)
 import Infrastructure.Eventium (applyUserCommand)
 import RIO
 import Test.Hspec
-import TestSupport.Helpers
+import Testkit.Helpers
   ( fromRight',
     mockAccountId,
     mockPasswordHash,
@@ -37,7 +37,7 @@ import TestSupport.Helpers
     shouldBeLeft,
     shouldBeRight,
   )
-import TestSupport.InMemoryEventStore (createTestAppEnv)
+import Testkit.InMemoryEventStore (createTestAppEnv)
 
 -- -----------------------------------------------------------------------------
 -- Test Data

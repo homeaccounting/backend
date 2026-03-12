@@ -49,7 +49,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, Money, UserId, mkAccountId, mkMoney, unsafeUserId)
+import Domain.Core.Types (AccountId, IncomeCategory (..), Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkMoney, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -131,7 +131,11 @@ data Transaction = Transaction
     -- | Current status of the transaction
     status :: TransactionStatus,
     -- | User who initiated the transfer
-    initiatedBy :: UserId
+    initiatedBy :: UserId,
+    -- | Type of transfer (Income, Expense, InternalTransfer)
+    transferType :: TransferType,
+    -- | Category of the transfer
+    category :: TransferCategory
   }
   deriving (Show, Eq)
 
@@ -168,7 +172,9 @@ transactionDefault =
         Left _ -> error "transactionDefault: mkMoney 0 should never fail",
       reason = "",
       status = Pending,
-      initiatedBy = unsafeUserId nil
+      initiatedBy = unsafeUserId nil,
+      transferType = Income,
+      category = IncomeCat IncomeOther
     }
 
 -- -----------------------------------------------------------------------------
@@ -241,6 +247,10 @@ handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
     .~ Pending
     & #initiatedBy
     .~ evt.by
+    & #transferType
+    .~ evt.transferType
+    & #category
+    .~ evt.category
 handleTransactionEvent transaction (TransferCompletedTransactionEvent TransferCompleted) =
   -- Mark transaction as completed
   -- Only update if currently Pending (idempotent for other states)

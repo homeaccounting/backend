@@ -152,13 +152,13 @@ generate_telegram_payload() {
 
     cat <<EOF
 {
-  "telegramAuthId": $telegram_id,
-  "telegramAuthFirstName": "$first_name",
-  "telegramAuthLastName": $last_name_json,
-  "telegramAuthUsername": $username_json,
-  "telegramAuthPhotoUrl": null,
-  "telegramAuthAuthDate": $auth_date,
-  "telegramAuthHash": "$hash"
+  "id": $telegram_id,
+  "firstName": "$first_name",
+  "lastName": $last_name_json,
+  "username": $username_json,
+  "photoUrl": null,
+  "authDate": $auth_date,
+  "hash": "$hash"
 }
 EOF
 }
@@ -191,8 +191,8 @@ test_telegram_login() {
     print_info "Response (HTTP $HTTP_CODE):"
     echo "$BODY" | jq '.'
 
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.authToken')
-    AUTH_USER_ID=$(echo "$BODY" | jq -r '.authUserId')
+    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
+    AUTH_USER_ID=$(echo "$BODY" | jq -r '.userId')
 
     if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
         print_success "Telegram login successful!"
@@ -239,8 +239,8 @@ test_telegram_login_same_user() {
 
     echo "$BODY" | jq '.'
 
-    AUTH_USER_ID=$(echo "$BODY" | jq -r '.authUserId')
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.authToken')
+    AUTH_USER_ID=$(echo "$BODY" | jq -r '.userId')
+    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
 
     if [ "$AUTH_USER_ID" = "$ORIGINAL_USER_ID" ]; then
         print_success "Same user returned (idempotent login)"
@@ -271,9 +271,9 @@ test_telegram_profile() {
 
     echo "$RESPONSE" | jq '.'
 
-    HAS_PASSWORD=$(echo "$RESPONSE" | jq -r '.profileHasPassword')
-    TELEGRAM_IDENTITY=$(echo "$RESPONSE" | jq -r '.profileTelegramIdentity')
-    EXTERNAL_ACCOUNT=$(echo "$RESPONSE" | jq -r '.profileExternalAccountId')
+    HAS_PASSWORD=$(echo "$RESPONSE" | jq -r '.hasPassword')
+    TELEGRAM_IDENTITY=$(echo "$RESPONSE" | jq -r '.telegramIdentity')
+    EXTERNAL_ACCOUNT=$(echo "$RESPONSE" | jq -r '.externalAccountId')
 
     if [ "$TELEGRAM_IDENTITY" != "null" ]; then
         print_success "Telegram identity linked to profile"
@@ -313,14 +313,14 @@ test_create_account() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"accountName\": \"$ACCOUNT_NAME\", \"initialBalance\": $INITIAL_BALANCE}")
+        -d "{\"name\": \"$ACCOUNT_NAME\", \"initialBalance\": $INITIAL_BALANCE}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
-    ACCOUNT_ID=$(echo "$BODY" | jq -r '.accountId')
+    ACCOUNT_ID=$(echo "$BODY" | jq -r '.id')
 
     if [ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "null" ]; then
         print_success "Account created: $ACCOUNT_ID"
@@ -361,13 +361,13 @@ test_invalid_hash() {
 
     PAYLOAD=$(cat <<EOF
 {
-  "telegramAuthId": 999999999,
-  "telegramAuthFirstName": "Hacker",
-  "telegramAuthLastName": null,
-  "telegramAuthUsername": "hacker",
-  "telegramAuthPhotoUrl": null,
-  "telegramAuthAuthDate": $auth_date,
-  "telegramAuthHash": "0000000000000000000000000000000000000000000000000000000000000000"
+  "id": 999999999,
+  "firstName": "Hacker",
+  "lastName": null,
+  "username": "hacker",
+  "photoUrl": null,
+  "authDate": $auth_date,
+  "hash": "0000000000000000000000000000000000000000000000000000000000000000"
 }
 EOF
 )
@@ -403,13 +403,13 @@ test_expired_auth() {
 
     PAYLOAD=$(cat <<EOF
 {
-  "telegramAuthId": 888888888,
-  "telegramAuthFirstName": "Expired",
-  "telegramAuthLastName": null,
-  "telegramAuthUsername": "expired_user",
-  "telegramAuthPhotoUrl": null,
-  "telegramAuthAuthDate": $expired_date,
-  "telegramAuthHash": "$hash"
+  "id": 888888888,
+  "firstName": "Expired",
+  "lastName": null,
+  "username": "expired_user",
+  "photoUrl": null,
+  "authDate": $expired_date,
+  "hash": "$hash"
 }
 EOF
 )
@@ -447,8 +447,8 @@ test_full_workflow() {
         -H "Content-Type: application/json" \
         -d "$PAYLOAD")
 
-    AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.authToken')
-    USER_ID=$(echo "$RESPONSE" | jq -r '.authUserId')
+    AUTH_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+    USER_ID=$(echo "$RESPONSE" | jq -r '.userId')
 
     if [ -z "$AUTH_TOKEN" ] || [ "$AUTH_TOKEN" = "null" ]; then
         print_error "Telegram login failed"
@@ -470,9 +470,9 @@ test_full_workflow() {
     SAVINGS_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"accountName": "Savings", "initialBalance": 1000.0}')
+        -d '{"name": "Savings", "initialBalance": 1000.0}')
 
-    SAVINGS_ID=$(echo "$SAVINGS_RESPONSE" | jq -r '.accountId')
+    SAVINGS_ID=$(echo "$SAVINGS_RESPONSE" | jq -r '.id')
     echo "$SAVINGS_RESPONSE" | jq '.'
 
     if [ -z "$SAVINGS_ID" ] || [ "$SAVINGS_ID" = "null" ]; then
@@ -486,9 +486,9 @@ test_full_workflow() {
     CHECKING_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"accountName": "Checking", "initialBalance": 500.0}')
+        -d '{"name": "Checking", "initialBalance": 500.0}')
 
-    CHECKING_ID=$(echo "$CHECKING_RESPONSE" | jq -r '.accountId')
+    CHECKING_ID=$(echo "$CHECKING_RESPONSE" | jq -r '.id')
     echo "$CHECKING_RESPONSE" | jq '.'
 
     if [ -z "$CHECKING_ID" ] || [ "$CHECKING_ID" = "null" ]; then
@@ -534,8 +534,8 @@ test_full_workflow() {
     FINAL_CHECKING=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${CHECKING_ID}" \
         -H "Authorization: Bearer $AUTH_TOKEN")
 
-    SAVINGS_BALANCE=$(echo "$FINAL_SAVINGS" | jq -r '.currentBalance')
-    CHECKING_BALANCE=$(echo "$FINAL_CHECKING" | jq -r '.currentBalance')
+    SAVINGS_BALANCE=$(echo "$FINAL_SAVINGS" | jq -r '.balance')
+    CHECKING_BALANCE=$(echo "$FINAL_CHECKING" | jq -r '.balance')
 
     echo ""
     echo -e "${CYAN}Summary:${NC}"

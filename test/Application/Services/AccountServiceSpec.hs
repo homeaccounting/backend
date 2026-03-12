@@ -13,7 +13,7 @@
 --   - Returns appropriate DomainErrors for invalid operations
 module Application.Services.AccountServiceSpec (spec) where
 
-import Application.ReadModels.AccountSummary (AccountSummaryData (..))
+import Application.ReadModels.Account (AccountData (..))
 import Application.Services.AccountService
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -23,8 +23,8 @@ import Domain.Core.Types
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec
-import TestSupport.Helpers (fromRight', mockMoney, mockUserId, shouldBeLeft, shouldBeRight)
-import TestSupport.InMemoryEventStore (createTestAppEnv)
+import Testkit.Helpers (fromRight', mockMoney, mockUserId, shouldBeLeft, shouldBeRight)
+import Testkit.InMemoryEventStore (createTestAppEnv)
 
 -- -----------------------------------------------------------------------------
 -- Test Data
@@ -66,7 +66,7 @@ createTestAccount cmd = do
 spec :: Spec
 spec = describe "AccountService" $ do
   describe "createAccount" $ do
-    it "creates an account and returns AccountId and AccountSummaryData" $ do
+    it "creates an account and returns AccountId and AccountData" $ do
       env <- createTestAppEnv
       result <- runAppM env $ createAccount validCreateAccount
       shouldBeRight result

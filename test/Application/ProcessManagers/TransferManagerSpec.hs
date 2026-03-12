@@ -29,7 +29,10 @@ import Domain.Account.Events
     AccountDebited (..),
   )
 import Domain.Core.Types
-  ( unsafeAccountId,
+  ( InternalCategory (..),
+    TransferCategory (..),
+    TransferType (..),
+    unsafeAccountId,
     unsafeMoney,
     unsafeTransactionId,
     unsafeUserId,
@@ -79,7 +82,9 @@ mkTransferInitiatedEvent =
             toAccountId = unsafeAccountId targetAcctUuid,
             amount = unsafeMoney 200,
             reason = "Test transfer",
-            by = unsafeUserId userUuid
+            by = unsafeUserId userUuid,
+            transferType = InternalTransfer,
+            category = InternalCat InternalOther
           }
     )
 
@@ -198,7 +203,9 @@ spec = describe "TransferManager (Saga)" $ do
                       toAccountId = unsafeAccountId targetAcctUuid,
                       amount = unsafeMoney 100,
                       reason = "Bad",
-                      by = unsafeUserId userUuid
+                      by = unsafeUserId userUuid,
+                      transferType = InternalTransfer,
+                      category = InternalCat InternalOther
                     }
               )
           state = handleTransferEvent emptyTransferManager badEvent
