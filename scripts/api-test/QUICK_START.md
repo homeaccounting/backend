@@ -47,6 +47,12 @@ This will register a user, login, create accounts, transfer money, share account
 # Share an account with another user
 ./scripts/api-test/quick-test.sh share <account-id> <user-id> editor
 
+# Record income (requires auth)
+./scripts/api-test/quick-test.sh income <account-id> 500 salary
+
+# Record expense (requires auth)
+./scripts/api-test/quick-test.sh expense <account-id> 100 food
+
 # Transfer money (requires auth)
 ./scripts/api-test/quick-test.sh transfer <from-id> <to-id> 300
 
@@ -101,6 +107,8 @@ This will register a user, login, create accounts, transfer money, share account
 
 # Transaction tests
 ./scripts/api-test/test-transactions.sh setup
+./scripts/api-test/test-transactions.sh income
+./scripts/api-test/test-transactions.sh expense
 ./scripts/api-test/test-transactions.sh initiate
 ./scripts/api-test/test-transactions.sh status
 ```
@@ -156,6 +164,8 @@ scripts/api-test/
     │   ├── create-checking.json
     │   └── share-account.json
     └── transactions/            # Transaction JSON payloads
+        ├── income-500.json
+        ├── expense-100.json
         ├── transfer-300.json
         └── transfer-500.json
 ```
@@ -164,7 +174,7 @@ scripts/api-test/
 
 ## Common Workflows
 
-### Register, Create Account, and Transfer
+### Register, Create Account, and Transact
 
 ```bash
 # 1. Register a user (token saved automatically)
@@ -177,10 +187,16 @@ scripts/api-test/
 # 3. List accounts to get IDs
 ./scripts/api-test/quick-test.sh list
 
-# 4. Transfer money
+# 4. Record income
+./scripts/api-test/quick-test.sh income <savings-id> 500 salary
+
+# 5. Record expense
+./scripts/api-test/quick-test.sh expense <checking-id> 100 food
+
+# 6. Transfer money between accounts
 ./scripts/api-test/quick-test.sh transfer <savings-id> <checking-id> 300
 
-# 5. Check transaction status
+# 7. Check transaction status
 ./scripts/api-test/quick-test.sh tx <transaction-id>
 ```
 

@@ -1,0 +1,6 @@
+{
+  "accountId": "REPLACE_WITH_ACCOUNT_ID",
+  "amount": 500.0,
+  "category": "salary",
+  "reason": "Monthly salary"
+}

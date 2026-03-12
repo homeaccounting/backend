@@ -215,17 +215,18 @@ main() {
   "fromAccountId": "$SAVINGS_ID",
   "toAccountId": "$CHECKING_ID",
   "amount": 300.0,
+  "category": "rebalance",
   "reason": "Transfer to checking for bills"
 }
 EOF
 )
 
-    TRANSFER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions" \
+    TRANSFER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
         -d "$TRANSFER_PAYLOAD")
 
-    TRANSACTION_ID=$(echo "$TRANSFER_RESPONSE" | jq -r '.transactionId')
+    TRANSACTION_ID=$(echo "$TRANSFER_RESPONSE" | jq -r '.id')
     TRANSACTION_STATUS=$(echo "$TRANSFER_RESPONSE" | jq -r '.status')
 
     echo "$TRANSFER_RESPONSE" | jq '.'

@@ -45,6 +45,8 @@ print_usage() {
     echo "  revoke <acct-id> <user-id>   - Revoke access (requires auth)"
     echo ""
     echo "Transaction Commands:"
+    echo "  income <acct-id> <amt> <cat> - Record income (requires auth)"
+    echo "  expense <acct-id> <amt> <cat> - Record expense (requires auth)"
     echo "  transfer <from> <to> <amt>   - Transfer money (requires auth)"
     echo "  tx <id>                      - Get transaction status"
     echo ""
@@ -68,6 +70,8 @@ print_usage() {
     echo "  $0 telegram-login 12345 John johndoe       # Override with args"
     echo "  $0 create \"My Account\" 1000"
     echo "  $0 list"
+    echo "  $0 income <account-id> 500 salary"
+    echo "  $0 expense <account-id> 100 food"
     echo "  $0 transfer <from-id> <to-id> 300"
     echo "  $0 profile"
 }
@@ -285,19 +289,55 @@ case "${1:-help}" in
 
     # --- Transactions ---
 
+    income)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Usage: $0 income <account-id> <amount> [category]"
+            echo "  Categories: salary, freelance, investment, gift, other"
+            exit 1
+        fi
+        ACCOUNT_ID="$2"
+        AMOUNT="$3"
+        CATEGORY="${4:-salary}"
+        echo -e "${YELLOW}Recording income of \$$AMOUNT to $ACCOUNT_ID (category: $CATEGORY)${NC}"
+        RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/income" \
+            -H "Content-Type: application/json" \
+            -H "$(auth_header)" \
+            -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"category\": \"$CATEGORY\", \"reason\": \"Quick income\"}")
+        check_jq "$RESPONSE"
+        ;;
+
+    expense)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Usage: $0 expense <account-id> <amount> [category]"
+            echo "  Categories: food, transport, utilities, rent, entertainment, other"
+            exit 1
+        fi
+        ACCOUNT_ID="$2"
+        AMOUNT="$3"
+        CATEGORY="${4:-other}"
+        echo -e "${YELLOW}Recording expense of \$$AMOUNT from $ACCOUNT_ID (category: $CATEGORY)${NC}"
+        RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/expense" \
+            -H "Content-Type: application/json" \
+            -H "$(auth_header)" \
+            -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"category\": \"$CATEGORY\", \"reason\": \"Quick expense\"}")
+        check_jq "$RESPONSE"
+        ;;
+
     transfer)
         if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
-            echo "Usage: $0 transfer <from-id> <to-id> <amount>"
+            echo "Usage: $0 transfer <from-id> <to-id> <amount> [category]"
+            echo "  Categories: rebalance, savings, other"
             exit 1
         fi
         FROM_ID="$2"
         TO_ID="$3"
         AMOUNT="$4"
-        echo -e "${YELLOW}Transferring \$$AMOUNT from $FROM_ID to $TO_ID${NC}"
-        RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions" \
+        CATEGORY="${5:-other}"
+        echo -e "${YELLOW}Transferring \$$AMOUNT from $FROM_ID to $TO_ID (category: $CATEGORY)${NC}"
+        RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"fromAccountId\": \"$FROM_ID\", \"toAccountId\": \"$TO_ID\", \"amount\": $AMOUNT, \"reason\": \"Quick transfer\"}")
+            -d "{\"fromAccountId\": \"$FROM_ID\", \"toAccountId\": \"$TO_ID\", \"amount\": $AMOUNT, \"category\": \"$CATEGORY\", \"reason\": \"Quick transfer\"}")
         check_jq "$RESPONSE"
         ;;
 

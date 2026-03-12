@@ -362,37 +362,108 @@ curl -X DELETE $API_BASE/api/accounts/{account-id}/access/{user-id} \
 
 ## Transaction Endpoints
 
-### 1. Initiate Transfer (Requires Auth)
+### 1. Record Income (Requires Auth)
+
+Record income to an account.
+
+**Request:**
+```bash
+curl -X POST $API_BASE/api/transactions/income \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ***REMOVED***" \
+  -d '{
+    "accountId": "550e8400-e29b-41d4-a716-446655440000",
+    "amount": 500.0,
+    "category": "salary",
+    "reason": "Monthly salary"
+  }' | jq
+```
+
+**Valid Categories:** `salary`, `freelance`, `investment`, `gift`, `other`
+
+**Expected Response (200 OK):**
+```json
+{
+  "id": "750e8400-e29b-41d4-a716-446655440002",
+  "transferType": "income",
+  "accountId": "550e8400-e29b-41d4-a716-446655440000",
+  "amount": 500.0,
+  "category": "salary",
+  "reason": "Monthly salary",
+  "status": "Pending",
+  "failureReason": null
+}
+```
+
+### 2. Record Expense (Requires Auth)
+
+Record an expense from an account.
+
+**Request:**
+```bash
+curl -X POST $API_BASE/api/transactions/expense \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ***REMOVED***" \
+  -d '{
+    "accountId": "550e8400-e29b-41d4-a716-446655440000",
+    "amount": 100.0,
+    "category": "food",
+    "reason": "Groceries"
+  }' | jq
+```
+
+**Valid Categories:** `food`, `transport`, `utilities`, `rent`, `entertainment`, `other`
+
+**Expected Response (200 OK):**
+```json
+{
+  "id": "750e8400-e29b-41d4-a716-446655440003",
+  "transferType": "expense",
+  "accountId": "550e8400-e29b-41d4-a716-446655440000",
+  "amount": 100.0,
+  "category": "food",
+  "reason": "Groceries",
+  "status": "Pending",
+  "failureReason": null
+}
+```
+
+### 3. Initiate Transfer (Requires Auth)
 
 Transfer money between two accounts. This operation is asynchronous and processed by the TransferManager.
 
 **Request:**
 ```bash
-curl -X POST $API_BASE/api/transactions \
+curl -X POST $API_BASE/api/transactions/transfer \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
     "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
     "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
     "amount": 300.0,
+    "category": "rebalance",
     "reason": "Rent payment"
   }' | jq
 ```
 
+**Valid Categories:** `rebalance`, `savings`, `other`
+
 **Expected Response (200 OK):**
 ```json
 {
-  "transactionId": "750e8400-e29b-41d4-a716-446655440002",
+  "id": "750e8400-e29b-41d4-a716-446655440004",
+  "transferType": "transfer",
   "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
   "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 300.0,
+  "category": "rebalance",
   "reason": "Rent payment",
   "status": "Pending",
   "failureReason": null
 }
 ```
 
-### 2. Get Transaction Status
+### 4. Get Transaction Status
 
 Query the status of a transaction (public).
 
@@ -405,10 +476,12 @@ curl -X GET $API_BASE/api/transactions/{transaction-id} | jq
 **Expected Response - Completed (200 OK):**
 ```json
 {
-  "transactionId": "750e8400-e29b-41d4-a716-446655440002",
+  "id": "750e8400-e29b-41d4-a716-446655440002",
+  "transferType": "transfer",
   "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
   "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 300.0,
+  "category": "rebalance",
   "reason": "Rent payment",
   "status": "Completed",
   "failureReason": null
@@ -418,10 +491,12 @@ curl -X GET $API_BASE/api/transactions/{transaction-id} | jq
 **Expected Response - Failed (200 OK):**
 ```json
 {
-  "transactionId": "750e8400-e29b-41d4-a716-446655440002",
+  "id": "750e8400-e29b-41d4-a716-446655440002",
+  "transferType": "transfer",
   "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
   "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 500.0,
+  "category": "other",
   "reason": "Large transfer",
   "status": "Failed",
   "failureReason": "Insufficient funds in source account"
@@ -565,16 +640,17 @@ curl -s -X GET $API_BASE/api/accounts | jq
 
 # 5. Transfer money
 echo -e "\nInitiating transfer..."
-TRANSFER=$(curl -s -X POST $API_BASE/api/transactions \
+TRANSFER=$(curl -s -X POST $API_BASE/api/transactions/transfer \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "{
     \"fromAccountId\": \"$SAVINGS_ID\",
     \"toAccountId\": \"$CHECKING_ID\",
     \"amount\": 300.0,
+    \"category\": \"rebalance\",
     \"reason\": \"Transfer\"
   }")
-TX_ID=$(echo $TRANSFER | jq -r '.transactionId')
+TX_ID=$(echo $TRANSFER | jq -r '.id')
 echo "Transaction ID: $TX_ID"
 echo $TRANSFER | jq
 

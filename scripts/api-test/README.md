@@ -35,6 +35,8 @@ scripts/api-test/
     │   ├── create-checking.json
     │   └── share-account.json
     └── transactions/      # Transaction operation payloads
+        ├── income-500.json
+        ├── expense-100.json
         ├── transfer-300.json
         └── transfer-500.json
 ```
@@ -122,6 +124,8 @@ Available operations:
 
 Available operations:
 - Setup test accounts
+- Record income (requires auth)
+- Record expense (requires auth)
 - Initiate transfer (requires auth)
 - Test transfer without auth (expected 401)
 - Get transaction status
@@ -155,7 +159,9 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 ./scripts/api-test/quick-test.sh get <account-id>
 ./scripts/api-test/quick-test.sh share <account-id> <user-id> editor
 
-# Transactions (transfer requires auth)
+# Transactions (requires auth)
+./scripts/api-test/quick-test.sh income <account-id> 500 salary
+./scripts/api-test/quick-test.sh expense <account-id> 100 food
 ./scripts/api-test/quick-test.sh transfer <from-id> <to-id> 300
 ./scripts/api-test/quick-test.sh tx <transaction-id>
 
@@ -203,7 +209,9 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/api/transactions` | JWT | Create a transaction (transfer) |
+| POST | `/api/transactions/income` | JWT | Record income to an account |
+| POST | `/api/transactions/expense` | JWT | Record an expense from an account |
+| POST | `/api/transactions/transfer` | JWT | Transfer money between accounts |
 | GET | `/api/transactions/:id` | No | Get transaction status |
 
 ### Telegram Webhook
@@ -240,10 +248,12 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 
 ```json
 {
-  "transactionId": "750e8400-e29b-41d4-a716-446655440002",
+  "id": "750e8400-e29b-41d4-a716-446655440002",
+  "transferType": "transfer",
   "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
   "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 300.0,
+  "category": "rebalance",
   "reason": "Rent payment",
   "status": "Pending",
   "failureReason": null
@@ -337,7 +347,7 @@ sudo apt-get install jq
 
 - All amounts are in dollars (decimal format)
 - Account IDs, User IDs, and Transaction IDs are UUIDs
-- Transfers are processed asynchronously by the TransferManager process
+- Transactions (income, expense, transfer) are processed asynchronously by the TransferManager process
 - Transaction status will be "Pending" initially, then "Completed" or "Failed"
 - You may need to poll the transaction status endpoint to see the final result
 - JWT tokens expire after the configured duration (check `expiresIn` in the response)

@@ -2,5 +2,6 @@
   "fromAccountId": "REPLACE_WITH_SOURCE_ACCOUNT_ID",
   "toAccountId": "REPLACE_WITH_TARGET_ACCOUNT_ID",
   "amount": 300.0,
+  "category": "other",
   "reason": "Rent payment"
 }

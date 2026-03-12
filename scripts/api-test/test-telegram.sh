@@ -499,12 +499,12 @@ test_full_workflow() {
 
     # Step 5: Transfer money
     print_step "Step 5: Transfer \$200 (Savings → Checking)"
-    TRANSFER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions" \
+    TRANSFER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"fromAccountId\": \"$SAVINGS_ID\", \"toAccountId\": \"$CHECKING_ID\", \"amount\": 200.0, \"reason\": \"Telegram test transfer\"}")
+        -d "{\"fromAccountId\": \"$SAVINGS_ID\", \"toAccountId\": \"$CHECKING_ID\", \"amount\": 200.0, \"category\": \"other\", \"reason\": \"Telegram test transfer\"}")
 
-    TRANSACTION_ID=$(echo "$TRANSFER_RESPONSE" | jq -r '.transactionId')
+    TRANSACTION_ID=$(echo "$TRANSFER_RESPONSE" | jq -r '.id')
     echo "$TRANSFER_RESPONSE" | jq '.'
     print_success "Transfer initiated: $TRANSACTION_ID"
 

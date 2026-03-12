@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Transaction API Testing Script
-# Tests transaction-related endpoints (money transfers)
+# Tests transaction-related endpoints (income, expense, transfers)
 #
-# Note: Transfer initiation requires JWT authentication.
+# Note: Transaction endpoints require JWT authentication.
 # This script will auto-register a test user if no token is saved.
 #
 # Note: set -e is NOT used so all tests run even when individual assertions fail.
@@ -125,6 +125,96 @@ setup_accounts() {
     echo "$TARGET_ACCOUNT_ID" > /tmp/test_target_account_id.txt
 }
 
+# Test: Initiate Income
+test_initiate_income() {
+    print_header "TEST: Initiate Income"
+
+    ensure_authenticated
+
+    if [ ! -f /tmp/test_source_account_id.txt ]; then
+        print_error "Accounts not set up. Run setup first."
+        return 1
+    fi
+
+    SOURCE_ACCOUNT_ID=$(cat /tmp/test_source_account_id.txt)
+
+    print_info "Recording income of \$500 to $SOURCE_ACCOUNT_ID"
+
+    INCOME_PAYLOAD=$(cat <<EOF
+{
+  "accountId": "$SOURCE_ACCOUNT_ID",
+  "amount": 500.0,
+  "category": "salary",
+  "reason": "Test income - Monthly salary"
+}
+EOF
+)
+
+    RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/income" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -d "$INCOME_PAYLOAD")
+
+    echo "$RESPONSE" | jq '.'
+
+    TRANSACTION_ID=$(echo "$RESPONSE" | jq -r '.id')
+    TRANSACTION_STATUS=$(echo "$RESPONSE" | jq -r '.status')
+
+    if [ -n "$TRANSACTION_ID" ] && [ "$TRANSACTION_ID" != "null" ]; then
+        print_success "Income recorded. Transaction ID: $TRANSACTION_ID"
+        print_info "Initial status: $TRANSACTION_STATUS"
+        echo "$TRANSACTION_ID" > /tmp/test_income_transaction_id.txt
+    else
+        print_error "Failed to record income"
+        return 1
+    fi
+}
+
+# Test: Initiate Expense
+test_initiate_expense() {
+    print_header "TEST: Initiate Expense"
+
+    ensure_authenticated
+
+    if [ ! -f /tmp/test_source_account_id.txt ]; then
+        print_error "Accounts not set up. Run setup first."
+        return 1
+    fi
+
+    SOURCE_ACCOUNT_ID=$(cat /tmp/test_source_account_id.txt)
+
+    print_info "Recording expense of \$100 from $SOURCE_ACCOUNT_ID"
+
+    EXPENSE_PAYLOAD=$(cat <<EOF
+{
+  "accountId": "$SOURCE_ACCOUNT_ID",
+  "amount": 100.0,
+  "category": "food",
+  "reason": "Test expense - Groceries"
+}
+EOF
+)
+
+    RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/expense" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -d "$EXPENSE_PAYLOAD")
+
+    echo "$RESPONSE" | jq '.'
+
+    TRANSACTION_ID=$(echo "$RESPONSE" | jq -r '.id')
+    TRANSACTION_STATUS=$(echo "$RESPONSE" | jq -r '.status')
+
+    if [ -n "$TRANSACTION_ID" ] && [ "$TRANSACTION_ID" != "null" ]; then
+        print_success "Expense recorded. Transaction ID: $TRANSACTION_ID"
+        print_info "Initial status: $TRANSACTION_STATUS"
+        echo "$TRANSACTION_ID" > /tmp/test_expense_transaction_id.txt
+    else
+        print_error "Failed to record expense"
+        return 1
+    fi
+}
+
 # Test: Initiate Transfer
 test_initiate_transfer() {
     print_header "TEST: Initiate Transfer"
@@ -146,19 +236,20 @@ test_initiate_transfer() {
   "fromAccountId": "$SOURCE_ACCOUNT_ID",
   "toAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 300.0,
+  "category": "other",
   "reason": "Test transfer - Rent payment"
 }
 EOF
 )
 
-    RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions" \
+    RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
         -d "$TRANSFER_PAYLOAD")
 
     echo "$RESPONSE" | jq '.'
 
-    TRANSACTION_ID=$(echo "$RESPONSE" | jq -r '.transactionId')
+    TRANSACTION_ID=$(echo "$RESPONSE" | jq -r '.id')
     TRANSACTION_STATUS=$(echo "$RESPONSE" | jq -r '.status')
 
     if [ -n "$TRANSACTION_ID" ] && [ "$TRANSACTION_ID" != "null" ]; then
@@ -176,12 +267,13 @@ test_transfer_unauthorized() {
     print_header "TEST: Initiate Transfer Without Auth (Expected 401)"
 
     print_info "Attempting to create transfer without token..."
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/transactions" \
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -d '{
             "fromAccountId": "00000000-0000-0000-0000-000000000001",
             "toAccountId": "00000000-0000-0000-0000-000000000002",
             "amount": 100.0,
+            "category": "other",
             "reason": "Unauthorized transfer"
         }')
 
@@ -294,19 +386,20 @@ test_insufficient_funds_transfer() {
   "fromAccountId": "$SOURCE_ACCOUNT_ID",
   "toAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 10000.0,
+  "category": "other",
   "reason": "Test transfer - Should fail"
 }
 EOF
 )
 
-    RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions" \
+    RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
         -d "$TRANSFER_PAYLOAD")
 
     echo "$RESPONSE" | jq '.'
 
-    TRANSACTION_ID=$(echo "$RESPONSE" | jq -r '.transactionId')
+    TRANSACTION_ID=$(echo "$RESPONSE" | jq -r '.id')
 
     if [ -n "$TRANSACTION_ID" ] && [ "$TRANSACTION_ID" != "null" ]; then
         print_info "Transfer initiated (will fail). Transaction ID: $TRANSACTION_ID"
@@ -345,6 +438,8 @@ main() {
         echo "Available tests:"
         echo "  all              - Run all tests in sequence"
         echo "  setup            - Create test accounts (requires auth)"
+        echo "  income           - Record an income transaction (requires auth)"
+        echo "  expense          - Record an expense transaction (requires auth)"
         echo "  initiate         - Initiate a transfer (requires auth)"
         echo "  unauthorized     - Test transfer without auth (expected 401)"
         echo "  status           - Get transaction status"
@@ -358,6 +453,8 @@ main() {
     case "$1" in
         all)
             setup_accounts
+            test_initiate_income
+            test_initiate_expense
             test_initiate_transfer
             test_transfer_unauthorized
             test_get_transaction
@@ -367,6 +464,12 @@ main() {
             ;;
         setup)
             setup_accounts
+            ;;
+        income)
+            test_initiate_income
+            ;;
+        expense)
+            test_initiate_expense
             ;;
         initiate)
             test_initiate_transfer
