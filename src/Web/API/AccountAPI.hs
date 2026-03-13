@@ -21,6 +21,7 @@
 --   GET    /api/accounts              - List all accounts
 --   POST   /api/accounts/:id/share    - Share account with another user
 --   DELETE /api/accounts/:id/access/:userId - Revoke user's access
+--   PUT    /api/accounts/:id/overdraft-limit - Set overdraft limit
 --
 -- Handler Responsibilities (HTTP concerns only):
 --   1. Extract data from HTTP request (path params, body, auth)
@@ -35,6 +36,7 @@ module Web.API.AccountAPI
 
     -- * Request/Response Types
     ShareAccountRequest (..),
+    SetOverdraftLimitRequest (..),
 
     -- * Server
     accountServer,
@@ -45,6 +47,7 @@ module Web.API.AccountAPI
     listAccountsHandler,
     shareAccountHandler,
     revokeAccountAccessHandler,
+    setOverdraftLimitHandler,
   )
 where
 
@@ -52,7 +55,7 @@ import qualified Application.Services.AccountService as AccountService
 import Data.Aeson (FromJSON, ToJSON)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Domain.Core.Types (AccountType (..))
+import Domain.Core.Types (AccountType (..), mkMoney, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
@@ -120,6 +123,14 @@ type AccountAPI =
       :> "access"
       :> Capture "userId" UUID
       :> Delete '[JSON] NoContent
+    -- PUT /api/accounts/:id/overdraft-limit - Set overdraft limit (requires auth, owner only)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "accounts"
+      :> Capture "id" UUID
+      :> "overdraft-limit"
+      :> ReqBody '[JSON] SetOverdraftLimitRequest
+      :> Put '[JSON] NoContent
 
 -- -----------------------------------------------------------------------------
 -- Request Types
@@ -135,6 +146,17 @@ data ShareAccountRequest = ShareAccountRequest
 instance ToJSON ShareAccountRequest
 
 instance FromJSON ShareAccountRequest
+
+-- | Set overdraft limit request.
+data SetOverdraftLimitRequest = SetOverdraftLimitRequest
+  { overdraftLimit :: Maybe Double,
+    currency :: Maybe Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SetOverdraftLimitRequest
+
+instance FromJSON SetOverdraftLimitRequest
 
 -- | Proxy for the AccountAPI.
 accountAPI :: Proxy AccountAPI
@@ -152,6 +174,7 @@ accountServer =
     :<|> listAccountsHandler
     :<|> shareAccountHandler
     :<|> revokeAccountAccessHandler
+    :<|> setOverdraftLimitHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
@@ -204,6 +227,27 @@ revokeAccountAccessHandler :: AuthenticatedUser -> UUID -> UUID -> AppM NoConten
 revokeAccountAccessHandler user accountUuid targetUserUuid = do
   let userId = user.userId
   result <- AccountService.revokeAccountAccess userId accountUuid targetUserUuid
+  case result of
+    Right () -> return NoContent
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/accounts/:id/overdraft-limit - Set overdraft limit.
+setOverdraftLimitHandler :: AuthenticatedUser -> UUID -> SetOverdraftLimitRequest -> AppM NoContent
+setOverdraftLimitHandler user accountUuid SetOverdraftLimitRequest {..} = do
+  let userId = user.userId
+
+  domainLimit <- case overdraftLimit of
+    Nothing -> return Nothing
+    Just amt -> do
+      let curText = fromMaybe "USD" currency
+      case parseCurrency curText of
+        Left err -> throwDomainError $ ValidationErr $ mkValidationError "currency" err curText
+        Right cur ->
+          case mkMoney cur (toRational amt) of
+            Left err -> throwDomainError $ ValidationErr $ mkValidationError "overdraftLimit" err (tshow amt)
+            Right money -> return (Just money)
+
+  result <- AccountService.setOverdraftLimit userId accountUuid domainLimit
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err

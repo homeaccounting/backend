@@ -9,7 +9,7 @@
 -- using QuickCheck property-based testing.
 --
 -- Test Coverage:
---   - Money: Non-negativity, commutativity, associativity, identity
+--   - Money: Commutativity, associativity, identity, subtraction
 --   - Identifiers: Uniqueness, non-nil invariants
 module Domain.Core.TypesPropertySpec (spec) where
 
@@ -36,11 +36,6 @@ spec = do
 moneyPropertySpec :: Spec
 moneyPropertySpec = describe "Money Properties" $ do
   describe "When performing arithmetic operations" $ do
-    it "Then maintains non-negativity invariant"
-      $ property
-      $ \(m :: Money) ->
-        unMoney m >= 0
-
     it "Then addition is commutative (same currency)"
       $ property
       $ forAll genCurrency
@@ -68,27 +63,15 @@ moneyPropertySpec = describe "Money Properties" $ do
           let zero = unsafeMoney cur 0
            in addMoney m zero === Right m
 
-    it "Then subtraction maintains non-negativity when valid (same currency)"
+    it "Then subtraction always succeeds for same currency"
       $ property
       $ forAll genCurrency
       $ \cur ->
         forAll (genMoneyIn cur) $ \m1 ->
           forAll (genMoneyIn cur) $ \m2 ->
-            unMoney m1 >= unMoney m2 ==>
-              case subtractMoney m1 m2 of
-                Right result -> unMoney result >= 0
-                Left _ -> False
-
-    it "Then subtraction fails when insufficient funds (same currency)"
-      $ property
-      $ forAll genCurrency
-      $ \cur ->
-        forAll (genMoneyIn cur) $ \m1 ->
-          forAll (genMoneyIn cur) $ \m2 ->
-            unMoney m1 < unMoney m2 ==>
-              case subtractMoney m1 m2 of
-                Left _ -> True
-                Right _ -> False
+            case subtractMoney m1 m2 of
+              Right result -> unMoney result === unMoney m1 - unMoney m2
+              Left _ -> property False
 
   describe "When currencies differ" $ do
     it "Then addMoney returns Left"

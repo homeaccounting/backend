@@ -62,6 +62,7 @@ import Domain.Account.Events
     AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
+    OverdraftLimitSet (..),
   )
 import Domain.Core.Types
   ( AccountAccess (..),
@@ -72,7 +73,7 @@ import Domain.Core.Types
     UserId,
     addMoney,
     mkAccountIdSafe,
-    subtractMoneyAllowNegative,
+    subtractMoney,
   )
 import Domain.Models
   ( AccountingEvent (..),
@@ -105,6 +106,8 @@ data AccountData = AccountData
     accountType :: AccountType,
     -- | Access control list (users and their roles)
     accessList :: [AccountAccess],
+    -- | Overdraft limit (Nothing = unlimited)
+    overdraftLimit :: Maybe Money,
     -- | Version number from event stream for optimistic concurrency
     version :: Int
   }
@@ -230,6 +233,7 @@ processEvent summaries globalEvent =
                         createdBy = evt.by,
                         accountType = evt.accountType,
                         accessList = [initialAccess],
+                        overdraftLimit = evt.overdraftLimit,
                         version = 1
                       }
                     summaries
@@ -270,7 +274,7 @@ processEvent summaries globalEvent =
             Just accountId ->
               Map.adjust
                 ( \summary ->
-                    case subtractMoneyAllowNegative summary.balance evt.amount of
+                    case subtractMoney summary.balance evt.amount of
                       Right newBalance ->
                         summary
                           { balance = newBalance,
@@ -293,6 +297,19 @@ processEvent summaries globalEvent =
                             version = summary.version + 1
                           }
                       Left _ -> summary -- Currency mismatch: should not happen for valid events
+                )
+                accountId
+                summaries
+        OverdraftLimitSetEvent evt ->
+          case mkAccountIdSafe streamUuid of
+            Nothing -> summaries
+            Just accountId ->
+              Map.adjust
+                ( \summary ->
+                    summary
+                      { overdraftLimit = evt.overdraftLimit,
+                        version = summary.version + 1
+                      }
                 )
                 accountId
                 summaries

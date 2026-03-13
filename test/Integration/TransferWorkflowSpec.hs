@@ -100,7 +100,8 @@ setupRegularAccounts = do
           { name = "Source Account",
             initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
-            accountType = RegularAccount
+            accountType = RegularAccount,
+            overdraftLimit = Nothing
           }
 
   -- Create target account with initial balance of 500
@@ -111,7 +112,8 @@ setupRegularAccounts = do
           { name = "Target Account",
             initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
-            accountType = RegularAccount
+            accountType = RegularAccount,
+            overdraftLimit = Nothing
           }
 
   return (env, acctUuid1, acctUuid2, userUuid)
@@ -134,7 +136,8 @@ setupRegularAccountsWithPM = do
           { name = "Source Account",
             initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
-            accountType = RegularAccount
+            accountType = RegularAccount,
+            overdraftLimit = Nothing
           }
 
   _ <-
@@ -144,7 +147,8 @@ setupRegularAccountsWithPM = do
           { name = "Target Account",
             initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
-            accountType = RegularAccount
+            accountType = RegularAccount,
+            overdraftLimit = Nothing
           }
 
   return (env, acctUuid1, acctUuid2, userUuid)
@@ -282,7 +286,8 @@ incomeFlowSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = ExternalAccount
+                accountType = ExternalAccount,
+                overdraftLimit = Nothing
               }
 
       -- Create regular account (income destination)
@@ -293,7 +298,8 @@ incomeFlowSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = RegularAccount
+                accountType = RegularAccount,
+                overdraftLimit = Nothing
               }
 
       -- Transfer from external to regular (income flow)
@@ -335,7 +341,8 @@ expenseFlowSpec =
               { name = "Checking",
                 initialBalance = unsafeMoney USD 1000,
                 createdBy = unsafeUserId userUuid,
-                accountType = RegularAccount
+                accountType = RegularAccount,
+                overdraftLimit = Nothing
               }
 
       -- Create external account (expense destination)
@@ -346,7 +353,8 @@ expenseFlowSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = ExternalAccount
+                accountType = ExternalAccount,
+                overdraftLimit = Nothing
               }
 
       -- Transfer from regular to external (expense flow)
@@ -525,7 +533,8 @@ processManagerDrivenSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = ExternalAccount
+                accountType = ExternalAccount,
+                overdraftLimit = Nothing
               }
 
       -- Create regular account
@@ -536,7 +545,8 @@ processManagerDrivenSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = RegularAccount
+                accountType = RegularAccount,
+                overdraftLimit = Nothing
               }
 
       -- Income: External(0) -> Regular(0), amount 500
@@ -556,13 +566,13 @@ processManagerDrivenSpec =
         Just regData ->
           regData.balance `shouldBe` unsafeMoney USD 500
 
-    it "fails transfer when regular account has insufficient funds" $ do
+    it "rejects transfer exceeding balance for regular account (default overdraft 0)" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
 
-      -- Source has 1000, try to transfer 5000
-      txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 5000 "Too much"
+      -- Source has 1000, transfer 5000 — rejected because Regular accounts default to Just 0 overdraft
+      txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 5000 "Overdraft"
 
-      -- Transaction should be Failed
+      -- Transaction should be Failed (insufficient funds)
       let txReadModel = env.transactionReadModel
       maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
@@ -570,7 +580,7 @@ processManagerDrivenSpec =
         Just txData ->
           txData.status `shouldBe` Failed "Insufficient funds"
 
-      -- Balances should be unchanged
+      -- Balances should remain unchanged
       let acctReadModel = env.accountReadModel
       maybeSrc <- getAccount acctReadModel (unsafeAccountId acct1Uuid)
       case maybeSrc of
@@ -631,7 +641,8 @@ categorizedTransferSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = ExternalAccount
+                accountType = ExternalAccount,
+                overdraftLimit = Nothing
               }
 
       -- Create regular account (income destination)
@@ -642,7 +653,8 @@ categorizedTransferSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = RegularAccount
+                accountType = RegularAccount,
+                overdraftLimit = Nothing
               }
 
       -- Initiate income transfer with Income type and Salary category
@@ -701,7 +713,8 @@ categorizedTransferSpec =
               { name = "Checking",
                 initialBalance = unsafeMoney USD 5000,
                 createdBy = unsafeUserId userUuid,
-                accountType = RegularAccount
+                accountType = RegularAccount,
+                overdraftLimit = Nothing
               }
 
       -- Create external account (expense destination)
@@ -712,7 +725,8 @@ categorizedTransferSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountType = ExternalAccount
+                accountType = ExternalAccount,
+                overdraftLimit = Nothing
               }
 
       -- Initiate expense transfer with Expense type and Food category

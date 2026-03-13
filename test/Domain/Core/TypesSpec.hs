@@ -62,12 +62,12 @@ moneySpec = describe "Money" $ do
           Left _ -> expectationFailure "Expected Right"
 
     context "Given negative amount" $ do
-      it "Then rejects with error message" $ do
+      it "Then accepts negative amounts" $ do
         let result = mkMoney USD (-10)
-        shouldBeLeft result
+        shouldBeRight result
         case result of
-          Left err -> err `shouldSatisfy` (\msg -> "non-negative" `isInfixOf` msg)
-          Right _ -> expectationFailure "Expected Left"
+          Right money -> unMoney money `shouldBe` (-10)
+          Left _ -> expectationFailure "Expected Right"
 
   describe "addMoney" $ do
     it "Then adds two amounts correctly" $ do
@@ -119,15 +119,15 @@ moneySpec = describe "Money" $ do
           Right money -> unMoney money `shouldBe` 0
           Left _ -> expectationFailure "Expected Right"
 
-    context "Given insufficient funds" $ do
-      it "Then returns error" $ do
+    context "Given larger subtrahend" $ do
+      it "Then succeeds with negative result" $ do
         let m1 = mockMoney 50
         let m2 = mockMoney 100
         let result = subtractMoney m1 m2
-        shouldBeLeft result
+        shouldBeRight result
         case result of
-          Left err -> err `shouldSatisfy` (\msg -> "Insufficient funds" `isInfixOf` msg)
-          Right _ -> expectationFailure "Expected Left"
+          Right money -> unMoney money `shouldBe` (-50)
+          Left _ -> expectationFailure "Expected Right"
 
     context "Given currency mismatch" $ do
       it "Then returns error" $ do

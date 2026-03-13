@@ -57,6 +57,7 @@ module Domain.Account
     AccountAccessRevoked (..),
     AccountDebited (..),
     AccountCredited (..),
+    OverdraftLimitSet (..),
     accountEvents,
 
     -- * Projection
@@ -72,6 +73,7 @@ import Domain.Account.Events
     AccountCreated (AccountCreated),
     AccountCredited (..),
     AccountDebited (..),
+    OverdraftLimitSet (..),
     accountEvents,
   )
 import Domain.Account.Projection

@@ -36,6 +36,7 @@ module Domain.Account.Commands
     RevokeAccountAccess (..),
     DebitAccount (..),
     CreditAccount (..),
+    SetOverdraftLimit (..),
   )
 where
 
@@ -58,7 +59,8 @@ accountCommands =
     ''ShareAccount,
     ''RevokeAccountAccess,
     ''DebitAccount,
-    ''CreditAccount
+    ''CreditAccount,
+    ''SetOverdraftLimit
   ]
 
 -- -----------------------------------------------------------------------------
@@ -89,7 +91,9 @@ data CreateAccount = CreateAccount
     -- | User who is creating the account (becomes Owner)
     createdBy :: UserId,
     -- | Type of account (Regular or External)
-    accountType :: AccountType
+    accountType :: AccountType,
+    -- | Optional overdraft limit (Nothing = use default for account type)
+    overdraftLimit :: Maybe (Maybe Money)
   }
   deriving (Show, Eq)
 
@@ -187,6 +191,25 @@ data CreditAccount = CreditAccount
   }
   deriving (Show, Eq)
 
+-- | Command to set or remove the overdraft limit on an account.
+--
+-- Only the account owner can set the overdraft limit.
+-- Setting to Nothing means unlimited overdraft (no limit).
+-- Setting to Just limit means the account can go negative up to that amount.
+--
+-- Business Rules:
+--   - Only Owner can set overdraft limit
+--   - Account must exist
+--   - If setting a limit, currency must match account currency
+--
+-- Example:
+-- >>> SetOverdraftLimit (Just (Money 500)) ownerId
+data SetOverdraftLimit = SetOverdraftLimit
+  { overdraftLimit :: Maybe Money,
+    setBy :: UserId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -197,3 +220,4 @@ deriveJSON defaultOptions ''ShareAccount
 deriveJSON defaultOptions ''RevokeAccountAccess
 deriveJSON defaultOptions ''DebitAccount
 deriveJSON defaultOptions ''CreditAccount
+deriveJSON defaultOptions ''SetOverdraftLimit

@@ -126,7 +126,8 @@ data CreateAccountRequest
   = CreateAccountRequest
   { name :: Text,
     initialBalance :: Double,
-    currency :: Text
+    currency :: Text,
+    overdraftLimit :: Maybe Double
   }
   deriving (Show, Eq, Generic)
 
@@ -172,6 +173,7 @@ data AccountResponse
     name :: Text,
     balance :: Double,
     currency :: Text,
+    overdraftLimit :: Maybe Double,
     version :: Int
   }
   deriving (Show, Eq, Generic)
@@ -492,8 +494,15 @@ toCreateAccountCommand createdBy accountType CreateAccountRequest {..} = do
   -- Validate and convert initial balance
   domainBalance <- toDomainMoney cur initialBalance
 
+  -- Convert optional overdraft limit
+  domainLimit <- case overdraftLimit of
+    Nothing -> Right Nothing
+    Just amt -> do
+      money <- toDomainMoney cur (abs amt)
+      Right (Just (Just money))
+
   -- Create domain command with owner and type
-  return $ CreateAccount name domainBalance createdBy accountType
+  return $ CreateAccount name domainBalance createdBy accountType domainLimit
   where
     when :: Bool -> Either Text () -> Either Text ()
     when True action = action
@@ -565,6 +574,7 @@ fromAccountData accountId AccountData {..} =
       name = name,
       balance = fromDomainMoney balance,
       currency = currencyToText (moneyCurrency balance),
+      overdraftLimit = fmap fromDomainMoney overdraftLimit,
       version = version
     }
 

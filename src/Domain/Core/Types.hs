@@ -22,7 +22,6 @@ module Domain.Core.Types
     moneyCurrency,
     addMoney,
     subtractMoney,
-    subtractMoneyAllowNegative,
 
     -- * Identifiers
     AccountId,
@@ -123,11 +122,10 @@ parseCurrency t = case T.toUpper t of
 -- Uses Rational instead of Double to avoid floating-point precision issues.
 -- This ensures exact calculations for financial operations.
 --
--- Invariant: Money values must be non-negative.
--- Use smart constructor 'mkMoney' to create validated instances.
+-- Money values can be negative (overdraft enforcement is at account level).
+-- Use smart constructor 'mkMoney' to create instances.
 --
 -- Mathematical Properties:
---  - Non-negative: forall m. unMoney m >= 0
 --  - Additive identity: addMoney m (mkMoney c 0) = m (when currencies match)
 --  - Commutative: addMoney m1 m2 = addMoney m2 m1 (when currencies match)
 --  - Associative: addMoney (addMoney m1 m2) m3 = addMoney m1 (addMoney m2 m3) (when currencies match)
@@ -167,17 +165,15 @@ instance FromJSON Money where
 
 -- | Smart constructor for Money from Currency and Rational.
 --
--- Creates a Money value if the amount is non-negative.
+-- Creates a Money value for any amount (negative values are allowed).
 --
 -- >>> mkMoney UAH 100
 -- Right (Money {amount = 100 % 1, currency = UAH})
 --
 -- >>> mkMoney UAH (-10)
--- Left "Money amount must be non-negative: (-10) % 1"
+-- Right (Money {amount = (-10) % 1, currency = UAH})
 mkMoney :: Currency -> Rational -> Either Text Money
-mkMoney cur amt
-  | amt < 0 = Left $ T.pack $ "Money amount must be non-negative: " <> show amt
-  | otherwise = Right (Money amt cur)
+mkMoney cur amt = Right (Money amt cur)
 
 -- | Smart constructor for Money using the default currency (USD).
 --
@@ -207,20 +203,10 @@ addMoney (Money a ca) (Money b cb)
 
 -- | Subtract two Money values.
 --
--- Returns an error if the currencies do not match or if the result would be negative.
+-- Returns an error only if the currencies do not match.
+-- Negative results are allowed (overdraft enforcement is at account level).
 subtractMoney :: Money -> Money -> Either Text Money
 subtractMoney (Money a ca) (Money b cb)
-  | ca /= cb = Left $ "Currency mismatch: cannot subtract " <> T.pack (show cb) <> " from " <> T.pack (show ca)
-  | a < b = Left $ T.pack $ "Insufficient funds: cannot subtract " <> show b <> " from " <> show a
-  | otherwise = Right (Money (a - b) ca)
-
--- | Subtract two Money values, allowing negative results.
---
--- This is used for External accounts that can go negative
--- (representing money owed to the "outside world").
--- Returns an error if the currencies do not match.
-subtractMoneyAllowNegative :: Money -> Money -> Either Text Money
-subtractMoneyAllowNegative (Money a ca) (Money b cb)
   | ca /= cb = Left $ "Currency mismatch: cannot subtract " <> T.pack (show cb) <> " from " <> T.pack (show ca)
   | otherwise = Right (Money (a - b) ca)
 

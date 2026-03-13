@@ -22,7 +22,7 @@ module Domain.Account.CommandHandlerSpec (spec) where
 import Data.Either (isLeft)
 import Domain.Account
 import Domain.Account.CommandHandler
-import Domain.Account.Commands (CreditAccount (..), DebitAccount (..))
+import Domain.Account.Commands (CreditAccount (..), DebitAccount (..), SetOverdraftLimit (..))
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
@@ -43,6 +43,7 @@ spec = do
   shareAccountSpec
   revokeAccessSpec
   currencyMismatchSpec
+  setOverdraftLimitSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -71,7 +72,7 @@ regularAccountWithOwner :: UserId -> Account
 regularAccountWithOwner ownerId =
   applyEvents
     [ AccountCreatedAccountEvent
-        $ AccountCreated "Test Account" (mockMoney 1000) ownerId RegularAccount
+        $ AccountCreated "Test Account" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0))
     ]
 
 -- | Create an external account with an owner
@@ -79,7 +80,7 @@ externalAccountWithOwner :: UserId -> Account
 externalAccountWithOwner ownerId =
   applyEvents
     [ AccountCreatedAccountEvent
-        $ AccountCreated "External" (mockMoney 0) ownerId ExternalAccount
+        $ AccountCreated "External" (mockMoney 0) ownerId ExternalAccount Nothing
     ]
 
 -- | Create an account with shared access
@@ -87,7 +88,7 @@ accountWithSharedAccess :: UserId -> UserId -> AccountRole -> Account
 accountWithSharedAccess ownerId sharedUserId role =
   applyEvents
     [ AccountCreatedAccountEvent
-        $ AccountCreated "Shared Account" (mockMoney 1000) ownerId RegularAccount,
+        $ AccountCreated "Shared Account" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
       AccountAccessGrantedAccountEvent
         $ AccountAccessGranted sharedUserId role ownerId
     ]
@@ -108,7 +109,8 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Savings",
                     initialBalance = mockMoney 1000,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount
+                    accountType = RegularAccount,
+                    overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
 
@@ -132,7 +134,8 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Checking",
                     initialBalance = mockMoney 500,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount
+                    accountType = RegularAccount,
+                    overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
 
@@ -143,6 +146,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
             newAccount ^. #balance `shouldBe` mockMoney 500
             newAccount ^. #createdBy `shouldBe` testOwnerId
             newAccount ^. #accountType `shouldBe` RegularAccount
+            newAccount ^. #overdraftLimit `shouldBe` Just (mockMoney 0)
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
       it "Then owner is automatically added to access list" $ do
@@ -153,7 +157,8 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "My Account",
                     initialBalance = mockMoney 0,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount
+                    accountType = RegularAccount,
+                    overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
 
@@ -176,7 +181,8 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "External",
                     initialBalance = mockMoney 0,
                     createdBy = testOwnerId,
-                    accountType = ExternalAccount
+                    accountType = ExternalAccount,
+                    overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
 
@@ -187,6 +193,8 @@ createAccountSpec = describe "CreateAccount Command" $ do
               AccountCreatedAccountEvent created ->
                 created.accountType `shouldBe` ExternalAccount
               _ -> expectationFailure "Expected AccountCreated event"
+            let newAccount = applyEvents events
+            newAccount ^. #overdraftLimit `shouldBe` Nothing
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
     describe "When creating account with empty name" $ do
@@ -198,7 +206,8 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "",
                     initialBalance = mockMoney 1000,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount
+                    accountType = RegularAccount,
+                    overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
 
@@ -214,7 +223,8 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Another Account",
                     initialBalance = mockMoney 500,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount
+                    accountType = RegularAccount,
+                    overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
 
@@ -265,7 +275,7 @@ shareAccountSpec = describe "ShareAccount Command" $ do
           Right events -> do
             let baseEvents =
                   [ AccountCreatedAccountEvent
-                      $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId RegularAccount
+                      $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0))
                   ]
             let newAccount = applyEvents (baseEvents <> events)
             getUserRole testEditorId newAccount `shouldBe` Just Editor
@@ -392,7 +402,7 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
           Right events -> do
             let baseEvents =
                   [ AccountCreatedAccountEvent
-                      $ AccountCreated "Shared Account" (mockMoney 1000) testOwnerId RegularAccount,
+                      $ AccountCreated "Shared Account" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0)),
                     AccountAccessGrantedAccountEvent
                       $ AccountAccessGranted testEditorId Editor testOwnerId
                   ]
@@ -406,7 +416,7 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let account =
               applyEvents
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) testOwnerId RegularAccount,
+                    $ AccountCreated "Test" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted testEditorId Editor testOwnerId,
                   AccountAccessGrantedAccountEvent
@@ -493,6 +503,80 @@ currencyMismatchSpec = describe "CurrencyMismatch" $ do
                   { amount = mockMoneyWith EUR 100,
                     transactionId = testTransactionId,
                     reason = "Transfer"
+                  }
+        let result = handleAccountCommand account command
+        result `shouldBe` Left CurrencyMismatch
+
+-- -----------------------------------------------------------------------------
+-- SetOverdraftLimit Tests
+-- -----------------------------------------------------------------------------
+
+setOverdraftLimitSpec :: Spec
+setOverdraftLimitSpec = describe "SetOverdraftLimit Command" $ do
+  context "Given regular account with owner" $ do
+    describe "When owner sets overdraft limit" $ do
+      it "Then emits OverdraftLimitSet event" $ do
+        let account = regularAccountWithOwner testOwnerId
+        let command =
+              SetOverdraftLimitAccountCommand
+                $ SetOverdraftLimit
+                  { overdraftLimit = Just (mockMoney 500),
+                    setBy = testOwnerId
+                  }
+        let result = handleAccountCommand account command
+        case result of
+          Right events -> length events `shouldBe` 1
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+      it "Then overdraft limit is applied to account state" $ do
+        let baseEvents =
+              [ AccountCreatedAccountEvent
+                  $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0))
+              ]
+        let account = applyEvents baseEvents
+        let command =
+              SetOverdraftLimitAccountCommand
+                $ SetOverdraftLimit
+                  { overdraftLimit = Just (mockMoney 500),
+                    setBy = testOwnerId
+                  }
+        case handleAccountCommand account command of
+          Right events -> do
+            let newAccount = applyEvents (baseEvents <> events)
+            newAccount ^. #overdraftLimit `shouldBe` Just (mockMoney 500)
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+      it "Then can set to Nothing for unlimited overdraft" $ do
+        let account = regularAccountWithOwner testOwnerId
+        let command =
+              SetOverdraftLimitAccountCommand
+                $ SetOverdraftLimit
+                  { overdraftLimit = Nothing,
+                    setBy = testOwnerId
+                  }
+        let result = handleAccountCommand account command
+        shouldBeRight result
+
+    describe "When non-owner tries to set overdraft limit" $ do
+      it "Then rejects command" $ do
+        let account = accountWithSharedAccess testOwnerId testEditorId Editor
+        let command =
+              SetOverdraftLimitAccountCommand
+                $ SetOverdraftLimit
+                  { overdraftLimit = Just (mockMoney 500),
+                    setBy = testEditorId
+                  }
+        let result = handleAccountCommand account command
+        result `shouldSatisfy` isLeft
+
+    describe "When setting overdraft with currency mismatch" $ do
+      it "Then rejects command" $ do
+        let account = regularAccountWithOwner testOwnerId
+        let command =
+              SetOverdraftLimitAccountCommand
+                $ SetOverdraftLimit
+                  { overdraftLimit = Just (mockMoneyWith EUR 500),
+                    setBy = testOwnerId
                   }
         let result = handleAccountCommand account command
         result `shouldBe` Left CurrencyMismatch

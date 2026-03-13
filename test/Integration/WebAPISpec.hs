@@ -345,8 +345,8 @@ accountCreationSpec =
 
         postJSONAuth "/api/accounts" token (encode payload) `shouldRespondWith` 400
 
-    describe "rejects account creation with negative balance" $ with mkApp $ do
-      it "returns 400" $ do
+    describe "accepts account creation with negative balance" $ with mkApp $ do
+      it "returns 201" $ do
         token <- liftIO generateTestToken
         let payload =
               object
@@ -355,7 +355,7 @@ accountCreationSpec =
                   "currency" .= ("USD" :: Text)
                 ]
 
-        postJSONAuth "/api/accounts" token (encode payload) `shouldRespondWith` 400
+        postJSONAuth "/api/accounts" token (encode payload) `shouldRespondWith` 201
 
 -- | Test account retrieval via GET /api/accounts/:id
 accountRetrievalSpec :: Spec

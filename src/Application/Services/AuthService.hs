@@ -182,7 +182,8 @@ register email password = do
                             { name = "External",
                               initialBalance = unsafeMoney USD 0,
                               createdBy = userId,
-                              accountType = ExternalAccount
+                              accountType = ExternalAccount,
+                              overdraftLimit = Nothing
                             }
 
                   result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
@@ -538,7 +539,8 @@ createUserViaOAuth email oauthIdentity = do
                         { name = "External",
                           initialBalance = unsafeMoney USD 0,
                           createdBy = uid,
-                          accountType = ExternalAccount
+                          accountType = ExternalAccount,
+                          overdraftLimit = Nothing
                         }
               result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
               case result2 of
@@ -591,7 +593,8 @@ createUserViaTelegram telegramIdentity = do
                         { name = "External",
                           initialBalance = unsafeMoney USD 0,
                           createdBy = uid,
-                          accountType = ExternalAccount
+                          accountType = ExternalAccount,
+                          overdraftLimit = Nothing
                         }
               result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
               case result2 of

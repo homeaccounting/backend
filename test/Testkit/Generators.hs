@@ -72,11 +72,8 @@ instance Arbitrary Currency where
 
 -- | Generate a valid Money value with a random currency.
 --
--- Generates non-negative amounts up to 1,000,000.00 with 2 decimal places.
+-- Generates amounts from -1,000,000.00 to 1,000,000.00 with 2 decimal places.
 -- Uses Rational for exact arithmetic.
---
--- Property:
---  forall m <- genMoney. unMoney m >= 0
 genMoney :: Gen Money
 genMoney = do
   cur <- genCurrency
@@ -95,11 +92,11 @@ genPositiveMoney = do
 
 -- | Generate a valid Money value in a specific currency.
 --
--- Generates non-negative amounts up to 1,000,000.00 with 2 decimal places.
+-- Generates amounts from -1,000,000.00 to 1,000,000.00 with 2 decimal places.
 genMoneyIn :: Currency -> Gen Money
 genMoneyIn cur = do
-  -- Generate cents (0 to 100,000,000 cents = 0 to 1,000,000.00)
-  cents <- choose (0, 100000000) :: Gen Integer
+  -- Generate cents (-100,000,000 to 100,000,000 cents = -1,000,000.00 to 1,000,000.00)
+  cents <- choose (-100000000, 100000000) :: Gen Integer
   -- Convert to dollars: cents / 100
   let amt = fromInteger cents % 100
   pure $ unsafeMoney cur amt

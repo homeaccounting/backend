@@ -34,6 +34,7 @@ module Domain.Account.Events
     AccountAccessRevoked (..),
     AccountDebited (..),
     AccountCredited (..),
+    OverdraftLimitSet (..),
   )
 where
 
@@ -56,7 +57,8 @@ accountEvents =
     ''AccountAccessGranted,
     ''AccountAccessRevoked,
     ''AccountDebited,
-    ''AccountCredited
+    ''AccountCredited,
+    ''OverdraftLimitSet
   ]
 
 -- -----------------------------------------------------------------------------
@@ -78,7 +80,9 @@ data AccountCreated = AccountCreated
     -- | User who created the account (becomes Owner)
     by :: UserId,
     -- | Type of account (Regular or External)
-    accountType :: AccountType
+    accountType :: AccountType,
+    -- | Overdraft limit for the account
+    overdraftLimit :: Maybe Money
   }
   deriving (Show, Eq)
 
@@ -149,6 +153,18 @@ data AccountCredited = AccountCredited
   }
   deriving (Show, Eq)
 
+-- | Event emitted when the overdraft limit is set or removed.
+--
+-- Records the new overdraft limit and who set it.
+--
+-- Example:
+-- >>> OverdraftLimitSet (Just (Money 500)) ownerId
+data OverdraftLimitSet = OverdraftLimitSet
+  { overdraftLimit :: Maybe Money,
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -159,3 +175,4 @@ deriveJSON defaultOptions ''AccountAccessGranted
 deriveJSON defaultOptions ''AccountAccessRevoked
 deriveJSON defaultOptions ''AccountDebited
 deriveJSON defaultOptions ''AccountCredited
+deriveJSON defaultOptions ''OverdraftLimitSet

@@ -43,7 +43,8 @@ mkCreateAccount acctName userId accType =
     { name = acctName,
       initialBalance = mockMoney 5000,
       createdBy = userId,
-      accountType = accType
+      accountType = accType,
+      overdraftLimit = Nothing
     }
 
 -- | Helper to create two accounts and return their IDs for transfer tests.

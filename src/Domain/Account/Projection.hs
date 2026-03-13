@@ -55,6 +55,7 @@ import Domain.Account.Events
     AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
+    OverdraftLimitSet (..),
     accountEvents,
   )
 import Domain.Core.Types
@@ -65,7 +66,7 @@ import Domain.Core.Types
     UserId,
     addMoney,
     mkDefaultMoney,
-    subtractMoneyAllowNegative,
+    subtractMoney,
     unsafeUserId,
   )
 import Eventium (Projection (..))
@@ -90,8 +91,9 @@ import Optics (makeFieldLabelsNoPrefix, (&), (.~), (^.))
 --   - accessList: List of users with access and their roles
 --
 -- Invariants:
---   - Regular account balance is always non-negative
---   - External account balance can be negative (representing spent money)
+--   - Balance can be negative; overdraft enforcement is at the account level via overdraftLimit
+--   - Regular accounts default to overdraftLimit = Just 0 (no overdraft)
+--   - External accounts default to overdraftLimit = Nothing (unlimited)
 --   - Name is never empty for created accounts
 --   - Owner is always in access list with Owner role
 --   - State can only be modified through event handlers
@@ -110,7 +112,9 @@ data Account = Account
     -- | Type of account (Regular or External)
     accountType :: AccountType,
     -- | List of users with access and their roles
-    accessList :: [AccountAccess]
+    accessList :: [AccountAccess],
+    -- | Overdraft limit. Nothing = unlimited, Just limit = max negative balance
+    overdraftLimit :: Maybe Money
   }
   deriving (Show, Eq)
 
@@ -135,7 +139,8 @@ accountDefault = case mkDefaultMoney 0 of
         name = "",
         createdBy = unsafeUserId UUID.nil,
         accountType = RegularAccount,
-        accessList = []
+        accessList = [],
+        overdraftLimit = Just m
       }
   Left _ -> error "accountDefault: mkDefaultMoney 0 should never fail"
 
@@ -230,6 +235,8 @@ handleAccountEvent account (AccountCreatedAccountEvent created) =
         .~ created.accountType
         & #accessList
         .~ [AccountAccess ownerId Owner]
+        & #overdraftLimit
+        .~ created.overdraftLimit
 handleAccountEvent account (AccountAccessGrantedAccountEvent AccountAccessGranted {..}) =
   -- Add or update user access in the access list
   -- If user already has access, replace their role
@@ -244,9 +251,9 @@ handleAccountEvent account (AccountAccessRevokedAccountEvent AccountAccessRevoke
    in account & #accessList .~ withoutUser
 handleAccountEvent account (AccountDebitedAccountEvent AccountDebited {..}) =
   -- Subtract the debited amount from balance.
-  -- The command handler already validated sufficiency and currency match, so we use
-  -- subtractMoneyAllowNegative which handles External accounts too.
-  case subtractMoneyAllowNegative (account ^. #balance) amount of
+  -- The command handler already validated currency match; subtractMoney allows negative results
+  -- (overdraft enforcement is at account level).
+  case subtractMoney (account ^. #balance) amount of
     Right newBalance -> account & #balance .~ newBalance
     Left _ -> account -- Impossible: currency was validated by command handler
 handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
@@ -254,6 +261,8 @@ handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
   case addMoney (account ^. #balance) amount of
     Right newBalance -> account & #balance .~ newBalance
     Left _ -> account -- Impossible: currency was validated by command handler
+handleAccountEvent account (OverdraftLimitSetAccountEvent OverdraftLimitSet {..}) =
+  account & #overdraftLimit .~ overdraftLimit
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

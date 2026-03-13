@@ -24,8 +24,9 @@
 --   - CreateAccount: Cannot create account if already exists
 --   - ShareAccount: Only Owner can share, External accounts cannot be shared
 --   - RevokeAccountAccess: Only Owner can revoke, Owner cannot be removed
---   - DebitAccount: Regular accounts need sufficient funds, External always succeeds
+--   - DebitAccount: Enforces overdraft limit (Nothing = unlimited, Just limit = balance - debit >= -limit)
 --   - CreditAccount: Always succeeds (adding money never fails)
+--   - SetOverdraftLimit: Only Owner can set, currency must match account
 --
 -- DebitAccount and CreditAccount are internal commands issued exclusively by the
 -- TransferManager process manager. They are not exposed via any API endpoint.
@@ -50,7 +51,7 @@ import qualified Data.Text as T
 import Domain.Account.Commands
 import Domain.Account.Events
 import Domain.Account.Projection
-import Domain.Core.Types (AccountType (..), moneyCurrency, subtractMoney)
+import Domain.Core.Types (AccountType (..), moneyCurrency, unMoney, unsafeMoney)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
@@ -114,8 +115,9 @@ constructSumType
 --   - CreateAccount: Validates account doesn't exist, creates account with owner
 --   - ShareAccount: Validates Owner role, grants access
 --   - RevokeAccountAccess: Validates Owner role, revokes access
---   - DebitAccount: Validates sufficient funds, emits AccountDebited or AccountDebitRejected
+--   - DebitAccount: Validates overdraft limit, emits AccountDebited
 --   - CreditAccount: Always succeeds, emits AccountCredited
+--   - SetOverdraftLimit: Validates Owner role and currency, emits OverdraftLimitSet
 --
 -- Business Rules:
 --   1. Cannot create account if already exists (name is not empty)
@@ -123,9 +125,9 @@ constructSumType
 --   3. Only Owner can share or revoke access
 --   4. External accounts cannot be shared
 --   5. Owner cannot be removed from access list
---   6. Regular accounts need sufficient funds for debit
---   7. External accounts can go negative (debit always succeeds)
---   8. Credit always succeeds (adding money never fails)
+--   6. Debit enforces overdraft limit (Nothing = unlimited, Just limit = balance - debit >= -limit)
+--   7. Credit always succeeds (adding money never fails)
+--   8. Only Owner can set overdraft limit, currency must match
 --
 -- Returns:
 --   @'Right' events@ on success, @'Left' error@ on rejection.
@@ -139,15 +141,25 @@ handleAccountCommand account (CreateAccountAccountCommand CreateAccount {..})
   | not (T.null (account ^. #name)) = Left AccountAlreadyExists
   | T.null name = Left AccountNameEmpty
   | otherwise =
-      Right
-        [ AccountCreatedAccountEvent
-            AccountCreated
-              { name = name,
-                initialBalance = initialBalance,
-                by = createdBy,
-                accountType = accountType
-              }
-        ]
+      case overdraftLimit of
+        Just (Just limit)
+          | moneyCurrency limit /= moneyCurrency initialBalance -> Left CurrencyMismatch
+        _ -> Right ()
+        >> let resolvedLimit = case overdraftLimit of
+                 Just explicit -> explicit
+                 Nothing -> case accountType of
+                   RegularAccount -> Just (unsafeMoney (moneyCurrency initialBalance) 0)
+                   ExternalAccount -> Nothing
+            in Right
+                 [ AccountCreatedAccountEvent
+                     AccountCreated
+                       { name = name,
+                         initialBalance = initialBalance,
+                         by = createdBy,
+                         accountType = accountType,
+                         overdraftLimit = resolvedLimit
+                       }
+                 ]
 -- Handle ShareAccount command
 handleAccountCommand account (ShareAccountAccountCommand ShareAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
@@ -181,18 +193,9 @@ handleAccountCommand account (RevokeAccountAccessAccountCommand RevokeAccountAcc
 handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
   | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
-  | account ^. #accountType == ExternalAccount =
-      Right
-        [ AccountDebitedAccountEvent
-            AccountDebited
-              { amount = amount,
-                transactionId = transactionId,
-                reason = reason
-              }
-        ]
   | otherwise =
-      case subtractMoney (account ^. #balance) amount of
-        Right _ ->
+      case account ^. #overdraftLimit of
+        Nothing ->
           Right
             [ AccountDebitedAccountEvent
                 AccountDebited
@@ -201,7 +204,44 @@ handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
                     reason = reason
                   }
             ]
-        Left _ -> Left InsufficientFunds
+        Just limit ->
+          let newBalance = unMoney (account ^. #balance) - unMoney amount
+              minAllowed = negate (unMoney limit)
+           in if newBalance >= minAllowed
+                then
+                  Right
+                    [ AccountDebitedAccountEvent
+                        AccountDebited
+                          { amount = amount,
+                            transactionId = transactionId,
+                            reason = reason
+                          }
+                    ]
+                else Left InsufficientFunds
+-- Handle SetOverdraftLimit command
+handleAccountCommand account (SetOverdraftLimitAccountCommand SetOverdraftLimit {..})
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | not (isOwner setBy account) = Left NotAccountOwner
+  | otherwise =
+      case overdraftLimit of
+        Nothing ->
+          Right
+            [ OverdraftLimitSetAccountEvent
+                OverdraftLimitSet
+                  { overdraftLimit = overdraftLimit,
+                    by = setBy
+                  }
+            ]
+        Just limit
+          | moneyCurrency limit /= moneyCurrency (account ^. #balance) -> Left CurrencyMismatch
+          | otherwise ->
+              Right
+                [ OverdraftLimitSetAccountEvent
+                    OverdraftLimitSet
+                      { overdraftLimit = overdraftLimit,
+                        by = setBy
+                      }
+                ]
 -- Handle CreditAccount command (internal, issued by TransferManager saga)
 handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist

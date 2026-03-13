@@ -24,12 +24,12 @@ import Data.Either (fromRight, isLeft)
 import qualified Data.Text as T
 import Domain.Account
 import Domain.Account.CommandHandler
-import Domain.Account.Commands (DebitAccount (..))
+import Domain.Account.Commands (DebitAccount (..), SetOverdraftLimit (..))
 import Domain.Account.Events (AccountAccessGranted (..), AccountAccessRevoked (..), AccountCreated (..))
 import Domain.Core.Types
 import Eventium (latestProjection)
-import Optics ((^.))
-import RIO hiding ((^.))
+import Optics ((&), (.~), (^.))
+import RIO hiding ((.~), (^.))
 import Test.Hspec
 import Test.QuickCheck
 import Testkit.Generators
@@ -53,15 +53,19 @@ applyEvents = latestProjection accountProjection
 -- | Create an account with given owner and type
 createAccountWithOwner :: Text -> Money -> UserId -> AccountType -> Account
 createAccountWithOwner acctName balance ownerId accType =
-  applyEvents
-    [ AccountCreatedAccountEvent
-        $ AccountCreated
-          { name = acctName,
-            initialBalance = balance,
-            by = ownerId,
-            accountType = accType
-          }
-    ]
+  let limit = case accType of
+        RegularAccount -> Just (mockMoney 0)
+        ExternalAccount -> Nothing
+   in applyEvents
+        [ AccountCreatedAccountEvent
+            $ AccountCreated
+              { name = acctName,
+                initialBalance = balance,
+                by = ownerId,
+                accountType = accType,
+                overdraftLimit = limit
+              }
+        ]
 
 -- -----------------------------------------------------------------------------
 -- Determinism Properties
@@ -76,7 +80,7 @@ determinismSpec = describe "Determinism Properties" $ do
         let account = applyEvents []
             command =
               CreateAccountAccountCommand
-                $ CreateAccount acctName balance ownerId RegularAccount
+                $ CreateAccount acctName balance ownerId RegularAccount Nothing
             events1 = handleAccountCommand account command
             events2 = handleAccountCommand account command
          in events1 === events2
@@ -99,7 +103,7 @@ determinismSpec = describe "Determinism Properties" $ do
         ownerId /= targetId ==>
           let baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount,
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted targetId Editor ownerId
                 ]
@@ -132,12 +136,28 @@ invariantSpec = describe "Invariant Properties" $ do
           let account = createAccountWithOwner acctName balance ownerId RegularAccount
            in getUserRole ownerId account === Just Owner
 
-    it "Then maintains non-negative balance for regular accounts"
+    it "Then Regular account defaults to Just zero overdraft limit"
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
         not (T.null acctName) ==>
           let account = createAccountWithOwner acctName balance ownerId RegularAccount
-           in unMoney (account ^. #balance) >= 0
+           in case account ^. #overdraftLimit of
+                Just limit -> unMoney limit === 0
+                Nothing -> property False
+
+    it "Then External account defaults to Nothing overdraft limit"
+      $ property
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
+        not (T.null acctName) ==>
+          let account = createAccountWithOwner acctName balance ownerId ExternalAccount
+           in account ^. #overdraftLimit === Nothing
+
+    it "Then preserves initial balance for regular accounts"
+      $ property
+      $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
+        not (T.null acctName) ==>
+          let account = createAccountWithOwner acctName balance ownerId RegularAccount
+           in unMoney (account ^. #balance) === unMoney balance
 
   describe "When sharing access" $ do
     it "Then target user is added to access list"
@@ -151,7 +171,7 @@ invariantSpec = describe "Invariant Properties" $ do
               result = handleAccountCommand account command
               baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0))
                 ]
               events = fromRight [] result
               newAccount = applyEvents (baseEvents <> events)
@@ -168,7 +188,7 @@ invariantSpec = describe "Invariant Properties" $ do
               result = handleAccountCommand account command
               baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0))
                 ]
               events = fromRight [] result
               newAccount = applyEvents (baseEvents <> events)
@@ -181,7 +201,7 @@ invariantSpec = describe "Invariant Properties" $ do
         ownerId /= targetId ==>
           let baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount,
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted targetId Editor ownerId
                 ]
@@ -208,7 +228,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand
-                  $ CreateAccount acctName balance ownerId RegularAccount
+                  $ CreateAccount acctName balance ownerId RegularAccount Nothing
               result = handleAccountCommand account command
               events = fromRight [] result
               newAccount = applyEvents events
@@ -221,7 +241,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand
-                  $ CreateAccount acctName balance ownerId RegularAccount
+                  $ CreateAccount acctName balance ownerId RegularAccount Nothing
               result = handleAccountCommand account command
               events = fromRight [] result
               newAccount = applyEvents events
@@ -233,7 +253,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
         let account = applyEvents []
             command =
               CreateAccountAccountCommand
-                $ CreateAccount "" balance ownerId RegularAccount
+                $ CreateAccount "" balance ownerId RegularAccount Nothing
             result = handleAccountCommand account command
          in isLeft result
 
@@ -244,7 +264,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
         ownerId /= nonOwnerId && nonOwnerId /= targetId && ownerId /= targetId ==>
           let baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount,
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted nonOwnerId Editor ownerId
                 ]
@@ -273,6 +293,70 @@ businessRuleSpec = describe "Business Rule Properties" $ do
               command =
                 ShareAccountAccountCommand
                   $ ShareAccount targetId targetRole ownerId
+              result = handleAccountCommand account command
+           in isLeft result
+
+  describe "Overdraft enforcement" $ do
+    it "Then debit succeeds when within overdraft limit"
+      $ property
+      $ \(ownerId :: UserId) (txId :: TransactionId) ->
+        forAll (genPositiveMoneyIn USD) $ \debitAmt ->
+          -- Account with balance 0 and overdraft limit >= debit amount
+          let account =
+                createAccountWithOwner "Test" (mockMoney 0) ownerId RegularAccount
+                  & #overdraftLimit
+                  .~ Just debitAmt
+              command =
+                DebitAccountAccountCommand
+                  $ DebitAccount debitAmt txId "Transfer"
+              result = handleAccountCommand account command
+           in result =/= Left InsufficientFunds
+
+    it "Then debit fails when exceeding overdraft limit"
+      $ property
+      $ \(ownerId :: UserId) (txId :: TransactionId) ->
+        forAll (genPositiveMoneyIn USD) $ \debitAmt ->
+          unMoney debitAmt > 0 ==>
+            let account = createAccountWithOwner "Test" (mockMoney 0) ownerId RegularAccount
+                -- Default overdraft is 0, so any positive debit on zero balance fails
+                command =
+                  DebitAccountAccountCommand
+                    $ DebitAccount debitAmt txId "Transfer"
+                result = handleAccountCommand account command
+             in result === Left InsufficientFunds
+
+    it "Then debit always succeeds with Nothing overdraft limit"
+      $ property
+      $ \(ownerId :: UserId) (txId :: TransactionId) ->
+        forAll (genPositiveMoneyIn USD) $ \debitAmt ->
+          let account =
+                createAccountWithOwner "Test" (mockMoney 0) ownerId RegularAccount
+                  & #overdraftLimit
+                  .~ Nothing
+              command =
+                DebitAccountAccountCommand
+                  $ DebitAccount debitAmt txId "Transfer"
+              result = handleAccountCommand account command
+           in result =/= Left InsufficientFunds
+
+  describe "Overdraft limit management" $ do
+    it "Then only owner can set overdraft limit"
+      $ property
+      $ \(ownerId :: UserId) (nonOwnerId :: UserId) ->
+        ownerId /= nonOwnerId ==>
+          let account =
+                applyEvents
+                  [ AccountCreatedAccountEvent
+                      $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
+                    AccountAccessGrantedAccountEvent
+                      $ AccountAccessGranted nonOwnerId Editor ownerId
+                  ]
+              command =
+                SetOverdraftLimitAccountCommand
+                  $ SetOverdraftLimit
+                    { overdraftLimit = Just (mockMoney 500),
+                      setBy = nonOwnerId
+                    }
               result = handleAccountCommand account command
            in isLeft result
 

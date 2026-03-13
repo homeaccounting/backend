@@ -29,6 +29,7 @@ module Application.Services.AccountService
     listAccountsForUser,
     shareAccount,
     revokeAccountAccess,
+    setOverdraftLimit,
   )
 where
 
@@ -40,6 +41,7 @@ import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands
   ( CreateAccount,
     RevokeAccountAccess (..),
+    SetOverdraftLimit (..),
     ShareAccount (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
@@ -47,6 +49,7 @@ import Domain.Core.Types
   ( AccountId,
     AccountRole (..),
     AccountType (..),
+    Money,
     UserId,
     mkAccountId,
     mkUserId,
@@ -294,5 +297,35 @@ parseRole t = case T.toLower t of
   "editor" -> Just Editor
   "viewer" -> Just Viewer
   _ -> Nothing
+
+-- | Set the overdraft limit on an account.
+setOverdraftLimit ::
+  UserId ->
+  UUID ->
+  Maybe Money ->
+  AppM (Either DomainError ())
+setOverdraftLimit requestingUserId accountUuid newLimit = do
+  logInfo $ "Setting overdraft limit: " <> displayShow accountUuid
+
+  case mkAccountId accountUuid of
+    Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
+    Right _accountId -> do
+      let setLimitCmd =
+            SetOverdraftLimitAccountCommand
+              SetOverdraftLimit
+                { overdraftLimit = newLimit,
+                  setBy = requestingUserId
+                }
+
+      writer <- view eventStoreWriterL
+      reader <- view eventStoreReaderL
+      result <- liftIO $ applyAccountCommand writer reader accountUuid setLimitCmd
+      case result of
+        Left err -> do
+          logError $ "Set overdraft limit rejected: " <> displayShow err
+          return $ Left $ AccountError "Set overdraft limit rejected by domain"
+        Right _ -> do
+          logInfo "Overdraft limit set successfully"
+          return $ Right ()
 
 -- Note: Uses 'tshow' from RIO for Text conversion of Show-able values.

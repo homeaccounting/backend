@@ -48,7 +48,8 @@ validCreateAccount =
     { name = "Savings",
       initialBalance = mockMoney 1000,
       createdBy = testUserId1,
-      accountType = RegularAccount
+      accountType = RegularAccount,
+      overdraftLimit = Nothing
     }
 
 -- | Helper to create an account and extract the AccountId.
