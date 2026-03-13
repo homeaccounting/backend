@@ -15,8 +15,11 @@
 --   - Use custom generators for specific test scenarios
 module Testkit.Generators
   ( -- * Generators
+    genCurrency,
     genMoney,
     genPositiveMoney,
+    genMoneyIn,
+    genPositiveMoneyIn,
     genAccountId,
     genTransactionId,
     genUserId,
@@ -53,10 +56,21 @@ import RIO
 import Test.QuickCheck
 
 -- -----------------------------------------------------------------------------
+-- Currency Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a valid Currency value.
+genCurrency :: Gen Currency
+genCurrency = elements [UAH, USD, EUR, GBP]
+
+instance Arbitrary Currency where
+  arbitrary = genCurrency
+
+-- -----------------------------------------------------------------------------
 -- Money Generators
 -- -----------------------------------------------------------------------------
 
--- | Generate a valid Money value.
+-- | Generate a valid Money value with a random currency.
 --
 -- Generates non-negative amounts up to 1,000,000.00 with 2 decimal places.
 -- Uses Rational for exact arithmetic.
@@ -65,13 +79,10 @@ import Test.QuickCheck
 --  forall m <- genMoney. unMoney m >= 0
 genMoney :: Gen Money
 genMoney = do
-  -- Generate cents (0 to 100,000,000 cents = 0 to 1,000,000.00)
-  cents <- choose (0, 100000000) :: Gen Integer
-  -- Convert to dollars: cents / 100
-  let amount = fromInteger cents % 100
-  pure $ unsafeMoney amount
+  cur <- genCurrency
+  genMoneyIn cur
 
--- | Generate a positive Money value (> 0).
+-- | Generate a positive Money value (> 0) with a random currency.
 --
 -- Useful for testing operations that require non-zero amounts.
 --
@@ -79,10 +90,29 @@ genMoney = do
 --  forall m <- genPositiveMoney. unMoney m > 0
 genPositiveMoney :: Gen Money
 genPositiveMoney = do
+  cur <- genCurrency
+  genPositiveMoneyIn cur
+
+-- | Generate a valid Money value in a specific currency.
+--
+-- Generates non-negative amounts up to 1,000,000.00 with 2 decimal places.
+genMoneyIn :: Currency -> Gen Money
+genMoneyIn cur = do
+  -- Generate cents (0 to 100,000,000 cents = 0 to 1,000,000.00)
+  cents <- choose (0, 100000000) :: Gen Integer
+  -- Convert to dollars: cents / 100
+  let amt = fromInteger cents % 100
+  pure $ unsafeMoney cur amt
+
+-- | Generate a positive Money value (> 0) in a specific currency.
+--
+-- Useful for testing operations that require non-zero amounts.
+genPositiveMoneyIn :: Currency -> Gen Money
+genPositiveMoneyIn cur = do
   -- Generate cents (1 to 100,000,000 cents = 0.01 to 1,000,000.00)
   cents <- choose (1, 100000000) :: Gen Integer
-  let amount = fromInteger cents % 100
-  pure $ unsafeMoney amount
+  let amt = fromInteger cents % 100
+  pure $ unsafeMoney cur amt
 
 instance Arbitrary Money where
   arbitrary = genMoney

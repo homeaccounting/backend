@@ -91,7 +91,7 @@ setup_accounts() {
     SOURCE_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"name": "Transfer Test - Source", "initialBalance": 1000.0}')
+        -d '{"name": "Transfer Test - Source", "currency": "USD", "initialBalance": 1000.0}')
 
     SOURCE_ACCOUNT_ID=$(echo "$SOURCE_RESPONSE" | jq -r '.id')
     echo "$SOURCE_RESPONSE" | jq '.'
@@ -108,7 +108,7 @@ setup_accounts() {
     TARGET_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"name": "Transfer Test - Target", "initialBalance": 500.0}')
+        -d '{"name": "Transfer Test - Target", "currency": "USD", "initialBalance": 500.0}')
 
     TARGET_ACCOUNT_ID=$(echo "$TARGET_RESPONSE" | jq -r '.id')
     echo "$TARGET_RESPONSE" | jq '.'
@@ -144,6 +144,7 @@ test_initiate_income() {
 {
   "accountId": "$SOURCE_ACCOUNT_ID",
   "amount": 500.0,
+  "currency": "USD",
   "category": "salary",
   "reason": "Test income - Monthly salary"
 }
@@ -189,6 +190,7 @@ test_initiate_expense() {
 {
   "accountId": "$SOURCE_ACCOUNT_ID",
   "amount": 100.0,
+  "currency": "USD",
   "category": "food",
   "reason": "Test expense - Groceries"
 }
@@ -236,6 +238,7 @@ test_initiate_transfer() {
   "fromAccountId": "$SOURCE_ACCOUNT_ID",
   "toAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 300.0,
+  "currency": "USD",
   "category": "other",
   "reason": "Test transfer - Rent payment"
 }
@@ -273,6 +276,7 @@ test_transfer_unauthorized() {
             "fromAccountId": "00000000-0000-0000-0000-000000000001",
             "toAccountId": "00000000-0000-0000-0000-000000000002",
             "amount": 100.0,
+            "currency": "USD",
             "category": "other",
             "reason": "Unauthorized transfer"
         }')
@@ -386,6 +390,7 @@ test_insufficient_funds_transfer() {
   "fromAccountId": "$SOURCE_ACCOUNT_ID",
   "toAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 10000.0,
+  "currency": "USD",
   "category": "other",
   "reason": "Test transfer - Should fail"
 }

@@ -225,7 +225,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"name\": \"$NAME\", \"initialBalance\": $BALANCE}")
+            -d "{\"name\": \"$NAME\", \"currency\": \"USD\", \"initialBalance\": $BALANCE}")
         check_jq "$RESPONSE"
         ;;
 
@@ -302,7 +302,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/income" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"category\": \"$CATEGORY\", \"reason\": \"Quick income\"}")
+            -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"category\": \"$CATEGORY\", \"reason\": \"Quick income\"}")
         check_jq "$RESPONSE"
         ;;
 
@@ -319,7 +319,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/expense" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"category\": \"$CATEGORY\", \"reason\": \"Quick expense\"}")
+            -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"category\": \"$CATEGORY\", \"reason\": \"Quick expense\"}")
         check_jq "$RESPONSE"
         ;;
 
@@ -337,7 +337,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"fromAccountId\": \"$FROM_ID\", \"toAccountId\": \"$TO_ID\", \"amount\": $AMOUNT, \"category\": \"$CATEGORY\", \"reason\": \"Quick transfer\"}")
+            -d "{\"fromAccountId\": \"$FROM_ID\", \"toAccountId\": \"$TO_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"category\": \"$CATEGORY\", \"reason\": \"Quick transfer\"}")
         check_jq "$RESPONSE"
         ;;
 

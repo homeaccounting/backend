@@ -14,6 +14,7 @@
 --   - TransactionId: Smart constructor validation
 module Domain.Core.TypesSpec (spec) where
 
+import Data.Aeson (Result (..), fromJSON, toJSON)
 import Data.Text (isInfixOf)
 import Data.UUID (nil)
 import qualified Data.UUID as UUID
@@ -38,22 +39,31 @@ moneySpec = describe "Money" $ do
   describe "mkMoney" $ do
     context "Given valid amount" $ do
       it "Then creates Money value" $ do
-        let result = mkMoney 100
+        let result = mkMoney USD 100
         shouldBeRight result
         case result of
-          Right money -> unMoney money `shouldBe` 100
+          Right money -> do
+            unMoney money `shouldBe` 100
+            moneyCurrency money `shouldBe` USD
           Left _ -> expectationFailure "Expected Right"
 
       it "Then accepts zero" $ do
-        let result = mkMoney 0
+        let result = mkMoney USD 0
         shouldBeRight result
         case result of
           Right money -> unMoney money `shouldBe` 0
           Left _ -> expectationFailure "Expected Right"
 
+      it "Then preserves currency" $ do
+        let result = mkMoney USD 100
+        shouldBeRight result
+        case result of
+          Right money -> moneyCurrency money `shouldBe` USD
+          Left _ -> expectationFailure "Expected Right"
+
     context "Given negative amount" $ do
       it "Then rejects with error message" $ do
-        let result = mkMoney (-10)
+        let result = mkMoney USD (-10)
         shouldBeLeft result
         case result of
           Left err -> err `shouldSatisfy` (\msg -> "non-negative" `isInfixOf` msg)
@@ -64,7 +74,10 @@ moneySpec = describe "Money" $ do
       let m1 = mockMoney 100
       let m2 = mockMoney 50
       let result = addMoney m1 m2
-      unMoney result `shouldBe` 150
+      shouldBeRight result
+      case result of
+        Right money -> unMoney money `shouldBe` 150
+        Left _ -> expectationFailure "Expected Right"
 
     it "Then is commutative" $ do
       let m1 = mockMoney 100
@@ -74,7 +87,17 @@ moneySpec = describe "Money" $ do
     it "Then zero is identity element" $ do
       let m = mockMoney 100
       let zero = mockMoney 0
-      addMoney m zero `shouldBe` m
+      addMoney m zero `shouldBe` Right m
+
+    context "Given currency mismatch" $ do
+      it "Then returns error" $ do
+        let m1 = unsafeMoney USD 100
+        let m2 = unsafeMoney EUR 50
+        let result = addMoney m1 m2
+        shouldBeLeft result
+        case result of
+          Left err -> err `shouldSatisfy` (\msg -> "Currency mismatch" `isInfixOf` msg)
+          Right _ -> expectationFailure "Expected Left"
 
   describe "subtractMoney" $ do
     context "Given sufficient funds" $ do
@@ -105,6 +128,23 @@ moneySpec = describe "Money" $ do
         case result of
           Left err -> err `shouldSatisfy` (\msg -> "Insufficient funds" `isInfixOf` msg)
           Right _ -> expectationFailure "Expected Left"
+
+    context "Given currency mismatch" $ do
+      it "Then returns error" $ do
+        let m1 = unsafeMoney USD 100
+        let m2 = unsafeMoney EUR 50
+        let result = subtractMoney m1 m2
+        shouldBeLeft result
+        case result of
+          Left err -> err `shouldSatisfy` (\msg -> "Currency mismatch" `isInfixOf` msg)
+          Right _ -> expectationFailure "Expected Left"
+
+  describe "Currency" $ do
+    it "Then JSON roundtrips correctly" $ do
+      let currencies = [UAH, USD, EUR, GBP]
+      forM_ currencies $ \cur -> do
+        let encoded = toJSON cur
+        fromJSON encoded `shouldBe` Success cur
 
 -- -----------------------------------------------------------------------------
 -- AccountId Tests

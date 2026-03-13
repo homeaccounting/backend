@@ -21,7 +21,8 @@ import Domain.Account.Events
     AccountDebited (..),
   )
 import Domain.Core.Types
-  ( InternalCategory (..),
+  ( Currency (..),
+    InternalCategory (..),
     TransferCategory (..),
     TransferType (..),
     unAccountId,
@@ -76,7 +77,7 @@ genTransferInitiatedEvent = do
             TransferInitiated
               { fromAccountId = unsafeAccountId sourceId,
                 toAccountId = unsafeAccountId targetId,
-                amount = unsafeMoney amt,
+                amount = unsafeMoney USD amt,
                 reason = "Property test transfer",
                 by = unsafeUserId userId,
                 transferType = InternalTransfer,

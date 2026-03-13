@@ -13,12 +13,13 @@
 --   - Identifiers: Uniqueness, non-nil invariants
 module Domain.Core.TypesPropertySpec (spec) where
 
+import qualified Data.Aeson as Aeson
 import qualified Data.UUID as UUID
 import Domain.Core.Types
 import RIO
 import Test.Hspec
 import Test.QuickCheck
-import Testkit.Generators ()
+import Testkit.Generators
 
 spec :: Spec
 spec = do
@@ -40,39 +41,79 @@ moneyPropertySpec = describe "Money Properties" $ do
       $ \(m :: Money) ->
         unMoney m >= 0
 
-    it "Then addition is commutative"
+    it "Then addition is commutative (same currency)"
       $ property
-      $ \(m1 :: Money) (m2 :: Money) ->
-        addMoney m1 m2 === addMoney m2 m1
+      $ forAll genCurrency
+      $ \cur ->
+        forAll (genMoneyIn cur) $ \m1 ->
+          forAll (genMoneyIn cur) $ \m2 ->
+            addMoney m1 m2 === addMoney m2 m1
 
-    it "Then addition is associative (exact equality)"
+    it "Then addition is associative (same currency, exact equality)"
       $ property
-      $ \(m1 :: Money) (m2 :: Money) (m3 :: Money) ->
-        let result1 = addMoney (addMoney m1 m2) m3
-            result2 = addMoney m1 (addMoney m2 m3)
-         in result1 === result2
+      $ forAll genCurrency
+      $ \cur ->
+        forAll (genMoneyIn cur) $ \m1 ->
+          forAll (genMoneyIn cur) $ \m2 ->
+            forAll (genMoneyIn cur) $ \m3 ->
+              let result1 = addMoney m1 m2 >>= \r -> addMoney r m3
+                  result2 = addMoney m2 m3 >>= \r -> addMoney m1 r
+               in result1 === result2
 
     it "Then zero is additive identity"
       $ property
-      $ \(m :: Money) ->
-        let zero = unsafeMoney 0
-         in addMoney m zero === m
+      $ forAll genCurrency
+      $ \cur ->
+        forAll (genMoneyIn cur) $ \m ->
+          let zero = unsafeMoney cur 0
+           in addMoney m zero === Right m
 
-    it "Then subtraction maintains non-negativity when valid"
+    it "Then subtraction maintains non-negativity when valid (same currency)"
       $ property
-      $ \(m1 :: Money) (m2 :: Money) ->
-        unMoney m1 >= unMoney m2 ==>
-          case subtractMoney m1 m2 of
-            Right result -> unMoney result >= 0
-            Left _ -> False
+      $ forAll genCurrency
+      $ \cur ->
+        forAll (genMoneyIn cur) $ \m1 ->
+          forAll (genMoneyIn cur) $ \m2 ->
+            unMoney m1 >= unMoney m2 ==>
+              case subtractMoney m1 m2 of
+                Right result -> unMoney result >= 0
+                Left _ -> False
 
-    it "Then subtraction fails when insufficient funds"
+    it "Then subtraction fails when insufficient funds (same currency)"
       $ property
-      $ \(m1 :: Money) (m2 :: Money) ->
-        unMoney m1 < unMoney m2 ==>
+      $ forAll genCurrency
+      $ \cur ->
+        forAll (genMoneyIn cur) $ \m1 ->
+          forAll (genMoneyIn cur) $ \m2 ->
+            unMoney m1 < unMoney m2 ==>
+              case subtractMoney m1 m2 of
+                Left _ -> True
+                Right _ -> False
+
+  describe "When currencies differ" $ do
+    it "Then addMoney returns Left"
+      $ property
+      $ forAll (genMoneyIn USD)
+      $ \m1 ->
+        forAll (genMoneyIn EUR) $ \m2 ->
+          case addMoney m1 m2 of
+            Left _ -> True
+            Right _ -> False
+
+    it "Then subtractMoney returns Left"
+      $ property
+      $ forAll (genMoneyIn USD)
+      $ \m1 ->
+        forAll (genMoneyIn EUR) $ \m2 ->
           case subtractMoney m1 m2 of
             Left _ -> True
             Right _ -> False
+
+  describe "Currency" $ do
+    it "Then JSON roundtrips correctly"
+      $ property
+      $ \(cur :: Currency) ->
+        Aeson.fromJSON (Aeson.toJSON cur) === Aeson.Success cur
 
 -- -----------------------------------------------------------------------------
 -- Identifier Property Tests

@@ -49,7 +49,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, IncomeCategory (..), Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkMoney, unsafeUserId)
+import Domain.Core.Types (AccountId, IncomeCategory (..), Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -167,9 +167,9 @@ transactionDefault =
       toAccountId = case mkAccountId nil of
         Right aid -> aid
         Left _ -> error "transactionDefault: mkAccountId should never fail for nil UUID",
-      amount = case mkMoney 0 of
+      amount = case mkDefaultMoney 0 of
         Right m -> m
-        Left _ -> error "transactionDefault: mkMoney 0 should never fail",
+        Left _ -> error "transactionDefault: mkDefaultMoney 0 should never fail",
       reason = "",
       status = Pending,
       initiatedBy = unsafeUserId nil,

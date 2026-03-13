@@ -50,7 +50,7 @@ import qualified Data.Text as T
 import Domain.Account.Commands
 import Domain.Account.Events
 import Domain.Account.Projection
-import Domain.Core.Types (AccountType (..), subtractMoney)
+import Domain.Core.Types (AccountType (..), moneyCurrency, subtractMoney)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
@@ -74,6 +74,7 @@ data AccountError
   | CannotRevokeOwner
   | UserHasNoAccess
   | InsufficientFunds
+  | CurrencyMismatch
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -179,6 +180,7 @@ handleAccountCommand account (RevokeAccountAccessAccountCommand RevokeAccountAcc
 -- Handle DebitAccount command (internal, issued by TransferManager saga)
 handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
+  | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
   | account ^. #accountType == ExternalAccount =
       Right
         [ AccountDebitedAccountEvent
@@ -203,6 +205,7 @@ handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
 -- Handle CreditAccount command (internal, issued by TransferManager saga)
 handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
+  | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
   | otherwise =
       Right
         [ AccountCreditedAccountEvent

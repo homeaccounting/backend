@@ -40,7 +40,7 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import Domain.Core.Types (mkMoney, unAccountId, unMoney, validateTransferCategory)
+import Domain.Core.Types (unAccountId, unMoney, validateTransferCategory)
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
@@ -119,7 +119,7 @@ handleTransactionCommand :: Transaction -> TransactionCommand -> Either Transact
 handleTransactionCommand transaction (InitiateTransferTransactionCommand InitiateTransfer {..}) =
   case transaction ^. #status of
     Pending
-      | transaction.amount == (case mkMoney 0 of Right m -> m; Left _ -> error "mkMoney 0 failed") ->
+      | unMoney transaction.amount == 0 ->
           if unAccountId fromAccountId == unAccountId toAccountId
             then Left TransferToSameAccount
             else

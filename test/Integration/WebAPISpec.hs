@@ -155,7 +155,8 @@ unauthenticatedRequestsSpec =
         let payload =
               object
                 [ "name" .= ("Test Account" :: Text),
-                  "initialBalance" .= (100.0 :: Double)
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
         postJSON "/api/accounts" (encode payload)
           `shouldRespondWith` 401
@@ -308,7 +309,8 @@ accountCreationSpec =
         let payload =
               object
                 [ "name" .= ("Savings Account" :: Text),
-                  "initialBalance" .= (1000.0 :: Double)
+                  "initialBalance" .= (1000.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         response <- postJSONAuth "/api/accounts" token (encode payload)
@@ -325,7 +327,8 @@ accountCreationSpec =
         let payload =
               object
                 [ "name" .= ("Test Account" :: Text),
-                  "initialBalance" .= (100.0 :: Double)
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         postJSON "/api/accounts" (encode payload) `shouldRespondWith` 401
@@ -336,7 +339,8 @@ accountCreationSpec =
         let payload =
               object
                 [ "name" .= ("" :: Text),
-                  "initialBalance" .= (100.0 :: Double)
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         postJSONAuth "/api/accounts" token (encode payload) `shouldRespondWith` 400
@@ -347,7 +351,8 @@ accountCreationSpec =
         let payload =
               object
                 [ "name" .= ("Test" :: Text),
-                  "initialBalance" .= (-100.0 :: Double)
+                  "initialBalance" .= (-100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         postJSONAuth "/api/accounts" token (encode payload) `shouldRespondWith` 400
@@ -363,7 +368,8 @@ accountRetrievalSpec =
         let createPayload =
               object
                 [ "name" .= ("Checking" :: Text),
-                  "initialBalance" .= (500.0 :: Double)
+                  "initialBalance" .= (500.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         createResp <- postJSONAuth "/api/accounts" token (encode createPayload)
@@ -396,12 +402,14 @@ accountListingSpec =
         let account1 =
               object
                 [ "name" .= ("Account 1" :: Text),
-                  "initialBalance" .= (100.0 :: Double)
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
         let account2 =
               object
                 [ "name" .= ("Account 2" :: Text),
-                  "initialBalance" .= (200.0 :: Double)
+                  "initialBalance" .= (200.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         _ <- postJSONAuth "/api/accounts" token (encode account1)
@@ -451,12 +459,14 @@ transferInitiationSpec =
         let account1 =
               object
                 [ "name" .= ("Source" :: Text),
-                  "initialBalance" .= (1000.0 :: Double)
+                  "initialBalance" .= (1000.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
         let account2 =
               object
                 [ "name" .= ("Destination" :: Text),
-                  "initialBalance" .= (0.0 :: Double)
+                  "initialBalance" .= (0.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         _ <- postJSONAuth "/api/accounts" token (encode account1)
@@ -548,7 +558,8 @@ errorHandlingSpec =
         let payload =
               object
                 [ "name" .= ("" :: Text),
-                  "initialBalance" .= (100.0 :: Double)
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
                 ]
 
         response <- postJSONAuth "/api/accounts" token (encode payload)

@@ -42,12 +42,12 @@ import Application.ReadModels.User
 import Application.Services.AuthService (findOrCreateTelegramBotUser)
 import Domain.Core.Types
   ( AccountType (..),
+    Currency (..),
     Money,
     TelegramId (..),
     TelegramIdentity (..),
-    addMoney,
+    moneyCurrency,
     unMoney,
-    unsafeMoney,
   )
 import Infrastructure.App (AppM, HasReadModel (..), HasTelegramClient (..))
 import RIO
@@ -180,10 +180,9 @@ handleBalance _botState telegramId chatId _args = do
         then sendMsg chatId "You don't have any accounts yet."
         else do
           let formatBalance (_accId, acc) =
-                acc.name <> ": " <> formatMoney acc.balance
+                acc.name <> ": " <> formatMoney acc.balance <> " " <> showCurrency (moneyCurrency acc.balance)
               balanceList = T.unlines $ map formatBalance userAccounts
-              total = foldl' addMoney (unsafeMoney 0) $ map (\(_, acc) -> acc.balance) userAccounts
-          sendMsg chatId $ "Your balances:\n\n" <> balanceList <> "\n---\nTotal: " <> formatMoney total
+          sendMsg chatId $ "Your balances:\n\n" <> balanceList
 
 -- | Handle /transfer command.
 handleTransfer :: TVar BotState -> TelegramId -> Int64 -> AppM ()
@@ -245,3 +244,10 @@ formatMoney m = T.pack $ show (fromRational (unMoney m) :: Double)
 showAccountType :: AccountType -> Text
 showAccountType RegularAccount = "Regular"
 showAccountType ExternalAccount = "External"
+
+-- | Show currency as text.
+showCurrency :: Currency -> Text
+showCurrency UAH = "UAH"
+showCurrency USD = "USD"
+showCurrency EUR = "EUR"
+showCurrency GBP = "GBP"

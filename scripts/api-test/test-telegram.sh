@@ -313,7 +313,7 @@ test_create_account() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"name\": \"$ACCOUNT_NAME\", \"initialBalance\": $INITIAL_BALANCE}")
+        -d "{\"name\": \"$ACCOUNT_NAME\", \"currency\": \"USD\", \"initialBalance\": $INITIAL_BALANCE}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -470,7 +470,7 @@ test_full_workflow() {
     SAVINGS_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"name": "Savings", "initialBalance": 1000.0}')
+        -d '{"name": "Savings", "currency": "USD", "initialBalance": 1000.0}')
 
     SAVINGS_ID=$(echo "$SAVINGS_RESPONSE" | jq -r '.id')
     echo "$SAVINGS_RESPONSE" | jq '.'
@@ -486,7 +486,7 @@ test_full_workflow() {
     CHECKING_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"name": "Checking", "initialBalance": 500.0}')
+        -d '{"name": "Checking", "currency": "USD", "initialBalance": 500.0}')
 
     CHECKING_ID=$(echo "$CHECKING_RESPONSE" | jq -r '.id')
     echo "$CHECKING_RESPONSE" | jq '.'
@@ -502,7 +502,7 @@ test_full_workflow() {
     TRANSFER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"fromAccountId\": \"$SAVINGS_ID\", \"toAccountId\": \"$CHECKING_ID\", \"amount\": 200.0, \"category\": \"other\", \"reason\": \"Telegram test transfer\"}")
+        -d "{\"fromAccountId\": \"$SAVINGS_ID\", \"toAccountId\": \"$CHECKING_ID\", \"amount\": 200.0, \"currency\": \"USD\", \"category\": \"other\", \"reason\": \"Telegram test transfer\"}")
 
     TRANSACTION_ID=$(echo "$TRANSFER_RESPONSE" | jq -r '.id')
     echo "$TRANSFER_RESPONSE" | jq '.'

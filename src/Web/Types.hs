@@ -96,7 +96,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.UUID (UUID)
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountType (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, mkMoney, unAccountId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountType (..), Currency (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -125,7 +125,8 @@ import GHC.Generics (Generic)
 data CreateAccountRequest
   = CreateAccountRequest
   { name :: Text,
-    initialBalance :: Double
+    initialBalance :: Double,
+    currency :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -170,6 +171,7 @@ data AccountResponse
   { id :: UUID,
     name :: Text,
     balance :: Double,
+    currency :: Text,
     version :: Int
   }
   deriving (Show, Eq, Generic)
@@ -246,6 +248,7 @@ data TransferRequest
   { fromAccountId :: UUID,
     toAccountId :: UUID,
     amount :: Double,
+    currency :: Text,
     reason :: Text
   }
   deriving (Show, Eq, Generic)
@@ -259,6 +262,7 @@ data IncomeRequest
   = IncomeRequest
   { accountId :: UUID,
     amount :: Double,
+    currency :: Text,
     category :: Text,
     reason :: Text
   }
@@ -273,6 +277,7 @@ data ExpenseRequest
   = ExpenseRequest
   { accountId :: UUID,
     amount :: Double,
+    currency :: Text,
     category :: Text,
     reason :: Text
   }
@@ -288,6 +293,7 @@ data InternalTransferRequest
   { fromAccountId :: UUID,
     toAccountId :: UUID,
     amount :: Double,
+    currency :: Text,
     category :: Text,
     reason :: Text
   }
@@ -449,8 +455,8 @@ instance FromJSON ValidationErrorResponse
 --
 -- >>> toDomainMoney (-50.0)
 -- Left "Money amount must be non-negative: -50.0"
-toDomainMoney :: Double -> Either Text Money
-toDomainMoney d = mkMoney (toRational d)
+toDomainMoney :: Currency -> Double -> Either Text Money
+toDomainMoney cur d = mkMoney cur (toRational d)
 
 -- | Converts Domain Money to Double for API responses.
 --
@@ -480,8 +486,11 @@ toCreateAccountCommand createdBy accountType CreateAccountRequest {..} = do
   when (T.null name) $
     Left "Account name cannot be empty"
 
+  -- Parse currency
+  cur <- parseCurrency currency
+
   -- Validate and convert initial balance
-  domainBalance <- toDomainMoney initialBalance
+  domainBalance <- toDomainMoney cur initialBalance
 
   -- Create domain command with owner and type
   return $ CreateAccount name domainBalance createdBy accountType
@@ -517,8 +526,11 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
   when (amount <= 0) $
     Left "Transfer amount must be positive"
 
+  -- Parse currency
+  cur <- parseCurrency currency
+
   -- Convert to domain Money
-  domainAmount <- toDomainMoney amount
+  domainAmount <- toDomainMoney cur amount
 
   -- Validate source and destination are different
   when (fromId == toId) $
@@ -552,8 +564,16 @@ fromAccountData accountId AccountData {..} =
     { id = unAccountId accountId,
       name = name,
       balance = fromDomainMoney balance,
+      currency = currencyToText (moneyCurrency balance),
       version = version
     }
+
+-- | Convert a Currency to its text representation.
+currencyToText :: Currency -> Text
+currencyToText UAH = "UAH"
+currencyToText USD = "USD"
+currencyToText EUR = "EUR"
+currencyToText GBP = "GBP"
 
 -- | Converts TransactionData (read model) to TransactionResponse.
 --

@@ -64,7 +64,7 @@ import Domain.Core.Types
     Money,
     UserId,
     addMoney,
-    mkMoney,
+    mkDefaultMoney,
     subtractMoneyAllowNegative,
     unsafeUserId,
   )
@@ -128,7 +128,7 @@ deriveJSON defaultOptions ''Account
 -- Note: In practice, this state should never be observed directly, as the
 -- first event in any account stream should be AccountCreated.
 accountDefault :: Account
-accountDefault = case mkMoney 0 of
+accountDefault = case mkDefaultMoney 0 of
   Right m ->
     Account
       { balance = m,
@@ -137,7 +137,7 @@ accountDefault = case mkMoney 0 of
         accountType = RegularAccount,
         accessList = []
       }
-  Left _ -> error "accountDefault: mkMoney 0 should never fail"
+  Left _ -> error "accountDefault: mkDefaultMoney 0 should never fail"
 
 -- | Check if a user is the owner of the account.
 isOwner :: UserId -> Account -> Bool
@@ -244,14 +244,16 @@ handleAccountEvent account (AccountAccessRevokedAccountEvent AccountAccessRevoke
    in account & #accessList .~ withoutUser
 handleAccountEvent account (AccountDebitedAccountEvent AccountDebited {..}) =
   -- Subtract the debited amount from balance.
-  -- The command handler already validated sufficiency, so we use
+  -- The command handler already validated sufficiency and currency match, so we use
   -- subtractMoneyAllowNegative which handles External accounts too.
-  let newBalance = subtractMoneyAllowNegative (account ^. #balance) amount
-   in account & #balance .~ newBalance
+  case subtractMoneyAllowNegative (account ^. #balance) amount of
+    Right newBalance -> account & #balance .~ newBalance
+    Left _ -> account -- Impossible: currency was validated by command handler
 handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
-  -- Add the credited amount to balance. Credits always succeed.
-  let newBalance = addMoney (account ^. #balance) amount
-   in account & #balance .~ newBalance
+  -- Add the credited amount to balance. Credits always succeed (currency validated by command handler).
+  case addMoney (account ^. #balance) amount of
+    Right newBalance -> account & #balance .~ newBalance
+    Left _ -> account -- Impossible: currency was validated by command handler
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

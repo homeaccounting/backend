@@ -256,6 +256,7 @@ curl -X POST $API_BASE/api/accounts \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
     "name": "Savings Account",
+    "currency": "USD",
     "initialBalance": 1000.0
   }' | jq
 ```
@@ -265,6 +266,7 @@ curl -X POST $API_BASE/api/accounts \
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "Savings Account",
+  "currency": "USD",
   "balance": 1000.0,
   "version": 1
 }
@@ -290,6 +292,7 @@ curl -X GET $API_BASE/api/accounts/550e8400-e29b-41d4-a716-446655440000 | jq
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "Savings Account",
+  "currency": "USD",
   "balance": 1000.0,
   "version": 1
 }
@@ -311,12 +314,14 @@ curl -X GET $API_BASE/api/accounts | jq
     {
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "name": "Savings Account",
+      "currency": "USD",
       "balance": 1000.0,
       "version": 1
     },
     {
       "id": "650e8400-e29b-41d4-a716-446655440001",
       "name": "Checking Account",
+      "currency": "USD",
       "balance": 500.0,
       "version": 1
     }
@@ -374,6 +379,7 @@ curl -X POST $API_BASE/api/transactions/income \
   -d '{
     "accountId": "550e8400-e29b-41d4-a716-446655440000",
     "amount": 500.0,
+    "currency": "USD",
     "category": "salary",
     "reason": "Monthly salary"
   }' | jq
@@ -407,6 +413,7 @@ curl -X POST $API_BASE/api/transactions/expense \
   -d '{
     "accountId": "550e8400-e29b-41d4-a716-446655440000",
     "amount": 100.0,
+    "currency": "USD",
     "category": "food",
     "reason": "Groceries"
   }' | jq
@@ -441,6 +448,7 @@ curl -X POST $API_BASE/api/transactions/transfer \
     "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
     "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
     "amount": 300.0,
+    "currency": "USD",
     "category": "rebalance",
     "reason": "Rent payment"
   }' | jq
@@ -549,7 +557,7 @@ Missing or invalid JWT token on a protected endpoint.
 ```bash
 curl -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
-  -d '{"name": "Test", "initialBalance": 100.0}' | jq
+  -d '{"name": "Test", "currency": "USD", "initialBalance": 100.0}' | jq
 ```
 
 ### 400 Bad Request - Validation Error
@@ -623,14 +631,14 @@ echo -e "\nCreating accounts..."
 SAVINGS=$(curl -s -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"name": "Savings", "initialBalance": 1000.0}')
+  -d '{"name": "Savings", "currency": "USD", "initialBalance": 1000.0}')
 SAVINGS_ID=$(echo $SAVINGS | jq -r '.id')
 echo "Savings ID: $SAVINGS_ID"
 
 CHECKING=$(curl -s -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"name": "Checking", "initialBalance": 500.0}')
+  -d '{"name": "Checking", "currency": "USD", "initialBalance": 500.0}')
 CHECKING_ID=$(echo $CHECKING | jq -r '.id')
 echo "Checking ID: $CHECKING_ID"
 
@@ -647,6 +655,7 @@ TRANSFER=$(curl -s -X POST $API_BASE/api/transactions/transfer \
     \"fromAccountId\": \"$SAVINGS_ID\",
     \"toAccountId\": \"$CHECKING_ID\",
     \"amount\": 300.0,
+    \"currency\": \"USD\",
     \"category\": \"rebalance\",
     \"reason\": \"Transfer\"
   }")
@@ -709,7 +718,7 @@ TOKEN=$(curl -s -X POST $API_BASE/api/auth/register \
 curl -X POST $API_BASE/api/accounts \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"name": "Test", "initialBalance": 100.0}' | jq
+  -d '{"name": "Test", "currency": "USD", "initialBalance": 100.0}' | jq
 ```
 
 ### Check HTTP Status Code

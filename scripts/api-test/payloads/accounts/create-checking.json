@@ -1,4 +1,5 @@
 {
   "name": "Checking Account",
+  "currency": "USD",
   "initialBalance": 500.0
 }

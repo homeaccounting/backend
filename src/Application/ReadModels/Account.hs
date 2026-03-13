@@ -270,11 +270,13 @@ processEvent summaries globalEvent =
             Just accountId ->
               Map.adjust
                 ( \summary ->
-                    summary
-                      { balance =
-                          subtractMoneyAllowNegative summary.balance evt.amount,
-                        version = summary.version + 1
-                      }
+                    case subtractMoneyAllowNegative summary.balance evt.amount of
+                      Right newBalance ->
+                        summary
+                          { balance = newBalance,
+                            version = summary.version + 1
+                          }
+                      Left _ -> summary -- Currency mismatch: should not happen for valid events
                 )
                 accountId
                 summaries
@@ -284,11 +286,13 @@ processEvent summaries globalEvent =
             Just accountId ->
               Map.adjust
                 ( \summary ->
-                    summary
-                      { balance =
-                          summary.balance `addMoney` evt.amount,
-                        version = summary.version + 1
-                      }
+                    case addMoney summary.balance evt.amount of
+                      Right newBalance ->
+                        summary
+                          { balance = newBalance,
+                            version = summary.version + 1
+                          }
+                      Left _ -> summary -- Currency mismatch: should not happen for valid events
                 )
                 accountId
                 summaries

@@ -15,6 +15,7 @@
 module Testkit.Helpers
   ( -- * Mock Constructors
     mockMoney,
+    mockMoneyWith,
     mockAccountId,
     mockTransactionId,
     mockUserId,
@@ -43,15 +44,25 @@ import Test.Hspec
 -- Mock Constructors
 -- -----------------------------------------------------------------------------
 
--- | Create a Money value without validation.
+-- | Create a Money value without validation (defaults to USD).
 --
 -- WARNING: Only use in tests where you need invalid values or want to bypass validation.
 -- For valid test data, use the generators in Testkit.Generators.
 --
 -- >>> mockMoney 100
--- Money (100 % 1)
+-- Money {amount = 100 % 1, currency = USD}
 mockMoney :: Rational -> Money
-mockMoney = unsafeMoney
+mockMoney = unsafeMoney USD
+
+-- | Create a Money value without validation in a specific currency.
+--
+-- WARNING: Only use in tests where you need invalid values or want to bypass validation.
+-- For valid test data, use the generators in Testkit.Generators.
+--
+-- >>> mockMoneyWith USD 100
+-- Money {amount = 100 % 1, currency = USD}
+mockMoneyWith :: Currency -> Rational -> Money
+mockMoneyWith = unsafeMoney
 
 -- | Create an AccountId without validation.
 --

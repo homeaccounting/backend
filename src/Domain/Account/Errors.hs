@@ -36,12 +36,13 @@ module Domain.Account.Errors
     mkAccessDenied,
     mkNotOwner,
     mkExternalAccountNotShareable,
+    mkCurrencyMismatch,
   )
 where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, Money, UserId)
+import Domain.Core.Types (AccountId, Currency, Money, UserId)
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------
@@ -104,6 +105,15 @@ data AccountError
     ExternalAccountNotShareable
       { -- | The External account that cannot be shared
         externalAccountNotShareableId :: AccountId
+      }
+  | -- | Currency mismatch between account and operation
+    CurrencyMismatch
+      { -- | The account with the mismatched currency
+        accountId :: AccountId,
+        -- | The currency of the account
+        accountCurrency :: Currency,
+        -- | The currency of the operation
+        operationCurrency :: Currency
       }
   deriving (Show, Eq, Generic)
 
@@ -271,4 +281,23 @@ mkExternalAccountNotShareable ::
 mkExternalAccountNotShareable accountId =
   ExternalAccountNotShareable
     { externalAccountNotShareableId = accountId
+    }
+
+-- | Create a CurrencyMismatch error.
+--
+-- This error indicates that an operation was attempted with a currency
+-- that does not match the account's currency.
+mkCurrencyMismatch ::
+  -- | Account ID
+  AccountId ->
+  -- | Account currency
+  Currency ->
+  -- | Operation currency
+  Currency ->
+  AccountError
+mkCurrencyMismatch accId accCurrency opCurrency =
+  CurrencyMismatch
+    { accountId = accId,
+      accountCurrency = accCurrency,
+      operationCurrency = opCurrency
     }

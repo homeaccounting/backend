@@ -58,6 +58,7 @@ import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountType (..),
+    Currency (..),
     OAuthIdentity (..),
     OAuthProvider (..),
     TelegramIdentity (..),
@@ -179,7 +180,7 @@ register email password = do
                         CreateAccountAccountCommand
                           CreateAccount
                             { name = "External",
-                              initialBalance = unsafeMoney 0,
+                              initialBalance = unsafeMoney USD 0,
                               createdBy = userId,
                               accountType = ExternalAccount
                             }
@@ -535,7 +536,7 @@ createUserViaOAuth email oauthIdentity = do
                     CreateAccountAccountCommand
                       CreateAccount
                         { name = "External",
-                          initialBalance = unsafeMoney 0,
+                          initialBalance = unsafeMoney USD 0,
                           createdBy = uid,
                           accountType = ExternalAccount
                         }
@@ -588,7 +589,7 @@ createUserViaTelegram telegramIdentity = do
                     CreateAccountAccountCommand
                       CreateAccount
                         { name = "External",
-                          initialBalance = unsafeMoney 0,
+                          initialBalance = unsafeMoney USD 0,
                           createdBy = uid,
                           accountType = ExternalAccount
                         }

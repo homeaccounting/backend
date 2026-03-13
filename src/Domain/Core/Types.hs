@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
@@ -8,11 +9,17 @@
 -- This module defines the fundamental value types used throughout the accounting domain.
 -- All types include smart constructors with validation to maintain domain invariants.
 module Domain.Core.Types
-  ( -- * Money Type
+  ( -- * Currency Type
+    Currency (..),
+    parseCurrency,
+
+    -- * Money Type
     Money,
     mkMoney,
+    mkDefaultMoney,
     unsafeMoney,
     unMoney,
+    moneyCurrency,
     addMoney,
     subtractMoney,
     subtractMoneyAllowNegative,
@@ -61,7 +68,7 @@ module Domain.Core.Types
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), withText)
+import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, withText, (.:), (.=))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int64)
@@ -73,10 +80,45 @@ import qualified Data.UUID as UUID
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------
+-- Currency Type
+-- -----------------------------------------------------------------------------
+
+-- | Supported currencies in the accounting system.
+data Currency = UAH | USD | EUR | GBP
+  deriving (Show, Eq, Ord, Generic, Enum, Bounded)
+
+instance ToJSON Currency where
+  toJSON UAH = toJSON ("UAH" :: Text)
+  toJSON USD = toJSON ("USD" :: Text)
+  toJSON EUR = toJSON ("EUR" :: Text)
+  toJSON GBP = toJSON ("GBP" :: Text)
+
+instance FromJSON Currency where
+  parseJSON = withText "Currency" $ \t ->
+    case parseCurrency t of
+      Right c -> pure c
+      Left err -> fail (T.unpack err)
+
+-- | Parse a currency code from text.
+--
+-- >>> parseCurrency "UAH"
+-- Right UAH
+--
+-- >>> parseCurrency "xyz"
+-- Left "Unknown currency: xyz"
+parseCurrency :: Text -> Either Text Currency
+parseCurrency t = case T.toUpper t of
+  "UAH" -> Right UAH
+  "USD" -> Right USD
+  "EUR" -> Right EUR
+  "GBP" -> Right GBP
+  _ -> Left $ "Unknown currency: " <> t
+
+-- -----------------------------------------------------------------------------
 -- Money Type
 -- -----------------------------------------------------------------------------
 
--- | Represents a monetary amount using exact rational arithmetic.
+-- | Represents a monetary amount with currency using exact rational arithmetic.
 --
 -- Uses Rational instead of Double to avoid floating-point precision issues.
 -- This ensures exact calculations for financial operations.
@@ -86,46 +128,63 @@ import GHC.Generics (Generic)
 --
 -- Mathematical Properties:
 --  - Non-negative: forall m. unMoney m >= 0
---  - Additive identity: addMoney m (Money 0) = m
---  - Commutative: addMoney m1 m2 = addMoney m2 m1
---  - Associative: addMoney (addMoney m1 m2) m3 = addMoney m1 (addMoney m2 m3)
+--  - Additive identity: addMoney m (mkMoney c 0) = m (when currencies match)
+--  - Commutative: addMoney m1 m2 = addMoney m2 m1 (when currencies match)
+--  - Associative: addMoney (addMoney m1 m2) m3 = addMoney m1 (addMoney m2 m3) (when currencies match)
 --  - Exact arithmetic: No rounding errors in basic operations
-newtype Money = Money
-  { unMoney :: Rational
+data Money = Money
+  { amount :: Rational,
+    currency :: Currency
   }
   deriving (Show, Eq, Ord, Generic)
 
 -- | Extract the rational value from a Money.
 unMoney :: Money -> Rational
-unMoney (Money r) = r
+unMoney (Money r _) = r
+
+-- | Extract the currency from a Money.
+moneyCurrency :: Money -> Currency
+moneyCurrency (Money _ c) = c
 
 -- | JSON serialization for Money.
--- Serializes as a decimal number with appropriate precision.
+-- Serializes as an object with amount and currency fields.
 instance ToJSON Money where
-  toJSON (Money rat) = toJSON (fromRational rat :: Double)
+  toJSON (Money rat cur) =
+    object
+      [ "amount" .= (fromRational rat :: Double),
+        "currency" .= cur
+      ]
 
 -- | JSON deserialization for Money.
--- Accepts both integer and decimal numbers.
+-- Accepts an object with amount and currency fields.
 instance FromJSON Money where
-  parseJSON v = do
-    (d :: Double) <- parseJSON v
-    case mkMoney (toRational d) of
+  parseJSON = withObject "Money" $ \o -> do
+    (d :: Double) <- o .: "amount"
+    cur <- o .: "currency"
+    case mkMoney cur (toRational d) of
       Right money -> pure money
       Left err -> fail (T.unpack err)
 
--- | Smart constructor for Money from Rational.
+-- | Smart constructor for Money from Currency and Rational.
 --
 -- Creates a Money value if the amount is non-negative.
 --
--- >>> mkMoney 100
--- Right (Money (100 % 1))
+-- >>> mkMoney UAH 100
+-- Right (Money {amount = 100 % 1, currency = UAH})
 --
--- >>> mkMoney (-10)
+-- >>> mkMoney UAH (-10)
 -- Left "Money amount must be non-negative: (-10) % 1"
-mkMoney :: Rational -> Either Text Money
-mkMoney amount
-  | amount < 0 = Left $ T.pack $ "Money amount must be non-negative: " <> show amount
-  | otherwise = Right (Money amount)
+mkMoney :: Currency -> Rational -> Either Text Money
+mkMoney cur amt
+  | amt < 0 = Left $ T.pack $ "Money amount must be non-negative: " <> show amt
+  | otherwise = Right (Money amt cur)
+
+-- | Smart constructor for Money using the default currency (USD).
+--
+-- >>> mkDefaultMoney 100
+-- Right (Money {amount = 100 % 1, currency = USD})
+mkDefaultMoney :: Rational -> Either Text Money
+mkDefaultMoney = mkMoney USD
 
 -- | Unsafe constructor for Money.
 --
@@ -133,50 +192,37 @@ mkMoney amount
 -- This function does not perform any validation and will accept any amount,
 -- including negative values.
 --
--- >>> unsafeMoney 100
--- Money (100 % 1)
---
--- >>> unsafeMoney (-10)  -- Should not do this!
--- Money ((-10) % 1)
-unsafeMoney :: Rational -> Money
-unsafeMoney = Money
+-- >>> unsafeMoney UAH 100
+-- Money {amount = 100 % 1, currency = UAH}
+unsafeMoney :: Currency -> Rational -> Money
+unsafeMoney cur amt = Money amt cur
 
 -- | Add two Money values.
 --
--- >>> let m1 = Money 100
--- >>> let m2 = Money 50
--- >>> addMoney m1 m2
--- Money (150 % 1)
-addMoney :: Money -> Money -> Money
-addMoney (Money a) (Money b) = Money (a + b)
+-- Returns an error if the currencies do not match.
+addMoney :: Money -> Money -> Either Text Money
+addMoney (Money a ca) (Money b cb)
+  | ca /= cb = Left $ "Currency mismatch: cannot add " <> T.pack (show ca) <> " and " <> T.pack (show cb)
+  | otherwise = Right (Money (a + b) ca)
 
 -- | Subtract two Money values.
 --
--- Returns an error if the result would be negative.
---
--- >>> let m1 = Money 100
--- >>> let m2 = Money 50
--- >>> subtractMoney m1 m2
--- Right (Money (50 % 1))
---
--- >>> subtractMoney m2 m1
--- Left "Insufficient funds: cannot subtract 100 % 1 from 50 % 1"
+-- Returns an error if the currencies do not match or if the result would be negative.
 subtractMoney :: Money -> Money -> Either Text Money
-subtractMoney (Money a) (Money b)
+subtractMoney (Money a ca) (Money b cb)
+  | ca /= cb = Left $ "Currency mismatch: cannot subtract " <> T.pack (show cb) <> " from " <> T.pack (show ca)
   | a < b = Left $ T.pack $ "Insufficient funds: cannot subtract " <> show b <> " from " <> show a
-  | otherwise = Right (Money (a - b))
+  | otherwise = Right (Money (a - b) ca)
 
 -- | Subtract two Money values, allowing negative results.
 --
 -- This is used for External accounts that can go negative
 -- (representing money owed to the "outside world").
---
--- >>> let m1 = Money 50
--- >>> let m2 = Money 100
--- >>> subtractMoneyAllowNegative m1 m2
--- Money ((-50) % 1)
-subtractMoneyAllowNegative :: Money -> Money -> Money
-subtractMoneyAllowNegative (Money a) (Money b) = Money (a - b)
+-- Returns an error if the currencies do not match.
+subtractMoneyAllowNegative :: Money -> Money -> Either Text Money
+subtractMoneyAllowNegative (Money a ca) (Money b cb)
+  | ca /= cb = Left $ "Currency mismatch: cannot subtract " <> T.pack (show cb) <> " from " <> T.pack (show ca)
+  | otherwise = Right (Money (a - b) ca)
 
 -- -----------------------------------------------------------------------------
 -- Account Identifier

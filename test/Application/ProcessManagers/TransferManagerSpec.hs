@@ -29,7 +29,8 @@ import Domain.Account.Events
     AccountDebited (..),
   )
 import Domain.Core.Types
-  ( InternalCategory (..),
+  ( Currency (..),
+    InternalCategory (..),
     TransferCategory (..),
     TransferType (..),
     unsafeAccountId,
@@ -80,7 +81,7 @@ mkTransferInitiatedEvent =
         TransferInitiated
           { fromAccountId = unsafeAccountId sourceAcctUuid,
             toAccountId = unsafeAccountId targetAcctUuid,
-            amount = unsafeMoney 200,
+            amount = unsafeMoney USD 200,
             reason = "Test transfer",
             by = unsafeUserId userUuid,
             transferType = InternalTransfer,
@@ -97,7 +98,7 @@ mkAccountDebitedEvent =
     (emptyMetadata "")
     ( AccountDebitedEvent
         AccountDebited
-          { amount = unsafeMoney 200,
+          { amount = unsafeMoney USD 200,
             transactionId = unsafeTransactionId txUuid,
             reason = "Test transfer"
           }
@@ -112,7 +113,7 @@ mkAccountCreditedEvent =
     (emptyMetadata "")
     ( AccountCreditedEvent
         AccountCredited
-          { amount = unsafeMoney 200,
+          { amount = unsafeMoney USD 200,
             transactionId = unsafeTransactionId txUuid,
             reason = "Test transfer"
           }
@@ -155,7 +156,7 @@ spec = describe "TransferManager (Saga)" $ do
         Just td -> do
           td.sourceAccount `shouldBe` unsafeAccountId sourceAcctUuid
           td.targetAccount `shouldBe` unsafeAccountId targetAcctUuid
-          td.amount `shouldBe` unsafeMoney 200
+          td.amount `shouldBe` unsafeMoney USD 200
           td.reason `shouldBe` "Test transfer"
 
     it "issues DebitAccount effect with compensation to source account" $ do
@@ -167,7 +168,7 @@ spec = describe "TransferManager (Saga)" $ do
           targetId `shouldBe` sourceAcctUuid
           case cmd of
             DebitAccountCommand (DebitAccount amt txId rsn) -> do
-              amt `shouldBe` unsafeMoney 200
+              amt `shouldBe` unsafeMoney USD 200
               txId `shouldBe` unsafeTransactionId txUuid
               rsn `shouldBe` "Test transfer"
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
@@ -201,7 +202,7 @@ spec = describe "TransferManager (Saga)" $ do
                   TransferInitiated
                     { fromAccountId = unsafeAccountId sourceAcctUuid,
                       toAccountId = unsafeAccountId targetAcctUuid,
-                      amount = unsafeMoney 100,
+                      amount = unsafeMoney USD 100,
                       reason = "Bad",
                       by = unsafeUserId userUuid,
                       transferType = InternalTransfer,
@@ -226,7 +227,7 @@ spec = describe "TransferManager (Saga)" $ do
           creditTarget `shouldBe` targetAcctUuid
           case creditCmd of
             CreditAccountCommand (CreditAccount amt txId rsn) -> do
-              amt `shouldBe` unsafeMoney 200
+              amt `shouldBe` unsafeMoney USD 200
               txId `shouldBe` unsafeTransactionId txUuid
               rsn `shouldBe` "Test transfer"
             other -> expectationFailure $ "Expected CreditAccountCommand, got: " ++ show other

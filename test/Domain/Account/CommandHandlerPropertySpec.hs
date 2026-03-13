@@ -24,6 +24,7 @@ import Data.Either (fromRight, isLeft)
 import qualified Data.Text as T
 import Domain.Account
 import Domain.Account.CommandHandler
+import Domain.Account.Commands (DebitAccount (..))
 import Domain.Account.Events (AccountAccessGranted (..), AccountAccessRevoked (..), AccountCreated (..))
 import Domain.Core.Types
 import Eventium (latestProjection)
@@ -31,7 +32,7 @@ import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import Test.QuickCheck
-import Testkit.Generators ()
+import Testkit.Generators
 import Testkit.Helpers
 import Prelude (read)
 
@@ -274,6 +275,18 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                   $ ShareAccount targetId targetRole ownerId
               result = handleAccountCommand account command
            in isLeft result
+
+  describe "Currency enforcement" $ do
+    it "Then debit with different currency always returns CurrencyMismatch"
+      $ property
+      $ \(ownerId :: UserId) (txId :: TransactionId) ->
+        forAll (genPositiveMoneyIn EUR) $ \amt ->
+          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
+              command =
+                DebitAccountAccountCommand
+                  $ DebitAccount amt txId "Transfer"
+              result = handleAccountCommand account command
+           in result === Left CurrencyMismatch
 
 -- -----------------------------------------------------------------------------
 -- Arbitrary Instances for Domain Types

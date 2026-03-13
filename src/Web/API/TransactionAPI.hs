@@ -44,7 +44,7 @@ where
 import qualified Application.Services.TransactionService as TransactionService
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Domain.Core.Types (mkAccountId)
+import Domain.Core.Types (mkAccountId, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
@@ -135,17 +135,22 @@ incomeHandler user request = do
       case mkAccountId request.accountId of
         Left err ->
           throwDomainError $ ValidationErr $ mkValidationError "accountId" err err
-        Right accountId -> do
-          -- 3. Parse amount
-          case toDomainMoney request.amount of
+        Right accountId ->
+          -- 3. Parse currency
+          case parseCurrency request.currency of
             Left err ->
-              throwDomainError $ ValidationErr $ mkValidationError "amount" err err
-            Right money -> do
-              -- 4. Delegate to service
-              result <- TransactionService.initiateIncome userId accountId money incomeCat request.reason
-              case result of
-                Right (txId, summary) -> return $ fromTransactionData txId summary
-                Left err -> throwDomainError err
+              throwDomainError $ ValidationErr $ mkValidationError "currency" err err
+            Right cur -> do
+              -- 4. Parse amount
+              case toDomainMoney cur request.amount of
+                Left err ->
+                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
+                Right money -> do
+                  -- 5. Delegate to service
+                  result <- TransactionService.initiateIncome userId accountId money incomeCat request.reason
+                  case result of
+                    Right (txId, summary) -> return $ fromTransactionData txId summary
+                    Left err -> throwDomainError err
 
 -- | Handler for POST /api/transactions/expense - Record an expense transaction.
 expenseHandler :: AuthenticatedUser -> ExpenseRequest -> AppM TransactionResponse
@@ -160,17 +165,22 @@ expenseHandler user request = do
       case mkAccountId request.accountId of
         Left err ->
           throwDomainError $ ValidationErr $ mkValidationError "accountId" err err
-        Right accountId -> do
-          -- 3. Parse amount
-          case toDomainMoney request.amount of
+        Right accountId ->
+          -- 3. Parse currency
+          case parseCurrency request.currency of
             Left err ->
-              throwDomainError $ ValidationErr $ mkValidationError "amount" err err
-            Right money -> do
-              -- 4. Delegate to service
-              result <- TransactionService.initiateExpense userId accountId money expenseCat request.reason
-              case result of
-                Right (txId, summary) -> return $ fromTransactionData txId summary
-                Left err -> throwDomainError err
+              throwDomainError $ ValidationErr $ mkValidationError "currency" err err
+            Right cur -> do
+              -- 4. Parse amount
+              case toDomainMoney cur request.amount of
+                Left err ->
+                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
+                Right money -> do
+                  -- 5. Delegate to service
+                  result <- TransactionService.initiateExpense userId accountId money expenseCat request.reason
+                  case result of
+                    Right (txId, summary) -> return $ fromTransactionData txId summary
+                    Left err -> throwDomainError err
 
 -- | Handler for POST /api/transactions/transfer - Initiate an internal transfer.
 transferHandler :: AuthenticatedUser -> InternalTransferRequest -> AppM TransactionResponse
@@ -190,17 +200,22 @@ transferHandler user request = do
           case mkAccountId request.toAccountId of
             Left err ->
               throwDomainError $ ValidationErr $ mkValidationError "toAccountId" err err
-            Right toAccId -> do
-              -- 4. Parse amount
-              case toDomainMoney request.amount of
+            Right toAccId ->
+              -- 4. Parse currency
+              case parseCurrency request.currency of
                 Left err ->
-                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
-                Right money -> do
-                  -- 5. Delegate to service
-                  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money internalCat request.reason
-                  case result of
-                    Right (txId, summary) -> return $ fromTransactionData txId summary
-                    Left err -> throwDomainError err
+                  throwDomainError $ ValidationErr $ mkValidationError "currency" err err
+                Right cur -> do
+                  -- 5. Parse amount
+                  case toDomainMoney cur request.amount of
+                    Left err ->
+                      throwDomainError $ ValidationErr $ mkValidationError "amount" err err
+                    Right money -> do
+                      -- 6. Delegate to service
+                      result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money internalCat request.reason
+                      case result of
+                        Right (txId, summary) -> return $ fromTransactionData txId summary
+                        Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions/:id - Get transaction status.
 getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse

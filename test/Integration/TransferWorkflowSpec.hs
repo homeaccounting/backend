@@ -50,6 +50,7 @@ import Domain.Core.Types
   ( AccountAccess (..),
     AccountRole (..),
     AccountType (..),
+    Currency (..),
     ExpenseCategory (..),
     IncomeCategory (..),
     InternalCategory (..),
@@ -97,7 +98,7 @@ setupRegularAccounts = do
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Source Account",
-            initialBalance = unsafeMoney 1000,
+            initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
             accountType = RegularAccount
           }
@@ -108,7 +109,7 @@ setupRegularAccounts = do
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Target Account",
-            initialBalance = unsafeMoney 500,
+            initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
             accountType = RegularAccount
           }
@@ -131,7 +132,7 @@ setupRegularAccountsWithPM = do
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Source Account",
-            initialBalance = unsafeMoney 1000,
+            initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
             accountType = RegularAccount
           }
@@ -141,7 +142,7 @@ setupRegularAccountsWithPM = do
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Target Account",
-            initialBalance = unsafeMoney 500,
+            initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
             accountType = RegularAccount
           }
@@ -175,7 +176,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
         InitiateTransfer
           { fromAccountId = unsafeAccountId fromUuid,
             toAccountId = unsafeAccountId toUuid,
-            amount = unsafeMoney amt,
+            amount = unsafeMoney USD amt,
             reason = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = InternalTransfer,
@@ -211,7 +212,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
         InitiateTransfer
           { fromAccountId = unsafeAccountId fromUuid,
             toAccountId = unsafeAccountId toUuid,
-            amount = unsafeMoney amt,
+            amount = unsafeMoney USD amt,
             reason = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = InternalTransfer,
@@ -254,7 +255,7 @@ successfulTransferSpec =
         Just txData -> do
           txData.fromAccountId `shouldBe` unsafeAccountId acct1Uuid
           txData.toAccountId `shouldBe` unsafeAccountId acct2Uuid
-          txData.amount `shouldBe` unsafeMoney 200
+          txData.amount `shouldBe` unsafeMoney USD 200
           txData.status `shouldBe` Completed
 
 -- -----------------------------------------------------------------------------
@@ -279,7 +280,7 @@ incomeFlowSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = ExternalAccount
               }
@@ -290,7 +291,7 @@ incomeFlowSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Wallet",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = RegularAccount
               }
@@ -306,7 +307,7 @@ incomeFlowSpec =
         Just txData -> do
           txData.fromAccountId `shouldBe` unsafeAccountId extUuid
           txData.toAccountId `shouldBe` unsafeAccountId regUuid
-          txData.amount `shouldBe` unsafeMoney 500
+          txData.amount `shouldBe` unsafeMoney USD 500
           txData.reason `shouldBe` "Salary"
           txData.status `shouldBe` Completed
 
@@ -332,7 +333,7 @@ expenseFlowSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Checking",
-                initialBalance = unsafeMoney 1000,
+                initialBalance = unsafeMoney USD 1000,
                 createdBy = unsafeUserId userUuid,
                 accountType = RegularAccount
               }
@@ -343,7 +344,7 @@ expenseFlowSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = ExternalAccount
               }
@@ -359,7 +360,7 @@ expenseFlowSpec =
         Just txData -> do
           txData.fromAccountId `shouldBe` unsafeAccountId regUuid
           txData.toAccountId `shouldBe` unsafeAccountId extUuid
-          txData.amount `shouldBe` unsafeMoney 300
+          txData.amount `shouldBe` unsafeMoney USD 300
           txData.reason `shouldBe` "Groceries"
           txData.status `shouldBe` Completed
 
@@ -484,7 +485,7 @@ processManagerDrivenSpec =
         Nothing -> expectationFailure "Transaction not found in read model after PM processing"
         Just txData -> do
           txData.status `shouldBe` Completed
-          txData.amount `shouldBe` unsafeMoney 200
+          txData.amount `shouldBe` unsafeMoney USD 200
 
     it "updates both account balances correctly" $ do
       (env, acct1Uuid, acct2Uuid, _userUuid) <- setupRegularAccountsWithPM
@@ -498,14 +499,14 @@ processManagerDrivenSpec =
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found in read model"
         Just srcData ->
-          srcData.balance `shouldBe` unsafeMoney 800
+          srcData.balance `shouldBe` unsafeMoney USD 800
 
       -- Target should be 500 + 200 = 700
       maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found in read model"
         Just tgtData ->
-          tgtData.balance `shouldBe` unsafeMoney 700
+          tgtData.balance `shouldBe` unsafeMoney USD 700
 
     it "external account can go negative" $ do
       env <- createTestAppEnvWithProcessManager
@@ -522,7 +523,7 @@ processManagerDrivenSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = ExternalAccount
               }
@@ -533,7 +534,7 @@ processManagerDrivenSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Wallet",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = RegularAccount
               }
@@ -547,13 +548,13 @@ processManagerDrivenSpec =
       case maybeExt of
         Nothing -> expectationFailure "External account not found in read model"
         Just extData ->
-          extData.balance `shouldBe` unsafeMoney (-500)
+          extData.balance `shouldBe` unsafeMoney USD (-500)
 
       maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found in read model"
         Just regData ->
-          regData.balance `shouldBe` unsafeMoney 500
+          regData.balance `shouldBe` unsafeMoney USD 500
 
     it "fails transfer when regular account has insufficient funds" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
@@ -575,13 +576,13 @@ processManagerDrivenSpec =
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found"
         Just srcData ->
-          srcData.balance `shouldBe` unsafeMoney 1000
+          srcData.balance `shouldBe` unsafeMoney USD 1000
 
       maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found"
         Just tgtData ->
-          tgtData.balance `shouldBe` unsafeMoney 500
+          tgtData.balance `shouldBe` unsafeMoney USD 500
 
     it "handles multiple sequential transfers correctly" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
@@ -598,13 +599,13 @@ processManagerDrivenSpec =
       case maybeSrc of
         Nothing -> expectationFailure "Source not found"
         Just srcData ->
-          srcData.balance `shouldBe` unsafeMoney 750
+          srcData.balance `shouldBe` unsafeMoney USD 750
 
       maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
       case maybeTgt of
         Nothing -> expectationFailure "Target not found"
         Just tgtData ->
-          tgtData.balance `shouldBe` unsafeMoney 750
+          tgtData.balance `shouldBe` unsafeMoney USD 750
 
 -- -----------------------------------------------------------------------------
 -- Categorized Transfer Tests (Income, Expense, Internal with categories)
@@ -628,7 +629,7 @@ categorizedTransferSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = ExternalAccount
               }
@@ -639,7 +640,7 @@ categorizedTransferSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Wallet",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = RegularAccount
               }
@@ -652,7 +653,7 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId extUuid,
                 toAccountId = unsafeAccountId regUuid,
-                amount = unsafeMoney 3000,
+                amount = unsafeMoney USD 3000,
                 reason = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Income,
@@ -675,13 +676,13 @@ categorizedTransferSpec =
       case maybeExt of
         Nothing -> expectationFailure "External account not found"
         Just extData ->
-          extData.balance `shouldBe` unsafeMoney (-3000)
+          extData.balance `shouldBe` unsafeMoney USD (-3000)
 
       maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found"
         Just regData ->
-          regData.balance `shouldBe` unsafeMoney 3000
+          regData.balance `shouldBe` unsafeMoney USD 3000
 
     it "expense flow with Food category completes correctly" $ do
       env <- createTestAppEnvWithProcessManager
@@ -698,7 +699,7 @@ categorizedTransferSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Checking",
-                initialBalance = unsafeMoney 5000,
+                initialBalance = unsafeMoney USD 5000,
                 createdBy = unsafeUserId userUuid,
                 accountType = RegularAccount
               }
@@ -709,7 +710,7 @@ categorizedTransferSpec =
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
-                initialBalance = unsafeMoney 0,
+                initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
                 accountType = ExternalAccount
               }
@@ -722,7 +723,7 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId regUuid,
                 toAccountId = unsafeAccountId extUuid,
-                amount = unsafeMoney 150,
+                amount = unsafeMoney USD 150,
                 reason = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Expense,
@@ -745,13 +746,13 @@ categorizedTransferSpec =
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found"
         Just regData ->
-          regData.balance `shouldBe` unsafeMoney 4850
+          regData.balance `shouldBe` unsafeMoney USD 4850
 
       maybeExt <- getAccount acctReadModel (unsafeAccountId extUuid)
       case maybeExt of
         Nothing -> expectationFailure "External account not found"
         Just extData ->
-          extData.balance `shouldBe` unsafeMoney 150
+          extData.balance `shouldBe` unsafeMoney USD 150
 
     it "internal transfer with Savings category completes correctly" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
@@ -766,7 +767,7 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId acct1Uuid,
                 toAccountId = unsafeAccountId acct2Uuid,
-                amount = unsafeMoney 300,
+                amount = unsafeMoney USD 300,
                 reason = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = InternalTransfer,
@@ -796,7 +797,7 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId acct1Uuid,
                 toAccountId = unsafeAccountId acct2Uuid,
-                amount = unsafeMoney 100,
+                amount = unsafeMoney USD 100,
                 reason = "Mismatched category",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Income,

@@ -138,7 +138,7 @@ test_create_account_unauthorized() {
     print_info "Attempting to create account without token..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
-        -d '{"name": "Unauthorized Account", "initialBalance": 100.0}')
+        -d '{"name": "Unauthorized Account", "currency": "USD", "initialBalance": 100.0}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

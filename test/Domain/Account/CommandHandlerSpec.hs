@@ -22,6 +22,7 @@ module Domain.Account.CommandHandlerSpec (spec) where
 import Data.Either (isLeft)
 import Domain.Account
 import Domain.Account.CommandHandler
+import Domain.Account.Commands (CreditAccount (..), DebitAccount (..))
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
@@ -41,6 +42,7 @@ spec = do
   createAccountSpec
   shareAccountSpec
   revokeAccessSpec
+  currencyMismatchSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -459,3 +461,38 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let result = handleAccountCommand account command
 
         result `shouldSatisfy` isLeft
+
+-- -----------------------------------------------------------------------------
+-- CurrencyMismatch Tests
+-- -----------------------------------------------------------------------------
+
+currencyMismatchSpec :: Spec
+currencyMismatchSpec = describe "CurrencyMismatch" $ do
+  let testTransactionId = mockTransactionId (read "44444444-4444-4444-4444-444444444444")
+
+  context "Given USD account" $ do
+    describe "When debiting with EUR" $ do
+      it "Then returns CurrencyMismatch error" $ do
+        let account = regularAccountWithOwner testOwnerId
+        let command =
+              DebitAccountAccountCommand
+                $ DebitAccount
+                  { amount = mockMoneyWith EUR 100,
+                    transactionId = testTransactionId,
+                    reason = "Transfer"
+                  }
+        let result = handleAccountCommand account command
+        result `shouldBe` Left CurrencyMismatch
+
+    describe "When crediting with EUR" $ do
+      it "Then returns CurrencyMismatch error" $ do
+        let account = regularAccountWithOwner testOwnerId
+        let command =
+              CreditAccountAccountCommand
+                $ CreditAccount
+                  { amount = mockMoneyWith EUR 100,
+                    transactionId = testTransactionId,
+                    reason = "Transfer"
+                  }
+        let result = handleAccountCommand account command
+        result `shouldBe` Left CurrencyMismatch

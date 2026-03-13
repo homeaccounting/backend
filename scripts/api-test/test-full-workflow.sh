@@ -160,7 +160,7 @@ main() {
     SAVINGS_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"name": "Savings Account", "initialBalance": 1000.0}')
+        -d '{"name": "Savings Account", "currency": "USD", "initialBalance": 1000.0}')
 
     SAVINGS_ID=$(echo "$SAVINGS_RESPONSE" | jq -r '.id')
     SAVINGS_BALANCE=$(echo "$SAVINGS_RESPONSE" | jq -r '.balance')
@@ -179,7 +179,7 @@ main() {
     CHECKING_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d '{"name": "Checking Account", "initialBalance": 500.0}')
+        -d '{"name": "Checking Account", "currency": "USD", "initialBalance": 500.0}')
 
     CHECKING_ID=$(echo "$CHECKING_RESPONSE" | jq -r '.id')
     CHECKING_BALANCE=$(echo "$CHECKING_RESPONSE" | jq -r '.balance')
@@ -215,6 +215,7 @@ main() {
   "fromAccountId": "$SAVINGS_ID",
   "toAccountId": "$CHECKING_ID",
   "amount": 300.0,
+  "currency": "USD",
   "category": "rebalance",
   "reason": "Transfer to checking for bills"
 }

@@ -1,6 +1,7 @@
 {
   "accountId": "REPLACE_WITH_ACCOUNT_ID",
   "amount": 100.0,
+  "currency": "USD",
   "category": "food",
   "reason": "Groceries"
 }

@@ -239,6 +239,7 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "name": "Savings Account",
+  "currency": "USD",
   "balance": 1000.0,
   "version": 1
 }
