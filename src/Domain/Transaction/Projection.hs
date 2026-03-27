@@ -49,7 +49,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, IncomeCategory (..), Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeUserId)
+import Domain.Core.Types (AccountId, ExchangeRate, IncomeCategory (..), Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -124,8 +124,12 @@ data Transaction = Transaction
     fromAccountId :: AccountId,
     -- | Account to which money is being credited
     toAccountId :: AccountId,
-    -- | Amount of money being transferred
-    amount :: Money,
+    -- | Amount debited from source account
+    sourceAmount :: Money,
+    -- | Amount credited to target account
+    targetAmount :: Money,
+    -- | Exchange rate used (Nothing if same-currency)
+    exchangeRate :: Maybe ExchangeRate,
     -- | Reason or description for the transfer
     reason :: Text,
     -- | Current status of the transaction
@@ -167,9 +171,13 @@ transactionDefault =
       toAccountId = case mkAccountId nil of
         Right aid -> aid
         Left _ -> error "transactionDefault: mkAccountId should never fail for nil UUID",
-      amount = case mkDefaultMoney 0 of
+      sourceAmount = case mkDefaultMoney 0 of
         Right m -> m
         Left _ -> error "transactionDefault: mkDefaultMoney 0 should never fail",
+      targetAmount = case mkDefaultMoney 0 of
+        Right m -> m
+        Left _ -> error "transactionDefault: mkDefaultMoney 0 should never fail",
+      exchangeRate = Nothing,
       reason = "",
       status = Pending,
       initiatedBy = unsafeUserId nil,
@@ -239,8 +247,12 @@ handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
     .~ evt.fromAccountId
     & #toAccountId
     .~ evt.toAccountId
-    & #amount
-    .~ evt.amount
+    & #sourceAmount
+    .~ evt.sourceAmount
+    & #targetAmount
+    .~ evt.targetAmount
+    & #exchangeRate
+    .~ evt.exchangeRate
     & #reason
     .~ evt.reason
     & #status

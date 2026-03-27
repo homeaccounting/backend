@@ -44,6 +44,8 @@ import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
+    Currency,
+    ExchangeRate,
     ExpenseCategory,
     IncomeCategory,
     InternalCategory,
@@ -52,16 +54,22 @@ import Domain.Core.Types
     TransferCategory (..),
     TransferType (..),
     UserId,
+    convert,
+    exchangeRateValue,
+    mkExchangeRate,
     mkTransactionId,
+    moneyCurrency,
   )
 import Domain.Transaction.CommandHandler (TransactionCommand (InitiateTransferTransactionCommand))
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),
+    HasExchangeRateCache (..),
     HasReadModel (..),
   )
 import Infrastructure.Eventium (applyTransactionCommand)
+import Infrastructure.ExchangeRate.Provider (getCachedRate)
 import RIO
 
 -- -----------------------------------------------------------------------------
@@ -136,7 +144,8 @@ getTransaction transactionUuid = do
 -- | Initiate an income transfer (External -> Regular account).
 --
 -- Looks up the user's External account and validates the target is a Regular
--- account, then delegates to 'initiateTransfer'.
+-- account. Resolves cross-currency amounts using ECB rates, then delegates
+-- to 'initiateTransfer'.
 initiateIncome ::
   UserId ->
   AccountId ->
@@ -170,23 +179,39 @@ initiateIncome userId targetAccountId amount incomeCat reason = do
               logWarn "Target account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
             else do
-              -- 3. Construct and delegate to initiateTransfer
-              let cmd =
-                    InitiateTransfer
-                      { fromAccountId = externalAccId,
-                        toAccountId = targetAccountId,
-                        amount = amount,
-                        reason = reason,
-                        initiatedBy = userId,
-                        transferType = Income,
-                        category = IncomeCat incomeCat
-                      }
-              initiateTransfer cmd
+              -- 3. Look up External account to get its currency
+              maybeExternal <- AccountRM.getAccount accountRM externalAccId
+              case maybeExternal of
+                Nothing -> do
+                  logWarn $ "External account not found: " <> displayShow externalAccId
+                  return $ Left $ NotFound "Account" (tshow externalAccId)
+                Just externalData -> do
+                  let srcCurrency = moneyCurrency externalData.balance
+                      tgtCurrency = moneyCurrency targetData.balance
+                  -- Income: user provides amount in target (Regular) currency
+                  resolveResult <- resolveAmounts amount srcCurrency tgtCurrency False Nothing
+                  case resolveResult of
+                    Left err -> return $ Left err
+                    Right (srcAmt, tgtAmt, rate) -> do
+                      let cmd =
+                            InitiateTransfer
+                              { fromAccountId = externalAccId,
+                                toAccountId = targetAccountId,
+                                sourceAmount = srcAmt,
+                                targetAmount = tgtAmt,
+                                exchangeRate = rate,
+                                reason = reason,
+                                initiatedBy = userId,
+                                transferType = Income,
+                                category = IncomeCat incomeCat
+                              }
+                      initiateTransfer cmd
 
 -- | Initiate an expense transfer (Regular -> External account).
 --
 -- Looks up the user's External account and validates the source is a Regular
--- account, then delegates to 'initiateTransfer'.
+-- account. Resolves cross-currency amounts using ECB rates, then delegates
+-- to 'initiateTransfer'.
 initiateExpense ::
   UserId ->
   AccountId ->
@@ -220,23 +245,38 @@ initiateExpense userId sourceAccountId amount expenseCat reason = do
               logWarn "Source account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
             else do
-              -- 3. Construct and delegate to initiateTransfer
-              let cmd =
-                    InitiateTransfer
-                      { fromAccountId = sourceAccountId,
-                        toAccountId = externalAccId,
-                        amount = amount,
-                        reason = reason,
-                        initiatedBy = userId,
-                        transferType = Expense,
-                        category = ExpenseCat expenseCat
-                      }
-              initiateTransfer cmd
+              -- 3. Look up External account to get its currency
+              maybeExternal <- AccountRM.getAccount accountRM externalAccId
+              case maybeExternal of
+                Nothing -> do
+                  logWarn $ "External account not found: " <> displayShow externalAccId
+                  return $ Left $ NotFound "Account" (tshow externalAccId)
+                Just externalData -> do
+                  let srcCurrency = moneyCurrency sourceData.balance
+                      tgtCurrency = moneyCurrency externalData.balance
+                  -- Expense: user provides amount in source (Regular) currency
+                  resolveResult <- resolveAmounts amount srcCurrency tgtCurrency True Nothing
+                  case resolveResult of
+                    Left err -> return $ Left err
+                    Right (srcAmt, tgtAmt, rate) -> do
+                      let cmd =
+                            InitiateTransfer
+                              { fromAccountId = sourceAccountId,
+                                toAccountId = externalAccId,
+                                sourceAmount = srcAmt,
+                                targetAmount = tgtAmt,
+                                exchangeRate = rate,
+                                reason = reason,
+                                initiatedBy = userId,
+                                transferType = Expense,
+                                category = ExpenseCat expenseCat
+                              }
+                      initiateTransfer cmd
 
 -- | Initiate an internal transfer (Regular -> Regular account).
 --
--- Validates both accounts exist and are Regular, then delegates to
--- 'initiateTransfer'.
+-- Validates both accounts exist and are Regular, resolves cross-currency
+-- amounts, then delegates to 'initiateTransfer'.
 initiateInternalTransfer ::
   UserId ->
   AccountId ->
@@ -244,8 +284,9 @@ initiateInternalTransfer ::
   Money ->
   InternalCategory ->
   Text ->
+  Maybe Rational ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateInternalTransfer userId sourceAccountId targetAccountId amount internalCat reason = do
+initiateInternalTransfer userId sourceAccountId targetAccountId amount internalCat reason maybeUserRate = do
   logInfo "Initiating internal transfer..."
 
   -- 1. Validate both accounts exist and are Regular
@@ -272,18 +313,26 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount internalC
                   logWarn "Target account is not a regular account"
                   return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
                 else do
-                  -- 2. Construct and delegate to initiateTransfer
-                  let cmd =
-                        InitiateTransfer
-                          { fromAccountId = sourceAccountId,
-                            toAccountId = targetAccountId,
-                            amount = amount,
-                            reason = reason,
-                            initiatedBy = userId,
-                            transferType = InternalTransfer,
-                            category = InternalCat internalCat
-                          }
-                  initiateTransfer cmd
+                  let srcCurrency = moneyCurrency sourceData.balance
+                      tgtCurrency = moneyCurrency targetData.balance
+                  -- Internal: user provides amount in source currency
+                  resolveResult <- resolveAmounts amount srcCurrency tgtCurrency True maybeUserRate
+                  case resolveResult of
+                    Left err -> return $ Left err
+                    Right (srcAmt, tgtAmt, rate) -> do
+                      let cmd =
+                            InitiateTransfer
+                              { fromAccountId = sourceAccountId,
+                                toAccountId = targetAccountId,
+                                sourceAmount = srcAmt,
+                                targetAmount = tgtAmt,
+                                exchangeRate = rate,
+                                reason = reason,
+                                initiatedBy = userId,
+                                transferType = InternalTransfer,
+                                category = InternalCat internalCat
+                              }
+                      initiateTransfer cmd
 
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
@@ -303,5 +352,50 @@ queryTransactionResult transactionId = do
     Nothing -> do
       logWarn "Transaction not found"
       return $ Left $ NotFound "Transaction" (tshow transactionId)
+
+-- | Resolve amounts for a cross-currency transfer.
+-- For same-currency: returns identical amounts with Nothing rate.
+-- For different currencies: fetches rate and converts.
+--
+-- Parameters:
+--   userAmount: the amount the user provided
+--   srcCurrency: source account currency
+--   tgtCurrency: target account currency
+--   userAmountIsSource: True if userAmount is in source currency, False if in target
+--   maybeUserRate: optional user-provided exchange rate override (src -> tgt)
+resolveAmounts ::
+  (MonadReader env m, HasExchangeRateCache env, MonadIO m) =>
+  Money ->
+  Currency ->
+  Currency ->
+  Bool ->
+  Maybe Rational ->
+  m (Either DomainError (Money, Money, Maybe ExchangeRate))
+resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate
+  | srcCurrency == tgtCurrency =
+      pure $ Right (userAmount, userAmount, Nothing)
+  | otherwise = do
+      -- Always resolve src->tgt rate
+      rateResult <- case maybeUserRate of
+        Just r ->
+          pure $ first ExchangeRateUnavailable $ mkExchangeRate srcCurrency tgtCurrency r
+        Nothing -> do
+          cache <- view exchangeRateCacheL
+          liftIO
+            $ getCachedRate cache srcCurrency tgtCurrency
+            <&> first ExchangeRateUnavailable
+      case rateResult of
+        Left err -> pure $ Left err
+        Right er ->
+          if userAmountIsSource
+            then -- User gave source amount, compute target
+              let tgtAmount = convert er userAmount
+               in pure $ Right (userAmount, tgtAmount, Just er)
+            else -- User gave target amount, compute source (use inverse rate)
+              case mkExchangeRate tgtCurrency srcCurrency (1 / exchangeRateValue er) of
+                Left err -> pure $ Left $ ExchangeRateUnavailable err
+                Right inverseEr ->
+                  let srcAmount = convert inverseEr userAmount
+                   in pure $ Right (srcAmount, userAmount, Just er)
 
 -- Note: Uses 'tshow' from RIO for Text conversion of Show-able values.

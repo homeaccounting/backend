@@ -180,7 +180,9 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
         InitiateTransfer
           { fromAccountId = unsafeAccountId fromUuid,
             toAccountId = unsafeAccountId toUuid,
-            amount = unsafeMoney USD amt,
+            sourceAmount = unsafeMoney USD amt,
+            targetAmount = unsafeMoney USD amt,
+            exchangeRate = Nothing,
             reason = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = InternalTransfer,
@@ -216,7 +218,9 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
         InitiateTransfer
           { fromAccountId = unsafeAccountId fromUuid,
             toAccountId = unsafeAccountId toUuid,
-            amount = unsafeMoney USD amt,
+            sourceAmount = unsafeMoney USD amt,
+            targetAmount = unsafeMoney USD amt,
+            exchangeRate = Nothing,
             reason = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = InternalTransfer,
@@ -259,7 +263,7 @@ successfulTransferSpec =
         Just txData -> do
           txData.fromAccountId `shouldBe` unsafeAccountId acct1Uuid
           txData.toAccountId `shouldBe` unsafeAccountId acct2Uuid
-          txData.amount `shouldBe` unsafeMoney USD 200
+          txData.sourceAmount `shouldBe` unsafeMoney USD 200
           txData.status `shouldBe` Completed
 
 -- -----------------------------------------------------------------------------
@@ -313,7 +317,7 @@ incomeFlowSpec =
         Just txData -> do
           txData.fromAccountId `shouldBe` unsafeAccountId extUuid
           txData.toAccountId `shouldBe` unsafeAccountId regUuid
-          txData.amount `shouldBe` unsafeMoney USD 500
+          txData.sourceAmount `shouldBe` unsafeMoney USD 500
           txData.reason `shouldBe` "Salary"
           txData.status `shouldBe` Completed
 
@@ -368,7 +372,7 @@ expenseFlowSpec =
         Just txData -> do
           txData.fromAccountId `shouldBe` unsafeAccountId regUuid
           txData.toAccountId `shouldBe` unsafeAccountId extUuid
-          txData.amount `shouldBe` unsafeMoney USD 300
+          txData.sourceAmount `shouldBe` unsafeMoney USD 300
           txData.reason `shouldBe` "Groceries"
           txData.status `shouldBe` Completed
 
@@ -493,7 +497,7 @@ processManagerDrivenSpec =
         Nothing -> expectationFailure "Transaction not found in read model after PM processing"
         Just txData -> do
           txData.status `shouldBe` Completed
-          txData.amount `shouldBe` unsafeMoney USD 200
+          txData.sourceAmount `shouldBe` unsafeMoney USD 200
 
     it "updates both account balances correctly" $ do
       (env, acct1Uuid, acct2Uuid, _userUuid) <- setupRegularAccountsWithPM
@@ -665,7 +669,9 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId extUuid,
                 toAccountId = unsafeAccountId regUuid,
-                amount = unsafeMoney USD 3000,
+                sourceAmount = unsafeMoney USD 3000,
+                targetAmount = unsafeMoney USD 3000,
+                exchangeRate = Nothing,
                 reason = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Income,
@@ -737,7 +743,9 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId regUuid,
                 toAccountId = unsafeAccountId extUuid,
-                amount = unsafeMoney USD 150,
+                sourceAmount = unsafeMoney USD 150,
+                targetAmount = unsafeMoney USD 150,
+                exchangeRate = Nothing,
                 reason = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Expense,
@@ -781,7 +789,9 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId acct1Uuid,
                 toAccountId = unsafeAccountId acct2Uuid,
-                amount = unsafeMoney USD 300,
+                sourceAmount = unsafeMoney USD 300,
+                targetAmount = unsafeMoney USD 300,
+                exchangeRate = Nothing,
                 reason = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = InternalTransfer,
@@ -811,7 +821,9 @@ categorizedTransferSpec =
             InitiateTransfer
               { fromAccountId = unsafeAccountId acct1Uuid,
                 toAccountId = unsafeAccountId acct2Uuid,
-                amount = unsafeMoney USD 100,
+                sourceAmount = unsafeMoney USD 100,
+                targetAmount = unsafeMoney USD 100,
+                exchangeRate = Nothing,
                 reason = "Mismatched category",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Income,

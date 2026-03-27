@@ -21,6 +21,7 @@ module Testkit.Helpers
     mockUserId,
     mockTelegramId,
     mockPasswordHash,
+    mockExchangeRate,
 
     -- * Test Assertions
     shouldBeRight,
@@ -107,6 +108,15 @@ mockTelegramId = TelegramId
 -- PasswordHash "test-hash"
 mockPasswordHash :: BS.ByteString -> PasswordHash
 mockPasswordHash = PasswordHash
+
+-- | Create an ExchangeRate without validation.
+--
+-- WARNING: Only use in tests where you need to bypass validation.
+--
+-- >>> mockExchangeRate UAH USD 0.025
+-- ExchangeRate {source = UAH, target = USD, rate = ...}
+mockExchangeRate :: Currency -> Currency -> Rational -> ExchangeRate
+mockExchangeRate = unsafeExchangeRate
 
 -- -----------------------------------------------------------------------------
 -- Test Assertions

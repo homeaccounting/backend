@@ -41,6 +41,8 @@ data DomainError
       { sourceAmount :: Double,
         requiredAmount :: Double
       }
+  | -- | Exchange rate unavailable for currency conversion
+    ExchangeRateUnavailable Text
   | -- | Entity not found
     NotFound
       { entityType :: Text,

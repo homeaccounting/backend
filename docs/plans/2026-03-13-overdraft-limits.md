@@ -886,7 +886,7 @@ AccountData and AccountResponse now include overdraftLimit field."
 ### Task 7: Update documentation
 
 **Files:**
-- Modify: `docs/plans/2026-03-13-overdraft-limits-design.md`
+- Modify: `docs/specs/2026-03-13-overdraft-limits-design.md`
 
 **Step 1: Mark design as completed**
 
@@ -895,6 +895,6 @@ Change `status: completed` to `status: completed` in the frontmatter.
 **Step 2: Commit**
 
 ```bash
-git add docs/plans/2026-03-13-overdraft-limits-design.md
+git add docs/specs/2026-03-13-overdraft-limits-design.md
 git commit -m "docs: mark overdraft limits design as completed"
 ```

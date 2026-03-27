@@ -23,6 +23,15 @@ module Domain.Core.Types
     addMoney,
     subtractMoney,
 
+    -- * Exchange Rate Type
+    ExchangeRate,
+    mkExchangeRate,
+    unsafeExchangeRate,
+    exchangeRateSource,
+    exchangeRateTarget,
+    exchangeRateValue,
+    convert,
+
     -- * Identifiers
     AccountId,
     mkAccountId,
@@ -209,6 +218,78 @@ subtractMoney :: Money -> Money -> Either Text Money
 subtractMoney (Money a ca) (Money b cb)
   | ca /= cb = Left $ "Currency mismatch: cannot subtract " <> T.pack (show cb) <> " from " <> T.pack (show ca)
   | otherwise = Right (Money (a - b) ca)
+
+-- -----------------------------------------------------------------------------
+-- Exchange Rate Type
+-- -----------------------------------------------------------------------------
+
+-- | Represents an exchange rate between two currencies.
+--
+-- The rate converts from source to target currency:
+-- amount_in_target = amount_in_source * rate
+--
+-- Uses Rational for exact arithmetic (no floating-point precision loss).
+data ExchangeRate = ExchangeRate
+  { source :: Currency,
+    target :: Currency,
+    rate :: Rational
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ExchangeRate where
+  toJSON (ExchangeRate s t r) =
+    object ["source" .= s, "target" .= t, "rate" .= (fromRational r :: Double)]
+
+instance FromJSON ExchangeRate where
+  parseJSON = withObject "ExchangeRate" $ \o -> do
+    s <- o .: "source"
+    t <- o .: "target"
+    (d :: Double) <- o .: "rate"
+    case mkExchangeRate s t (toRational d) of
+      Right er -> pure er
+      Left err -> fail (T.unpack err)
+
+-- | Smart constructor. Rejects non-positive rates and same-currency pairs.
+--
+-- >>> mkExchangeRate UAH USD 0.025
+-- Right (ExchangeRate {source = UAH, target = USD, rate = ...})
+--
+-- >>> mkExchangeRate USD USD 1.0
+-- Left "Source and target currencies must differ"
+--
+-- >>> mkExchangeRate UAH USD 0
+-- Left "Exchange rate must be positive"
+mkExchangeRate :: Currency -> Currency -> Rational -> Either Text ExchangeRate
+mkExchangeRate src tgt r
+  | src == tgt = Left "Source and target currencies must differ"
+  | r <= 0 = Left "Exchange rate must be positive"
+  | otherwise = Right (ExchangeRate src tgt r)
+
+-- | Unsafe constructor for tests. Bypasses validation.
+unsafeExchangeRate :: Currency -> Currency -> Rational -> ExchangeRate
+unsafeExchangeRate = ExchangeRate
+
+-- | Extract the source currency from an ExchangeRate.
+exchangeRateSource :: ExchangeRate -> Currency
+exchangeRateSource (ExchangeRate s _ _) = s
+
+-- | Extract the target currency from an ExchangeRate.
+exchangeRateTarget :: ExchangeRate -> Currency
+exchangeRateTarget (ExchangeRate _ t _) = t
+
+-- | Extract the rate value from an ExchangeRate.
+exchangeRateValue :: ExchangeRate -> Rational
+exchangeRateValue (ExchangeRate _ _ r) = r
+
+-- | Convert money using an exchange rate.
+--
+-- Output is in the rate's target currency.
+-- Uses direct pattern match on Money since both types are in this module.
+--
+-- >>> convert (unsafeExchangeRate UAH USD 0.025) (unsafeMoney UAH 1000)
+-- Money {amount = 25 % 1, currency = USD}
+convert :: ExchangeRate -> Money -> Money
+convert (ExchangeRate _ tgt r) (Money amt _) = Money (amt * r) tgt
 
 -- -----------------------------------------------------------------------------
 -- Account Identifier

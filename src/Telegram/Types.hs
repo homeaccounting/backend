@@ -39,56 +39,62 @@ import GHC.Generics (Generic)
 --   - Session data per user
 data BotState = BotState
   { -- | Active conversations by Telegram user ID
-    conversations :: Map TelegramId ConversationState
+    conversations :: Map TelegramId ConversationState,
+    -- | Selected accounts by Telegram user ID
+    selectedAccounts :: Map TelegramId (AccountId, Text)
   }
   deriving (Show, Eq, Generic)
 
 -- | Initial empty bot state.
 emptyBotState :: BotState
-emptyBotState = BotState Map.empty
+emptyBotState = BotState Map.empty Map.empty
 
 -- | State for a multi-step conversation.
 --
 -- Used for flows like /transfer that require multiple inputs.
 data ConversationState
-  = -- | Transfer flow: waiting for source account
+  = -- Transfer flow
     TransferSelectSource
-  | -- | Transfer flow: waiting for target account
-    TransferSelectTarget
+  | TransferSelectTarget
       { sourceAccountId :: AccountId
       }
-  | -- | Transfer flow: waiting for amount
-    TransferEnterAmount
+  | TransferSelectCategory
       { sourceAccountId :: AccountId,
         targetAccountId :: AccountId
       }
-  | -- | Transfer flow: waiting for reason
-    TransferEnterReason
+  | TransferEnterAmount
       { sourceAccountId :: AccountId,
         targetAccountId :: AccountId,
-        amount :: Money
+        category :: Text
       }
-  | -- | Income flow: waiting for account selection
-    IncomeSelectAccount
-  | -- | Income flow: waiting for amount
-    IncomeEnterAmount
-      { targetAccountId :: AccountId
-      }
-  | -- | Income flow: waiting for reason
-    IncomeEnterReason
-      { targetAccountId :: AccountId,
-        amount :: Money
-      }
-  | -- | Expense flow: waiting for account selection
-    ExpenseSelectAccount
-  | -- | Expense flow: waiting for amount
-    ExpenseEnterAmount
-      { sourceAccountId :: AccountId
-      }
-  | -- | Expense flow: waiting for reason
-    ExpenseEnterReason
+  | TransferEnterReason
       { sourceAccountId :: AccountId,
+        targetAccountId :: AccountId,
+        category :: Text,
         amount :: Money
+      }
+  | -- Income flow
+    IncomeSelectCategory
+  | IncomeEnterAmount
+      { category :: Text
+      }
+  | IncomeEnterReason
+      { category :: Text,
+        amount :: Money
+      }
+  | -- Expense flow
+    ExpenseSelectCategory
+  | ExpenseEnterAmount
+      { category :: Text
+      }
+  | ExpenseEnterReason
+      { category :: Text,
+        amount :: Money
+      }
+  | -- Account creation flow
+    CreateAccountEnterName
+  | CreateAccountSelectCurrency
+      { accountName :: Text
       }
   deriving (Show, Eq, Generic)
 
@@ -107,6 +113,10 @@ instance FromJSON ConversationState
 data CallbackData
   = -- | Account selection callback
     AccountSelect AccountSelectionCallback
+  | -- | Category selection callback
+    CategorySelect Text
+  | -- | Currency selection callback
+    CurrencySelect Text
   | -- | Cancel current operation
     Cancel
   | -- | Confirm current operation

@@ -212,7 +212,8 @@ transferHandler user request = do
                       throwDomainError $ ValidationErr $ mkValidationError "amount" err err
                     Right money -> do
                       -- 6. Delegate to service
-                      result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money internalCat request.reason
+                      let maybeRate = fmap toRational request.exchangeRate
+                      result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money internalCat request.reason maybeRate
                       case result of
                         Right (txId, summary) -> return $ fromTransactionData txId summary
                         Left err -> throwDomainError err

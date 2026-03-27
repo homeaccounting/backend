@@ -35,6 +35,8 @@ module Testkit.Generators
     genInternalCategory,
     genTransferType,
     genTransferCategory,
+    genExchangeRate,
+    genPositiveRational,
 
     -- * Arbitrary Instances
   )
@@ -339,3 +341,24 @@ genTransferCategory =
 
 instance Arbitrary TransferCategory where
   arbitrary = genTransferCategory
+
+-- -----------------------------------------------------------------------------
+-- Exchange Rate Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a positive Rational value.
+genPositiveRational :: Gen Rational
+genPositiveRational = do
+  n <- chooseInteger (1, 1000000)
+  d <- chooseInteger (1, 1000000)
+  pure (n % d)
+
+-- | Generate a valid ExchangeRate with different source and target currencies.
+genExchangeRate :: Gen ExchangeRate
+genExchangeRate = do
+  src <- genCurrency
+  tgt <- elements [c | c <- [minBound .. maxBound], c /= src]
+  unsafeExchangeRate src tgt <$> genPositiveRational
+
+instance Arbitrary ExchangeRate where
+  arbitrary = genExchangeRate

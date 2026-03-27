@@ -77,7 +77,9 @@ genTransferInitiatedEvent = do
             TransferInitiated
               { fromAccountId = unsafeAccountId sourceId,
                 toAccountId = unsafeAccountId targetId,
-                amount = unsafeMoney USD amt,
+                sourceAmount = unsafeMoney USD amt,
+                targetAmount = unsafeMoney USD amt,
+                exchangeRate = Nothing,
                 reason = "Property test transfer",
                 by = unsafeUserId userId,
                 transferType = InternalTransfer,
@@ -95,7 +97,7 @@ genAccountDebitedFor txId td =
     (emptyMetadata "")
     ( AccountDebitedEvent
         AccountDebited
-          { amount = td.amount,
+          { amount = td.sourceAmount,
             transactionId = unsafeTransactionId txId,
             reason = td.reason
           }
@@ -110,7 +112,7 @@ genAccountCreditedFor txId td =
     (emptyMetadata "")
     ( AccountCreditedEvent
         AccountCredited
-          { amount = td.amount,
+          { amount = td.targetAmount,
             transactionId = unsafeTransactionId txId,
             reason = td.reason
           }

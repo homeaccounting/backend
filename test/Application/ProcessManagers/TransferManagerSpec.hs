@@ -81,7 +81,9 @@ mkTransferInitiatedEvent =
         TransferInitiated
           { fromAccountId = unsafeAccountId sourceAcctUuid,
             toAccountId = unsafeAccountId targetAcctUuid,
-            amount = unsafeMoney USD 200,
+            sourceAmount = unsafeMoney USD 200,
+            targetAmount = unsafeMoney USD 200,
+            exchangeRate = Nothing,
             reason = "Test transfer",
             by = unsafeUserId userUuid,
             transferType = InternalTransfer,
@@ -156,7 +158,7 @@ spec = describe "TransferManager (Saga)" $ do
         Just td -> do
           td.sourceAccount `shouldBe` unsafeAccountId sourceAcctUuid
           td.targetAccount `shouldBe` unsafeAccountId targetAcctUuid
-          td.amount `shouldBe` unsafeMoney USD 200
+          td.sourceAmount `shouldBe` unsafeMoney USD 200
           td.reason `shouldBe` "Test transfer"
 
     it "issues DebitAccount effect with compensation to source account" $ do
@@ -202,7 +204,9 @@ spec = describe "TransferManager (Saga)" $ do
                   TransferInitiated
                     { fromAccountId = unsafeAccountId sourceAcctUuid,
                       toAccountId = unsafeAccountId targetAcctUuid,
-                      amount = unsafeMoney USD 100,
+                      sourceAmount = unsafeMoney USD 100,
+                      targetAmount = unsafeMoney USD 100,
+                      exchangeRate = Nothing,
                       reason = "Bad",
                       by = unsafeUserId userUuid,
                       transferType = InternalTransfer,

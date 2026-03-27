@@ -15,16 +15,20 @@ module Application.Services.TransactionServiceSpec (spec) where
 import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.TransactionService
+import Data.Ratio ((%))
+import Data.Time (getCurrentTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
 import Domain.Transaction.Commands (InitiateTransfer (..))
-import Infrastructure.App (AppEnv, AppM, runAppM)
+import Infrastructure.App (AppEnv (..), AppM, runAppM)
+import Infrastructure.ExchangeRate.Provider (ExchangeRateCache, ExchangeRateMap, RateProvider (..), newExchangeRateCache, refreshCache)
 import RIO
+import qualified RIO.Map as Map
 import Test.Hspec
-import Testkit.Helpers (fromRight', mockMoney, mockUserId, shouldBeLeft, shouldBeRight)
+import Testkit.Helpers (fromRight', mockExchangeRate, mockMoney, mockMoneyWith, mockUserId, shouldBeLeft, shouldBeRight)
 import Testkit.InMemoryEventStore (createTestAppEnv)
 
 -- -----------------------------------------------------------------------------
@@ -46,6 +50,52 @@ mkCreateAccount acctName userId accType =
       accountType = accType,
       overdraftLimit = Nothing
     }
+
+mkCreateAccountWith :: Currency -> Rational -> Text -> UserId -> AccountType -> CreateAccount
+mkCreateAccountWith currency balance acctName userId accType =
+  CreateAccount
+    { name = acctName,
+      initialBalance = mockMoneyWith currency balance,
+      createdBy = userId,
+      accountType = accType,
+      overdraftLimit = Nothing
+    }
+
+-- | Create a mock provider that returns fixed rates.
+mockRateProvider :: ExchangeRateMap -> RateProvider
+mockRateProvider rates =
+  RateProvider
+    { providerName = "Mock",
+      fetchRates = pure (Right rates)
+    }
+
+-- | Create a test exchange rate cache pre-populated with known rates.
+mkTestExchangeRateCache :: [(Currency, Currency, Rational)] -> IO ExchangeRateCache
+mkTestExchangeRateCache rates = do
+  let rateMap = Map.fromList [((src, tgt), mockExchangeRate src tgt r) | (src, tgt, r) <- rates]
+  cache <- newExchangeRateCache (mockRateProvider rateMap)
+  -- Force a refresh to populate the cache
+  void $ refreshCache cache
+  return cache
+
+-- | Create a test env with a pre-populated exchange rate cache.
+createTestAppEnvWithRates :: [(Currency, Currency, Rational)] -> IO AppEnv
+createTestAppEnvWithRates rates = do
+  env <- createTestAppEnv
+  cache <- mkTestExchangeRateCache rates
+  return env {exchangeRateCache = cache}
+
+-- | Helper to create two accounts in different currencies.
+setupCrossCurrencyAccounts :: [(Currency, Currency, Rational)] -> Currency -> Currency -> IO (AppEnv, AccountId, AccountId)
+setupCrossCurrencyAccounts rates srcCurrency tgtCurrency = do
+  env <- createTestAppEnvWithRates rates
+  (fromAccId, toAccId) <- runAppM env $ do
+    result1 <- createAccount (mkCreateAccountWith srcCurrency 5000 "Source" testUserId1 RegularAccount)
+    let (fromId, _) = fromRight' result1
+    result2 <- createAccount (mkCreateAccountWith tgtCurrency 5000 "Target" testUserId1 RegularAccount)
+    let (toId, _) = fromRight' result2
+    return (fromId, toId)
+  return (env, fromAccId, toAccId)
 
 -- | Helper to create two accounts and return their IDs for transfer tests.
 setupTwoAccounts :: IO (AppEnv, AccountId, AccountId)
@@ -72,7 +122,9 @@ spec = describe "TransactionService" $ do
             InitiateTransfer
               { fromAccountId = fromAccId,
                 toAccountId = toAccId,
-                amount = mockMoney 100,
+                sourceAmount = mockMoney 100,
+                targetAmount = mockMoney 100,
+                exchangeRate = Nothing,
                 reason = "Test transfer",
                 initiatedBy = testUserId1,
                 transferType = InternalTransfer,
@@ -83,7 +135,7 @@ spec = describe "TransactionService" $ do
       let (_, summary) = fromRight' result
       summary.fromAccountId `shouldBe` fromAccId
       summary.toAccountId `shouldBe` toAccId
-      summary.amount `shouldBe` mockMoney 100
+      summary.sourceAmount `shouldBe` mockMoney 100
       summary.reason `shouldBe` "Test transfer"
 
   describe "getTransaction" $ do
@@ -93,7 +145,9 @@ spec = describe "TransactionService" $ do
             InitiateTransfer
               { fromAccountId = fromAccId,
                 toAccountId = toAccId,
-                amount = mockMoney 250,
+                sourceAmount = mockMoney 250,
+                targetAmount = mockMoney 250,
+                exchangeRate = Nothing,
                 reason = "Retrieve test",
                 initiatedBy = testUserId1,
                 transferType = InternalTransfer,
@@ -105,7 +159,7 @@ spec = describe "TransactionService" $ do
       shouldBeRight result
       let (retId, summary) = fromRight' result
       retId `shouldBe` txId
-      summary.amount `shouldBe` mockMoney 250
+      summary.sourceAmount `shouldBe` mockMoney 250
       summary.reason `shouldBe` "Retrieve test"
 
     it "returns NotFound for non-existent transaction" $ do
@@ -124,7 +178,9 @@ spec = describe "TransactionService" $ do
             InitiateTransfer
               { fromAccountId = fromAccId,
                 toAccountId = toAccId,
-                amount = mockMoney amt,
+                sourceAmount = mockMoney amt,
+                targetAmount = mockMoney amt,
+                exchangeRate = Nothing,
                 reason = rsn,
                 initiatedBy = testUserId1,
                 transferType = InternalTransfer,
@@ -145,3 +201,50 @@ spec = describe "TransactionService" $ do
       let (_, s2) = fromRight' getResult2
       s1.reason `shouldBe` "First"
       s2.reason `shouldBe` "Second"
+
+  describe "initiateInternalTransfer (cross-currency)" $ do
+    it "converts USD to EUR using cached exchange rate" $ do
+      -- USD -> EUR at rate 9/10 (i.e. 1 USD = 0.9 EUR, exact rational)
+      let rates = [(USD, EUR, 9 % 10), (EUR, USD, 10 % 9)]
+      (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
+
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) InternalOther "Cross-currency transfer" Nothing
+      shouldBeRight result
+      let (_, summary) = fromRight' result
+      -- Source: 100 USD, Target: 90 EUR (100 * 9/10)
+      summary.sourceAmount `shouldBe` mockMoneyWith USD 100
+      summary.targetAmount `shouldBe` mockMoneyWith EUR 90
+      summary.exchangeRate `shouldSatisfy` isJust
+
+    it "skips conversion for same-currency transfer" $ do
+      (env, fromAccId, toAccId) <- setupTwoAccounts -- both USD
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) InternalOther "Same currency" Nothing
+      shouldBeRight result
+      let (_, summary) = fromRight' result
+      summary.sourceAmount `shouldBe` mockMoney 100
+      summary.targetAmount `shouldBe` mockMoney 100
+      summary.exchangeRate `shouldSatisfy` isNothing
+
+    it "uses user-provided exchange rate instead of cache" $ do
+      -- Cache has USD->EUR at 9/10, but user provides 17/20 (0.85 exact)
+      let rates = [(USD, EUR, 9 % 10), (EUR, USD, 10 % 9)]
+      (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
+
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) InternalOther "User rate" (Just (17 % 20))
+      shouldBeRight result
+      let (_, summary) = fromRight' result
+      summary.sourceAmount `shouldBe` mockMoneyWith USD 100
+      summary.targetAmount `shouldBe` mockMoneyWith EUR 85
+      summary.exchangeRate `shouldSatisfy` isJust
+
+    it "returns ExchangeRateUnavailable when rate not found" $ do
+      -- Cache has rates but NOT for USD->EUR (only GBP->EUR)
+      let rates = [(GBP, EUR, 6 % 5)]
+      (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
+
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) InternalOther "No rate for pair" Nothing
+      shouldBeLeft result
+      case result of
+        Left (ExchangeRateUnavailable _) -> pure ()
+        Left err -> expectationFailure $ "Expected ExchangeRateUnavailable, got: " <> show err
+        Right _ -> expectationFailure "Expected Left"

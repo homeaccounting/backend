@@ -57,6 +57,7 @@ import Infrastructure.Config
     CorsConfig (..),
     DatabaseConfig (..),
     EventStoreConfig (..),
+    ExchangeRateConfig (..),
     JWTConfig (..),
     LogFormat (..),
     LogLevel (..),
@@ -76,11 +77,13 @@ import Infrastructure.Eventium
     commandDispatcher,
     createReadModelHandlers,
   )
+import Infrastructure.ExchangeRate.ECB (ecbProvider)
+import Infrastructure.ExchangeRate.Provider (newExchangeRateCache)
 import RIO hiding (atomically, newTVarIO)
 import qualified RIO
 import qualified RIO.Text as T
 import System.Environment (lookupEnv)
-import Telegram.Types (BotState (..))
+import Telegram.Types (emptyBotState)
 
 -- -----------------------------------------------------------------------------
 -- Types
@@ -252,7 +255,11 @@ createTestAppEnv = do
                 },
             auth = testJWTConfig,
             oauth = testOAuthConfig,
-            telegram = testTelegramConfig
+            telegram = testTelegramConfig,
+            exchangeRate =
+              ExchangeRateConfig
+                { provider = "ecb"
+                }
           }
 
       dbConfig = config.database
@@ -261,7 +268,8 @@ createTestAppEnv = do
   -- Note: We don't have a real connection pool, but handlers don't need it
   -- because they work through the event store abstraction
   -- Using undefined instead of error so it's only evaluated if actually used
-  botState <- RIO.newTVarIO (BotState mempty)
+  botState <- RIO.newTVarIO emptyBotState
+  exchangeRateCache' <- newExchangeRateCache ecbProvider
 
   return
     AppEnv
@@ -279,7 +287,8 @@ createTestAppEnv = do
         oauthConfig = testOAuthConfig,
         telegramConfig = testTelegramConfig,
         botState = botState,
-        telegramClientEnv = Nothing
+        telegramClientEnv = Nothing,
+        exchangeRateCache = exchangeRateCache'
       }
 
 -- | Create a test AppEnv with the Transfer Process Manager enabled.
@@ -369,12 +378,17 @@ createTestAppEnvWithProcessManager = do
                 },
             auth = testJWTConfig,
             oauth = testOAuthConfig,
-            telegram = testTelegramConfig
+            telegram = testTelegramConfig,
+            exchangeRate =
+              ExchangeRateConfig
+                { provider = "ecb"
+                }
           }
 
       dbConfig = config.database
 
-  botState <- RIO.newTVarIO (BotState mempty)
+  botState <- RIO.newTVarIO emptyBotState
+  exchangeRateCache <- newExchangeRateCache ecbProvider
 
   return
     AppEnv
@@ -392,7 +406,8 @@ createTestAppEnvWithProcessManager = do
         oauthConfig = testOAuthConfig,
         telegramConfig = testTelegramConfig,
         botState = botState,
-        telegramClientEnv = Nothing
+        telegramClientEnv = Nothing,
+        exchangeRateCache = exchangeRateCache
       }
 
 -- -----------------------------------------------------------------------------

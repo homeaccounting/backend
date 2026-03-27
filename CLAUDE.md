@@ -199,6 +199,6 @@ Project documentation lives in `docs/` with a precedence hierarchy:
 
 - **L1 (highest)**: `mission-statement.md`, `operational-context.md`, `user-experience-spec.md`
 - **L2**: `architecture.md` (living doc), `guides/` (coding guidelines)
-- **L3**: `plans/` (dated implementation plans), `decisions/` (ADRs)
+- **L3**: `specs/` (design specs, `*-design.md`), `plans/` (implementation plans), `decisions/` (ADRs)
 
-Plans use `YYYY-MM-DD-feature-name.md` naming and require frontmatter with `status: draft|in-progress|completed|superseded`. In case of conflict, higher-level documents take precedence.
+Specs and plans use `YYYY-MM-DD-feature-name.md` naming (`-design.md` suffix for specs) and require frontmatter with `status: draft|in-progress|completed|superseded`. In case of conflict, higher-level documents take precedence.

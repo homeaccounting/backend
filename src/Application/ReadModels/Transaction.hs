@@ -53,7 +53,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, Money, TransactionId, TransferCategory, TransferType, mkTransactionIdSafe)
+import Domain.Core.Types (AccountId, ExchangeRate, Money, TransactionId, TransferCategory, TransferType, mkTransactionIdSafe)
 import Domain.Models
   ( AccountingEvent (TransferCompletedEvent, TransferFailedEvent, TransferInitiatedEvent),
   )
@@ -78,7 +78,9 @@ data TransactionData
   = TransactionData
   { fromAccountId :: AccountId,
     toAccountId :: AccountId,
-    amount :: Money,
+    sourceAmount :: Money,
+    targetAmount :: Money,
+    exchangeRate :: Maybe ExchangeRate,
     reason :: Text,
     status :: TransactionStatus,
     transferType :: TransferType,
@@ -187,7 +189,9 @@ processEvent summaries globalEvent =
                     TransactionData
                       { fromAccountId = evt.fromAccountId,
                         toAccountId = evt.toAccountId,
-                        amount = evt.amount,
+                        sourceAmount = evt.sourceAmount,
+                        targetAmount = evt.targetAmount,
+                        exchangeRate = evt.exchangeRate,
                         reason = evt.reason,
                         status = Pending,
                         transferType = evt.transferType,

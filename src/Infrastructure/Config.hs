@@ -27,6 +27,7 @@ module Infrastructure.Config
     CorsConfig (..),
     EventStoreConfig (..),
     ProcessManagerConfig (..),
+    ExchangeRateConfig (..),
 
     -- * Auth Configuration (re-exports)
     JWTConfig (..),
@@ -84,7 +85,8 @@ data AppConfig = AppConfig
     processManagers :: !ProcessManagerConfig,
     auth :: !JWTConfig,
     oauth :: !OAuthConfig,
-    telegram :: !TelegramConfig
+    telegram :: !TelegramConfig,
+    exchangeRate :: !ExchangeRateConfig
   }
   deriving (Show, Eq, Generic)
 
@@ -100,6 +102,7 @@ instance FromJSON AppConfig where
       <*> v .: "auth"
       <*> v .: "oauth"
       <*> v .: "telegram"
+      <*> v .: "exchange_rate"
 
 instance ToJSON AppConfig
 
@@ -274,6 +277,19 @@ instance FromJSON ProcessManagerConfig where
       <$> v .: "poll_interval_ms"
 
 instance ToJSON ProcessManagerConfig
+
+-- | Exchange rate provider configuration.
+data ExchangeRateConfig = ExchangeRateConfig
+  { provider :: !Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON ExchangeRateConfig where
+  parseJSON = withObject "ExchangeRateConfig" $ \v ->
+    ExchangeRateConfig
+      <$> v .: "provider"
+
+instance ToJSON ExchangeRateConfig
 
 -- -----------------------------------------------------------------------------
 -- Configuration Loading
@@ -473,6 +489,12 @@ validateConfig config = do
   when (pollInterval < 1) $
     Left $
       "Invalid poll interval: " <> T.pack (show pollInterval) <> " (must be positive)"
+
+  -- Validate exchange rate config
+  let providerValue = config.exchangeRate.provider
+  when (providerValue `notElem` ["ecb", "nbu"]) $
+    Left $
+      "Invalid exchange rate provider: " <> providerValue <> " (must be \"ecb\" or \"nbu\")"
 
 -- Helper function for when
 when :: Bool -> Either Text () -> Either Text ()

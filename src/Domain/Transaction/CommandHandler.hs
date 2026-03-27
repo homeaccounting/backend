@@ -119,11 +119,11 @@ handleTransactionCommand :: Transaction -> TransactionCommand -> Either Transact
 handleTransactionCommand transaction (InitiateTransferTransactionCommand InitiateTransfer {..}) =
   case transaction ^. #status of
     Pending
-      | unMoney transaction.amount == 0 ->
+      | unMoney transaction.sourceAmount == 0 ->
           if unAccountId fromAccountId == unAccountId toAccountId
             then Left TransferToSameAccount
             else
-              if unMoney amount <= 0
+              if unMoney sourceAmount <= 0 || unMoney targetAmount <= 0
                 then Left TransferAmountNotPositive
                 else case validateTransferCategory transferType category of
                   Left _ -> Left TransferCategoryMismatch
@@ -133,7 +133,9 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
                           TransferInitiated
                             { fromAccountId = fromAccountId,
                               toAccountId = toAccountId,
-                              amount = amount,
+                              sourceAmount = sourceAmount,
+                              targetAmount = targetAmount,
+                              exchangeRate = exchangeRate,
                               reason = reason,
                               by = initiatedBy,
                               transferType = transferType,

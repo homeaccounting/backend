@@ -13,6 +13,14 @@ module Telegram.Keyboards
     accountSelectionKeyboard,
     confirmCancelKeyboard,
     cancelKeyboard,
+    currencyKeyboard,
+    incomeCategoryKeyboard,
+    expenseCategoryKeyboard,
+    internalCategoryKeyboard,
+
+    -- * Formatting
+    formatMoney,
+    showCurrency,
 
     -- * Types
     InlineKeyboard (..),
@@ -23,7 +31,7 @@ where
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.UUID as UUID
-import Domain.Core.Types (AccountId, Money, unAccountId)
+import Domain.Core.Types (AccountId, Currency (..), Money, moneyCurrency, unAccountId, unMoney)
 
 -- -----------------------------------------------------------------------------
 -- Types
@@ -70,7 +78,18 @@ accountSelectionKeyboard accounts context =
           }
       ]
     shortId accountId = T.take 8 $ T.pack $ UUID.toString $ unAccountId accountId
-    showMoney m = T.pack $ show m -- Simplified, would format properly
+    showMoney m = formatMoney m <> " " <> showCurrency (moneyCurrency m)
+
+-- | Format a Money amount as a human-readable number.
+formatMoney :: Money -> Text
+formatMoney m = T.pack $ show (fromRational (unMoney m) :: Double)
+
+-- | Show currency code.
+showCurrency :: Currency -> Text
+showCurrency UAH = "UAH"
+showCurrency USD = "USD"
+showCurrency EUR = "EUR"
+showCurrency GBP = "GBP"
 
 -- | Build a confirm/cancel keyboard.
 confirmCancelKeyboard :: InlineKeyboard
@@ -88,6 +107,52 @@ cancelKeyboard :: InlineKeyboard
 cancelKeyboard =
   InlineKeyboard
     { rows = [[cancelButton]]
+    }
+
+-- | Currency selection keyboard (2x2 grid + cancel).
+currencyKeyboard :: InlineKeyboard
+currencyKeyboard =
+  InlineKeyboard
+    { rows =
+        [ [InlineButton "UAH" "cur:UAH", InlineButton "USD" "cur:USD"],
+          [InlineButton "EUR" "cur:EUR", InlineButton "GBP" "cur:GBP"],
+          [cancelButton]
+        ]
+    }
+
+-- | Income category keyboard.
+incomeCategoryKeyboard :: InlineKeyboard
+incomeCategoryKeyboard =
+  InlineKeyboard
+    { rows =
+        [ [InlineButton "Salary" "cat:salary", InlineButton "Freelance" "cat:freelance"],
+          [InlineButton "Investment" "cat:investment", InlineButton "Gift" "cat:gift"],
+          [InlineButton "Other" "cat:other"],
+          [cancelButton]
+        ]
+    }
+
+-- | Expense category keyboard.
+expenseCategoryKeyboard :: InlineKeyboard
+expenseCategoryKeyboard =
+  InlineKeyboard
+    { rows =
+        [ [InlineButton "Food" "cat:food", InlineButton "Transport" "cat:transport"],
+          [InlineButton "Utilities" "cat:utilities", InlineButton "Rent" "cat:rent"],
+          [InlineButton "Entertainment" "cat:entertainment", InlineButton "Other" "cat:other"],
+          [cancelButton]
+        ]
+    }
+
+-- | Internal transfer category keyboard.
+internalCategoryKeyboard :: InlineKeyboard
+internalCategoryKeyboard =
+  InlineKeyboard
+    { rows =
+        [ [InlineButton "Rebalance" "cat:rebalance", InlineButton "Savings" "cat:savings"],
+          [InlineButton "Other" "cat:other"],
+          [cancelButton]
+        ]
     }
 
 -- | Cancel button.

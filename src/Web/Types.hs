@@ -96,7 +96,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.UUID (UUID)
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountType (..), Currency (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountType (..), Currency (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -297,7 +297,8 @@ data InternalTransferRequest
     amount :: Double,
     currency :: Text,
     category :: Text,
-    reason :: Text
+    reason :: Text,
+    exchangeRate :: Maybe Double
   }
   deriving (Show, Eq, Generic)
 
@@ -350,7 +351,11 @@ data TransactionResponse
   { id :: UUID,
     fromAccountId :: UUID,
     toAccountId :: UUID,
-    amount :: Double,
+    sourceAmount :: Double,
+    sourceCurrency :: Text,
+    targetAmount :: Double,
+    targetCurrency :: Text,
+    exchangeRate :: Maybe Double,
     reason :: Text,
     status :: Text,
     failureReason :: Maybe Text,
@@ -551,7 +556,18 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
 
   -- Create domain command with user who initiated
   -- Default to InternalTransfer / InternalOther (will be replaced by dedicated endpoints)
-  return $ InitiateTransfer fromId toId domainAmount reason initiatedBy InternalTransfer (InternalCat InternalOther)
+  return $
+    InitiateTransfer
+      { fromAccountId = fromId,
+        toAccountId = toId,
+        sourceAmount = domainAmount,
+        targetAmount = domainAmount,
+        exchangeRate = Nothing,
+        reason = reason,
+        initiatedBy = initiatedBy,
+        transferType = InternalTransfer,
+        category = InternalCat InternalOther
+      }
   where
     when :: Bool -> Either Text () -> Either Text ()
     when True action = action
@@ -600,7 +616,11 @@ fromTransactionData txId TransactionData {..} =
     { id = unTransactionId txId,
       fromAccountId = unAccountId fromAccountId,
       toAccountId = unAccountId toAccountId,
-      amount = fromDomainMoney amount,
+      sourceAmount = fromDomainMoney sourceAmount,
+      sourceCurrency = T.pack (show (moneyCurrency sourceAmount)),
+      targetAmount = fromDomainMoney targetAmount,
+      targetCurrency = T.pack (show (moneyCurrency targetAmount)),
+      exchangeRate = fmap (fromRational . exchangeRateValue) exchangeRate,
       reason = reason,
       status = fromTransactionStatus status,
       failureReason = case status of
@@ -625,7 +645,11 @@ fromTransaction txId tx =
     { id = unTransactionId txId,
       fromAccountId = unAccountId tx.fromAccountId,
       toAccountId = unAccountId tx.toAccountId,
-      amount = fromDomainMoney tx.amount,
+      sourceAmount = fromDomainMoney tx.sourceAmount,
+      sourceCurrency = T.pack (show (moneyCurrency tx.sourceAmount)),
+      targetAmount = fromDomainMoney tx.targetAmount,
+      targetCurrency = T.pack (show (moneyCurrency tx.targetAmount)),
+      exchangeRate = fmap (fromRational . exchangeRateValue) tx.exchangeRate,
       reason = tx.reason,
       status = fromTransactionStatus tx.status,
       failureReason = case tx.status of

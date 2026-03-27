@@ -14,6 +14,7 @@
 module Domain.Core.TypesPropertySpec (spec) where
 
 import qualified Data.Aeson as Aeson
+import Data.Ratio ((%))
 import qualified Data.UUID as UUID
 import Domain.Core.Types
 import RIO
@@ -24,6 +25,7 @@ import Testkit.Generators
 spec :: Spec
 spec = do
   moneyPropertySpec
+  exchangeRatePropertySpec
   identifierPropertySpec
 
 -- -----------------------------------------------------------------------------
@@ -97,6 +99,80 @@ moneyPropertySpec = describe "Money Properties" $ do
       $ property
       $ \(cur :: Currency) ->
         Aeson.fromJSON (Aeson.toJSON cur) === Aeson.Success cur
+
+-- -----------------------------------------------------------------------------
+-- ExchangeRate Property Tests
+-- -----------------------------------------------------------------------------
+
+exchangeRatePropertySpec :: Spec
+exchangeRatePropertySpec = describe "ExchangeRate Properties" $ do
+  describe "Smart constructor validation" $ do
+    it "Then rejects zero rate"
+      $ property
+      $ forAll genCurrency
+      $ \src ->
+        forAll (elements [c | c <- [minBound .. maxBound], c /= src]) $ \tgt ->
+          isLeft (mkExchangeRate src tgt 0)
+
+    it "Then rejects negative rate"
+      $ property
+      $ forAll genCurrency
+      $ \src ->
+        forAll (elements [c | c <- [minBound .. maxBound], c /= src]) $ \tgt ->
+          forAll genPositiveRational $ \r ->
+            isLeft (mkExchangeRate src tgt (negate r))
+
+    it "Then rejects same-currency pair"
+      $ property
+      $ forAll genCurrency
+      $ \c ->
+        forAll genPositiveRational $ \r ->
+          isLeft (mkExchangeRate c c r)
+
+    it "Then accepts valid rate"
+      $ property
+      $ forAll genCurrency
+      $ \src ->
+        forAll (elements [c | c <- [minBound .. maxBound], c /= src]) $ \tgt ->
+          forAll genPositiveRational $ \r ->
+            isRight (mkExchangeRate src tgt r)
+
+  describe "convert" $ do
+    it "Then produces target currency"
+      $ property
+      $ forAll genExchangeRate
+      $ \er ->
+        forAll genPositiveRational $ \r ->
+          let srcMoney = unsafeMoney (exchangeRateSource er) r
+           in moneyCurrency (convert er srcMoney) === exchangeRateTarget er
+
+    it "Then preserves amount with rate 1"
+      $ property
+      $ forAll genCurrency
+      $ \src ->
+        forAll (elements [c | c <- [minBound .. maxBound], c /= src]) $ \tgt ->
+          case mkExchangeRate src tgt 1 of
+            Left _ -> property True -- impossible
+            Right er ->
+              forAll genPositiveRational $ \amt ->
+                let srcMoney = unsafeMoney src amt
+                 in unMoney (convert er srcMoney) === amt
+
+    it "Then JSON roundtrips correctly"
+      $ property
+      $ forAll genExchangeRate
+      $ \er ->
+        case Aeson.fromJSON (Aeson.toJSON er) of
+          Aeson.Success er' ->
+            exchangeRateSource er' === exchangeRateSource er
+              .&&. exchangeRateTarget er' === exchangeRateTarget er
+          Aeson.Error _ -> property False
+  where
+    genPositiveRational :: Gen Rational
+    genPositiveRational = do
+      n <- chooseInteger (1, 1000000)
+      d <- chooseInteger (1, 1000000)
+      pure (n Data.Ratio.% d)
 
 -- -----------------------------------------------------------------------------
 -- Identifier Property Tests

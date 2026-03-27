@@ -20,7 +20,7 @@ logging:
   format: "json"
 
 cors:
-  enabled: false  # Use reverse proxy/API gateway for CORS in production
+  enabled: false # Use reverse proxy/API gateway for CORS in production
   allowed_origins: []
   allowed_methods: []
   allowed_headers: []
@@ -61,3 +61,7 @@ telegram:
   use_polling: false
   polling_timeout: "${TELEGRAM_POLLING_TIMEOUT:-30}"
   auth_max_age_seconds: 86400
+
+# Exchange rate provider
+exchange_rate:
+  provider: ${EXCHANGE_RATE_PROVIDER:-nbu}

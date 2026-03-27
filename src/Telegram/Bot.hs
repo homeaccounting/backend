@@ -30,7 +30,7 @@ import Servant.Client (ClientEnv)
 import Telegram.Api (fetchUpdates)
 import qualified Telegram.Bot.API as TG
 import Telegram.Commands (handleCallbackQuery, handleCommand, handleMessage)
-import Telegram.Types (BotState (..))
+import Telegram.Types (BotState (..), emptyBotState)
 
 -- -----------------------------------------------------------------------------
 -- Bot Initialization
@@ -41,8 +41,6 @@ import Telegram.Types (BotState (..))
 -- This sets up conversation state tracking.
 initBot :: (MonadIO m) => TelegramConfig -> m (TVar BotState)
 initBot _config = liftIO $ newTVarIO emptyBotState
-  where
-    emptyBotState = BotState mempty
 
 -- -----------------------------------------------------------------------------
 -- Polling Mode

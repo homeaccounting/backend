@@ -43,6 +43,7 @@ module Application.ReadModels.Account
     getAccountForUser,
     getAllAccounts,
     getAccessibleAccounts,
+    getUserRegularAccounts,
     accountExists,
 
     -- * Helper Functions
@@ -407,6 +408,28 @@ getAccessibleAccounts readModelTVar userId = do
           Just role <- [getUserRole userId summary.accessList]
         ]
   return accessibleAccounts
+
+-- | Retrieves a user's regular (non-External) accounts as (AccountId, name, balance) triples.
+--
+-- Filters accounts where the user is the creator and the account type is RegularAccount.
+--
+-- Example:
+-- >>> accounts <- getUserRegularAccounts readModel userId
+-- >>> mapM_ (\(id, name, bal) -> displayAccount id name bal) accounts
+getUserRegularAccounts ::
+  (MonadIO m) =>
+  TVar AccountReadModel ->
+  UserId ->
+  m [(AccountId, Text, Money)]
+getUserRegularAccounts readModelTVar userId = do
+  model <- liftIO $ readTVarIO readModelTVar
+  let allAccounts = Map.toList model.summaryData
+  return
+    [ (accId, acc.name, acc.balance)
+    | (accId, acc) <- allAccounts,
+      acc.createdBy == userId,
+      acc.accountType == RegularAccount
+    ]
 
 -- | Checks if an account exists in the read model.
 --

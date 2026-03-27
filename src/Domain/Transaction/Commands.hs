@@ -32,7 +32,7 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, Money, TransferCategory, TransferType, UserId)
+import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferCategory, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -81,8 +81,12 @@ data InitiateTransfer = InitiateTransfer
     fromAccountId :: AccountId,
     -- | Account to which money will be credited
     toAccountId :: AccountId,
-    -- | Amount of money to transfer
-    amount :: Money,
+    -- | Amount debited from source account
+    sourceAmount :: Money,
+    -- | Amount credited to target account
+    targetAmount :: Money,
+    -- | Exchange rate used (Nothing if same-currency)
+    exchangeRate :: Maybe ExchangeRate,
     -- | Reason or description for the transfer
     reason :: Text,
     -- | User who initiated the transfer (for audit trail)

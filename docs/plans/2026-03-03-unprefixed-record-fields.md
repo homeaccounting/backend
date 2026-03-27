@@ -8,7 +8,7 @@
 
 **Tech Stack:** optics 0.4+, optics-th 0.4+, GHC 9.6.7
 
-**Design doc:** `docs/plans/2026-03-03-unprefixed-record-fields-design.md`
+**Design doc:** `docs/specs/2026-03-03-unprefixed-record-fields-design.md`
 
 ---
 

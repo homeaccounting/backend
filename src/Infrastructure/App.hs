@@ -86,6 +86,7 @@ module Infrastructure.App
     HasAuthConfig (..),
     HasBotState (..),
     HasTelegramClient (..),
+    HasExchangeRateCache (..),
 
     -- * Running the Application
     runAppM,
@@ -113,6 +114,7 @@ import Infrastructure.Eventium
     AccountingVersionedEventStoreReader,
     AccountingVersionedEventStoreWriter,
   )
+import Infrastructure.ExchangeRate.Provider (ExchangeRateCache)
 import RIO
 import Servant.Client (ClientEnv)
 import Telegram.Types (BotState)
@@ -175,7 +177,9 @@ data AppEnv = AppEnv
     -- | Telegram bot state (conversation tracking)
     botState :: !(TVar BotState),
     -- | Telegram API client environment (Nothing if bot token is empty)
-    telegramClientEnv :: !(Maybe ClientEnv)
+    telegramClientEnv :: !(Maybe ClientEnv),
+    -- | Exchange rate cache (daily rates from configured provider)
+    exchangeRateCache :: !ExchangeRateCache
   }
 
 -- | Initialize the application environment.
@@ -208,8 +212,9 @@ initializeAppEnv ::
   TelegramConfig ->
   TVar BotState ->
   Maybe ClientEnv ->
+  ExchangeRateCache ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateCache =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -225,7 +230,8 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       oauthConfig = oauthConfig,
       telegramConfig = telegramConfig,
       botState = botState,
-      telegramClientEnv = telegramClientEnv
+      telegramClientEnv = telegramClientEnv,
+      exchangeRateCache = exchangeRateCache
     }
 
 -- -----------------------------------------------------------------------------
@@ -342,6 +348,13 @@ class HasTelegramClient env where
 
 instance HasTelegramClient AppEnv where
   telegramClientEnvL = lens (.telegramClientEnv) (\x y -> x {telegramClientEnv = y})
+
+-- | Type class for environments that have an exchange rate cache.
+class HasExchangeRateCache env where
+  exchangeRateCacheL :: Lens' env ExchangeRateCache
+
+instance HasExchangeRateCache AppEnv where
+  exchangeRateCacheL = lens (.exchangeRateCache) (\x y -> x {exchangeRateCache = y})
 
 -- | Type class for environments that have application configuration.
 --

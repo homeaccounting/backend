@@ -111,6 +111,9 @@ import Infrastructure.Eventium
     liftVersionedWriter,
     replayReadModels,
   )
+import Infrastructure.ExchangeRate.ECB (ecbProvider)
+import Infrastructure.ExchangeRate.NBU (nbuProvider)
+import Infrastructure.ExchangeRate.Provider (newExchangeRateCache, refreshCache)
 import RIO
 import qualified RIO.Text as T
 -- Web Server
@@ -299,6 +302,18 @@ initializeEnvironment logFunc config = do
   -- The transferProcessManager is already wired in accountingEventStoreWriter
   logInfo "Process managers registered via event bus"
 
+  -- 6b. Initialize exchange rate cache (best-effort, app starts even if ECB is unreachable)
+  logInfo "Initializing exchange rate cache..."
+  rateProvider <- case config.exchangeRate.provider of
+    "nbu" -> pure nbuProvider
+    "ecb" -> pure ecbProvider
+    unknown -> throwString $ "Unknown exchange rate provider: " <> T.unpack unknown
+  exchangeRateCache <- liftIO $ newExchangeRateCache rateProvider
+  refreshResult <- liftIO $ refreshCache exchangeRateCache
+  case refreshResult of
+    Right () -> logInfo $ "Exchange rate cache populated from " <> display (config.exchangeRate.provider)
+    Left err -> logWarn $ "Exchange rate cache initialization failed (will retry on first use): " <> display err
+
   -- 7. Build application environment
   let configDbConfig = config.database -- Config.DatabaseConfig for AppEnv
       env =
@@ -318,6 +333,7 @@ initializeEnvironment logFunc config = do
           telegramConfig
           botState
           telegramClientEnv
+          exchangeRateCache
 
   logInfo "Application environment initialized successfully"
   return env

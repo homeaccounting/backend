@@ -105,8 +105,10 @@ data TransferData = TransferData
     sourceAccount :: AccountId,
     -- | Target account (being credited)
     targetAccount :: AccountId,
-    -- | Amount being transferred
-    amount :: Money,
+    -- | Amount debited from source account
+    sourceAmount :: Money,
+    -- | Amount credited to target account
+    targetAmount :: Money,
     -- | Reason for the transfer
     reason :: Text,
     -- | Current phase of the transfer saga
@@ -153,7 +155,8 @@ handleTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)
             ?~ TransferData
               { sourceAccount = evt.fromAccountId,
                 targetAccount = evt.toAccountId,
-                amount = evt.amount,
+                sourceAmount = evt.sourceAmount,
+                targetAmount = evt.targetAmount,
                 reason = evt.reason,
                 phase = AwaitingDebit
               }
@@ -203,7 +206,7 @@ reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt
                       accountCommandEmbedding
                       ( DebitAccountAccountCommand
                           DebitAccount
-                            { amount = evt.amount,
+                            { amount = evt.sourceAmount,
                               transactionId = txId,
                               reason = evt.reason
                             }
@@ -233,7 +236,7 @@ reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
               accountCommandEmbedding
               ( CreditAccountAccountCommand
                   CreditAccount
-                    { amount = amount,
+                    { amount = targetAmount,
                       transactionId = evt.transactionId,
                       reason = reason
                     }

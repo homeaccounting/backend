@@ -16,7 +16,7 @@ database:
 
 logging:
   level: "debug"
-  format: "text"  # text or json
+  format: "text" # text or json
 
 cors:
   enabled: true
@@ -36,8 +36,8 @@ cors:
 
 event_store:
   # Event store specific settings
-  snapshot_frequency: 100  # Create snapshot every N events
-  
+  snapshot_frequency: 100 # Create snapshot every N events
+
 process_managers:
   # Process manager polling settings
   poll_interval_ms: 1000
@@ -46,7 +46,7 @@ process_managers:
 auth:
   # JWT settings (use environment variables for secrets!)
   jwt_secret: ${JWT_SECRET:-CHANGE_THIS_TO_A_SECURE_SECRET_IN_PRODUCTION}
-  jwt_expiry_seconds: 3600  # 1 hour
+  jwt_expiry_seconds: 3600 # 1 hour
   jwt_issuer: "accounting-api-dev"
   jwt_audience: "accounting-app"
 
@@ -69,7 +69,11 @@ oauth:
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN:-}
   bot_username: ${TELEGRAM_BOT_USERNAME:-}
-  webhook_url: null  # Use polling in development
+  webhook_url: null # Use polling in development
   use_polling: true
   polling_timeout: 30
-  auth_max_age_seconds: 86400  # 24 hours
+  auth_max_age_seconds: 86400 # 24 hours
+
+# Exchange rate provider
+exchange_rate:
+  provider: nbu

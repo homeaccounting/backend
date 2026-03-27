@@ -72,3 +72,7 @@ telegram:
   use_polling: true
   polling_timeout: 30
   auth_max_age_seconds: 86400 # 24 hours
+
+# Exchange rate provider
+exchange_rate:
+  provider: nbu

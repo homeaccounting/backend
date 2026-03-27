@@ -25,6 +25,12 @@
       - Domain.Transaction.CommandHandler
       - Application.ProcessManagers.TransferManager
 
+# validateConfig uses a custom 'when' for Either Text (), not Control.Monad.when
+- ignore:
+    name: Use unless
+    within:
+      - Infrastructure.Config
+
 # Allow incomplete patterns in test code
 - ignore:
     name: Incomplete patterns

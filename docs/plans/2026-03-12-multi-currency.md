@@ -1269,7 +1269,7 @@ Expected: No formatting or lint issues.
 
 **Step 4: Update design doc status**
 
-Change `docs/plans/2026-03-12-multi-currency-design.md` frontmatter from `status: draft` to `status: completed`.
+Change `docs/specs/2026-03-12-multi-currency-design.md` frontmatter from `status: draft` to `status: completed`.
 
 **Step 5: Final commit**
 
