@@ -8,6 +8,7 @@ This directory contains AI-generated implementation plans that have been reviewe
 |------|--------|---------|-------------|
 | [2025-12-01-account-backend.md](./2025-12-01-account-backend.md) | in-progress | 2025-12-01 | Accounting backend with DDD, CQRS, Event Sourcing |
 | [2026-01-30-user-management.md](./2026-01-30-user-management.md) | draft | 2026-01-30 | User management with OAuth2, Telegram, groups, and authorization |
+| [2026-03-27-deployment-infrastructure.md](./2026-03-27-deployment-infrastructure.md) | in-progress | 2026-03-27 | Deployment: Docker, CI, Terraform, Hetzner VPS |
 
 ## Archived Plans
 

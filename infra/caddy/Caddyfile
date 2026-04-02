@@ -1,0 +1,5 @@
+{$DOMAIN} {
+    handle_path /api/* {
+        reverse_proxy accounting:8080
+    }
+}

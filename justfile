@@ -176,3 +176,52 @@ profile:
     @echo "Building with profiling enabled..."
     cabal build --enable-profiling
 
+# --- Deployment ---
+
+# Load deploy env and SSH into server to pull & restart
+deploy env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source ".deploy.{{env}}.env"
+    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/accounting && docker compose pull && docker compose up -d && docker image prune -f"
+
+# Sync docker-compose and Caddyfile to the server
+deploy-sync env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source ".deploy.{{env}}.env"
+    scp -i "$DEPLOY_SSH_KEY" infra/docker/docker-compose.prod.yaml "$DEPLOY_USER@$DEPLOY_HOST:/opt/accounting/docker-compose.yaml"
+    scp -i "$DEPLOY_SSH_KEY" infra/caddy/Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/accounting/Caddyfile"
+
+# Show service status on the server
+deploy-status env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source ".deploy.{{env}}.env"
+    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/accounting && docker compose ps"
+
+# Tail logs from the server
+deploy-logs env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source ".deploy.{{env}}.env"
+    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/accounting && docker compose logs -f"
+
+# Rollback to a specific image SHA
+deploy-rollback env sha:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source ".deploy.{{env}}.env"
+    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/accounting && sed -i 's/ACCOUNTING_TAG=.*/ACCOUNTING_TAG={{sha}}/' .env && docker compose pull && docker compose up -d"
+
+# Run setup script on a fresh server
+infra-setup env:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source ".deploy.{{env}}.env"
+    scp -i "$DEPLOY_SSH_KEY" infra/scripts/setup-server.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/setup-server.sh"
+    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" "bash /tmp/setup-server.sh"

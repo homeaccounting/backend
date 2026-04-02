@@ -45,6 +45,9 @@
           
           # Command runner
           just
+
+          # Infrastructure
+          opentofu
           
           # System dependencies
           pkg-config
