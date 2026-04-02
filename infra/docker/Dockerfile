@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM haskell:9.10.3-slim AS builder
+FROM haskell:9.10.3-slim-bookworm AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
