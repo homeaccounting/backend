@@ -29,15 +29,18 @@ module Telegram.Api
 
     -- * Bot Configuration
     registerCommands,
+    registerWebhook,
   )
 where
 
 import Network.HTTP.Client (managerResponseTimeout, newManager, responseTimeoutMicro)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import RIO
+import qualified RIO.Text as T
 import Servant.Client (ClientEnv, ClientError, mkClientEnv, runClientM)
 import qualified Telegram.Bot.API as TG
 import Telegram.Bot.API.MakingRequests ()
+import qualified Telegram.Bot.API.Webhook as TGW
 import Telegram.Types (botCommands)
 
 -- -----------------------------------------------------------------------------
@@ -237,3 +240,16 @@ registerCommands clientEnv = liftIO $ do
           }
   response <- runClientM (TG.setMyCommands request) clientEnv
   return $ fmap TG.responseResult response
+
+-- | Register the webhook URL with Telegram.
+--
+-- This calls the @setWebhook@ API so Telegram knows where to send updates.
+-- Must be called once at startup when running in webhook mode.
+registerWebhook ::
+  (MonadIO m) =>
+  ClientEnv ->
+  Text ->
+  m (Either ClientError ())
+registerWebhook clientEnv webhookUrl = liftIO $ do
+  let request = TGW.defSetWebhook (T.unpack webhookUrl)
+  TGW.setUpWebhook request clientEnv

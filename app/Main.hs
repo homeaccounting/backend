@@ -122,7 +122,7 @@ import qualified RIO.Text as T
 import System.Environment (getArgs, lookupEnv)
 import System.IO (hPutStrLn)
 import Telegram.Api (createTelegramClientEnv)
-import Telegram.Bot (initBot, runBotPolling, setupBotCommands)
+import Telegram.Bot (initBot, runBotPolling, setupBotCommands, setupWebhook)
 import Web.Server (runServer)
 
 -- -----------------------------------------------------------------------------
@@ -296,6 +296,10 @@ initializeEnvironment logFunc config = do
         cEnv <- liftIO $ createTelegramClientEnv telegramConfig.botToken
         logInfo "Telegram API client environment created"
         setupBotCommands cEnv
+        -- Register webhook URL with Telegram when in webhook mode
+        case telegramConfig.webhookUrl of
+          Just url | not telegramConfig.usePolling -> setupWebhook cEnv url
+          _ -> return ()
         return (Just cEnv)
 
   -- 6. Register process managers

@@ -15,6 +15,7 @@ module Telegram.Bot
   ( -- * Bot Initialization
     initBot,
     setupBotCommands,
+    setupWebhook,
     runBotPolling,
 
     -- * Update Processing
@@ -28,7 +29,7 @@ import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
 import qualified RIO.Text as T
 import Servant.Client (ClientEnv)
-import Telegram.Api (fetchUpdates, registerCommands)
+import Telegram.Api (fetchUpdates, registerCommands, registerWebhook)
 import qualified Telegram.Bot.API as TG
 import Telegram.Commands (handleCallbackQuery, handleCommand, handleMessage)
 import Telegram.Types (BotState (..), emptyBotState)
@@ -53,6 +54,16 @@ setupBotCommands clientEnv = do
     Right True -> logInfo "Bot commands registered with Telegram"
     Right False -> logWarn "Telegram returned false for setMyCommands"
     Left err -> logWarn $ "Failed to register bot commands: " <> displayShow err
+
+-- | Register the webhook URL with Telegram so it knows where to send updates.
+--
+-- Must be called once at startup when running in webhook mode.
+setupWebhook :: (MonadIO m, MonadReader env m, HasLogFunc env) => ClientEnv -> Text -> m ()
+setupWebhook clientEnv webhookUrl = do
+  result <- registerWebhook clientEnv webhookUrl
+  case result of
+    Right () -> logInfo $ "Webhook registered with Telegram: " <> display webhookUrl
+    Left err -> logError $ "Failed to register webhook with Telegram: " <> displayShow err
 
 -- -----------------------------------------------------------------------------
 -- Polling Mode
