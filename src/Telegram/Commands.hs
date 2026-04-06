@@ -92,7 +92,7 @@ import Telegram.Keyboards
     internalCategoryKeyboard,
     showCurrency,
   )
-import Telegram.Types
+import Telegram.Types hiding (text)
 
 -- -----------------------------------------------------------------------------
 -- Main Command Router
@@ -220,19 +220,13 @@ handleStart _botState tgIdentity chatId _args = do
     Right (_userId, isNew) ->
       sendMsg chatId
         $ T.unlines
-          [ if isNew
+        $ [ if isNew
               then "Welcome to HomeAccounting Bot!\n\nYour account has been created successfully."
               else "Welcome back to HomeAccounting Bot!",
             "",
-            "Available commands:",
-            "/accounts - View accounts & select active one",
-            "/newaccount - Create a new account",
-            "/income - Record income",
-            "/expense - Record expense",
-            "/transfer - Transfer between accounts",
-            "/cancel - Cancel current operation",
-            "/help - Show all commands"
+            "Available commands:"
           ]
+        ++ formatCommandList
 
 -- | Handle /login command.
 handleLogin :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
@@ -323,17 +317,12 @@ handleHelp :: TelegramId -> Int64 -> AppM ()
 handleHelp _telegramId chatId = do
   sendMsg chatId
     $ T.unlines
-      [ "HomeAccounting Bot Commands:",
-        "",
-        "/start - Start using the bot",
-        "/accounts - View accounts & select active one",
-        "/newaccount - Create a new account",
-        "/transfer - Transfer between accounts",
-        "/income - Record income",
-        "/expense - Record expense",
-        "/cancel - Cancel current operation",
-        "/help - Show this help message"
-      ]
+    $ ["HomeAccounting Bot Commands:", ""]
+    ++ formatCommandList
+
+-- | Format the canonical command list for display in messages.
+formatCommandList :: [Text]
+formatCommandList = map (\(cmd, desc) -> cmd <> " - " <> desc) botCommands
 
 -- -----------------------------------------------------------------------------
 -- Callback Handlers

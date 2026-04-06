@@ -5,45 +5,12 @@
 
 set -e
 
-# Configuration
-API_BASE_URL="http://localhost:8080"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-NC='\033[0m' # No Color
-
-# Helper functions
-print_header() {
-    echo -e "\n${BLUE}════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  $1${NC}"
-    echo -e "${BLUE}════════════════════════════════════════════════════════${NC}\n"
-}
-
-print_step() {
-    echo -e "\n${CYAN}▶ Step $1: $2${NC}\n"
-}
-
-print_success() {
-    echo -e "${GREEN}  ✓ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}  ✗ $1${NC}"
-}
-
-print_info() {
-    echo -e "${YELLOW}  → $1${NC}"
-}
-
-print_balance() {
-    echo -e "${MAGENTA}  💰 $1${NC}"
-}
+_resolve_base_url "$@"
+ARGS=$(_strip_endpoint_flags "$@")
+set -- $ARGS
 
 # Check if jq is installed
 check_jq() {
@@ -51,21 +18,6 @@ check_jq() {
         print_error "jq is not installed. Install it for pretty JSON output:"
         echo "    macOS:        brew install jq"
         echo "    Ubuntu/Debian: sudo apt-get install jq"
-        exit 1
-    fi
-}
-
-# Check if server is running
-check_server() {
-    print_info "Checking if server is running..."
-    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
-        print_success "Server is running at ${API_BASE_URL}"
-    else
-        print_error "Server is not running at ${API_BASE_URL}"
-        echo ""
-        echo "Please start the server with:"
-        echo "    cd $(dirname "$SCRIPT_DIR")"
-        echo "    cabal run accounting"
         exit 1
     fi
 }
@@ -96,7 +48,7 @@ main() {
     # ============================================================
     # Step 1: Register a New User
     # ============================================================
-    print_step "1" "Register a New User"
+    print_step "Step 1: Register a New User"
 
     print_info "Registering user: $TEST_EMAIL"
     REGISTER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
@@ -121,7 +73,7 @@ main() {
     # ============================================================
     # Step 2: Login with Credentials
     # ============================================================
-    print_step "2" "Login with Credentials"
+    print_step "Step 2: Login with Credentials"
 
     print_info "Logging in as: $TEST_EMAIL"
     LOGIN_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/login" \
@@ -136,7 +88,7 @@ main() {
     # ============================================================
     # Step 3: Get User Profile
     # ============================================================
-    print_step "3" "Get User Profile"
+    print_step "Step 3: Get User Profile"
 
     print_info "Fetching user profile..."
     PROFILE_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/users/me" \
@@ -154,7 +106,7 @@ main() {
     # ============================================================
     # Step 4: Create Savings Account
     # ============================================================
-    print_step "4" "Create Savings Account"
+    print_step "Step 4: Create Savings Account"
 
     print_info "Creating Savings Account with initial balance of \$1000..."
     SAVINGS_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
@@ -173,7 +125,7 @@ main() {
     # ============================================================
     # Step 5: Create Checking Account
     # ============================================================
-    print_step "5" "Create Checking Account"
+    print_step "Step 5: Create Checking Account"
 
     print_info "Creating Checking Account with initial balance of \$500..."
     CHECKING_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
@@ -192,7 +144,7 @@ main() {
     # ============================================================
     # Step 6: List All Accounts
     # ============================================================
-    print_step "6" "List All Accounts"
+    print_step "Step 6: List All Accounts"
 
     print_info "Retrieving list of all accounts..."
     LIST_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
@@ -206,7 +158,7 @@ main() {
     # ============================================================
     # Step 7: Initiate Transfer (Savings -> Checking)
     # ============================================================
-    print_step "7" "Initiate Transfer (Savings → Checking)"
+    print_step "Step 7: Initiate Transfer (Savings -> Checking)"
 
     print_info "Transferring \$300 from Savings to Checking..."
 
@@ -238,7 +190,7 @@ EOF
     # ============================================================
     # Step 8: Poll Transaction Status
     # ============================================================
-    print_step "8" "Monitor Transaction Status"
+    print_step "Step 8: Monitor Transaction Status"
 
     print_info "Polling for transaction completion..."
 
@@ -271,7 +223,7 @@ EOF
     # ============================================================
     # Step 9: Share Account with Another User
     # ============================================================
-    print_step "9" "Share Account with Another User"
+    print_step "Step 9: Share Account with Another User"
 
     SECOND_EMAIL="second-$(date +%s)@example.com"
     SECOND_PASSWORD="SecurePass456!"
@@ -305,7 +257,7 @@ EOF
     # ============================================================
     # Step 10: Verify Final Balances
     # ============================================================
-    print_step "10" "Verify Final Account Balances"
+    print_step "Step 10: Verify Final Account Balances"
 
     print_info "Retrieving final Savings Account balance..."
     FINAL_SAVINGS=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SAVINGS_ID}" \
@@ -376,7 +328,7 @@ EOF
     echo "  Checking: $CHECKING_ID"
     echo ""
     print_info "You can query these accounts anytime with:"
-    echo "  curl http://localhost:8080/api/accounts/${SAVINGS_ID} | jq"
+    echo "  curl ${API_BASE_URL}/api/accounts/${SAVINGS_ID} | jq"
     echo ""
 }
 

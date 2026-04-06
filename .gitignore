@@ -53,6 +53,5 @@ infra/terraform/terraform.tfstate.backup
 infra/terraform/terraform.tfvars
 # Note: .terraform.lock.hcl is intentionally NOT ignored — commit it for reproducible provider versions
 
-# Deploy environment configs
-.deploy.*.env
+# Deploy environment configs (committed to infra/deploy.env — contains no secrets)
 

@@ -157,7 +157,29 @@ jobs:
           file: infra/docker/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/accounting:${{ steps.sha.outputs.short }}
-            ghcr.io/${{ github.repository_owner }}/accounting:latest
+            ghcr.io/${{ github.repository_owner }}/backend:${{ steps.sha.outputs.short }}
+            ghcr.io/${{ github.repository_owner }}/backend:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Production
+    needs: build-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load deploy config
+        run: source infra/deploy.env && echo "DEPLOY_HOST=$DEPLOY_HOST" >> "$GITHUB_ENV" && echo "DEPLOY_USER=$DEPLOY_USER" >> "$GITHUB_ENV"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key_path: infra/deploy_key
+          script: |
+            cd /opt/backend
+            docker compose pull api
+            docker compose up -d api
+            docker image prune -f

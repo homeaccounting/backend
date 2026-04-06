@@ -8,28 +8,29 @@
 #   - Use 'register' or 'login' to obtain and save a token
 #   - Token is saved to /tmp/test_auth_token.txt and reused automatically
 
-API_BASE_URL="http://localhost:8080"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+_resolve_base_url "$@"
+ARGS=$(_strip_endpoint_flags "$@")
+set -- $ARGS
+
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Load .env if Telegram env vars are missing (direnv may not have reloaded)
-if [ -z "$TELEGRAM_USER_ID" ] && [ -f "${PROJECT_ROOT}/.env" ]; then
-    set -a
-    source "${PROJECT_ROOT}/.env"
-    set +a
-fi
+load_env "$PROJECT_ROOT"
 
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-RED='\033[0;31m'
-NC='\033[0m'
+check_jq() {
+    if ! command -v jq &> /dev/null; then
+        echo "$@"
+        return
+    fi
+    echo "$@" | jq '.'
+}
 
 print_usage() {
     echo -e "${BLUE}Quick API Test Helper${NC}"
     echo ""
-    echo "Usage: $0 <command> [args]"
+    echo "Usage: $0 <command> [args] [--prod|--local]"
     echo ""
     echo "Authentication Commands:"
     echo "  register <email> <password>  - Register a new user"
@@ -57,6 +58,11 @@ print_usage() {
     echo "Other Commands:"
     echo "  health                       - Check if server is running"
     echo ""
+    echo "Endpoint flags:"
+    echo "  --local          - Use http://localhost:8080 (default)"
+    echo "  --prod           - Use https://homeaccounting.com"
+    echo "  API_BASE_URL=... - Override with any URL"
+    echo ""
     echo "Environment variables (for Telegram):"
     echo "  TELEGRAM_BOT_TOKEN   - Required for telegram-login"
     echo "  TELEGRAM_USER_ID     - Default Telegram user ID"
@@ -66,42 +72,14 @@ print_usage() {
     echo "Examples:"
     echo "  $0 register user@example.com MyPassword123"
     echo "  $0 login user@example.com MyPassword123"
+    echo "  $0 list --prod"
     echo "  $0 telegram-login                          # Uses env var defaults"
     echo "  $0 telegram-login 12345 John johndoe       # Override with args"
     echo "  $0 create \"My Account\" 1000"
-    echo "  $0 list"
     echo "  $0 income <account-id> 500 salary"
     echo "  $0 expense <account-id> 100 food"
     echo "  $0 transfer <from-id> <to-id> 300"
     echo "  $0 profile"
-}
-
-check_jq() {
-    if ! command -v jq &> /dev/null; then
-        echo "$@"
-        return
-    fi
-    echo "$@" | jq '.'
-}
-
-# Get saved auth token
-get_token() {
-    if [ -f /tmp/test_auth_token.txt ]; then
-        cat /tmp/test_auth_token.txt
-    else
-        echo ""
-    fi
-}
-
-# Auth header for protected endpoints
-auth_header() {
-    local token
-    token=$(get_token)
-    if [ -z "$token" ]; then
-        echo -e "${RED}No auth token found. Run '$0 register' or '$0 login' first.${NC}" >&2
-        exit 1
-    fi
-    echo "Authorization: Bearer $token"
 }
 
 case "${1:-help}" in
@@ -200,7 +178,7 @@ case "${1:-help}" in
         ;;
 
     token)
-        TOKEN=$(get_token)
+        TOKEN=$(get_saved_token)
         if [ -n "$TOKEN" ]; then
             echo -e "${YELLOW}Current auth token:${NC}"
             echo "$TOKEN"

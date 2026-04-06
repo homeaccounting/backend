@@ -8,7 +8,7 @@ default:
 
 # Generate cabal file from package.yaml
 hpack:
-    @echo "Generating accounting.cabal from package.yaml..."
+    @echo "Generating backend.cabal from package.yaml..."
     hpack
     @echo "✓ Done"
 
@@ -21,12 +21,12 @@ build: hpack
 # Run the server with dev config
 run:
     @echo "Starting accounting backend server..."
-    cabal run accounting
+    cabal run backend
 
 # Run the server with custom config
 run-config CONFIG:
     @echo "Starting accounting backend with {{CONFIG}}..."
-    CONFIG_PATH={{CONFIG}} cabal run accounting
+    CONFIG_PATH={{CONFIG}} cabal run backend
 
 # Run test suite
 test:
@@ -68,7 +68,7 @@ check: format lint
     @echo "✓ Code quality checks complete"
 
 # Start PostgreSQL with Docker Compose
-docker-up:
+db-up:
     @echo "Starting PostgreSQL..."
     docker compose up -d
     @echo "✓ PostgreSQL started"
@@ -77,27 +77,27 @@ docker-up:
     -docker compose exec -T postgres pg_isready -U postgres || echo "PostgreSQL not ready yet..."
 
 # Stop PostgreSQL
-docker-down:
+db-down:
     @echo "Stopping PostgreSQL..."
     docker compose down
     @echo "✓ PostgreSQL stopped"
 
 # Stop PostgreSQL and remove volumes
-docker-down-volumes:
+db-reset:
     @echo "Stopping PostgreSQL and removing volumes..."
     docker compose down -v
     @echo "✓ PostgreSQL stopped and volumes removed"
 
 # Show PostgreSQL logs
-docker-logs:
+db-logs:
     docker compose logs -f postgres
 
 # Connect to PostgreSQL with psql
-docker-psql:
+db-psql:
     docker compose exec postgres psql -U postgres -d accounting
 
 # Restart PostgreSQL
-docker-restart: docker-down docker-up
+db-restart: db-down db-up
     @echo "✓ PostgreSQL restarted"
 
 # Watch and rebuild on changes (requires ghcid)
@@ -111,7 +111,7 @@ watch-test:
     ghcid --test=:test
 
 # Setup development environment
-dev-setup: hpack docker-up
+dev-setup: hpack db-up
     @echo "Development environment ready!"
     @echo ""
     @echo "Next steps:"
@@ -152,7 +152,7 @@ info:
     @echo "  just build       - Build the project"
     @echo "  just run         - Run the server"
     @echo "  just test        - Run tests"
-    @echo "  just docker-up   - Start PostgreSQL"
+    @echo "  just db-up       - Start PostgreSQL"
     @echo "  just check       - Format and lint"
 
 # Install git hooks (if any)
@@ -178,50 +178,68 @@ profile:
 
 # --- Deployment ---
 
-# Load deploy env and SSH into server to pull & restart
-deploy env:
+# Build and push Docker image to GHCR
+image-push tag="latest":
     #!/usr/bin/env bash
     set -euo pipefail
-    source ".deploy.{{env}}.env"
-    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/accounting && docker compose pull && docker compose up -d && docker image prune -f"
+    source "infra/deploy.env"
+    IMAGE="ghcr.io/${GHCR_OWNER}/backend:{{tag}}"
+    docker build --platform linux/amd64 -f infra/docker/Dockerfile -t "$IMAGE" .
+    docker push "$IMAGE"
+
+# Build SSH/SCP flags from infra/deploy.env (DEPLOY_SSH_KEY is optional — omit for agent-based auth)
+_ssh_opts := ""
+
+# Load deploy env and SSH into server to pull & restart
+deploy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "infra/deploy.env"
+    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/backend && docker compose pull && docker compose up -d && docker image prune -f"
 
 # Sync docker-compose and Caddyfile to the server
-deploy-sync env:
+deploy-sync:
     #!/usr/bin/env bash
     set -euo pipefail
-    source ".deploy.{{env}}.env"
-    scp -i "$DEPLOY_SSH_KEY" infra/docker/docker-compose.prod.yaml "$DEPLOY_USER@$DEPLOY_HOST:/opt/accounting/docker-compose.yaml"
-    scp -i "$DEPLOY_SSH_KEY" infra/caddy/Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/accounting/Caddyfile"
+    source "infra/deploy.env"
+    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
+    scp "${SSH_OPTS[@]}" infra/docker/docker-compose.yaml "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/docker-compose.yaml"
+    scp "${SSH_OPTS[@]}" infra/caddy/Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/Caddyfile"
 
 # Show service status on the server
-deploy-status env:
+deploy-status:
     #!/usr/bin/env bash
     set -euo pipefail
-    source ".deploy.{{env}}.env"
-    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/accounting && docker compose ps"
+    source "infra/deploy.env"
+    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/backend && docker compose ps"
 
-# Tail logs from the server
-deploy-logs env:
+# Tail logs from the server (optionally filter by service: api, caddy, postgres)
+deploy-logs *service:
     #!/usr/bin/env bash
     set -euo pipefail
-    source ".deploy.{{env}}.env"
-    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/accounting && docker compose logs -f"
+    source "infra/deploy.env"
+    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/backend && docker compose logs -f {{service}}"
 
 # Rollback to a specific image SHA
-deploy-rollback env sha:
+deploy-rollback sha:
     #!/usr/bin/env bash
     set -euo pipefail
-    source ".deploy.{{env}}.env"
-    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/accounting && sed -i 's/ACCOUNTING_TAG=.*/ACCOUNTING_TAG={{sha}}/' .env && docker compose pull && docker compose up -d"
+    source "infra/deploy.env"
+    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/backend && sed -i 's/BACKEND_TAG=.*/BACKEND_TAG={{sha}}/' .env && docker compose pull && docker compose up -d"
 
 # Run setup script on a fresh server
-infra-setup env:
+infra-setup:
     #!/usr/bin/env bash
     set -euo pipefail
-    source ".deploy.{{env}}.env"
-    scp -i "$DEPLOY_SSH_KEY" infra/scripts/setup-server.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/setup-server.sh"
-    ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST" "bash /tmp/setup-server.sh"
+    source "infra/deploy.env"
+    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
+    scp "${SSH_OPTS[@]}" infra/scripts/setup-server.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/setup-server.sh"
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "bash /tmp/setup-server.sh"

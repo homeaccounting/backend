@@ -6,7 +6,7 @@
 
 ```bash
 # From project root
-cabal run accounting
+cabal run backend
 ```
 
 ### 2. Run the Full Workflow Test
@@ -245,7 +245,7 @@ scripts/api-test/
 
 ```bash
 # Terminal 1: Start the server
-cabal run accounting
+cabal run backend
 
 # Terminal 2: Test the API
 ./scripts/api-test/quick-test.sh health

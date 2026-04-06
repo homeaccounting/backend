@@ -13,11 +13,11 @@ services:
     environment:
       - DOMAIN=${DOMAIN}
     depends_on:
-      accounting:
+      api:
         condition: service_started
 
-  accounting:
-    image: ghcr.io/${GHCR_OWNER}/accounting:${ACCOUNTING_TAG:-latest}
+  api:
+    image: ghcr.io/${GHCR_OWNER}/backend:${BACKEND_TAG:-latest}
     restart: unless-stopped
     environment:
       - CONFIG_FILE=config/prod.yaml

@@ -1,25 +1,24 @@
 resource "hcloud_ssh_key" "default" {
-  name       = "accounting-deploy"
-  public_key = var.ssh_public_key
+  name       = "main-deploy"
+  public_key = file("${path.module}/../deploy_key.pub")
 }
 
-resource "hcloud_server" "accounting" {
-  name        = "accounting"
+resource "hcloud_server" "main" {
+  name        = "main"
   image       = "ubuntu-24.04"
   server_type = var.server_type
   location    = var.location
   ssh_keys    = [hcloud_ssh_key.default.id]
 
-  firewall_ids = [hcloud_firewall.accounting.id]
+  firewall_ids = [hcloud_firewall.main.id]
 
   labels = {
-    app = "accounting"
-    env = "prod"
+    roles = "backend"
   }
 }
 
-resource "hcloud_firewall" "accounting" {
-  name = "accounting"
+resource "hcloud_firewall" "main" {
+  name = "main"
 
   rule {
     direction  = "in"

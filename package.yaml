@@ -1,4 +1,4 @@
-name: accounting
+name: backend
 version: 0.1.0.0
 synopsis: Accounting system backend with CQRS and Event Sourcing
 description: |
@@ -118,7 +118,7 @@ library:
       ghc-options: -Werror
 
 executables:
-  accounting:
+  backend:
     main: Main.hs
     source-dirs: app
     ghc-options:
@@ -131,10 +131,10 @@ executables:
       - condition: flag(ci)
         ghc-options: -Werror
     dependencies:
-      - accounting
+      - backend
 
 tests:
-  accounting-test:
+  backend-test:
     main: Spec.hs
     source-dirs:
       - test
@@ -147,7 +147,7 @@ tests:
       - condition: flag(ci)
         ghc-options: -Werror
     dependencies:
-      - accounting
+      - backend
       - hspec >= 2.10 && < 2.12
       - hspec-discover >= 2.10 && < 2.12
       - HUnit >= 1.6 && < 1.7

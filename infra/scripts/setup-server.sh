@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One-time server bootstrap for accounting deployment.
+# One-time server bootstrap for backend deployment.
 # Run via: just infra-setup
 # Prerequisites: Terraform applied, SSH access to server.
 
@@ -20,13 +20,13 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
 echo "=== Creating app directory ==="
-mkdir -p /opt/accounting
+mkdir -p /opt/backend
 
 echo "=== Docker installed successfully ==="
 echo ""
 echo "Next steps (manual):"
-echo "  1. Copy docker-compose.prod.yaml and Caddyfile to server:"
-echo "     just deploy-sync <env>"
-echo "  2. Create /opt/accounting/.env with production secrets"
+echo "  1. Copy docker-compose.yaml and Caddyfile to server:"
+echo "     just deploy-sync"
+echo "  2. Create /opt/backend/.env with production secrets"
 echo "  3. Log into GHCR: docker login ghcr.io"
-echo "  4. Run: just deploy <env>"
+echo "  4. Run: just deploy"

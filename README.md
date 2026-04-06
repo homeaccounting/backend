@@ -107,7 +107,7 @@ just run
 just run-config config/local.yaml
 
 # Or manually with cabal
-cabal run accounting
+cabal run backend
 ```
 
 The server starts on `http://localhost:8080` by default.
@@ -180,7 +180,7 @@ Override with environment variable:
 just run-config config/local.yaml
 
 # Or manually with cabal
-CONFIG_PATH=config/local.yaml cabal run accounting
+CONFIG_PATH=config/local.yaml cabal run backend
 ```
 
 ### Environment Variables

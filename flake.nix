@@ -1,26 +1,36 @@
 {
-  description = "Accounting Backend - Personal accounting system with CQRS and Event Sourcing";
+  description = "Backend - Personal accounting system backend with CQRS and Event Sourcing";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        
+
         # Use GHC 9.10.3 to match eventium
         hPkgs = pkgs.haskell.packages.ghc9103;
-        
-        # Build the accounting package
-        accountingPackage = hPkgs.callCabal2nix "accounting" ./. {
+
+        # Build the backend package
+        backendPackage = hPkgs.callCabal2nix "backend" ./. {
           # Reference local eventium packages
-          eventium-core = hPkgs.callCabal2nix "eventium-core" ../lib/eventium/eventium-core {};
-          eventium-memory = hPkgs.callCabal2nix "eventium-memory" ../lib/eventium/eventium-memory {};
-          eventium-postgresql = hPkgs.callCabal2nix "eventium-postgresql" ../lib/eventium/eventium-postgresql {};
-          eventium-sql-common = hPkgs.callCabal2nix "eventium-sql-common" ../lib/eventium/eventium-sql-common {};
+          eventium-core = hPkgs.callCabal2nix "eventium-core" ../lib/eventium/eventium-core { };
+          eventium-memory = hPkgs.callCabal2nix "eventium-memory" ../lib/eventium/eventium-memory { };
+          eventium-postgresql =
+            hPkgs.callCabal2nix "eventium-postgresql" ../lib/eventium/eventium-postgresql
+              { };
+          eventium-sql-common =
+            hPkgs.callCabal2nix "eventium-sql-common" ../lib/eventium/eventium-sql-common
+              { };
         };
 
         # Development dependencies
@@ -29,45 +39,46 @@
           hPkgs.ghc
           hPkgs.cabal-install
           hPkgs.hpack
-          
+
           # Database libraries/headers for building
           postgresql.lib
           postgresql.dev
           libpq
           libpq.dev
-          
+
           # Development tools
           hPkgs.haskell-language-server
           hPkgs.hlint
           hPkgs.ormolu
           hPkgs.ghcid
           hPkgs.hspec-discover
-          
+
           # Command runner
           just
 
           # Infrastructure
           opentofu
-          
+
           # System dependencies
           pkg-config
           zlib
-          
+
           # PostgreSQL client tools (optional)
           postgresql
         ];
 
-      in {
+      in
+      {
         # Export the package
         packages = {
-          default = accountingPackage;
-          accounting = accountingPackage;
+          default = backendPackage;
+          backend = backendPackage;
         };
 
         # Development shell
         devShells.default = pkgs.mkShell {
           buildInputs = devDependencies;
-          
+
           # Set up environment for development
           shellHook = ''
             echo "💰 Accounting Backend Development Environment"
@@ -83,17 +94,17 @@
             echo ""
             echo "📚 Or use Cabal directly:"
             echo "  • cabal build          - Build"
-            echo "  • cabal run accounting - Run"
+            echo "  • cabal run backend - Run"
             echo "  • cabal test           - Test"
             echo ""
-            
+
             # Generate cabal file from package.yaml
             if [ -f package.yaml ]; then
-              echo "📝 Generating accounting.cabal from package.yaml..."
+              echo "📝 Generating backend.cabal from package.yaml..."
               hpack
-              echo "✅ accounting.cabal generated"
+              echo "✅ backend.cabal generated"
             fi
-            
+
             echo ""
             echo "🚀 Get started: just dev-setup"
           '';
@@ -110,7 +121,7 @@
             pkgs.libpq
             pkgs.zlib
           ];
-          
+
           # Database connection defaults (consumed by config/*.yaml)
           DB_HOST = "127.0.0.1";
           DB_PORT = "5432";
@@ -122,10 +133,10 @@
         # Apps for easy running
         apps = {
           default = flake-utils.lib.mkApp {
-            drv = accountingPackage;
-            exePath = "/bin/accounting";
+            drv = backendPackage;
+            exePath = "/bin/backend";
           };
         };
-      });
+      }
+    );
 }
-

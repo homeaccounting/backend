@@ -7,18 +7,13 @@ variable "hcloud_token" {
 variable "server_type" {
   description = "Hetzner server type"
   type        = string
-  default     = "cx22"
+  default     = "cx23"
 }
 
 variable "location" {
   description = "Hetzner datacenter location"
   type        = string
-  default     = "fsn1"
-}
-
-variable "ssh_public_key" {
-  description = "SSH public key content"
-  type        = string
+  default     = "nbg1"
 }
 
 variable "domain" {

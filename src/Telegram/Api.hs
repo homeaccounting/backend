@@ -26,6 +26,9 @@ module Telegram.Api
 
     -- * Updates
     fetchUpdates,
+
+    -- * Bot Configuration
+    registerCommands,
   )
 where
 
@@ -35,6 +38,7 @@ import RIO
 import Servant.Client (ClientEnv, ClientError, mkClientEnv, runClientM)
 import qualified Telegram.Bot.API as TG
 import Telegram.Bot.API.MakingRequests ()
+import Telegram.Types (botCommands)
 
 -- -----------------------------------------------------------------------------
 -- Client Environment
@@ -210,4 +214,26 @@ fetchUpdates clientEnv maybeOffset timeoutSeconds = liftIO $ do
             TG.getUpdatesAllowedUpdates = Nothing
           }
   response <- runClientM (TG.getUpdates request) clientEnv
+  return $ fmap TG.responseResult response
+
+-- -----------------------------------------------------------------------------
+-- Bot Configuration
+-- -----------------------------------------------------------------------------
+
+-- | Register bot commands with Telegram so they appear in the menu.
+--
+-- This calls the @setMyCommands@ API. Should be called once at startup.
+registerCommands ::
+  (MonadIO m) =>
+  ClientEnv ->
+  m (Either ClientError Bool)
+registerCommands clientEnv = liftIO $ do
+  let commands = map (uncurry TG.BotCommand) botCommands
+      request =
+        TG.SetMyCommandsRequest
+          { TG.setMyCommandsCommands = commands,
+            TG.setMyCommandsScope = Nothing,
+            TG.setMyCommandsLanguageCode = Nothing
+          }
+  response <- runClientM (TG.setMyCommands request) clientEnv
   return $ fmap TG.responseResult response

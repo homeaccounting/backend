@@ -4,67 +4,23 @@
 # Tests Telegram login/auth flow: authenticate via Telegram, then use JWT for account operations
 #
 # Prerequisites:
-#   - Server running on localhost:8080
+#   - Server running (use --prod or --local to select endpoint)
 #   - TELEGRAM_BOT_TOKEN env var set (same token the server uses)
 #   - openssl installed (for HMAC-SHA256 hash computation)
 #
 # The script computes a valid Telegram auth hash so you can test the full flow
 # without needing the actual Telegram Login Widget.
 
-# Configuration
-API_BASE_URL="http://localhost:8080"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+_resolve_base_url "$@"
+ARGS=$(_strip_endpoint_flags "$@")
+set -- $ARGS
+
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Load .env if env vars are missing (direnv may not have reloaded)
-if [ -z "$TELEGRAM_USER_ID" ] && [ -f "${PROJECT_ROOT}/.env" ]; then
-    set -a
-    source "${PROJECT_ROOT}/.env"
-    set +a
-fi
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-# Helper functions
-print_header() {
-    echo -e "\n${BLUE}========================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}========================================${NC}\n"
-}
-
-print_step() {
-    echo -e "\n${CYAN}▶ $1${NC}\n"
-}
-
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}"
-}
-
-print_info() {
-    echo -e "${YELLOW}→ $1${NC}"
-}
-
-# Check if server is running
-check_server() {
-    print_info "Checking if server is running..."
-    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
-        print_success "Server is running at ${API_BASE_URL}"
-    else
-        print_error "Server is not running at ${API_BASE_URL}"
-        echo "Please start the server with: just run"
-        exit 1
-    fi
-}
+load_env "$PROJECT_ROOT"
 
 # Check prerequisites
 check_prerequisites() {
@@ -432,9 +388,9 @@ EOF
     fi
 }
 
-# Full workflow: Telegram login → profile → create accounts → transfer
+# Full workflow: Telegram login -> profile -> create accounts -> transfer
 test_full_workflow() {
-    print_header "FULL WORKFLOW: Telegram Login → Create Accounts → Transfer"
+    print_header "FULL WORKFLOW: Telegram Login -> Create Accounts -> Transfer"
 
     local TELEGRAM_ID="${TELEGRAM_USER_ID:-$(( RANDOM * 10000 + RANDOM ))}"
     local FIRST_NAME="${TELEGRAM_FIRST_NAME:-TelegramUser}"
@@ -498,7 +454,7 @@ test_full_workflow() {
     print_success "Checking account: $CHECKING_ID"
 
     # Step 5: Transfer money
-    print_step "Step 5: Transfer \$200 (Savings → Checking)"
+    print_step "Step 5: Transfer \$200 (Savings -> Checking)"
     TRANSFER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
@@ -558,7 +514,7 @@ main() {
 
     if [ $# -eq 0 ]; then
         echo ""
-        echo "Usage: $0 [test_name]"
+        echo "Usage: $0 [test_name] [--prod|--local]"
         echo ""
         echo "Available tests:"
         echo "  all              - Run all tests in sequence"
@@ -569,7 +525,12 @@ main() {
         echo "  list-accounts    - List accounts"
         echo "  invalid-hash     - Test with forged hash (expected failure)"
         echo "  expired          - Test with expired auth date (expected failure)"
-        echo "  workflow         - Full workflow: login → accounts → transfer"
+        echo "  workflow         - Full workflow: login -> accounts -> transfer"
+        echo ""
+        echo "Endpoint flags:"
+        echo "  --local          - Use http://localhost:8080 (default)"
+        echo "  --prod           - Use https://homeaccounting.com"
+        echo "  API_BASE_URL=... - Override with any URL"
         echo ""
         echo "Environment variables:"
         echo "  TELEGRAM_BOT_TOKEN   - Required. Must match the server's bot token."
@@ -578,14 +539,8 @@ main() {
         echo "  TELEGRAM_USERNAME    - Your Telegram username without @ (used as default for login)"
         echo ""
         echo "Examples:"
-        echo "  # Set once in .env or shell:"
-        echo "  export TELEGRAM_BOT_TOKEN='123456:ABC-DEF...'"
-        echo "  export TELEGRAM_USER_ID=123456789"
-        echo "  export TELEGRAM_FIRST_NAME=John"
-        echo "  export TELEGRAM_USERNAME=johndoe"
-        echo ""
         echo "  $0 login                           # Login with your real Telegram identity"
-        echo "  $0 workflow                         # Full end-to-end with your identity"
+        echo "  $0 workflow --prod                  # Full end-to-end against production"
         echo "  $0 login 99999 Other otheruser      # Override with specific values"
         echo ""
         exit 0

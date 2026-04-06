@@ -11,7 +11,7 @@ RUN apt-get update && \
 WORKDIR /build
 
 # Step 1: Copy dependency files only (cached unless deps change)
-COPY package.yaml cabal.project accounting.cabal ./
+COPY package.yaml cabal.project backend.cabal ./
 
 RUN cabal update && \
     cabal build --only-dependencies -j
@@ -22,7 +22,7 @@ COPY src/ src/
 COPY config/ config/
 
 RUN cabal build -j && \
-    cp "$(cabal list-bin accounting)" /build/accounting-bin
+    cp "$(cabal list-bin backend)" /build/backend-bin
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim
@@ -37,11 +37,11 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY --from=builder /build/accounting-bin ./accounting
+COPY --from=builder /build/backend-bin ./backend
 COPY --from=builder /build/config/ ./config/
 
 ENV CONFIG_FILE=config/prod.yaml
 
 EXPOSE 8080
 
-CMD ["./accounting"]
+CMD ["./backend"]

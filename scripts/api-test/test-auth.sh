@@ -5,56 +5,17 @@
 #
 # Note: set -e is NOT used so all tests run even when individual assertions fail.
 
-# Configuration
-API_BASE_URL="http://localhost:8080"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common.sh"
+
+_resolve_base_url "$@"
+ARGS=$(_strip_endpoint_flags "$@")
+set -- $ARGS
+
 PAYLOADS_DIR="${SCRIPT_DIR}/payloads/auth"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# Load .env if Telegram env vars are missing (direnv may not have reloaded)
-if [ -z "$TELEGRAM_USER_ID" ] && [ -f "${PROJECT_ROOT}/.env" ]; then
-    set -a
-    source "${PROJECT_ROOT}/.env"
-    set +a
-fi
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Helper functions
-print_header() {
-    echo -e "\n${BLUE}========================================${NC}"
-    echo -e "${BLUE}$1${NC}"
-    echo -e "${BLUE}========================================${NC}\n"
-}
-
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}"
-}
-
-print_info() {
-    echo -e "${YELLOW}→ $1${NC}"
-}
-
-# Check if server is running
-check_server() {
-    print_info "Checking if server is running..."
-    if curl -s -o /dev/null -w "%{http_code}" "${API_BASE_URL}/api/nonexistent" 2>&1 | grep -q "404"; then
-        print_success "Server is running at ${API_BASE_URL}"
-    else
-        print_error "Server is not running at ${API_BASE_URL}"
-        echo "Please start the server with: cabal run accounting"
-        exit 1
-    fi
-}
+load_env "$PROJECT_ROOT"
 
 # Generate a unique email for testing
 generate_test_email() {
@@ -336,7 +297,7 @@ main() {
 
     if [ $# -eq 0 ]; then
         echo ""
-        echo "Usage: $0 [test_name]"
+        echo "Usage: $0 [test_name] [--prod|--local]"
         echo ""
         echo "Available tests:"
         echo "  all              - Run all tests in sequence"
@@ -349,7 +310,12 @@ main() {
         echo "  telegram         - Test Telegram login (requires TELEGRAM_BOT_TOKEN)"
         echo "  unauthorized     - Test accessing protected endpoint without token"
         echo ""
-        echo "Example: $0 all"
+        echo "Endpoint flags:"
+        echo "  --local          - Use http://localhost:8080 (default)"
+        echo "  --prod           - Use https://homeaccounting.com"
+        echo "  API_BASE_URL=... - Override with any URL"
+        echo ""
+        echo "Example: $0 all --prod"
         exit 0
     fi
 

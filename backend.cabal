@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 
-name:           accounting
+name:           backend
 version:        0.1.0.0
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
@@ -91,7 +91,7 @@ library
       Web.Server
       Web.Types
   other-modules:
-      Paths_accounting
+      Paths_backend
   hs-source-dirs:
       src
   default-extensions:
@@ -154,10 +154,10 @@ library
   if flag(ci)
     ghc-options: -Werror
 
-executable accounting
+executable backend
   main-is: Main.hs
   other-modules:
-      Paths_accounting
+      Paths_backend
   hs-source-dirs:
       app
   default-extensions:
@@ -174,10 +174,10 @@ executable accounting
       TypeOperators
   ghc-options: -Wall -Wcompat -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      accounting
-    , aeson >=2.0 && <2.3
+      aeson >=2.0 && <2.3
     , aeson-pretty ==0.8.*
     , aeson-yaml ==1.1.*
+    , backend
     , base >=4.17 && <5
     , base64-bytestring ==1.2.*
     , bytestring >=0.10 && <0.13
@@ -221,7 +221,7 @@ executable accounting
   if flag(ci)
     ghc-options: -Werror
 
-test-suite accounting-test
+test-suite backend-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
@@ -251,7 +251,7 @@ test-suite accounting-test
       Testkit.Generators
       Testkit.Helpers
       Testkit.InMemoryEventStore
-      Paths_accounting
+      Paths_backend
   hs-source-dirs:
       test
   default-extensions:
@@ -272,10 +272,10 @@ test-suite accounting-test
   build-depends:
       HUnit ==1.6.*
     , QuickCheck >=2.14 && <2.16
-    , accounting
     , aeson >=2.0 && <2.3
     , aeson-pretty ==0.8.*
     , aeson-yaml ==1.1.*
+    , backend
     , base >=4.17 && <5
     , base64-bytestring ==1.2.*
     , bytestring >=0.10 && <0.13

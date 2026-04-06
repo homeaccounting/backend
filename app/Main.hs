@@ -60,7 +60,7 @@
 -- Usage:
 --
 -- Development:
--- >>> cabal run accounting -- --config config/test.yaml
+-- >>> cabal run backend -- --config config/test.yaml
 --
 -- Production:
 -- >>> accounting --config config/prod.yaml
@@ -122,7 +122,7 @@ import qualified RIO.Text as T
 import System.Environment (getArgs, lookupEnv)
 import System.IO (hPutStrLn)
 import Telegram.Api (createTelegramClientEnv)
-import Telegram.Bot (initBot, runBotPolling)
+import Telegram.Bot (initBot, runBotPolling, setupBotCommands)
 import Web.Server (runServer)
 
 -- -----------------------------------------------------------------------------
@@ -295,6 +295,7 @@ initializeEnvironment logFunc config = do
       else do
         cEnv <- liftIO $ createTelegramClientEnv telegramConfig.botToken
         logInfo "Telegram API client environment created"
+        setupBotCommands cEnv
         return (Just cEnv)
 
   -- 6. Register process managers

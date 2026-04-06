@@ -14,6 +14,7 @@
 module Telegram.Bot
   ( -- * Bot Initialization
     initBot,
+    setupBotCommands,
     runBotPolling,
 
     -- * Update Processing
@@ -27,7 +28,7 @@ import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
 import qualified RIO.Text as T
 import Servant.Client (ClientEnv)
-import Telegram.Api (fetchUpdates)
+import Telegram.Api (fetchUpdates, registerCommands)
 import qualified Telegram.Bot.API as TG
 import Telegram.Commands (handleCallbackQuery, handleCommand, handleMessage)
 import Telegram.Types (BotState (..), emptyBotState)
@@ -41,6 +42,17 @@ import Telegram.Types (BotState (..), emptyBotState)
 -- This sets up conversation state tracking.
 initBot :: (MonadIO m) => TelegramConfig -> m (TVar BotState)
 initBot _config = liftIO $ newTVarIO emptyBotState
+
+-- | Register bot commands with Telegram (shows the menu in the chat).
+--
+-- Should be called once at startup when a client environment is available.
+setupBotCommands :: (MonadIO m, MonadReader env m, HasLogFunc env) => ClientEnv -> m ()
+setupBotCommands clientEnv = do
+  result <- registerCommands clientEnv
+  case result of
+    Right True -> logInfo "Bot commands registered with Telegram"
+    Right False -> logWarn "Telegram returned false for setMyCommands"
+    Left err -> logWarn $ "Failed to register bot commands: " <> displayShow err
 
 -- -----------------------------------------------------------------------------
 -- Polling Mode

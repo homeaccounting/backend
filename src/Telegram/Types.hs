@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- |
 -- Module      : Telegram.Types
@@ -11,6 +12,9 @@ module Telegram.Types
     BotState (..),
     emptyBotState,
     ConversationState (..),
+
+    -- * Commands
+    botCommands,
 
     -- * Callback Data
     CallbackData (..),
@@ -48,6 +52,25 @@ data BotState = BotState
 -- | Initial empty bot state.
 emptyBotState :: BotState
 emptyBotState = BotState Map.empty Map.empty
+
+-- -----------------------------------------------------------------------------
+-- Commands
+-- -----------------------------------------------------------------------------
+
+-- | Canonical list of bot commands (command, description).
+--
+-- Single source of truth used by setMyCommands, /help, and /start.
+botCommands :: [(Text, Text)]
+botCommands =
+  [ ("/start", "Start using the bot"),
+    ("/accounts", "View & select accounts"),
+    ("/newaccount", "Create a new account"),
+    ("/income", "Record income"),
+    ("/expense", "Record expense"),
+    ("/transfer", "Transfer between accounts"),
+    ("/cancel", "Cancel current operation"),
+    ("/help", "Show available commands")
+  ]
 
 -- | State for a multi-step conversation.
 --

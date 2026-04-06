@@ -49,21 +49,22 @@ Wait for DNS propagation before proceeding (Caddy needs this for HTTPS).
 
 ### 3. Bootstrap the Server
 
-Create `.deploy.prod.env` (gitignored):
+Update `infra/deploy.env` with your server details:
 
 ```bash
 DEPLOY_HOST=<server_ip>
 DEPLOY_USER=root
-DEPLOY_SSH_KEY=~/.ssh/your-key
+DEPLOY_SSH_KEY=infra/deploy_key
+GHCR_OWNER=<your-github-username>
 ```
 
 Run the bootstrap script:
 
 ```bash
-just infra-setup prod
+just infra-setup
 ```
 
-This installs Docker and creates `/opt/accounting/` on the server.
+This installs Docker and creates `/opt/backend/` on the server.
 
 ### 4. Configure the Server
 
@@ -71,7 +72,7 @@ SSH into the server and create the environment file:
 
 ```bash
 ssh -i ~/.ssh/your-key root@<server_ip>
-cat > /opt/accounting/.env << 'EOF'
+cat > /opt/backend/.env << 'EOF'
 # Database
 DB_HOST=postgres
 DB_PORT=5432
@@ -99,8 +100,8 @@ TELEGRAM_BOT_USERNAME=<your-bot-username>
 TELEGRAM_WEBHOOK_URL=https://homeaccounting.com/api/telegram/webhook
 
 # Docker image
-GHCR_OWNER=<your-github-username>
-ACCOUNTING_TAG=latest
+GHCR_OWNER=homeaccounting
+BACKEND_TAG=latest
 DOMAIN=homeaccounting.com
 
 # Exchange rate
@@ -123,39 +124,47 @@ Use a [personal access token](https://github.com/settings/tokens) with `read:pac
 Back on your local machine:
 
 ```bash
-just deploy-sync prod    # copies docker-compose.yaml and Caddyfile to server
-just deploy prod         # pulls image and starts services
+just deploy-sync    # copies docker-compose.yaml and Caddyfile to server
+just deploy         # pulls image and starts services
 ```
 
 Verify everything is running:
 
 ```bash
-just deploy-status prod
+just deploy-status
 ```
 
 Visit `https://homeaccounting.com/api/` — Caddy will automatically provision an HTTPS certificate.
 
 ## Day-to-Day Deployment
 
-### How It Works
+### How It Works (Continuous Delivery)
 
 1. Push code to `master`
-2. GitHub Actions runs tests, then builds a Docker image and pushes it to GHCR
-3. When ready, deploy manually:
+2. GitHub Actions runs tests, builds a Docker image, and pushes it to GHCR
+3. GitHub Actions automatically deploys to production via SSH
 
-```bash
-just deploy prod
-```
+No manual step is required — every green master push is deployed.
+
+### GitHub Actions Secrets
+
+The deploy job requires these secrets (`Settings → Secrets and variables → Actions`):
+
+| Secret           | Description                    |
+| ---------------- | ------------------------------ |
+| `DEPLOY_HOST`    | Server IP address              |
+| `DEPLOY_USER`    | SSH user (e.g. `root`)         |
+| `DEPLOY_SSH_KEY` | Private SSH key for the server |
 
 ### Available Commands
 
-| Command | Description |
-|---|---|
-| `just deploy <env>` | Pull latest image and restart |
-| `just deploy-sync <env>` | Copy docker-compose.yaml and Caddyfile to server |
-| `just deploy-status <env>` | Show `docker compose ps` on server |
-| `just deploy-logs <env>` | Tail service logs |
-| `just deploy-rollback <env> <sha>` | Roll back to a specific image |
+| Command                      | Description                                      |
+| ---------------------------- | ------------------------------------------------ |
+| `just deploy`                | Pull latest image and restart                    |
+| `just deploy-sync`           | Copy docker-compose.yaml and Caddyfile to server |
+| `just deploy-status`         | Show `docker compose ps` on server               |
+| `just deploy-logs`           | Tail service logs                                |
+| `just deploy-rollback <sha>` | Roll back to a specific image                    |
 
 ### Rollback
 
@@ -168,20 +177,20 @@ git log --oneline master
 Then:
 
 ```bash
-just deploy-rollback prod abc1234
+just deploy-rollback abc1234
 ```
 
-This updates `ACCOUNTING_TAG` in the server's `.env` and restarts services.
+This updates `BACKEND_TAG` in the server's `.env` and restarts services.
 
-To go back to latest after a rollback, SSH into the server and set `ACCOUNTING_TAG=latest` in `/opt/accounting/.env`, then `just deploy prod`.
+To go back to latest after a rollback, SSH into the server and set `BACKEND_TAG=latest` in `/opt/backend/.env`, then `just deploy`.
 
 ## Updating Infrastructure
 
-If you change `docker-compose.prod.yaml` or `Caddyfile`:
+If you change `docker-compose.yaml` or `Caddyfile`:
 
 ```bash
-just deploy-sync prod    # copy updated files to server
-just deploy prod         # restart with new config
+just deploy-sync    # copy updated files to server
+just deploy         # restart with new config
 ```
 
 If you change OpenTofu config:
@@ -197,24 +206,24 @@ tofu apply
 ### Check logs
 
 ```bash
-just deploy-logs prod
+just deploy-logs
 ```
 
 ### SSH into the server
 
 ```bash
-source .deploy.prod.env
+source infra/deploy.env
 ssh -i "$DEPLOY_SSH_KEY" "$DEPLOY_USER@$DEPLOY_HOST"
-cd /opt/accounting
+cd /opt/backend
 docker compose ps          # service status
 docker compose logs -f     # all logs
-docker compose logs accounting  # app logs only
+docker compose logs backend     # app logs only
 ```
 
 ### Restart a single service
 
 ```bash
-ssh -i ... root@<ip> "cd /opt/accounting && docker compose restart accounting"
+ssh -i ... root@<ip> "cd /opt/backend && docker compose restart backend"
 ```
 
 ### Caddy not getting HTTPS certificate
@@ -225,6 +234,6 @@ ssh -i ... root@<ip> "cd /opt/accounting && docker compose restart accounting"
 
 ### App fails to start
 
-- Check env vars: `docker compose exec accounting env`
+- Check env vars: `docker compose exec backend env`
 - Verify Postgres is healthy: `docker compose ps postgres`
-- Check app logs: `docker compose logs accounting`
+- Check app logs: `docker compose logs backend`

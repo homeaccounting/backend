@@ -313,7 +313,7 @@ If you get connection errors, ensure the backend is running:
 
 ```bash
 # Start the backend (from project root)
-cabal run accounting
+cabal run backend
 ```
 
 ### 401 Unauthorized Errors
