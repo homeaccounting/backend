@@ -207,6 +207,7 @@ deploy-sync:
     SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
     scp "${SSH_OPTS[@]}" infra/docker/docker-compose.yaml "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/docker-compose.yaml"
     scp "${SSH_OPTS[@]}" infra/caddy/Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/Caddyfile"
+    scp "${SSH_OPTS[@]}" infra/.env "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/.env"
 
 # Show service status on the server
 deploy-status:

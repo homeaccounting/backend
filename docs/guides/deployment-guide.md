@@ -66,48 +66,16 @@ just infra-setup
 
 This installs Docker and creates `/opt/backend/` on the server.
 
-### 4. Configure the Server
+### 4. Configure the Environment
 
-SSH into the server and create the environment file:
+Edit `infra/.env` (checked into git) with your production values. Replace all `CHANGE_ME` placeholders with real secrets:
 
 ```bash
-ssh -i ~/.ssh/your-key root@<server_ip>
-cat > /opt/backend/.env << 'EOF'
-# Database
-DB_HOST=postgres
-DB_PORT=5432
-DB_USER=accounting
-DB_PASSWORD=<generate-a-secure-password>
-DB_NAME=accounting
-
-# Auth
-JWT_SECRET=<generate-a-secure-secret>
-
-# OAuth (optional)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-GITHUB_REDIRECT_URI=
-MICROSOFT_CLIENT_ID=
-MICROSOFT_CLIENT_SECRET=
-MICROSOFT_REDIRECT_URI=
-
-# Telegram
-TELEGRAM_BOT_TOKEN=<your-bot-token>
-TELEGRAM_BOT_USERNAME=<your-bot-username>
-TELEGRAM_WEBHOOK_URL=https://homeaccounting.com/api/telegram/webhook
-
-# Docker image
-GHCR_OWNER=homeaccounting
-BACKEND_TAG=latest
-DOMAIN=homeaccounting.com
-
-# Exchange rate
-EXCHANGE_RATE_PROVIDER=nbu
-EOF
+$EDITOR infra/.env
 ```
+
+> **Note:** `infra/.env` contains secrets. It is committed to git for convenience (private repo).
+> If you change secrets later, edit `infra/.env` and run `just deploy-sync` to push the update.
 
 ### 5. Log Into GHCR on the Server
 
@@ -124,7 +92,7 @@ Use a [personal access token](https://github.com/settings/tokens) with `read:pac
 Back on your local machine:
 
 ```bash
-just deploy-sync    # copies docker-compose.yaml and Caddyfile to server
+just deploy-sync    # copies docker-compose.yaml, Caddyfile, and .env to server
 just deploy         # pulls image and starts services
 ```
 
@@ -161,7 +129,7 @@ The deploy job requires these secrets (`Settings → Secrets and variables → A
 | Command                      | Description                                      |
 | ---------------------------- | ------------------------------------------------ |
 | `just deploy`                | Pull latest image and restart                    |
-| `just deploy-sync`           | Copy docker-compose.yaml and Caddyfile to server |
+| `just deploy-sync`           | Copy docker-compose.yaml, Caddyfile, and .env to server |
 | `just deploy-status`         | Show `docker compose ps` on server               |
 | `just deploy-logs`           | Tail service logs                                |
 | `just deploy-rollback <sha>` | Roll back to a specific image                    |
@@ -186,7 +154,7 @@ To go back to latest after a rollback, SSH into the server and set `BACKEND_TAG=
 
 ## Updating Infrastructure
 
-If you change `docker-compose.yaml` or `Caddyfile`:
+If you change `docker-compose.yaml`, `Caddyfile`, or `infra/.env`:
 
 ```bash
 just deploy-sync    # copy updated files to server
