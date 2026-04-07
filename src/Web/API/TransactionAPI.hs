@@ -58,7 +58,6 @@ import Web.Types
     fromTransactionData,
     parseExpenseCategory,
     parseIncomeCategory,
-    parseInternalCategory,
     toDomainMoney,
   )
 
@@ -186,37 +185,32 @@ expenseHandler user request = do
 transferHandler :: AuthenticatedUser -> InternalTransferRequest -> AppM TransactionResponse
 transferHandler user request = do
   let userId = user.userId
-  -- 1. Parse category
-  case parseInternalCategory request.category of
+  -- 1. Parse fromAccountId
+  case mkAccountId request.fromAccountId of
     Left err ->
-      throwDomainError $ ValidationErr $ mkValidationError "category" err err
-    Right internalCat ->
-      -- 2. Parse fromAccountId
-      case mkAccountId request.fromAccountId of
+      throwDomainError $ ValidationErr $ mkValidationError "fromAccountId" err err
+    Right fromAccId ->
+      -- 2. Parse toAccountId
+      case mkAccountId request.toAccountId of
         Left err ->
-          throwDomainError $ ValidationErr $ mkValidationError "fromAccountId" err err
-        Right fromAccId ->
-          -- 3. Parse toAccountId
-          case mkAccountId request.toAccountId of
+          throwDomainError $ ValidationErr $ mkValidationError "toAccountId" err err
+        Right toAccId ->
+          -- 3. Parse currency
+          case parseCurrency request.currency of
             Left err ->
-              throwDomainError $ ValidationErr $ mkValidationError "toAccountId" err err
-            Right toAccId ->
-              -- 4. Parse currency
-              case parseCurrency request.currency of
+              throwDomainError $ ValidationErr $ mkValidationError "currency" err err
+            Right cur -> do
+              -- 4. Parse amount
+              case toDomainMoney cur request.amount of
                 Left err ->
-                  throwDomainError $ ValidationErr $ mkValidationError "currency" err err
-                Right cur -> do
-                  -- 5. Parse amount
-                  case toDomainMoney cur request.amount of
-                    Left err ->
-                      throwDomainError $ ValidationErr $ mkValidationError "amount" err err
-                    Right money -> do
-                      -- 6. Delegate to service
-                      let maybeRate = fmap toRational request.exchangeRate
-                      result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money internalCat request.reason maybeRate
-                      case result of
-                        Right (txId, summary) -> return $ fromTransactionData txId summary
-                        Left err -> throwDomainError err
+                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
+                Right money -> do
+                  -- 5. Delegate to service
+                  let maybeRate = fmap toRational request.exchangeRate
+                  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money request.reason maybeRate
+                  case result of
+                    Right (txId, summary) -> return $ fromTransactionData txId summary
+                    Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions/:id - Get transaction status.
 getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse

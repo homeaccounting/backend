@@ -35,9 +35,8 @@ spec = describe "TransferCategory validation" $ do
         validateTransferCategory Expense (ExpenseCat cat) === Right ()
 
     it "accepts InternalTransfer with InternalCat"
-      $ property
-      $ \(cat :: InternalCategory) ->
-        validateTransferCategory InternalTransfer (InternalCat cat) === Right ()
+      $ validateTransferCategory InternalTransfer InternalCat
+      `shouldBe` Right ()
 
     it "rejects mismatched type and category"
       $ property
@@ -49,5 +48,5 @@ spec = describe "TransferCategory validation" $ do
 isMatching :: TransferType -> TransferCategory -> Bool
 isMatching Income (IncomeCat _) = True
 isMatching Expense (ExpenseCat _) = True
-isMatching InternalTransfer (InternalCat _) = True
+isMatching InternalTransfer InternalCat = True
 isMatching _ _ = False

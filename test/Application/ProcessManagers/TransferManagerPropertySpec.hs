@@ -22,7 +22,6 @@ import Domain.Account.Events
   )
 import Domain.Core.Types
   ( Currency (..),
-    InternalCategory (..),
     TransferCategory (..),
     TransferType (..),
     unAccountId,
@@ -83,7 +82,7 @@ genTransferInitiatedEvent = do
                 reason = "Property test transfer",
                 by = unsafeUserId userId,
                 transferType = InternalTransfer,
-                category = InternalCat InternalOther
+                category = InternalCat
               }
         )
     )

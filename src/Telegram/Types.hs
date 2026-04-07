@@ -81,19 +81,13 @@ data ConversationState
   | TransferSelectTarget
       { sourceAccountId :: AccountId
       }
-  | TransferSelectCategory
-      { sourceAccountId :: AccountId,
-        targetAccountId :: AccountId
-      }
   | TransferEnterAmount
       { sourceAccountId :: AccountId,
-        targetAccountId :: AccountId,
-        category :: Text
+        targetAccountId :: AccountId
       }
   | TransferEnterReason
       { sourceAccountId :: AccountId,
         targetAccountId :: AccountId,
-        category :: Text,
         amount :: Money
       }
   | -- Income flow

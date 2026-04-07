@@ -62,7 +62,6 @@ import Domain.Core.Types
     AccountId,
     ExpenseCategory (..),
     IncomeCategory (..),
-    InternalCategory (..),
     Money,
     TelegramId (..),
     TelegramIdentity (..),
@@ -90,7 +89,6 @@ import Telegram.Keyboards
     expenseCategoryKeyboard,
     formatMoney,
     incomeCategoryKeyboard,
-    internalCategoryKeyboard,
     showCurrency,
   )
 import Telegram.Types hiding (text)
@@ -143,10 +141,10 @@ handleMessage botState telegramId chatId text = do
       handleExpenseAmount botState telegramId chatId cat text
     Just (ExpenseEnterReason cat money) ->
       handleExpenseReason botState telegramId chatId cat money text
-    Just (TransferEnterAmount srcId tgtId cat) ->
-      handleTransferAmount botState telegramId chatId srcId tgtId cat text
-    Just (TransferEnterReason srcId tgtId cat money) ->
-      handleTransferReason botState telegramId chatId srcId tgtId cat money text
+    Just (TransferEnterAmount srcId tgtId) ->
+      handleTransferAmount botState telegramId chatId srcId tgtId text
+    Just (TransferEnterReason srcId tgtId money) ->
+      handleTransferReason botState telegramId chatId srcId tgtId money text
     _ ->
       sendMsg chatId "I don't understand. Use /help to see available commands."
 
@@ -197,9 +195,6 @@ dispatchCallback botState telegramId chatId (Just TransferSelectSource) (Account
 -- Transfer target account selection
 dispatchCallback botState telegramId chatId (Just (TransferSelectTarget srcId)) (AccountSelect cb)
   | cb.context == "transfer_tgt" = handleTransferTargetSelected botState telegramId chatId srcId cb.accountId
--- Transfer category selection
-dispatchCallback botState telegramId chatId (Just (TransferSelectCategory srcId tgtId)) (CategorySelect catText) =
-  handleTransferCategorySelected botState telegramId chatId srcId tgtId catText
 -- Fallback
 dispatchCallback _botState _telegramId chatId _ _ =
   sendMsg chatId "Unexpected input. Use /cancel to start over."
@@ -543,22 +538,12 @@ handleTransferTargetSelected botState telegramId chatId srcId shortId = do
         Nothing -> sendMsg chatId "Account not found."
         Just (tgtAccountId, _name, _balance) -> do
           atomically $ modifyTVar' botState $ \s ->
-            s {conversations = Map.insert telegramId (TransferSelectCategory srcId tgtAccountId) s.conversations}
-          sendMsgWithKeyboard chatId "Select transfer category:" internalCategoryKeyboard
-
--- | Handle transfer category selection.
-handleTransferCategorySelected :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Text -> AppM ()
-handleTransferCategorySelected botState telegramId chatId srcId tgtId catText =
-  case parseInternalCategory catText of
-    Nothing -> sendMsg chatId "Invalid category. Please select from the keyboard."
-    Just _ -> do
-      atomically $ modifyTVar' botState $ \s ->
-        s {conversations = Map.insert telegramId (TransferEnterAmount srcId tgtId catText) s.conversations}
-      sendMsg chatId "Enter amount:"
+            s {conversations = Map.insert telegramId (TransferEnterAmount srcId tgtAccountId) s.conversations}
+          sendMsg chatId "Enter amount:"
 
 -- | Handle transfer amount input.
-handleTransferAmount :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Text -> Text -> AppM ()
-handleTransferAmount botState telegramId chatId srcId tgtId cat text =
+handleTransferAmount :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Text -> AppM ()
+handleTransferAmount botState telegramId chatId srcId tgtId text =
   case parseAmount text of
     Nothing -> sendMsg chatId "Invalid amount. Please enter a positive number:"
     Just amt -> do
@@ -574,31 +559,28 @@ handleTransferAmount botState telegramId chatId srcId tgtId cat text =
             Left _ -> sendMsg chatId "Failed to create money amount. Please try again."
             Right money -> do
               atomically $ modifyTVar' botState $ \s ->
-                s {conversations = Map.insert telegramId (TransferEnterReason srcId tgtId cat money) s.conversations}
+                s {conversations = Map.insert telegramId (TransferEnterReason srcId tgtId money) s.conversations}
               sendMsg chatId "Enter reason (description):"
 
 -- | Handle transfer reason input and execute the transaction.
-handleTransferReason :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Text -> Money -> Text -> AppM ()
-handleTransferReason botState telegramId chatId srcId tgtId cat money reason = do
+handleTransferReason :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Money -> Text -> AppM ()
+handleTransferReason botState telegramId chatId srcId tgtId money reason = do
   clearConversation botState telegramId
-  case parseInternalCategory cat of
-    Nothing -> sendMsg chatId "Invalid category. Operation cancelled."
-    Just internalCat -> do
-      maybeUserId <- getUserIdForTelegram telegramId
-      case maybeUserId of
-        Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
-        Just userId -> do
-          result <- initiateInternalTransfer userId srcId tgtId money internalCat reason Nothing
-          case result of
-            Left err -> do
-              logError $ "Transfer failed: " <> displayShow err
-              sendMsg chatId $ "Transfer failed: " <> tshow err
-            Right (_txId, txData) -> case txData.status of
-              Failed reason' -> do
-                logError $ "Transfer failed: " <> display reason'
-                sendMsg chatId $ "Transfer failed: " <> reason'
-              _ ->
-                sendMsg chatId $ "Transfer completed: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
+  maybeUserId <- getUserIdForTelegram telegramId
+  case maybeUserId of
+    Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
+    Just userId -> do
+      result <- initiateInternalTransfer userId srcId tgtId money reason Nothing
+      case result of
+        Left err -> do
+          logError $ "Transfer failed: " <> displayShow err
+          sendMsg chatId $ "Transfer failed: " <> tshow err
+        Right (_txId, txData) -> case txData.status of
+          Failed reason' -> do
+            logError $ "Transfer failed: " <> display reason'
+            sendMsg chatId $ "Transfer failed: " <> reason'
+          _ ->
+            sendMsg chatId $ "Transfer completed: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
 
 -- -----------------------------------------------------------------------------
 -- Category Parsers
@@ -622,13 +604,6 @@ parseExpenseCategory "rent" = Just Rent
 parseExpenseCategory "entertainment" = Just Entertainment
 parseExpenseCategory "other" = Just ExpenseOther
 parseExpenseCategory _ = Nothing
-
--- | Parse internal transfer category from callback text.
-parseInternalCategory :: Text -> Maybe InternalCategory
-parseInternalCategory "rebalance" = Just Rebalance
-parseInternalCategory "savings" = Just Savings
-parseInternalCategory "other" = Just InternalOther
-parseInternalCategory _ = Nothing
 
 -- | Parse a positive amount from user text input.
 parseAmount :: Text -> Maybe Double

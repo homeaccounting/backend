@@ -82,7 +82,6 @@ module Web.Types
     -- * Category Parsing
     parseIncomeCategory,
     parseExpenseCategory,
-    parseInternalCategory,
 
     -- * Serialization Helpers
     transferTypeToText,
@@ -102,7 +101,7 @@ import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Data.UUID (UUID)
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountCategory (..), AccountId, AccountType (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), EWalletProperties (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountCategory (..), AccountId, AccountType (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), EWalletProperties (..), ExpenseCategory (..), IncomeCategory (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -368,7 +367,6 @@ data InternalTransferRequest
     toAccountId :: UUID,
     amount :: Double,
     currency :: Text,
-    category :: Text,
     reason :: Text,
     exchangeRate :: Maybe Double
   }
@@ -632,7 +630,6 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
     Left "Transfer reason should not be empty"
 
   -- Create domain command with user who initiated
-  -- Default to InternalTransfer / InternalOther (will be replaced by dedicated endpoints)
   return $
     InitiateTransfer
       { fromAccountId = fromId,
@@ -643,7 +640,7 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
         reason = reason,
         initiatedBy = initiatedBy,
         transferType = InternalTransfer,
-        category = InternalCat InternalOther
+        category = InternalCat
       }
   where
     when :: Bool -> Either Text () -> Either Text ()
@@ -897,9 +894,7 @@ transferCategoryToText (ExpenseCat Utilities) = "utilities"
 transferCategoryToText (ExpenseCat Rent) = "rent"
 transferCategoryToText (ExpenseCat Entertainment) = "entertainment"
 transferCategoryToText (ExpenseCat ExpenseOther) = "other"
-transferCategoryToText (InternalCat Rebalance) = "rebalance"
-transferCategoryToText (InternalCat Savings) = "savings"
-transferCategoryToText (InternalCat InternalOther) = "other"
+transferCategoryToText InternalCat = "internal"
 
 -- -----------------------------------------------------------------------------
 -- Category Parsing
@@ -925,11 +920,3 @@ parseExpenseCategory t = case T.toLower t of
   "entertainment" -> Right Entertainment
   "other" -> Right ExpenseOther
   _ -> Left $ "Unknown expense category: " <> t
-
--- | Parse a text string into an InternalCategory.
-parseInternalCategory :: Text -> Either Text InternalCategory
-parseInternalCategory t = case T.toLower t of
-  "rebalance" -> Right Rebalance
-  "savings" -> Right Savings
-  "other" -> Right InternalOther
-  _ -> Left $ "Unknown internal category: " <> t

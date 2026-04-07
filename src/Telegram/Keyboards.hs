@@ -16,7 +16,6 @@ module Telegram.Keyboards
     currencyKeyboard,
     incomeCategoryKeyboard,
     expenseCategoryKeyboard,
-    internalCategoryKeyboard,
 
     -- * Formatting
     formatMoney,
@@ -140,17 +139,6 @@ expenseCategoryKeyboard =
         [ [InlineButton "Food" "cat:food", InlineButton "Transport" "cat:transport"],
           [InlineButton "Utilities" "cat:utilities", InlineButton "Rent" "cat:rent"],
           [InlineButton "Entertainment" "cat:entertainment", InlineButton "Other" "cat:other"],
-          [cancelButton]
-        ]
-    }
-
--- | Internal transfer category keyboard.
-internalCategoryKeyboard :: InlineKeyboard
-internalCategoryKeyboard =
-  InlineKeyboard
-    { rows =
-        [ [InlineButton "Rebalance" "cat:rebalance", InlineButton "Savings" "cat:savings"],
-          [InlineButton "Other" "cat:other"],
           [cancelButton]
         ]
     }

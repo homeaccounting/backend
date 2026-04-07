@@ -48,7 +48,6 @@ import Domain.Core.Types
     ExchangeRate,
     ExpenseCategory,
     IncomeCategory,
-    InternalCategory,
     Money,
     TransactionId,
     TransferCategory (..),
@@ -282,11 +281,10 @@ initiateInternalTransfer ::
   AccountId ->
   AccountId ->
   Money ->
-  InternalCategory ->
   Text ->
   Maybe Rational ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateInternalTransfer userId sourceAccountId targetAccountId amount internalCat reason maybeUserRate = do
+initiateInternalTransfer userId sourceAccountId targetAccountId amount reason maybeUserRate = do
   logInfo "Initiating internal transfer..."
 
   -- 1. Validate both accounts exist and are Regular
@@ -330,7 +328,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount internalC
                                 reason = reason,
                                 initiatedBy = userId,
                                 transferType = InternalTransfer,
-                                category = InternalCat internalCat
+                                category = InternalCat
                               }
                       initiateTransfer cmd
 

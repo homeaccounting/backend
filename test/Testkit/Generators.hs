@@ -32,7 +32,6 @@ module Testkit.Generators
     genNonEmptyText,
     genIncomeCategory,
     genExpenseCategory,
-    genInternalCategory,
     genTransferType,
     genTransferCategory,
     genExchangeRate,
@@ -316,13 +315,6 @@ genExpenseCategory = elements [Food, Transport, Utilities, Rent, Entertainment, 
 instance Arbitrary ExpenseCategory where
   arbitrary = genExpenseCategory
 
--- | Generate a valid InternalCategory.
-genInternalCategory :: Gen InternalCategory
-genInternalCategory = elements [Rebalance, Savings, InternalOther]
-
-instance Arbitrary InternalCategory where
-  arbitrary = genInternalCategory
-
 -- | Generate a valid TransferType.
 genTransferType :: Gen TransferType
 genTransferType = elements [Income, Expense, InternalTransfer]
@@ -336,7 +328,7 @@ genTransferCategory =
   oneof
     [ IncomeCat <$> arbitrary,
       ExpenseCat <$> arbitrary,
-      InternalCat <$> arbitrary
+      pure InternalCat
     ]
 
 instance Arbitrary TransferCategory where

@@ -53,7 +53,6 @@ import Domain.Core.Types
     Currency (..),
     ExpenseCategory (..),
     IncomeCategory (..),
-    InternalCategory (..),
     TransferCategory (..),
     TransferType (..),
     defaultCash,
@@ -187,7 +186,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             reason = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = InternalTransfer,
-            category = InternalCat InternalOther
+            category = InternalCat
           }
 
   -- Step 2: Complete the transfer (simulates TransferManager behavior)
@@ -225,7 +224,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             reason = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = InternalTransfer,
-            category = InternalCat InternalOther
+            category = InternalCat
           }
 
   return txUuid
@@ -777,10 +776,10 @@ categorizedTransferSpec =
         Just extData ->
           extData.balance `shouldBe` unsafeMoney USD 150
 
-    it "internal transfer with Savings category completes correctly" $ do
+    it "internal transfer with InternalCat category completes correctly" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
 
-      -- Initiate internal transfer with Savings category
+      -- Initiate internal transfer
       txUuid <- UUID.nextRandom
       let writer = env.eventStoreWriter
           reader = env.eventStoreReader
@@ -796,7 +795,7 @@ categorizedTransferSpec =
                 reason = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = InternalTransfer,
-                category = InternalCat Savings
+                category = InternalCat
               }
 
       -- Verify transaction read model has correct type and category
@@ -806,7 +805,7 @@ categorizedTransferSpec =
         Nothing -> expectationFailure "Internal transfer not found in read model"
         Just txData -> do
           txData.transferType `shouldBe` InternalTransfer
-          txData.category `shouldBe` InternalCat Savings
+          txData.category `shouldBe` InternalCat
           txData.status `shouldBe` Completed
 
     it "rejects transfer with mismatched type and category" $ do

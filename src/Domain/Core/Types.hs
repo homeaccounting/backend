@@ -77,7 +77,6 @@ module Domain.Core.Types
     TransferType (..),
     IncomeCategory (..),
     ExpenseCategory (..),
-    InternalCategory (..),
     TransferCategory (..),
     validateTransferCategory,
 
@@ -735,22 +734,11 @@ instance ToJSON ExpenseCategory
 
 instance FromJSON ExpenseCategory
 
--- | Category for internal (account-to-account) transfers.
-data InternalCategory
-  = Rebalance
-  | Savings
-  | InternalOther
-  deriving (Show, Eq, Generic)
-
-instance ToJSON InternalCategory
-
-instance FromJSON InternalCategory
-
 -- | Transfer category, scoped by transfer type.
 data TransferCategory
   = IncomeCat IncomeCategory
   | ExpenseCat ExpenseCategory
-  | InternalCat InternalCategory
+  | InternalCat
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransferCategory
@@ -761,7 +749,7 @@ instance FromJSON TransferCategory
 validateTransferCategory :: TransferType -> TransferCategory -> Either Text ()
 validateTransferCategory Income (IncomeCat _) = Right ()
 validateTransferCategory Expense (ExpenseCat _) = Right ()
-validateTransferCategory InternalTransfer (InternalCat _) = Right ()
+validateTransferCategory InternalTransfer InternalCat = Right ()
 validateTransferCategory transferType category =
   Left $ T.pack $ "Category " <> show category <> " is not valid for transfer type " <> show transferType
 

@@ -30,7 +30,6 @@ import Domain.Account.Events
   )
 import Domain.Core.Types
   ( Currency (..),
-    InternalCategory (..),
     TransferCategory (..),
     TransferType (..),
     unsafeAccountId,
@@ -87,7 +86,7 @@ mkTransferInitiatedEvent =
             reason = "Test transfer",
             by = unsafeUserId userUuid,
             transferType = InternalTransfer,
-            category = InternalCat InternalOther
+            category = InternalCat
           }
     )
 
@@ -210,7 +209,7 @@ spec = describe "TransferManager (Saga)" $ do
                       reason = "Bad",
                       by = unsafeUserId userUuid,
                       transferType = InternalTransfer,
-                      category = InternalCat InternalOther
+                      category = InternalCat
                     }
               )
           state = handleTransferEvent emptyTransferManager badEvent

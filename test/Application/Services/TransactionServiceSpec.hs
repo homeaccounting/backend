@@ -128,7 +128,7 @@ spec = describe "TransactionService" $ do
                 reason = "Test transfer",
                 initiatedBy = testUserId1,
                 transferType = InternalTransfer,
-                category = InternalCat InternalOther
+                category = InternalCat
               }
       result <- runAppM env $ initiateTransfer transferCmd
       shouldBeRight result
@@ -151,7 +151,7 @@ spec = describe "TransactionService" $ do
                 reason = "Retrieve test",
                 initiatedBy = testUserId1,
                 transferType = InternalTransfer,
-                category = InternalCat InternalOther
+                category = InternalCat
               }
       createResult <- runAppM env $ initiateTransfer transferCmd
       let (txId, _) = fromRight' createResult
@@ -184,7 +184,7 @@ spec = describe "TransactionService" $ do
                 reason = rsn,
                 initiatedBy = testUserId1,
                 transferType = InternalTransfer,
-                category = InternalCat InternalOther
+                category = InternalCat
               }
       result1 <- runAppM env $ initiateTransfer (mkTransferCmd 100 "First")
       result2 <- runAppM env $ initiateTransfer (mkTransferCmd 200 "Second")
@@ -208,7 +208,7 @@ spec = describe "TransactionService" $ do
       let rates = [(USD, EUR, 9 % 10), (EUR, USD, 10 % 9)]
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) InternalOther "Cross-currency transfer" Nothing
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "Cross-currency transfer" Nothing
       shouldBeRight result
       let (_, summary) = fromRight' result
       -- Source: 100 USD, Target: 90 EUR (100 * 9/10)
@@ -218,7 +218,7 @@ spec = describe "TransactionService" $ do
 
     it "skips conversion for same-currency transfer" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts -- both USD
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) InternalOther "Same currency" Nothing
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) "Same currency" Nothing
       shouldBeRight result
       let (_, summary) = fromRight' result
       summary.sourceAmount `shouldBe` mockMoney 100
@@ -230,7 +230,7 @@ spec = describe "TransactionService" $ do
       let rates = [(USD, EUR, 9 % 10), (EUR, USD, 10 % 9)]
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) InternalOther "User rate" (Just (17 % 20))
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "User rate" (Just (17 % 20))
       shouldBeRight result
       let (_, summary) = fromRight' result
       summary.sourceAmount `shouldBe` mockMoneyWith USD 100
@@ -242,7 +242,7 @@ spec = describe "TransactionService" $ do
       let rates = [(GBP, EUR, 6 % 5)]
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) InternalOther "No rate for pair" Nothing
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "No rate for pair" Nothing
       shouldBeLeft result
       case result of
         Left (ExchangeRateUnavailable _) -> pure ()

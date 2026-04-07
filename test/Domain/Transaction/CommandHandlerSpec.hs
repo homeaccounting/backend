@@ -65,7 +65,7 @@ pendingTransaction fromId toId amt =
             reason = "Test transfer",
             by = testUserId,
             transferType = InternalTransfer,
-            category = InternalCat InternalOther
+            category = InternalCat
           }
     ]
 
@@ -83,7 +83,7 @@ completedTransaction fromId toId amt =
             reason = "Test transfer",
             by = testUserId,
             transferType = InternalTransfer,
-            category = InternalCat InternalOther
+            category = InternalCat
           },
       TransferCompletedTransactionEvent TransferCompleted
     ]
@@ -102,7 +102,7 @@ failedTransaction fromId toId amt =
             reason = "Test transfer",
             by = testUserId,
             transferType = InternalTransfer,
-            category = InternalCat InternalOther
+            category = InternalCat
           },
       TransferFailedTransactionEvent $ TransferFailed "Insufficient funds"
     ]
@@ -129,7 +129,7 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     exchangeRate = Nothing,
                     reason = "Payment",
                     transferType = InternalTransfer,
-                    category = InternalCat InternalOther
+                    category = InternalCat
                   }
         let result = handleTransactionCommand transaction command
 
@@ -159,7 +159,7 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     exchangeRate = Nothing,
                     reason = "Test",
                     transferType = InternalTransfer,
-                    category = InternalCat InternalOther
+                    category = InternalCat
                   }
         let result = handleTransactionCommand transaction command
 
@@ -183,7 +183,7 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     exchangeRate = Nothing,
                     reason = "Self-transfer",
                     transferType = InternalTransfer,
-                    category = InternalCat InternalOther
+                    category = InternalCat
                   }
         let result = handleTransactionCommand transaction command
 
@@ -204,7 +204,7 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     exchangeRate = Nothing,
                     reason = "Zero transfer",
                     transferType = InternalTransfer,
-                    category = InternalCat InternalOther
+                    category = InternalCat
                   }
         let result = handleTransactionCommand transaction command
 
@@ -228,7 +228,7 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     exchangeRate = Nothing,
                     reason = "Second attempt",
                     transferType = InternalTransfer,
-                    category = InternalCat InternalOther
+                    category = InternalCat
                   }
         let result = handleTransactionCommand transaction command
 
@@ -266,7 +266,7 @@ completeTransferSpec = describe "CompleteTransfer Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId InternalTransfer (InternalCat InternalOther)] <> events
+            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId InternalTransfer InternalCat] <> events
             newTransaction ^. #status `shouldBe` Completed
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -325,7 +325,7 @@ failTransferSpec = describe "FailTransfer Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId InternalTransfer (InternalCat InternalOther)] <> events
+            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId InternalTransfer InternalCat] <> events
             newTransaction ^. #status `shouldBe` Failed "Error"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
