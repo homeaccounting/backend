@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- |
@@ -38,13 +37,13 @@ module Domain.Account.Commands
     DebitAccount (..),
     CreditAccount (..),
     SetOverdraftLimit (..),
-    SetAccountType (..),
+    SetAccountSubtype (..),
   )
 where
 
-import Data.Aeson.TH (defaultOptions, deriveJSON, fieldLabelModifier)
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountCategory, AccountRole, AccountType, Money, TransactionId, UserId)
+import Domain.Core.Types (AccountKind, AccountRole, AccountSubtype, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -63,7 +62,7 @@ accountCommands =
     ''DebitAccount,
     ''CreditAccount,
     ''SetOverdraftLimit,
-    ''SetAccountType
+    ''SetAccountSubtype
   ]
 
 -- -----------------------------------------------------------------------------
@@ -93,8 +92,8 @@ data CreateAccount = CreateAccount
     initialBalance :: Money,
     -- | User who is creating the account (becomes Owner)
     createdBy :: UserId,
-    -- | Account category (Regular with type, or External)
-    accountCategory :: AccountCategory,
+    -- | Account kind (Regular with subtype, or External)
+    kind :: AccountKind,
     -- | Optional overdraft limit (Nothing = use default for account type)
     overdraftLimit :: Maybe (Maybe Money)
   }
@@ -217,25 +216,18 @@ data SetOverdraftLimit = SetOverdraftLimit
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- | Command to change an account's user-facing type. Owner only.
-data SetAccountType = SetAccountType
-  { accountType :: AccountType,
+-- | Command to change an account's user-facing subtype. Owner only.
+data SetAccountSubtype = SetAccountSubtype
+  { subtype :: AccountSubtype,
     setBy :: UserId
   }
   deriving (Show, Eq)
 
 -- Derive JSON instances for all commands
--- CreateAccount uses custom fieldLabelModifier to keep "accountType" as JSON key
-deriveJSON
-  defaultOptions
-    { fieldLabelModifier = \case
-        "accountCategory" -> "accountType"
-        other -> other
-    }
-  ''CreateAccount
+deriveJSON defaultOptions ''CreateAccount
 deriveJSON defaultOptions ''ShareAccount
 deriveJSON defaultOptions ''RevokeAccountAccess
 deriveJSON defaultOptions ''DebitAccount
 deriveJSON defaultOptions ''CreditAccount
 deriveJSON defaultOptions ''SetOverdraftLimit
-deriveJSON defaultOptions ''SetAccountType
+deriveJSON defaultOptions ''SetAccountSubtype

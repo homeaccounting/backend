@@ -44,8 +44,8 @@
 module Web.Types
   ( -- * Account Request DTOs
     CreateAccountRequest (..),
-    AccountTypeRequest (..),
-    SetAccountTypeRequest (..),
+    AccountSubtypeRequest (..),
+    SetAccountSubtypeRequest (..),
 
     -- * Account Response DTOs
     AccountResponse (..),
@@ -70,7 +70,7 @@ module Web.Types
     -- ** To Domain Types
     toDomainMoney,
     toCreateAccountCommand,
-    toAccountType,
+    toAccountSubtype,
     toInitiateTransferCommand,
 
     -- ** From Domain Types
@@ -101,7 +101,7 @@ import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Data.UUID (UUID)
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountCategory (..), AccountId, AccountType (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), EWalletProperties (..), ExpenseCategory (..), IncomeCategory (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountKind (..), AccountSubtype (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), EWalletProperties (..), ExpenseCategory (..), IncomeCategory (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -133,7 +133,7 @@ data CreateAccountRequest
     initialBalance :: Double,
     currency :: Text,
     overdraftLimit :: Maybe Double,
-    accountType :: Maybe AccountTypeRequest
+    subtype :: Maybe AccountSubtypeRequest
   }
   deriving (Show, Eq, Generic)
 
@@ -141,8 +141,8 @@ instance ToJSON CreateAccountRequest
 
 instance FromJSON CreateAccountRequest
 
--- | Request DTO for account type with discriminated JSON format.
-data AccountTypeRequest = AccountTypeRequest
+-- | Request DTO for account subtype with discriminated JSON format.
+data AccountSubtypeRequest = AccountSubtypeRequest
   { type_ :: Text,
     storageLocation :: Maybe Text,
     bankName :: Maybe Text,
@@ -159,9 +159,9 @@ data AccountTypeRequest = AccountTypeRequest
   }
   deriving (Show, Eq, Generic)
 
-instance FromJSON AccountTypeRequest where
-  parseJSON = withObject "AccountTypeRequest" $ \o ->
-    AccountTypeRequest
+instance FromJSON AccountSubtypeRequest where
+  parseJSON = withObject "AccountSubtypeRequest" $ \o ->
+    AccountSubtypeRequest
       <$> o .: "type"
       <*> o .:? "storageLocation"
       <*> o .:? "bankName"
@@ -176,7 +176,7 @@ instance FromJSON AccountTypeRequest where
       <*> o .:? "dueDate"
       <*> o .:? "metadata"
 
-instance ToJSON AccountTypeRequest where
+instance ToJSON AccountSubtypeRequest where
   toJSON r =
     object $
       catMaybes
@@ -195,15 +195,15 @@ instance ToJSON AccountTypeRequest where
           ("metadata" .=) <$> r.metadata
         ]
 
--- | Request DTO for setting account type.
-data SetAccountTypeRequest = SetAccountTypeRequest
-  { accountType :: AccountTypeRequest
+-- | Request DTO for setting account subtype.
+data SetAccountSubtypeRequest = SetAccountSubtypeRequest
+  { subtype :: AccountSubtypeRequest
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON SetAccountTypeRequest
+instance ToJSON SetAccountSubtypeRequest
 
-instance FromJSON SetAccountTypeRequest
+instance FromJSON SetAccountSubtypeRequest
 
 -- | Request to credit (add money to) an account.
 --
@@ -244,7 +244,7 @@ data AccountResponse
     balance :: Double,
     currency :: Text,
     overdraftLimit :: Maybe Double,
-    accountType :: Maybe Value,
+    subtype :: Maybe Value,
     version :: Int
   }
   deriving (Show, Eq, Generic)
@@ -576,10 +576,10 @@ toCreateAccountCommand createdBy CreateAccountRequest {..} = do
       money <- toDomainMoney cur (abs amt)
       Right (Just (Just money))
 
-  -- Parse account type (defaults to Cash)
-  parsedType <- case accountType of
+  -- Parse account subtype (defaults to Cash)
+  parsedType <- case subtype of
     Nothing -> Right defaultCash
-    Just atr -> toAccountType atr
+    Just atr -> toAccountSubtype atr
 
   -- Create domain command with owner and type
   return $ CreateAccount name domainBalance createdBy (Regular parsedType) domainLimit
@@ -665,15 +665,15 @@ fromAccountData accountId AccountData {..} =
       balance = fromDomainMoney balance,
       currency = currencyToText (moneyCurrency balance),
       overdraftLimit = fmap fromDomainMoney overdraftLimit,
-      accountType = case accountCategory of
-        Regular at -> Just (fromAccountType at)
+      subtype = case kind of
+        Regular at -> Just (fromAccountSubtype at)
         External -> Nothing,
       version = version
     }
 
--- | Convert an AccountTypeRequest DTO to a domain AccountType.
-toAccountType :: AccountTypeRequest -> Either Text AccountType
-toAccountType req = case req.type_ of
+-- | Convert an AccountSubtypeRequest DTO to a domain AccountSubtype.
+toAccountSubtype :: AccountSubtypeRequest -> Either Text AccountSubtype
+toAccountSubtype req = case req.type_ of
   "cash" ->
     Right $
       Cash
@@ -717,16 +717,16 @@ toAccountType req = case req.type_ of
           }
   other -> Left $ "Unknown account type: " <> other
 
--- | Convert a domain AccountType to a JSON Value for API responses.
-fromAccountType :: AccountType -> Value
-fromAccountType (Cash props) =
+-- | Convert a domain AccountSubtype to a JSON Value for API responses.
+fromAccountSubtype :: AccountSubtype -> Value
+fromAccountSubtype (Cash props) =
   object $
     catMaybes
       [ Just ("type" .= ("cash" :: Text)),
         ("storageLocation" .=) <$> props.storageLocation,
         if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
       ]
-fromAccountType (BankAccount props) =
+fromAccountSubtype (BankAccount props) =
   object $
     catMaybes
       [ Just ("type" .= ("bankAccount" :: Text)),
@@ -735,7 +735,7 @@ fromAccountType (BankAccount props) =
         ("cardNetwork" .=) . cardNetworkToText <$> props.cardNetwork,
         if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
       ]
-fromAccountType (EWallet props) =
+fromAccountSubtype (EWallet props) =
   object $
     catMaybes
       [ Just ("type" .= ("eWallet" :: Text)),
@@ -743,7 +743,7 @@ fromAccountType (EWallet props) =
         ("accountIdentifier" .=) <$> props.accountIdentifier,
         if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
       ]
-fromAccountType (Asset props) =
+fromAccountSubtype (Asset props) =
   object $
     catMaybes
       [ Just ("type" .= ("asset" :: Text)),
@@ -751,7 +751,7 @@ fromAccountType (Asset props) =
         ("description" .=) <$> props.description,
         if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
       ]
-fromAccountType (Loan props) =
+fromAccountSubtype (Loan props) =
   object $
     catMaybes
       [ Just ("type" .= ("loan" :: Text)),

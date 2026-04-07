@@ -55,15 +55,15 @@ import Domain.Account.Events
     AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
-    AccountTypeSet (..),
+    AccountSubtypeSet (..),
     OverdraftLimitSet (..),
     accountEvents,
   )
 import Domain.Core.Types
   ( AccountAccess (..),
-    AccountCategory (..),
+    AccountKind (..),
     AccountRole (..),
-    AccountType,
+    AccountSubtype,
     Money,
     UserId,
     addMoney,
@@ -90,7 +90,7 @@ import Optics (makeFieldLabelsNoPrefix, (&), (.~), (^.))
 --   - balance: Current account balance
 --   - name: Human-readable name for the account
 --   - createdBy: User who created the account (Owner)
---   - accountType: Regular or External account
+--   - kind: Regular or External account
 --   - accessList: List of users with access and their roles
 --
 -- Invariants:
@@ -112,8 +112,8 @@ data Account = Account
     name :: Text,
     -- | User who created the account
     createdBy :: UserId,
-    -- | Account category (Regular with type, or External)
-    accountCategory :: AccountCategory,
+    -- | Account kind (Regular with subtype, or External)
+    kind :: AccountKind,
     -- | List of users with access and their roles
     accessList :: [AccountAccess],
     -- | Overdraft limit. Nothing = unlimited, Just limit = max negative balance
@@ -141,7 +141,7 @@ accountDefault = case mkDefaultMoney 0 of
       { balance = m,
         name = "",
         createdBy = unsafeUserId UUID.nil,
-        accountCategory = Regular defaultCash,
+        kind = Regular defaultCash,
         accessList = [],
         overdraftLimit = Just m
       }
@@ -234,8 +234,8 @@ handleAccountEvent account (AccountCreatedAccountEvent created) =
         .~ created.initialBalance
         & #createdBy
         .~ ownerId
-        & #accountCategory
-        .~ created.accountCategory
+        & #kind
+        .~ created.kind
         & #accessList
         .~ [AccountAccess ownerId Owner]
         & #overdraftLimit
@@ -266,8 +266,8 @@ handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
     Left _ -> account -- Impossible: currency was validated by command handler
 handleAccountEvent account (OverdraftLimitSetAccountEvent OverdraftLimitSet {..}) =
   account & #overdraftLimit .~ overdraftLimit
-handleAccountEvent account (AccountTypeSetAccountEvent AccountTypeSet {..}) =
-  account & #accountCategory .~ Regular accountType
+handleAccountEvent account (AccountSubtypeSetAccountEvent AccountSubtypeSet {..}) =
+  account & #kind .~ Regular subtype
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

@@ -48,7 +48,7 @@ validCreateAccount =
     { name = "Savings",
       initialBalance = mockMoney 1000,
       createdBy = testUserId1,
-      accountCategory = Regular defaultCash,
+      kind = Regular defaultCash,
       overdraftLimit = Nothing
     }
 
@@ -75,7 +75,7 @@ spec = describe "AccountService" $ do
       summary.name `shouldBe` "Savings"
       summary.balance `shouldBe` mockMoney 1000
       summary.createdBy `shouldBe` testUserId1
-      summary.accountCategory `shouldBe` Regular defaultCash
+      summary.kind `shouldBe` Regular defaultCash
 
     it "creates an account with zero initial balance" $ do
       env <- createTestAppEnv
@@ -87,11 +87,11 @@ spec = describe "AccountService" $ do
 
     it "creates an External account" $ do
       env <- createTestAppEnv
-      let cmd = (validCreateAccount :: CreateAccount) {accountCategory = External}
+      let cmd = (validCreateAccount :: CreateAccount) {kind = External}
       result <- runAppM env $ createAccount cmd
       shouldBeRight result
       let (_, summary) = fromRight' result
-      summary.accountCategory `shouldBe` External
+      summary.kind `shouldBe` External
 
   describe "getAccount" $ do
     it "retrieves a previously created account" $ do
@@ -162,7 +162,7 @@ spec = describe "AccountService" $ do
         Right _ -> expectationFailure "Expected Left"
 
     it "rejects sharing External accounts" $ do
-      let externalCmd = (validCreateAccount :: CreateAccount) {accountCategory = External}
+      let externalCmd = (validCreateAccount :: CreateAccount) {kind = External}
       (env, accountId) <- createTestAccount externalCmd
       result <- runAppM env $ shareAccount testUserId1 (unAccountId accountId) testUserUuid2 "editor"
       shouldBeLeft result

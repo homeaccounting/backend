@@ -41,7 +41,7 @@ testAccountId2 :: AccountId
 testAccountId2 = fromJust $ mkTestAccountId (UUID.fromWords 20 0 0 0)
 
 -- Create account auth data with specified creator and access list
-mkAuthData :: UserId -> AccountCategory -> [AccountAccess] -> AccountAuthData
+mkAuthData :: UserId -> AccountKind -> [AccountAccess] -> AccountAuthData
 mkAuthData = AccountAuthData
 
 spec :: Spec

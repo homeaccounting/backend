@@ -6,7 +6,7 @@ status: draft
 
 ## Summary
 
-Introduce user-facing account types (Cash, Bank Account, E-Wallet, Asset, Loan) with per-type structured properties and a freeform metadata bag. Account types are organizational metadata — they do not alter business rules. The existing `AccountType` (Regular | External) is renamed to `AccountCategory`, and `AccountType` is nested inside the `Regular` constructor.
+Introduce user-facing account types (Cash, Bank Account, E-Wallet, Asset, Loan) with per-type structured properties and a freeform metadata bag. Account types are organizational metadata — they do not alter business rules. The existing `AccountKind` (Regular | External) is renamed to `AccountKind`, and `AccountSubtype` is nested inside the `Regular` constructor.
 
 ## Motivation
 
@@ -15,24 +15,24 @@ Currently all regular accounts are undifferentiated — the only distinction is 
 ## Design Decisions
 
 - **Organizational only**: Account types do not introduce new business rules. All accounts follow the same transfer, overdraft, and access control mechanics.
-- **Orthogonal to AccountCategory**: `AccountCategory` (Regular | External) drives business behavior. `AccountType` drives UI categorization. They are separate concerns, with `AccountType` nested inside `Regular`.
+- **Orthogonal to AccountKind**: `AccountKind` (Regular | External) drives business behavior. `AccountSubtype` drives UI categorization. They are separate concerns, with `AccountSubtype` nested inside `Regular`.
 - **Sum type with per-variant records**: Leverages Haskell's type system — the compiler ensures valid field combinations per type.
 - **Smart overdraft defaults**: Account type influences the default overdraft limit at creation time, but users can always override.
 
 ## Domain Model
 
-### AccountCategory (renamed from AccountType)
+### AccountKind (renamed from AccountType)
 
 ```haskell
-data AccountCategory
-  = Regular AccountType
+data AccountKind
+  = Regular AccountSubtype
   | External
 ```
 
-### AccountType (new)
+### AccountSubtype (new)
 
 ```haskell
-data AccountType
+data AccountSubtype
   = Cash CashProperties
   | BankAccount BankAccountProperties
   | EWallet EWalletProperties
@@ -86,7 +86,7 @@ data Account = Account
   { balance :: Money
   , name :: Text
   , createdBy :: UserId
-  , accountCategory :: AccountCategory  -- renamed from accountType
+  , kind :: AccountKind  -- renamed from accountType
   , accessList :: [AccountAccess]
   , overdraftLimit :: Maybe Money
   }
@@ -104,34 +104,34 @@ defaultAssetProperties :: AssetProperties
 defaultLoanProperties :: LoanProperties
 
 -- Convenience: type with default empty properties
-defaultCash :: AccountType
-defaultBankAccount :: AccountType
-defaultEWallet :: AccountType
-defaultAsset :: AccountType
-defaultLoan :: AccountType
+defaultCash :: AccountSubtype
+defaultBankAccount :: AccountSubtype
+defaultEWallet :: AccountSubtype
+defaultAsset :: AccountSubtype
+defaultLoan :: AccountSubtype
 ```
 
 ## Events & Commands
 
 ### Modified: AccountCreated
 
-The `accountType` field is renamed to `accountCategory` in Haskell but keeps `accountType` as JSON key for backwards compatibility.
+The `kind` field is renamed from `accountType` in Haskell but keeps `accountType` as JSON key for backwards compatibility.
 
 ```haskell
 data AccountCreated = AccountCreated
   { name :: Text
   , initialBalance :: Money
   , by :: UserId
-  , accountCategory :: AccountCategory  -- renamed from accountType
+  , kind :: AccountKind  -- renamed from accountType
   , overdraftLimit :: Maybe Money
   }
 ```
 
-### New Event: AccountTypeSet
+### New Event: AccountSubtypeSet
 
 ```haskell
-data AccountTypeSet = AccountTypeSet
-  { accountType :: AccountType
+data AccountSubtypeSet = AccountSubtypeSet
+  { subtype :: AccountSubtype
   , by :: UserId
   }
 ```
@@ -143,30 +143,30 @@ data CreateAccount = CreateAccount
   { name :: Text
   , initialBalance :: Money
   , createdBy :: UserId
-  , accountCategory :: AccountCategory  -- renamed, carries AccountType inside Regular
+  , kind :: AccountKind  -- renamed, carries AccountSubtype inside Regular
   , overdraftLimit :: Maybe (Maybe Money)
   }
 ```
 
-### New Command: SetAccountType
+### New Command: SetAccountSubtype
 
 ```haskell
-data SetAccountType = SetAccountType
-  { accountType :: AccountType
+data SetAccountSubtype = SetAccountSubtype
+  { subtype :: AccountSubtype
   , setBy :: UserId
   }
 ```
 
 ### TH Registration
 
-`AccountTypeSet` must be added to `accountEvents` in `Events.hs` and `SetAccountType` to `accountCommands` in `Commands.hs` for Template Haskell to generate the corresponding sum type constructors.
+`AccountSubtypeSet` must be added to `accountEvents` in `Events.hs` and `SetAccountSubtype` to `accountCommands` in `Commands.hs` for Template Haskell to generate the corresponding sum type constructors.
 
-### Command Handler Rules for SetAccountType
+### Command Handler Rules for SetAccountSubtype
 
 - Account must exist
 - Account must be `Regular` (reject `External`)
 - User must be Owner (matching `SetOverdraftLimit` pattern — account type is a management-level setting)
-- Emits `AccountTypeSet` event
+- Emits `AccountSubtypeSet` event
 
 ### New Error Variants
 
@@ -188,8 +188,8 @@ With a corresponding `mkExternalTypeNotSettable` constructor in `Errors.hs`.
 -- Note: this handler is only reached if the event was stored, which means
 -- the command handler already validated the account is Regular.
 -- The projection trusts the event stream.
-handleAccountEvent account (AccountTypeSetAccountEvent e) =
-  account { accountCategory = Regular e.accountType }
+handleAccountEvent account (AccountSubtypeSetAccountEvent e) =
+  account { kind = Regular e.subtype }
 ```
 
 ## Overdraft Defaults by Account Type
@@ -207,10 +207,10 @@ When `overdraftLimit` is not specified at creation (`Nothing` in the `Maybe (May
 
 Users can always override with an explicit value. Defaults apply only at creation time.
 
-The existing two-branch pattern match in `CommandHandler.hs` (Regular → `Just 0`, External → `Nothing`) expands to match on `AccountCategory` and then the nested `AccountType`:
+The existing two-branch pattern match in `CommandHandler.hs` (Regular → `Just 0`, External → `Nothing`) expands to match on `AccountKind` and then the nested `AccountSubtype`:
 
 ```haskell
-Nothing -> case accountCategory of
+Nothing -> case kind of
   External -> Nothing
   Regular (Loan _) -> Nothing
   Regular _ -> Just (unsafeMoney (moneyCurrency initialBalance) 0)
@@ -226,24 +226,24 @@ data CreateAccountRequest = CreateAccountRequest
   , initialBalance :: Double
   , currency :: Text
   , overdraftLimit :: Maybe Double
-  , accountType :: Maybe AccountTypeRequest  -- NEW, defaults to Cash
+  , accountType :: Maybe AccountSubtypeRequest  -- NEW, defaults to Cash
   }
 ```
 
 ### New Endpoint: PUT /api/accounts/:id/type
 
 ```haskell
-data SetAccountTypeRequest = SetAccountTypeRequest
-  { accountType :: AccountTypeRequest
+data SetAccountSubtypeRequest = SetAccountSubtypeRequest
+  { accountType :: AccountSubtypeRequest
   }
 ```
 
-### AccountTypeRequest DTO
+### AccountSubtypeRequest DTO
 
 Discriminated JSON using a `type` field:
 
 ```haskell
-data AccountTypeRequest = AccountTypeRequest
+data AccountSubtypeRequest = AccountSubtypeRequest
   { type_ :: Text                       -- "cash" | "bankAccount" | "eWallet" | "asset" | "loan"
   , bankName :: Maybe Text
   , accountNumber :: Maybe Text
@@ -260,17 +260,17 @@ data AccountTypeRequest = AccountTypeRequest
   }
 ```
 
-Conversion function `toAccountType :: AccountTypeRequest -> Either Text AccountType` validates the `type_` discriminator and extracts relevant fields. Unknown `type_` values produce a `Left` error (mapped to HTTP 400). Fields irrelevant to the given type are silently ignored.
+Conversion function `toAccountSubtype :: AccountSubtypeRequest -> Either Text AccountSubtype` validates the `type_` discriminator and extracts relevant fields. Unknown `type_` values produce a `Left` error (mapped to HTTP 400). Fields irrelevant to the given type are silently ignored.
 
 ### Modified: toCreateAccountCommand
 
-The existing `toCreateAccountCommand :: UserId -> AccountType -> CreateAccountRequest -> Either Text CreateAccount` changes signature. The old `AccountType` parameter (Regular/External) is replaced — the handler determines `AccountCategory` by combining the request's `accountType` field with the endpoint context:
+The existing `toCreateAccountCommand :: UserId -> AccountKind -> CreateAccountRequest -> Either Text CreateAccount` changes signature. The old `AccountKind` parameter (Regular/External) is replaced — the handler determines `AccountKind` by combining the request's `accountType` field with the endpoint context:
 
 ```haskell
 toCreateAccountCommand :: UserId -> CreateAccountRequest -> Either Text CreateAccount
 ```
 
-The handler passes `Regular <parsed AccountType>` as `accountCategory`. External accounts are created through a separate internal code path (user registration), not through this endpoint.
+The handler passes `Regular <parsed AccountSubtype>` as `kind`. External accounts are created through a separate internal code path (user registration), not through this endpoint.
 
 ### JSON Examples
 
@@ -298,15 +298,15 @@ data AccountResponse = AccountResponse
 
 ## Event Serialization & Backwards Compatibility
 
-### AccountCategory JSON
+### AccountKind JSON
 
 The serialized JSON key remains `accountType` for backwards compatibility with existing events in the store.
 
 - `External` serializes as `"External"`
-- `Regular accountType` serializes as `{"tag": "Regular", "accountType": <accountType JSON>}`
+- `Regular subtype` serializes as `{"tag": "Regular", "accountType": <subtype JSON>}`
 - Old events contain `"RegularAccount"` and `"ExternalAccount"` (the previous Generic-derived format) — custom `FromJSON` instance handles both old and new formats: `"RegularAccount"` → `Regular (Cash defaultCashProperties)`, `"ExternalAccount"` → `External`
 
-### AccountType JSON
+### AccountSubtype JSON
 
 Same discriminated format as the web DTO:
 
@@ -315,7 +315,7 @@ Same discriminated format as the web DTO:
 { "type": "bankAccount", "bankName": "Monobank", "metadata": {} }
 ```
 
-### AccountTypeSet Event JSON
+### AccountSubtypeSet Event JSON
 
 New event type, no backwards compatibility needed:
 
@@ -330,18 +330,18 @@ New event type, no backwards compatibility needed:
 
 ### Property Tests
 
-- **Roundtrip serialization**: `AccountType` and `AccountCategory` survive JSON encode/decode, including backwards compat with old `"RegularAccount"`/`"ExternalAccount"` string formats
-- **Default overdraft by type**: Creating an account without explicit overdraft limit produces the correct default for each `AccountType`
-- **SetAccountType idempotence**: Setting the same type twice produces identical state
-- **External rejection**: `SetAccountType` always fails on `External`
+- **Roundtrip serialization**: `AccountSubtype` and `AccountKind` survive JSON encode/decode, including backwards compat with old `"RegularAccount"`/`"ExternalAccount"` string formats
+- **Default overdraft by type**: Creating an account without explicit overdraft limit produces the correct default for each `AccountSubtype`
+- **SetAccountSubtype idempotence**: Setting the same type twice produces identical state
+- **External rejection**: `SetAccountSubtype` always fails on `External`
 
 ### Unit Tests
 
-- **Command handler for SetAccountType**: Owner can set, non-Owner rejected, External rejected
-- **AccountCreated with each type variant**: Projection correctly initializes `accountCategory` with properties
+- **Command handler for SetAccountSubtype**: Owner can set, non-Owner rejected, External rejected
+- **AccountCreated with each type variant**: Projection correctly initializes `kind` with properties
 - **Backwards compat deserialization**: Old `AccountCreated` events with `"RegularAccount"` / `"ExternalAccount"` strings deserialize to `Regular defaultCash` / `External`
 - **Overdraft defaults**: Each account type gets correct default when `overdraftLimit` is `Nothing` in `CreateAccount`
-- **DTO conversion**: `AccountTypeRequest` → `AccountType` for each variant, including validation of unknown `type_` values
+- **DTO conversion**: `AccountSubtypeRequest` → `AccountSubtype` for each variant, including validation of unknown `type_` values
 
 ### Integration Tests
 
@@ -351,8 +351,8 @@ New event type, no backwards compatibility needed:
 
 ### Generators (Testkit)
 
-- `Arbitrary AccountType` — generates random variant with random properties
-- `Arbitrary AccountCategory` — generates `Regular <random type>` or `External`
+- `Arbitrary AccountSubtype` — generates random variant with random properties
+- `Arbitrary AccountKind` — generates `Regular <random type>` or `External`
 - `Arbitrary` for each properties record and sub-enums (`CardNetwork`, `AssetKind`)
 
 ## Notes

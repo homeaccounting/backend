@@ -48,7 +48,7 @@ import Domain.Account.CommandHandler (AccountCommand (CreateAccountAccountComman
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
   ( AccountAccess (..),
-    AccountCategory (..),
+    AccountKind (..),
     AccountRole (..),
     Currency (..),
     ExpenseCategory (..),
@@ -100,7 +100,7 @@ setupRegularAccounts = do
           { name = "Source Account",
             initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
-            accountCategory = Regular defaultCash,
+            kind = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -112,7 +112,7 @@ setupRegularAccounts = do
           { name = "Target Account",
             initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
-            accountCategory = Regular defaultCash,
+            kind = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -136,7 +136,7 @@ setupRegularAccountsWithPM = do
           { name = "Source Account",
             initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
-            accountCategory = Regular defaultCash,
+            kind = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -147,7 +147,7 @@ setupRegularAccountsWithPM = do
           { name = "Target Account",
             initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
-            accountCategory = Regular defaultCash,
+            kind = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -290,7 +290,7 @@ incomeFlowSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = External,
+                kind = External,
                 overdraftLimit = Nothing
               }
 
@@ -302,7 +302,7 @@ incomeFlowSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -345,7 +345,7 @@ expenseFlowSpec =
               { name = "Checking",
                 initialBalance = unsafeMoney USD 1000,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -357,7 +357,7 @@ expenseFlowSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = External,
+                kind = External,
                 overdraftLimit = Nothing
               }
 
@@ -393,13 +393,13 @@ authorizationSpec =
       let sourceOwnerData =
             AccountAuthData
               { createdBy = userId,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = [AccountAccess userId Owner]
               }
           targetEditorData =
             AccountAuthData
               { createdBy = otherUser,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceOwnerData targetEditorData srcId tgtId
@@ -409,7 +409,7 @@ authorizationSpec =
       let sourceEditorData =
             AccountAuthData
               { createdBy = otherUser,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceEditorData targetEditorData srcId tgtId
@@ -419,7 +419,7 @@ authorizationSpec =
       let targetOwnerData =
             AccountAuthData
               { createdBy = userId,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = [AccountAccess userId Owner]
               }
       canTransfer userId sourceOwnerData targetOwnerData srcId tgtId
@@ -435,13 +435,13 @@ authorizationSpec =
       let sourceViewerData =
             AccountAuthData
               { createdBy = otherUser,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = [AccountAccess userId Viewer]
               }
           targetEditorData =
             AccountAuthData
               { createdBy = otherUser,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceViewerData targetEditorData srcId tgtId
@@ -451,13 +451,13 @@ authorizationSpec =
       let sourceOwnerData =
             AccountAuthData
               { createdBy = userId,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = [AccountAccess userId Owner]
               }
           targetNoAccessData =
             AccountAuthData
               { createdBy = otherUser,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = []
               }
       canTransfer userId sourceOwnerData targetNoAccessData srcId tgtId
@@ -467,7 +467,7 @@ authorizationSpec =
       let sourceNoAccessData =
             AccountAuthData
               { createdBy = otherUser,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 accessList = []
               }
       canTransfer userId sourceNoAccessData targetEditorData srcId tgtId
@@ -537,7 +537,7 @@ processManagerDrivenSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = External,
+                kind = External,
                 overdraftLimit = Nothing
               }
 
@@ -549,7 +549,7 @@ processManagerDrivenSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -645,7 +645,7 @@ categorizedTransferSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = External,
+                kind = External,
                 overdraftLimit = Nothing
               }
 
@@ -657,7 +657,7 @@ categorizedTransferSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -719,7 +719,7 @@ categorizedTransferSpec =
               { name = "Checking",
                 initialBalance = unsafeMoney USD 5000,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = Regular defaultCash,
+                kind = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -731,7 +731,7 @@ categorizedTransferSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                accountCategory = External,
+                kind = External,
                 overdraftLimit = Nothing
               }
 

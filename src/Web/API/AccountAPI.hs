@@ -48,7 +48,7 @@ module Web.API.AccountAPI
     shareAccountHandler,
     revokeAccountAccessHandler,
     setOverdraftLimitHandler,
-    setAccountTypeHandler,
+    setAccountSubtypeHandler,
   )
 where
 
@@ -66,9 +66,9 @@ import Web.Types
   ( AccountListResponse (..),
     AccountResponse,
     CreateAccountRequest,
-    SetAccountTypeRequest (..),
+    SetAccountSubtypeRequest (..),
     fromAccountData,
-    toAccountType,
+    toAccountSubtype,
     toCreateAccountCommand,
   )
 
@@ -140,7 +140,7 @@ type AccountAPI =
       :> "accounts"
       :> Capture "id" UUID
       :> "type"
-      :> ReqBody '[JSON] SetAccountTypeRequest
+      :> ReqBody '[JSON] SetAccountSubtypeRequest
       :> Put '[JSON] NoContent
 
 -- -----------------------------------------------------------------------------
@@ -186,7 +186,7 @@ accountServer =
     :<|> shareAccountHandler
     :<|> revokeAccountAccessHandler
     :<|> setOverdraftLimitHandler
-    :<|> setAccountTypeHandler
+    :<|> setAccountSubtypeHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
@@ -263,14 +263,14 @@ setOverdraftLimitHandler user accountUuid SetOverdraftLimitRequest {..} = do
     Right () -> return NoContent
     Left err -> throwDomainError err
 
--- | Handler for PUT /api/accounts/:id/type - Set account type.
-setAccountTypeHandler :: AuthenticatedUser -> UUID -> SetAccountTypeRequest -> AppM NoContent
-setAccountTypeHandler user accountUuid SetAccountTypeRequest {..} = do
+-- | Handler for PUT /api/accounts/:id/type - Set account subtype.
+setAccountSubtypeHandler :: AuthenticatedUser -> UUID -> SetAccountSubtypeRequest -> AppM NoContent
+setAccountSubtypeHandler user accountUuid SetAccountSubtypeRequest {..} = do
   let userId = user.userId
-  case toAccountType accountType of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "accountType" err err
+  case toAccountSubtype subtype of
+    Left err -> throwDomainError $ ValidationErr $ mkValidationError "subtype" err err
     Right domainType -> do
-      result <- AccountService.setAccountType userId accountUuid domainType
+      result <- AccountService.setAccountSubtype userId accountUuid domainType
       case result of
         Right () -> return NoContent
         Left err -> throwDomainError err

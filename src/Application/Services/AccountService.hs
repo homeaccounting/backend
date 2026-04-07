@@ -30,7 +30,7 @@ module Application.Services.AccountService
     shareAccount,
     revokeAccountAccess,
     setOverdraftLimit,
-    setAccountType,
+    setAccountSubtype,
   )
 where
 
@@ -42,16 +42,16 @@ import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands
   ( CreateAccount,
     RevokeAccountAccess (..),
-    SetAccountType (..),
+    SetAccountSubtype (..),
     SetOverdraftLimit (..),
     ShareAccount (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
-  ( AccountCategory (..),
-    AccountId,
+  ( AccountId,
+    AccountKind (..),
     AccountRole (..),
-    AccountType,
+    AccountSubtype,
     Money,
     UserId,
     mkAccountId,
@@ -198,7 +198,7 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = do
               logWarn "User is not account owner"
               return $ Left $ AccountError "Only account owner can share access"
           -- Check account is not External
-          | summary.accountCategory == External -> do
+          | summary.kind == External -> do
               logWarn "Cannot share External account"
               return $ Left $ AccountError "External accounts cannot be shared"
           | otherwise -> do
@@ -332,21 +332,21 @@ setOverdraftLimit requestingUserId accountUuid newLimit = do
           return $ Right ()
 
 -- | Set the account type on an account.
-setAccountType ::
+setAccountSubtype ::
   UserId ->
   UUID ->
-  AccountType ->
+  AccountSubtype ->
   AppM (Either DomainError ())
-setAccountType requestingUserId accountUuid newType = do
+setAccountSubtype requestingUserId accountUuid newType = do
   logInfo $ "Setting account type: " <> displayShow accountUuid
 
   case mkAccountId accountUuid of
     Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
     Right _accountId -> do
       let setTypeCmd =
-            SetAccountTypeAccountCommand
-              SetAccountType
-                { accountType = newType,
+            SetAccountSubtypeAccountCommand
+              SetAccountSubtype
+                { subtype = newType,
                   setBy = requestingUserId
                 }
 

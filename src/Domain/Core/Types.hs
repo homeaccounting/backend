@@ -63,13 +63,13 @@ module Domain.Core.Types
     defaultEWalletProperties,
     defaultAssetProperties,
     defaultLoanProperties,
-    AccountType (..),
+    AccountSubtype (..),
     defaultCash,
     defaultBankAccount,
     defaultEWallet,
     defaultAsset,
     defaultLoan,
-    AccountCategory (..),
+    AccountKind (..),
     AccountRole (..),
     AccountAccess (..),
 
@@ -610,7 +610,7 @@ defaultLoanProperties :: LoanProperties
 defaultLoanProperties = LoanProperties Nothing Nothing Nothing mempty
 
 -- | User-facing account classification with per-type properties.
-data AccountType
+data AccountSubtype
   = Cash CashProperties
   | BankAccount BankAccountProperties
   | EWallet EWalletProperties
@@ -618,52 +618,46 @@ data AccountType
   | Loan LoanProperties
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountType
+instance ToJSON AccountSubtype
 
-instance FromJSON AccountType
+instance FromJSON AccountSubtype
 
 -- | Convenience constructors with default empty properties.
-defaultCash :: AccountType
+defaultCash :: AccountSubtype
 defaultCash = Cash defaultCashProperties
 
-defaultBankAccount :: AccountType
+defaultBankAccount :: AccountSubtype
 defaultBankAccount = BankAccount defaultBankAccountProperties
 
-defaultEWallet :: AccountType
+defaultEWallet :: AccountSubtype
 defaultEWallet = EWallet defaultEWalletProperties
 
-defaultAsset :: AccountType
+defaultAsset :: AccountSubtype
 defaultAsset = Asset defaultAssetProperties
 
-defaultLoan :: AccountType
+defaultLoan :: AccountSubtype
 defaultLoan = Loan defaultLoanProperties
 
 -- | Business behavior classification for accounts.
 --
--- Regular accounts are user-created and carry an AccountType for UI categorization.
+-- Regular accounts are user-created and carry an AccountSubtype for UI categorization.
 -- External accounts are system-created for tracking income/expenses.
-data AccountCategory
-  = Regular AccountType
+data AccountKind
+  = Regular AccountSubtype
   | External
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountCategory where
+instance ToJSON AccountKind where
   toJSON External = toJSON ("External" :: Text)
-  toJSON (Regular at) = object ["tag" .= ("Regular" :: Text), "accountType" .= at]
+  toJSON (Regular st) = object ["tag" .= ("Regular" :: Text), "subtype" .= st]
 
-instance FromJSON AccountCategory where
+instance FromJSON AccountKind where
   parseJSON (Aeson.String "External") = pure External
-  parseJSON (Aeson.String "ExternalAccount") = pure External
-  parseJSON (Aeson.String "RegularAccount") = pure (Regular defaultCash)
-  parseJSON (Aeson.String "Regular") = pure (Regular defaultCash)
-  parseJSON (Aeson.String "Internal") = pure (Regular defaultCash)
-  parseJSON v = flip (withObject "AccountCategory") v $ \o -> do
+  parseJSON v = flip (withObject "AccountKind") v $ \o -> do
     tag <- o .: "tag"
     case (tag :: Text) of
-      "Regular" -> Regular <$> o .: "accountType"
-      "Internal" -> Regular <$> o .:? "accountType" .!= defaultCash
-      "RegularAccount" -> Regular <$> o .:? "accountType" .!= defaultCash
-      _ -> fail $ "Unknown AccountCategory tag: " <> show tag
+      "Regular" -> Regular <$> o .: "subtype"
+      _ -> fail $ "Unknown AccountKind tag: " <> show tag
 
 -- | Role-Based Access Control role for account access.
 --

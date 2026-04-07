@@ -51,7 +51,7 @@ import qualified Data.Text as T
 import Domain.Account.Commands
 import Domain.Account.Events
 import Domain.Account.Projection
-import Domain.Core.Types (AccountCategory (..), AccountType (..), moneyCurrency, unMoney, unsafeMoney)
+import Domain.Core.Types (AccountKind (..), AccountSubtype (..), moneyCurrency, unMoney, unsafeMoney)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
@@ -148,7 +148,7 @@ handleAccountCommand account (CreateAccountAccountCommand CreateAccount {..})
         _ -> Right ()
         >> let resolvedLimit = case overdraftLimit of
                  Just explicit -> explicit
-                 Nothing -> case accountCategory of
+                 Nothing -> case kind of
                    External -> Nothing
                    Regular (Loan _) -> Nothing
                    Regular _ -> Just (unsafeMoney (moneyCurrency initialBalance) 0)
@@ -158,14 +158,14 @@ handleAccountCommand account (CreateAccountAccountCommand CreateAccount {..})
                        { name = name,
                          initialBalance = initialBalance,
                          by = createdBy,
-                         accountCategory = accountCategory,
+                         kind = kind,
                          overdraftLimit = resolvedLimit
                        }
                  ]
 -- Handle ShareAccount command
 handleAccountCommand account (ShareAccountAccountCommand ShareAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
-  | account ^. #accountCategory == External = Left ExternalAccountCannotBeShared
+  | account ^. #kind == External = Left ExternalAccountCannotBeShared
   | not (isOwner grantedBy account) = Left NotAccountOwner
   | userId == grantedBy = Left CannotShareWithSelf
   | otherwise =
@@ -244,16 +244,16 @@ handleAccountCommand account (SetOverdraftLimitAccountCommand SetOverdraftLimit 
                         by = setBy
                       }
                 ]
--- Handle SetAccountType command
-handleAccountCommand account (SetAccountTypeAccountCommand SetAccountType {..})
+-- Handle SetAccountSubtype command
+handleAccountCommand account (SetAccountSubtypeAccountCommand SetAccountSubtype {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
-  | account ^. #accountCategory == External = Left ExternalTypeNotSettable
+  | account ^. #kind == External = Left ExternalTypeNotSettable
   | not (isOwner setBy account) = Left NotAccountOwner
   | otherwise =
       Right
-        [ AccountTypeSetAccountEvent
-            AccountTypeSet
-              { accountType = accountType,
+        [ AccountSubtypeSetAccountEvent
+            AccountSubtypeSet
+              { subtype = subtype,
                 by = setBy
               }
         ]

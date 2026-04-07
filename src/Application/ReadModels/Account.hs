@@ -63,13 +63,13 @@ import Domain.Account.Events
     AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
-    AccountTypeSet (..),
+    AccountSubtypeSet (..),
     OverdraftLimitSet (..),
   )
 import Domain.Core.Types
   ( AccountAccess (..),
-    AccountCategory (..),
     AccountId,
+    AccountKind (..),
     AccountRole (..),
     Money,
     UserId,
@@ -105,7 +105,7 @@ data AccountData = AccountData
     -- | User who created the account (Owner)
     createdBy :: UserId,
     -- | Account category (Regular with type, or External)
-    accountCategory :: AccountCategory,
+    kind :: AccountKind,
     -- | Access control list (users and their roles)
     accessList :: [AccountAccess],
     -- | Overdraft limit (Nothing = unlimited)
@@ -233,7 +233,7 @@ processEvent summaries globalEvent =
                       { name = evt.name,
                         balance = evt.initialBalance,
                         createdBy = evt.by,
-                        accountCategory = evt.accountCategory,
+                        kind = evt.kind,
                         accessList = [initialAccess],
                         overdraftLimit = evt.overdraftLimit,
                         version = 1
@@ -315,14 +315,14 @@ processEvent summaries globalEvent =
                 )
                 accountId
                 summaries
-        AccountTypeSetEvent evt ->
+        AccountSubtypeSetEvent evt ->
           case mkAccountIdSafe streamUuid of
             Nothing -> summaries
             Just accountId ->
               Map.adjust
                 ( \summary ->
                     summary
-                      { accountCategory = Regular evt.accountType,
+                      { kind = Regular evt.subtype,
                         version = summary.version + 1
                       }
                 )
@@ -442,11 +442,11 @@ getUserRegularAccounts readModelTVar userId = do
     [ (accId, acc.name, acc.balance)
     | (accId, acc) <- allAccounts,
       acc.createdBy == userId,
-      isInternal acc.accountCategory
+      isRegular acc.kind
     ]
   where
-    isInternal (Regular _) = True
-    isInternal External = False
+    isRegular (Regular _) = True
+    isRegular External = False
 
 -- | Checks if an account exists in the read model.
 --

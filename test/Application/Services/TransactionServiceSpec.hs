@@ -41,23 +41,23 @@ testUserUuid1 = UUID.fromWords 1 0 0 0
 testUserId1 :: UserId
 testUserId1 = mockUserId testUserUuid1
 
-mkCreateAccount :: Text -> UserId -> AccountCategory -> CreateAccount
-mkCreateAccount acctName userId accType =
+mkCreateAccount :: Text -> UserId -> AccountKind -> CreateAccount
+mkCreateAccount acctName userId kind =
   CreateAccount
     { name = acctName,
       initialBalance = mockMoney 5000,
       createdBy = userId,
-      accountCategory = accType,
+      kind = kind,
       overdraftLimit = Nothing
     }
 
-mkCreateAccountWith :: Currency -> Rational -> Text -> UserId -> AccountCategory -> CreateAccount
-mkCreateAccountWith currency balance acctName userId accType =
+mkCreateAccountWith :: Currency -> Rational -> Text -> UserId -> AccountKind -> CreateAccount
+mkCreateAccountWith currency balance acctName userId kind =
   CreateAccount
     { name = acctName,
       initialBalance = mockMoneyWith currency balance,
       createdBy = userId,
-      accountCategory = accType,
+      kind = kind,
       overdraftLimit = Nothing
     }
 

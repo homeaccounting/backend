@@ -51,9 +51,9 @@ applyEvents :: [AccountEvent] -> Account
 applyEvents = latestProjection accountProjection
 
 -- | Create an account with given owner and type
-createAccountWithOwner :: Text -> Money -> UserId -> AccountCategory -> Account
-createAccountWithOwner acctName balance ownerId accCat =
-  let limit = case accCat of
+createAccountWithOwner :: Text -> Money -> UserId -> AccountKind -> Account
+createAccountWithOwner acctName balance ownerId kind =
+  let limit = case kind of
         Regular _ -> Just (mockMoney 0)
         External -> Nothing
    in applyEvents
@@ -62,7 +62,7 @@ createAccountWithOwner acctName balance ownerId accCat =
               { name = acctName,
                 initialBalance = balance,
                 by = ownerId,
-                accountCategory = accCat,
+                kind = kind,
                 overdraftLimit = limit
               }
         ]
@@ -379,5 +379,5 @@ businessRuleSpec = describe "Business Rule Properties" $ do
 instance Arbitrary AccountRole where
   arbitrary = elements [Owner, Editor, Viewer]
 
-instance Arbitrary AccountCategory where
+instance Arbitrary AccountKind where
   arbitrary = elements [Regular defaultCash, External]
