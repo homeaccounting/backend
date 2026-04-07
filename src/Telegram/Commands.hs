@@ -58,8 +58,8 @@ import Application.Services.TransactionService (initiateExpense, initiateIncome,
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
-  ( AccountId,
-    AccountType (..),
+  ( AccountCategory (..),
+    AccountId,
     ExpenseCategory (..),
     IncomeCategory (..),
     InternalCategory (..),
@@ -67,6 +67,7 @@ import Domain.Core.Types
     TelegramId (..),
     TelegramIdentity (..),
     UserId,
+    defaultCash,
     mkMoney,
     moneyCurrency,
     parseCurrency,
@@ -362,7 +363,7 @@ handleCreateAccountCurrency botState telegramId chatId name curText = do
                   { name = name,
                     initialBalance = unsafeMoney currency 0,
                     createdBy = userId,
-                    accountType = RegularAccount,
+                    accountCategory = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
           result <- createAccount createCmd

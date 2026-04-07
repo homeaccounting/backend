@@ -57,7 +57,7 @@ import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
-  ( AccountType (..),
+  ( AccountCategory (..),
     Currency (..),
     OAuthIdentity (..),
     OAuthProvider (..),
@@ -182,7 +182,7 @@ register email password = do
                             { name = "External",
                               initialBalance = unsafeMoney USD 0,
                               createdBy = userId,
-                              accountType = ExternalAccount,
+                              accountCategory = External,
                               overdraftLimit = Nothing
                             }
 
@@ -539,7 +539,7 @@ createUserViaOAuth email oauthIdentity = do
                         { name = "External",
                           initialBalance = unsafeMoney USD 0,
                           createdBy = uid,
-                          accountType = ExternalAccount,
+                          accountCategory = External,
                           overdraftLimit = Nothing
                         }
               result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
@@ -593,7 +593,7 @@ createUserViaTelegram telegramIdentity = do
                         { name = "External",
                           initialBalance = unsafeMoney USD 0,
                           createdBy = uid,
-                          accountType = ExternalAccount,
+                          accountCategory = External,
                           overdraftLimit = Nothing
                         }
               result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd

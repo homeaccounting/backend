@@ -30,6 +30,7 @@ module Application.Services.AccountService
     shareAccount,
     revokeAccountAccess,
     setOverdraftLimit,
+    setAccountType,
   )
 where
 
@@ -41,14 +42,16 @@ import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands
   ( CreateAccount,
     RevokeAccountAccess (..),
+    SetAccountType (..),
     SetOverdraftLimit (..),
     ShareAccount (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
-  ( AccountId,
+  ( AccountCategory (..),
+    AccountId,
     AccountRole (..),
-    AccountType (..),
+    AccountType,
     Money,
     UserId,
     mkAccountId,
@@ -195,7 +198,7 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = do
               logWarn "User is not account owner"
               return $ Left $ AccountError "Only account owner can share access"
           -- Check account is not External
-          | summary.accountType == ExternalAccount -> do
+          | summary.accountCategory == External -> do
               logWarn "Cannot share External account"
               return $ Left $ AccountError "External accounts cannot be shared"
           | otherwise -> do
@@ -326,6 +329,36 @@ setOverdraftLimit requestingUserId accountUuid newLimit = do
           return $ Left $ AccountError "Set overdraft limit rejected by domain"
         Right _ -> do
           logInfo "Overdraft limit set successfully"
+          return $ Right ()
+
+-- | Set the account type on an account.
+setAccountType ::
+  UserId ->
+  UUID ->
+  AccountType ->
+  AppM (Either DomainError ())
+setAccountType requestingUserId accountUuid newType = do
+  logInfo $ "Setting account type: " <> displayShow accountUuid
+
+  case mkAccountId accountUuid of
+    Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
+    Right _accountId -> do
+      let setTypeCmd =
+            SetAccountTypeAccountCommand
+              SetAccountType
+                { accountType = newType,
+                  setBy = requestingUserId
+                }
+
+      writer <- view eventStoreWriterL
+      reader <- view eventStoreReaderL
+      result <- liftIO $ applyAccountCommand writer reader accountUuid setTypeCmd
+      case result of
+        Left err -> do
+          logError $ "Set account type rejected: " <> displayShow err
+          return $ Left $ AccountError "Set account type rejected by domain"
+        Right _ -> do
+          logInfo "Account type set successfully"
           return $ Right ()
 
 -- Note: Uses 'tshow' from RIO for Text conversion of Show-able values.

@@ -51,7 +51,25 @@ module Domain.Core.Types
     TelegramId (..),
 
     -- * Account Types
+    CardNetwork (..),
+    AssetKind (..),
+    CashProperties (..),
+    BankAccountProperties (..),
+    EWalletProperties (..),
+    AssetProperties (..),
+    LoanProperties (..),
+    defaultCashProperties,
+    defaultBankAccountProperties,
+    defaultEWalletProperties,
+    defaultAssetProperties,
+    defaultLoanProperties,
     AccountType (..),
+    defaultCash,
+    defaultBankAccount,
+    defaultEWallet,
+    defaultAsset,
+    defaultLoan,
+    AccountCategory (..),
     AccountRole (..),
     AccountAccess (..),
 
@@ -76,13 +94,16 @@ module Domain.Core.Types
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, withText, (.:), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, withText, (.!=), (.:), (.:?), (.=))
+import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int64)
+import Data.Map.Strict (Map)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Data.Time.Calendar (Day)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import GHC.Generics (Generic)
@@ -487,20 +508,163 @@ instance FromJSON TelegramId where
 -- Account Types
 -- -----------------------------------------------------------------------------
 
--- | Type of account for transfer-only model.
---
--- - RegularAccount: User-created accounts (Checking, Savings, Cash, etc.)
--- - ExternalAccount: System-created account for each user to track income/expenses
+-- | Network of a bank card.
+data CardNetwork
+  = Visa
+  | Mastercard
+  | Amex
+  | OtherCardNetwork Text
+  deriving (Show, Eq, Generic)
+
+instance ToJSON CardNetwork
+
+instance FromJSON CardNetwork
+
+-- | Kind of asset held.
+data AssetKind
+  = Property
+  | Vehicle
+  | Stocks
+  | RetirementFund
+  | OtherAsset Text
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AssetKind
+
+instance FromJSON AssetKind
+
+-- | Properties specific to cash accounts.
+data CashProperties = CashProperties
+  { storageLocation :: Maybe Text,
+    metadata :: Map Text Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON CashProperties
+
+instance FromJSON CashProperties
+
+-- | Properties specific to bank accounts (checking, savings, debit/credit cards).
+data BankAccountProperties = BankAccountProperties
+  { bankName :: Maybe Text,
+    accountNumber :: Maybe Text,
+    cardNetwork :: Maybe CardNetwork,
+    metadata :: Map Text Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON BankAccountProperties
+
+instance FromJSON BankAccountProperties
+
+-- | Properties specific to electronic wallet accounts.
+data EWalletProperties = EWalletProperties
+  { provider :: Maybe Text,
+    accountIdentifier :: Maybe Text,
+    metadata :: Map Text Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON EWalletProperties
+
+instance FromJSON EWalletProperties
+
+-- | Properties specific to asset accounts (property, vehicles, stocks, etc.).
+data AssetProperties = AssetProperties
+  { assetKind :: Maybe AssetKind,
+    description :: Maybe Text,
+    metadata :: Map Text Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AssetProperties
+
+instance FromJSON AssetProperties
+
+-- | Properties specific to loan/liability accounts.
+data LoanProperties = LoanProperties
+  { lender :: Maybe Text,
+    interestRate :: Maybe Rational,
+    dueDate :: Maybe Day,
+    metadata :: Map Text Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON LoanProperties
+
+instance FromJSON LoanProperties
+
+-- | Default property constructors with all fields empty.
+defaultCashProperties :: CashProperties
+defaultCashProperties = CashProperties Nothing mempty
+
+defaultBankAccountProperties :: BankAccountProperties
+defaultBankAccountProperties = BankAccountProperties Nothing Nothing Nothing mempty
+
+defaultEWalletProperties :: EWalletProperties
+defaultEWalletProperties = EWalletProperties Nothing Nothing mempty
+
+defaultAssetProperties :: AssetProperties
+defaultAssetProperties = AssetProperties Nothing Nothing mempty
+
+defaultLoanProperties :: LoanProperties
+defaultLoanProperties = LoanProperties Nothing Nothing Nothing mempty
+
+-- | User-facing account classification with per-type properties.
 data AccountType
-  = -- | User-created account for holding money
-    RegularAccount
-  | -- | System-created account representing "outside world" for income/expenses
-    ExternalAccount
+  = Cash CashProperties
+  | BankAccount BankAccountProperties
+  | EWallet EWalletProperties
+  | Asset AssetProperties
+  | Loan LoanProperties
   deriving (Show, Eq, Generic)
 
 instance ToJSON AccountType
 
 instance FromJSON AccountType
+
+-- | Convenience constructors with default empty properties.
+defaultCash :: AccountType
+defaultCash = Cash defaultCashProperties
+
+defaultBankAccount :: AccountType
+defaultBankAccount = BankAccount defaultBankAccountProperties
+
+defaultEWallet :: AccountType
+defaultEWallet = EWallet defaultEWalletProperties
+
+defaultAsset :: AccountType
+defaultAsset = Asset defaultAssetProperties
+
+defaultLoan :: AccountType
+defaultLoan = Loan defaultLoanProperties
+
+-- | Business behavior classification for accounts.
+--
+-- Regular accounts are user-created and carry an AccountType for UI categorization.
+-- External accounts are system-created for tracking income/expenses.
+data AccountCategory
+  = Regular AccountType
+  | External
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AccountCategory where
+  toJSON External = toJSON ("External" :: Text)
+  toJSON (Regular at) = object ["tag" .= ("Regular" :: Text), "accountType" .= at]
+
+instance FromJSON AccountCategory where
+  parseJSON (Aeson.String "External") = pure External
+  parseJSON (Aeson.String "ExternalAccount") = pure External
+  parseJSON (Aeson.String "RegularAccount") = pure (Regular defaultCash)
+  parseJSON (Aeson.String "Regular") = pure (Regular defaultCash)
+  parseJSON (Aeson.String "Internal") = pure (Regular defaultCash)
+  parseJSON v = flip (withObject "AccountCategory") v $ \o -> do
+    tag <- o .: "tag"
+    case (tag :: Text) of
+      "Regular" -> Regular <$> o .: "accountType"
+      "Internal" -> Regular <$> o .:? "accountType" .!= defaultCash
+      "RegularAccount" -> Regular <$> o .:? "accountType" .!= defaultCash
+      _ -> fail $ "Unknown AccountCategory tag: " <> show tag
 
 -- | Role-Based Access Control role for account access.
 --

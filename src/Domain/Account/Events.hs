@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- |
@@ -35,12 +36,13 @@ module Domain.Account.Events
     AccountDebited (..),
     AccountCredited (..),
     OverdraftLimitSet (..),
+    AccountTypeSet (..),
   )
 where
 
-import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.Aeson.TH (defaultOptions, deriveJSON, fieldLabelModifier)
 import Data.Text (Text)
-import Domain.Core.Types (AccountRole, AccountType, Money, TransactionId, UserId)
+import Domain.Core.Types (AccountCategory, AccountRole, AccountType, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -58,7 +60,8 @@ accountEvents =
     ''AccountAccessRevoked,
     ''AccountDebited,
     ''AccountCredited,
-    ''OverdraftLimitSet
+    ''OverdraftLimitSet,
+    ''AccountTypeSet
   ]
 
 -- -----------------------------------------------------------------------------
@@ -79,8 +82,8 @@ data AccountCreated = AccountCreated
     initialBalance :: Money,
     -- | User who created the account (becomes Owner)
     by :: UserId,
-    -- | Type of account (Regular or External)
-    accountType :: AccountType,
+    -- | Account category (Regular with type, or External)
+    accountCategory :: AccountCategory,
     -- | Overdraft limit for the account
     overdraftLimit :: Maybe Money
   }
@@ -169,10 +172,26 @@ data OverdraftLimitSet = OverdraftLimitSet
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
--- Derive JSON instances for all events using default options (fields already unprefixed)
-deriveJSON defaultOptions ''AccountCreated
+-- | Event emitted when an account's user-facing type is changed.
+data AccountTypeSet = AccountTypeSet
+  { accountType :: AccountType,
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
+-- Derive JSON instances for all events
+-- AccountCreated uses custom fieldLabelModifier to keep "accountType" as JSON key
+-- for backwards compatibility (Haskell field renamed to accountCategory)
+deriveJSON
+  defaultOptions
+    { fieldLabelModifier = \case
+        "accountCategory" -> "accountType"
+        other -> other
+    }
+  ''AccountCreated
 deriveJSON defaultOptions ''AccountAccessGranted
 deriveJSON defaultOptions ''AccountAccessRevoked
 deriveJSON defaultOptions ''AccountDebited
 deriveJSON defaultOptions ''AccountCredited
 deriveJSON defaultOptions ''OverdraftLimitSet
+deriveJSON defaultOptions ''AccountTypeSet

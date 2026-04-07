@@ -44,6 +44,8 @@
 module Web.Types
   ( -- * Account Request DTOs
     CreateAccountRequest (..),
+    AccountTypeRequest (..),
+    SetAccountTypeRequest (..),
 
     -- * Account Response DTOs
     AccountResponse (..),
@@ -68,6 +70,7 @@ module Web.Types
     -- ** To Domain Types
     toDomainMoney,
     toCreateAccountCommand,
+    toAccountType,
     toInitiateTransferCommand,
 
     -- ** From Domain Types
@@ -90,13 +93,16 @@ where
 -- For read model integration
 import Application.ReadModels.Account (AccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.=))
 import Data.Map.Strict (Map)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar (Day)
+import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Data.UUID (UUID)
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountType (..), Currency (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountCategory (..), AccountId, AccountType (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), EWalletProperties (..), ExpenseCategory (..), IncomeCategory (..), InternalCategory (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -127,13 +133,78 @@ data CreateAccountRequest
   { name :: Text,
     initialBalance :: Double,
     currency :: Text,
-    overdraftLimit :: Maybe Double
+    overdraftLimit :: Maybe Double,
+    accountType :: Maybe AccountTypeRequest
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON CreateAccountRequest
 
 instance FromJSON CreateAccountRequest
+
+-- | Request DTO for account type with discriminated JSON format.
+data AccountTypeRequest = AccountTypeRequest
+  { type_ :: Text,
+    storageLocation :: Maybe Text,
+    bankName :: Maybe Text,
+    accountNumber :: Maybe Text,
+    cardNetwork :: Maybe Text,
+    provider :: Maybe Text,
+    accountIdentifier :: Maybe Text,
+    assetKind :: Maybe Text,
+    description :: Maybe Text,
+    lender :: Maybe Text,
+    interestRate :: Maybe Double,
+    dueDate :: Maybe Text,
+    metadata :: Maybe (Map Text Text)
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON AccountTypeRequest where
+  parseJSON = withObject "AccountTypeRequest" $ \o ->
+    AccountTypeRequest
+      <$> o .: "type"
+      <*> o .:? "storageLocation"
+      <*> o .:? "bankName"
+      <*> o .:? "accountNumber"
+      <*> o .:? "cardNetwork"
+      <*> o .:? "provider"
+      <*> o .:? "accountIdentifier"
+      <*> o .:? "assetKind"
+      <*> o .:? "description"
+      <*> o .:? "lender"
+      <*> o .:? "interestRate"
+      <*> o .:? "dueDate"
+      <*> o .:? "metadata"
+
+instance ToJSON AccountTypeRequest where
+  toJSON r =
+    object $
+      catMaybes
+        [ Just ("type" .= r.type_),
+          ("storageLocation" .=) <$> r.storageLocation,
+          ("bankName" .=) <$> r.bankName,
+          ("accountNumber" .=) <$> r.accountNumber,
+          ("cardNetwork" .=) <$> r.cardNetwork,
+          ("provider" .=) <$> r.provider,
+          ("accountIdentifier" .=) <$> r.accountIdentifier,
+          ("assetKind" .=) <$> r.assetKind,
+          ("description" .=) <$> r.description,
+          ("lender" .=) <$> r.lender,
+          ("interestRate" .=) <$> r.interestRate,
+          ("dueDate" .=) <$> r.dueDate,
+          ("metadata" .=) <$> r.metadata
+        ]
+
+-- | Request DTO for setting account type.
+data SetAccountTypeRequest = SetAccountTypeRequest
+  { accountType :: AccountTypeRequest
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SetAccountTypeRequest
+
+instance FromJSON SetAccountTypeRequest
 
 -- | Request to credit (add money to) an account.
 --
@@ -174,6 +245,7 @@ data AccountResponse
     balance :: Double,
     currency :: Text,
     overdraftLimit :: Maybe Double,
+    accountType :: Maybe Value,
     version :: Int
   }
   deriving (Show, Eq, Generic)
@@ -487,8 +559,8 @@ fromDomainMoney = fromRational . unMoney
 -- >>> let request = CreateAccountRequest "Savings" 1000.0
 -- >>> toCreateAccountCommand userId RegularAccount request
 -- Right (CreateAccount "Savings" (Money 1000.0) userId RegularAccount)
-toCreateAccountCommand :: UserId -> AccountType -> CreateAccountRequest -> Either Text CreateAccount
-toCreateAccountCommand createdBy accountType CreateAccountRequest {..} = do
+toCreateAccountCommand :: UserId -> CreateAccountRequest -> Either Text CreateAccount
+toCreateAccountCommand createdBy CreateAccountRequest {..} = do
   -- Validate account name
   when (T.null name) $
     Left "Account name cannot be empty"
@@ -506,8 +578,13 @@ toCreateAccountCommand createdBy accountType CreateAccountRequest {..} = do
       money <- toDomainMoney cur (abs amt)
       Right (Just (Just money))
 
+  -- Parse account type (defaults to Cash)
+  parsedType <- case accountType of
+    Nothing -> Right defaultCash
+    Just atr -> toAccountType atr
+
   -- Create domain command with owner and type
-  return $ CreateAccount name domainBalance createdBy accountType domainLimit
+  return $ CreateAccount name domainBalance createdBy (Regular parsedType) domainLimit
   where
     when :: Bool -> Either Text () -> Either Text ()
     when True action = action
@@ -591,8 +668,130 @@ fromAccountData accountId AccountData {..} =
       balance = fromDomainMoney balance,
       currency = currencyToText (moneyCurrency balance),
       overdraftLimit = fmap fromDomainMoney overdraftLimit,
+      accountType = case accountCategory of
+        Regular at -> Just (fromAccountType at)
+        External -> Nothing,
       version = version
     }
+
+-- | Convert an AccountTypeRequest DTO to a domain AccountType.
+toAccountType :: AccountTypeRequest -> Either Text AccountType
+toAccountType req = case req.type_ of
+  "cash" ->
+    Right $
+      Cash
+        CashProperties
+          { storageLocation = req.storageLocation,
+            metadata = fromMaybe mempty req.metadata
+          }
+  "bankAccount" ->
+    Right $
+      BankAccount
+        BankAccountProperties
+          { bankName = req.bankName,
+            accountNumber = req.accountNumber,
+            cardNetwork = parseCardNetwork <$> req.cardNetwork,
+            metadata = fromMaybe mempty req.metadata
+          }
+  "eWallet" ->
+    Right $
+      EWallet
+        EWalletProperties
+          { provider = req.provider,
+            accountIdentifier = req.accountIdentifier,
+            metadata = fromMaybe mempty req.metadata
+          }
+  "asset" ->
+    Right $
+      Asset
+        AssetProperties
+          { assetKind = parseAssetKind <$> req.assetKind,
+            description = req.description,
+            metadata = fromMaybe mempty req.metadata
+          }
+  "loan" ->
+    Right $
+      Loan
+        LoanProperties
+          { lender = req.lender,
+            interestRate = toRational <$> req.interestRate,
+            dueDate = req.dueDate >>= parseDay,
+            metadata = fromMaybe mempty req.metadata
+          }
+  other -> Left $ "Unknown account type: " <> other
+
+-- | Convert a domain AccountType to a JSON Value for API responses.
+fromAccountType :: AccountType -> Value
+fromAccountType (Cash props) =
+  object $
+    catMaybes
+      [ Just ("type" .= ("cash" :: Text)),
+        ("storageLocation" .=) <$> props.storageLocation,
+        if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
+      ]
+fromAccountType (BankAccount props) =
+  object $
+    catMaybes
+      [ Just ("type" .= ("bankAccount" :: Text)),
+        ("bankName" .=) <$> props.bankName,
+        ("accountNumber" .=) <$> props.accountNumber,
+        ("cardNetwork" .=) . cardNetworkToText <$> props.cardNetwork,
+        if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
+      ]
+fromAccountType (EWallet props) =
+  object $
+    catMaybes
+      [ Just ("type" .= ("eWallet" :: Text)),
+        ("provider" .=) <$> props.provider,
+        ("accountIdentifier" .=) <$> props.accountIdentifier,
+        if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
+      ]
+fromAccountType (Asset props) =
+  object $
+    catMaybes
+      [ Just ("type" .= ("asset" :: Text)),
+        ("assetKind" .=) . assetKindToText <$> props.assetKind,
+        ("description" .=) <$> props.description,
+        if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
+      ]
+fromAccountType (Loan props) =
+  object $
+    catMaybes
+      [ Just ("type" .= ("loan" :: Text)),
+        ("lender" .=) <$> props.lender,
+        ("interestRate" .=) <$> (fromRational <$> props.interestRate :: Maybe Double),
+        ("dueDate" .=) <$> props.dueDate,
+        if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
+      ]
+
+parseCardNetwork :: Text -> CardNetwork
+parseCardNetwork "visa" = Visa
+parseCardNetwork "mastercard" = Mastercard
+parseCardNetwork "amex" = Amex
+parseCardNetwork other = OtherCardNetwork other
+
+cardNetworkToText :: CardNetwork -> Text
+cardNetworkToText Visa = "visa"
+cardNetworkToText Mastercard = "mastercard"
+cardNetworkToText Amex = "amex"
+cardNetworkToText (OtherCardNetwork t) = t
+
+parseAssetKind :: Text -> AssetKind
+parseAssetKind "property" = Property
+parseAssetKind "vehicle" = Vehicle
+parseAssetKind "stocks" = Stocks
+parseAssetKind "retirementFund" = RetirementFund
+parseAssetKind other = OtherAsset other
+
+assetKindToText :: AssetKind -> Text
+assetKindToText Property = "property"
+assetKindToText Vehicle = "vehicle"
+assetKindToText Stocks = "stocks"
+assetKindToText RetirementFund = "retirementFund"
+assetKindToText (OtherAsset t) = t
+
+parseDay :: Text -> Maybe Day
+parseDay = parseTimeM True defaultTimeLocale "%Y-%m-%d" . T.unpack
 
 -- | Convert a Currency to its text representation.
 currencyToText :: Currency -> Text

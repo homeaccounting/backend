@@ -48,6 +48,7 @@ module Web.API.AccountAPI
     shareAccountHandler,
     revokeAccountAccessHandler,
     setOverdraftLimitHandler,
+    setAccountTypeHandler,
   )
 where
 
@@ -55,7 +56,7 @@ import qualified Application.Services.AccountService as AccountService
 import Data.Aeson (FromJSON, ToJSON)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Domain.Core.Types (AccountType (..), mkMoney, parseCurrency)
+import Domain.Core.Types (mkMoney, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
@@ -65,7 +66,9 @@ import Web.Types
   ( AccountListResponse (..),
     AccountResponse,
     CreateAccountRequest,
+    SetAccountTypeRequest (..),
     fromAccountData,
+    toAccountType,
     toCreateAccountCommand,
   )
 
@@ -131,6 +134,14 @@ type AccountAPI =
       :> "overdraft-limit"
       :> ReqBody '[JSON] SetOverdraftLimitRequest
       :> Put '[JSON] NoContent
+    -- PUT /api/accounts/:id/type - Set account type (requires auth, owner only)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "accounts"
+      :> Capture "id" UUID
+      :> "type"
+      :> ReqBody '[JSON] SetAccountTypeRequest
+      :> Put '[JSON] NoContent
 
 -- -----------------------------------------------------------------------------
 -- Request Types
@@ -175,6 +186,7 @@ accountServer =
     :<|> shareAccountHandler
     :<|> revokeAccountAccessHandler
     :<|> setOverdraftLimitHandler
+    :<|> setAccountTypeHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
@@ -184,9 +196,8 @@ accountServer =
 createAccountHandler :: AuthenticatedUser -> CreateAccountRequest -> AppM AccountResponse
 createAccountHandler user request = do
   let userId = user.userId
-      accountType = RegularAccount
   -- 1. Convert DTO to domain command (Web layer responsibility)
-  case toCreateAccountCommand userId accountType request of
+  case toCreateAccountCommand userId request of
     Left err -> throwDomainError $ ValidationErr $ mkValidationError "request" err err
     Right createCmd -> do
       -- 2. Delegate to service
@@ -251,3 +262,15 @@ setOverdraftLimitHandler user accountUuid SetOverdraftLimitRequest {..} = do
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err
+
+-- | Handler for PUT /api/accounts/:id/type - Set account type.
+setAccountTypeHandler :: AuthenticatedUser -> UUID -> SetAccountTypeRequest -> AppM NoContent
+setAccountTypeHandler user accountUuid SetAccountTypeRequest {..} = do
+  let userId = user.userId
+  case toAccountType accountType of
+    Left err -> throwDomainError $ ValidationErr $ mkValidationError "accountType" err err
+    Right domainType -> do
+      result <- AccountService.setAccountType userId accountUuid domainType
+      case result of
+        Right () -> return NoContent
+        Left err -> throwDomainError err

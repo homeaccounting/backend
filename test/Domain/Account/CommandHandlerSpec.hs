@@ -72,7 +72,7 @@ regularAccountWithOwner :: UserId -> Account
 regularAccountWithOwner ownerId =
   applyEvents
     [ AccountCreatedAccountEvent
-        $ AccountCreated "Test Account" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0))
+        $ AccountCreated "Test Account" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0))
     ]
 
 -- | Create an external account with an owner
@@ -80,7 +80,7 @@ externalAccountWithOwner :: UserId -> Account
 externalAccountWithOwner ownerId =
   applyEvents
     [ AccountCreatedAccountEvent
-        $ AccountCreated "External" (mockMoney 0) ownerId ExternalAccount Nothing
+        $ AccountCreated "External" (mockMoney 0) ownerId External Nothing
     ]
 
 -- | Create an account with shared access
@@ -88,7 +88,7 @@ accountWithSharedAccess :: UserId -> UserId -> AccountRole -> Account
 accountWithSharedAccess ownerId sharedUserId role =
   applyEvents
     [ AccountCreatedAccountEvent
-        $ AccountCreated "Shared Account" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
+        $ AccountCreated "Shared Account" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0)),
       AccountAccessGrantedAccountEvent
         $ AccountAccessGranted sharedUserId role ownerId
     ]
@@ -109,7 +109,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Savings",
                     initialBalance = mockMoney 1000,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount,
+                    accountCategory = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -122,7 +122,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                 created.name `shouldBe` "Savings"
                 created.initialBalance `shouldBe` mockMoney 1000
                 created.by `shouldBe` testOwnerId
-                created.accountType `shouldBe` RegularAccount
+                created.accountCategory `shouldBe` Regular defaultCash
               _ -> expectationFailure "Expected AccountCreated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -134,7 +134,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Checking",
                     initialBalance = mockMoney 500,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount,
+                    accountCategory = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -145,7 +145,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
             newAccount ^. #name `shouldBe` "Checking"
             newAccount ^. #balance `shouldBe` mockMoney 500
             newAccount ^. #createdBy `shouldBe` testOwnerId
-            newAccount ^. #accountType `shouldBe` RegularAccount
+            newAccount ^. #accountCategory `shouldBe` Regular defaultCash
             newAccount ^. #overdraftLimit `shouldBe` Just (mockMoney 0)
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -157,7 +157,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "My Account",
                     initialBalance = mockMoney 0,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount,
+                    accountCategory = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -173,7 +173,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
     describe "When creating external account" $ do
-      it "Then emits AccountCreated event with ExternalAccount type" $ do
+      it "Then emits AccountCreated event with External category" $ do
         let account = emptyAccount
         let command =
               CreateAccountAccountCommand
@@ -181,7 +181,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "External",
                     initialBalance = mockMoney 0,
                     createdBy = testOwnerId,
-                    accountType = ExternalAccount,
+                    accountCategory = External,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -191,7 +191,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               AccountCreatedAccountEvent created ->
-                created.accountType `shouldBe` ExternalAccount
+                created.accountCategory `shouldBe` External
               _ -> expectationFailure "Expected AccountCreated event"
             let newAccount = applyEvents events
             newAccount ^. #overdraftLimit `shouldBe` Nothing
@@ -206,7 +206,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "",
                     initialBalance = mockMoney 1000,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount,
+                    accountCategory = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -223,7 +223,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Another Account",
                     initialBalance = mockMoney 500,
                     createdBy = testOwnerId,
-                    accountType = RegularAccount,
+                    accountCategory = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -275,7 +275,7 @@ shareAccountSpec = describe "ShareAccount Command" $ do
           Right events -> do
             let baseEvents =
                   [ AccountCreatedAccountEvent
-                      $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0))
+                      $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId (Regular defaultCash) (Just (mockMoney 0))
                   ]
             let newAccount = applyEvents (baseEvents <> events)
             getUserRole testEditorId newAccount `shouldBe` Just Editor
@@ -402,7 +402,7 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
           Right events -> do
             let baseEvents =
                   [ AccountCreatedAccountEvent
-                      $ AccountCreated "Shared Account" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0)),
+                      $ AccountCreated "Shared Account" (mockMoney 1000) testOwnerId (Regular defaultCash) (Just (mockMoney 0)),
                     AccountAccessGrantedAccountEvent
                       $ AccountAccessGranted testEditorId Editor testOwnerId
                   ]
@@ -416,7 +416,7 @@ revokeAccessSpec = describe "RevokeAccountAccess Command" $ do
         let account =
               applyEvents
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0)),
+                    $ AccountCreated "Test" (mockMoney 1000) testOwnerId (Regular defaultCash) (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted testEditorId Editor testOwnerId,
                   AccountAccessGrantedAccountEvent
@@ -531,7 +531,7 @@ setOverdraftLimitSpec = describe "SetOverdraftLimit Command" $ do
       it "Then overdraft limit is applied to account state" $ do
         let baseEvents =
               [ AccountCreatedAccountEvent
-                  $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId RegularAccount (Just (mockMoney 0))
+                  $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId (Regular defaultCash) (Just (mockMoney 0))
               ]
         let account = applyEvents baseEvents
         let command =

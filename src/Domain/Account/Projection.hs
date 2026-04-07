@@ -55,16 +55,19 @@ import Domain.Account.Events
     AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
+    AccountTypeSet (..),
     OverdraftLimitSet (..),
     accountEvents,
   )
 import Domain.Core.Types
   ( AccountAccess (..),
+    AccountCategory (..),
     AccountRole (..),
-    AccountType (..),
+    AccountType,
     Money,
     UserId,
     addMoney,
+    defaultCash,
     mkDefaultMoney,
     subtractMoney,
     unsafeUserId,
@@ -109,8 +112,8 @@ data Account = Account
     name :: Text,
     -- | User who created the account
     createdBy :: UserId,
-    -- | Type of account (Regular or External)
-    accountType :: AccountType,
+    -- | Account category (Regular with type, or External)
+    accountCategory :: AccountCategory,
     -- | List of users with access and their roles
     accessList :: [AccountAccess],
     -- | Overdraft limit. Nothing = unlimited, Just limit = max negative balance
@@ -138,7 +141,7 @@ accountDefault = case mkDefaultMoney 0 of
       { balance = m,
         name = "",
         createdBy = unsafeUserId UUID.nil,
-        accountType = RegularAccount,
+        accountCategory = Regular defaultCash,
         accessList = [],
         overdraftLimit = Just m
       }
@@ -231,8 +234,8 @@ handleAccountEvent account (AccountCreatedAccountEvent created) =
         .~ created.initialBalance
         & #createdBy
         .~ ownerId
-        & #accountType
-        .~ created.accountType
+        & #accountCategory
+        .~ created.accountCategory
         & #accessList
         .~ [AccountAccess ownerId Owner]
         & #overdraftLimit
@@ -263,6 +266,8 @@ handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
     Left _ -> account -- Impossible: currency was validated by command handler
 handleAccountEvent account (OverdraftLimitSetAccountEvent OverdraftLimitSet {..}) =
   account & #overdraftLimit .~ overdraftLimit
+handleAccountEvent account (AccountTypeSetAccountEvent AccountTypeSet {..}) =
+  account & #accountCategory .~ Regular accountType
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

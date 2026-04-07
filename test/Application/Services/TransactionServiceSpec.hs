@@ -41,23 +41,23 @@ testUserUuid1 = UUID.fromWords 1 0 0 0
 testUserId1 :: UserId
 testUserId1 = mockUserId testUserUuid1
 
-mkCreateAccount :: Text -> UserId -> AccountType -> CreateAccount
+mkCreateAccount :: Text -> UserId -> AccountCategory -> CreateAccount
 mkCreateAccount acctName userId accType =
   CreateAccount
     { name = acctName,
       initialBalance = mockMoney 5000,
       createdBy = userId,
-      accountType = accType,
+      accountCategory = accType,
       overdraftLimit = Nothing
     }
 
-mkCreateAccountWith :: Currency -> Rational -> Text -> UserId -> AccountType -> CreateAccount
+mkCreateAccountWith :: Currency -> Rational -> Text -> UserId -> AccountCategory -> CreateAccount
 mkCreateAccountWith currency balance acctName userId accType =
   CreateAccount
     { name = acctName,
       initialBalance = mockMoneyWith currency balance,
       createdBy = userId,
-      accountType = accType,
+      accountCategory = accType,
       overdraftLimit = Nothing
     }
 
@@ -90,9 +90,9 @@ setupCrossCurrencyAccounts :: [(Currency, Currency, Rational)] -> Currency -> Cu
 setupCrossCurrencyAccounts rates srcCurrency tgtCurrency = do
   env <- createTestAppEnvWithRates rates
   (fromAccId, toAccId) <- runAppM env $ do
-    result1 <- createAccount (mkCreateAccountWith srcCurrency 5000 "Source" testUserId1 RegularAccount)
+    result1 <- createAccount (mkCreateAccountWith srcCurrency 5000 "Source" testUserId1 (Regular defaultCash))
     let (fromId, _) = fromRight' result1
-    result2 <- createAccount (mkCreateAccountWith tgtCurrency 5000 "Target" testUserId1 RegularAccount)
+    result2 <- createAccount (mkCreateAccountWith tgtCurrency 5000 "Target" testUserId1 (Regular defaultCash))
     let (toId, _) = fromRight' result2
     return (fromId, toId)
   return (env, fromAccId, toAccId)
@@ -102,9 +102,9 @@ setupTwoAccounts :: IO (AppEnv, AccountId, AccountId)
 setupTwoAccounts = do
   env <- createTestAppEnv
   (fromAccId, toAccId) <- runAppM env $ do
-    result1 <- createAccount (mkCreateAccount "Source" testUserId1 RegularAccount)
+    result1 <- createAccount (mkCreateAccount "Source" testUserId1 (Regular defaultCash))
     let (fromId, _) = fromRight' result1
-    result2 <- createAccount (mkCreateAccount "Target" testUserId1 RegularAccount)
+    result2 <- createAccount (mkCreateAccount "Target" testUserId1 (Regular defaultCash))
     let (toId, _) = fromRight' result2
     return (fromId, toId)
   return (env, fromAccId, toAccId)

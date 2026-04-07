@@ -51,18 +51,18 @@ applyEvents :: [AccountEvent] -> Account
 applyEvents = latestProjection accountProjection
 
 -- | Create an account with given owner and type
-createAccountWithOwner :: Text -> Money -> UserId -> AccountType -> Account
-createAccountWithOwner acctName balance ownerId accType =
-  let limit = case accType of
-        RegularAccount -> Just (mockMoney 0)
-        ExternalAccount -> Nothing
+createAccountWithOwner :: Text -> Money -> UserId -> AccountCategory -> Account
+createAccountWithOwner acctName balance ownerId accCat =
+  let limit = case accCat of
+        Regular _ -> Just (mockMoney 0)
+        External -> Nothing
    in applyEvents
         [ AccountCreatedAccountEvent
             $ AccountCreated
               { name = acctName,
                 initialBalance = balance,
                 by = ownerId,
-                accountType = accType,
+                accountCategory = accCat,
                 overdraftLimit = limit
               }
         ]
@@ -80,7 +80,7 @@ determinismSpec = describe "Determinism Properties" $ do
         let account = applyEvents []
             command =
               CreateAccountAccountCommand
-                $ CreateAccount acctName balance ownerId RegularAccount Nothing
+                $ CreateAccount acctName balance ownerId (Regular defaultCash) Nothing
             events1 = handleAccountCommand account command
             events2 = handleAccountCommand account command
          in events1 === events2
@@ -89,7 +89,7 @@ determinismSpec = describe "Determinism Properties" $ do
       $ property
       $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
-          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
+          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId (Regular defaultCash)
               command =
                 ShareAccountAccountCommand
                   $ ShareAccount targetId targetRole ownerId
@@ -103,7 +103,7 @@ determinismSpec = describe "Determinism Properties" $ do
         ownerId /= targetId ==>
           let baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted targetId Editor ownerId
                 ]
@@ -126,21 +126,21 @@ invariantSpec = describe "Invariant Properties" $ do
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
         not (T.null acctName) ==>
-          let account = createAccountWithOwner acctName balance ownerId RegularAccount
+          let account = createAccountWithOwner acctName balance ownerId (Regular defaultCash)
            in hasAccess ownerId account
 
     it "Then owner has Owner role"
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
         not (T.null acctName) ==>
-          let account = createAccountWithOwner acctName balance ownerId RegularAccount
+          let account = createAccountWithOwner acctName balance ownerId (Regular defaultCash)
            in getUserRole ownerId account === Just Owner
 
     it "Then Regular account defaults to Just zero overdraft limit"
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
         not (T.null acctName) ==>
-          let account = createAccountWithOwner acctName balance ownerId RegularAccount
+          let account = createAccountWithOwner acctName balance ownerId (Regular defaultCash)
            in case account ^. #overdraftLimit of
                 Just limit -> unMoney limit === 0
                 Nothing -> property False
@@ -149,14 +149,14 @@ invariantSpec = describe "Invariant Properties" $ do
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
         not (T.null acctName) ==>
-          let account = createAccountWithOwner acctName balance ownerId ExternalAccount
+          let account = createAccountWithOwner acctName balance ownerId External
            in account ^. #overdraftLimit === Nothing
 
     it "Then preserves initial balance for regular accounts"
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
         not (T.null acctName) ==>
-          let account = createAccountWithOwner acctName balance ownerId RegularAccount
+          let account = createAccountWithOwner acctName balance ownerId (Regular defaultCash)
            in unMoney (account ^. #balance) === unMoney balance
 
   describe "When sharing access" $ do
@@ -164,14 +164,14 @@ invariantSpec = describe "Invariant Properties" $ do
       $ property
       $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
-          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
+          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId (Regular defaultCash)
               command =
                 ShareAccountAccountCommand
                   $ ShareAccount targetId targetRole ownerId
               result = handleAccountCommand account command
               baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0))
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0))
                 ]
               events = fromRight [] result
               newAccount = applyEvents (baseEvents <> events)
@@ -181,14 +181,14 @@ invariantSpec = describe "Invariant Properties" $ do
       $ property
       $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
-          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
+          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId (Regular defaultCash)
               command =
                 ShareAccountAccountCommand
                   $ ShareAccount targetId targetRole ownerId
               result = handleAccountCommand account command
               baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0))
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0))
                 ]
               events = fromRight [] result
               newAccount = applyEvents (baseEvents <> events)
@@ -201,7 +201,7 @@ invariantSpec = describe "Invariant Properties" $ do
         ownerId /= targetId ==>
           let baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted targetId Editor ownerId
                 ]
@@ -228,7 +228,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand
-                  $ CreateAccount acctName balance ownerId RegularAccount Nothing
+                  $ CreateAccount acctName balance ownerId (Regular defaultCash) Nothing
               result = handleAccountCommand account command
               events = fromRight [] result
               newAccount = applyEvents events
@@ -241,7 +241,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand
-                  $ CreateAccount acctName balance ownerId RegularAccount Nothing
+                  $ CreateAccount acctName balance ownerId (Regular defaultCash) Nothing
               result = handleAccountCommand account command
               events = fromRight [] result
               newAccount = applyEvents events
@@ -253,7 +253,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
         let account = applyEvents []
             command =
               CreateAccountAccountCommand
-                $ CreateAccount "" balance ownerId RegularAccount Nothing
+                $ CreateAccount "" balance ownerId (Regular defaultCash) Nothing
             result = handleAccountCommand account command
          in isLeft result
 
@@ -264,7 +264,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
         ownerId /= nonOwnerId && nonOwnerId /= targetId && ownerId /= targetId ==>
           let baseEvents =
                 [ AccountCreatedAccountEvent
-                    $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
+                    $ AccountCreated "Test" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0)),
                   AccountAccessGrantedAccountEvent
                     $ AccountAccessGranted nonOwnerId Editor ownerId
                 ]
@@ -278,7 +278,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
     it "Then owner cannot be removed from access list"
       $ property
       $ \(ownerId :: UserId) ->
-        let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
+        let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId (Regular defaultCash)
             command =
               RevokeAccountAccessAccountCommand
                 $ RevokeAccountAccess ownerId ownerId
@@ -289,7 +289,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
       $ property
       $ \(ownerId :: UserId) (targetId :: UserId) (targetRole :: AccountRole) ->
         ownerId /= targetId ==>
-          let account = createAccountWithOwner "External" (mockMoney 0) ownerId ExternalAccount
+          let account = createAccountWithOwner "External" (mockMoney 0) ownerId External
               command =
                 ShareAccountAccountCommand
                   $ ShareAccount targetId targetRole ownerId
@@ -303,7 +303,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
         forAll (genPositiveMoneyIn USD) $ \debitAmt ->
           -- Account with balance 0 and overdraft limit >= debit amount
           let account =
-                createAccountWithOwner "Test" (mockMoney 0) ownerId RegularAccount
+                createAccountWithOwner "Test" (mockMoney 0) ownerId (Regular defaultCash)
                   & #overdraftLimit
                   .~ Just debitAmt
               command =
@@ -317,7 +317,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
       $ \(ownerId :: UserId) (txId :: TransactionId) ->
         forAll (genPositiveMoneyIn USD) $ \debitAmt ->
           unMoney debitAmt > 0 ==>
-            let account = createAccountWithOwner "Test" (mockMoney 0) ownerId RegularAccount
+            let account = createAccountWithOwner "Test" (mockMoney 0) ownerId (Regular defaultCash)
                 -- Default overdraft is 0, so any positive debit on zero balance fails
                 command =
                   DebitAccountAccountCommand
@@ -330,7 +330,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
       $ \(ownerId :: UserId) (txId :: TransactionId) ->
         forAll (genPositiveMoneyIn USD) $ \debitAmt ->
           let account =
-                createAccountWithOwner "Test" (mockMoney 0) ownerId RegularAccount
+                createAccountWithOwner "Test" (mockMoney 0) ownerId (Regular defaultCash)
                   & #overdraftLimit
                   .~ Nothing
               command =
@@ -347,7 +347,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account =
                 applyEvents
                   [ AccountCreatedAccountEvent
-                      $ AccountCreated "Test" (mockMoney 1000) ownerId RegularAccount (Just (mockMoney 0)),
+                      $ AccountCreated "Test" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0)),
                     AccountAccessGrantedAccountEvent
                       $ AccountAccessGranted nonOwnerId Editor ownerId
                   ]
@@ -365,7 +365,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
       $ property
       $ \(ownerId :: UserId) (txId :: TransactionId) ->
         forAll (genPositiveMoneyIn EUR) $ \amt ->
-          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId RegularAccount
+          let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId (Regular defaultCash)
               command =
                 DebitAccountAccountCommand
                   $ DebitAccount amt txId "Transfer"
@@ -379,5 +379,5 @@ businessRuleSpec = describe "Business Rule Properties" $ do
 instance Arbitrary AccountRole where
   arbitrary = elements [Owner, Editor, Viewer]
 
-instance Arbitrary AccountType where
-  arbitrary = elements [RegularAccount, ExternalAccount]
+instance Arbitrary AccountCategory where
+  arbitrary = elements [Regular defaultCash, External]

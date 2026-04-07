@@ -54,9 +54,9 @@ import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import Domain.Core.Types
   ( AccountAccess (..),
+    AccountCategory (..),
     AccountId,
     AccountRole (..),
-    AccountType (..),
     UserId,
   )
 import GHC.Generics (Generic)
@@ -121,7 +121,7 @@ instance FromJSON TransferDenialReason
 -- | Account data needed for authorization checks.
 data AccountAuthData = AccountAuthData
   { createdBy :: UserId,
-    accountType :: AccountType,
+    accountCategory :: AccountCategory,
     accessList :: [AccountAccess]
   }
   deriving (Show, Eq)

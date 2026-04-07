@@ -37,6 +37,7 @@ module Domain.Account.Errors
     mkNotOwner,
     mkExternalAccountNotShareable,
     mkCurrencyMismatch,
+    mkExternalTypeNotSettable,
   )
 where
 
@@ -105,6 +106,10 @@ data AccountError
     ExternalAccountNotShareable
       { -- | The External account that cannot be shared
         externalAccountNotShareableId :: AccountId
+      }
+  | -- | Cannot set type on external account
+    ExternalTypeNotSettable
+      { externalTypeNotSettableId :: AccountId
       }
   | -- | Currency mismatch between account and operation
     CurrencyMismatch
@@ -300,4 +305,14 @@ mkCurrencyMismatch accId accCurrency opCurrency =
     { accountId = accId,
       accountCurrency = accCurrency,
       operationCurrency = opCurrency
+    }
+
+-- | Create an ExternalTypeNotSettable error.
+mkExternalTypeNotSettable ::
+  -- | External account ID
+  AccountId ->
+  AccountError
+mkExternalTypeNotSettable accountId =
+  ExternalTypeNotSettable
+    { externalTypeNotSettableId = accountId
     }

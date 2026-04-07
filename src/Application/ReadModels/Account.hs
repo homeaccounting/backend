@@ -63,13 +63,14 @@ import Domain.Account.Events
     AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
+    AccountTypeSet (..),
     OverdraftLimitSet (..),
   )
 import Domain.Core.Types
   ( AccountAccess (..),
+    AccountCategory (..),
     AccountId,
     AccountRole (..),
-    AccountType (..),
     Money,
     UserId,
     addMoney,
@@ -103,8 +104,8 @@ data AccountData = AccountData
     balance :: Money,
     -- | User who created the account (Owner)
     createdBy :: UserId,
-    -- | Account type (Regular or External)
-    accountType :: AccountType,
+    -- | Account category (Regular with type, or External)
+    accountCategory :: AccountCategory,
     -- | Access control list (users and their roles)
     accessList :: [AccountAccess],
     -- | Overdraft limit (Nothing = unlimited)
@@ -232,7 +233,7 @@ processEvent summaries globalEvent =
                       { name = evt.name,
                         balance = evt.initialBalance,
                         createdBy = evt.by,
-                        accountType = evt.accountType,
+                        accountCategory = evt.accountCategory,
                         accessList = [initialAccess],
                         overdraftLimit = evt.overdraftLimit,
                         version = 1
@@ -309,6 +310,19 @@ processEvent summaries globalEvent =
                 ( \summary ->
                     summary
                       { overdraftLimit = evt.overdraftLimit,
+                        version = summary.version + 1
+                      }
+                )
+                accountId
+                summaries
+        AccountTypeSetEvent evt ->
+          case mkAccountIdSafe streamUuid of
+            Nothing -> summaries
+            Just accountId ->
+              Map.adjust
+                ( \summary ->
+                    summary
+                      { accountCategory = Regular evt.accountType,
                         version = summary.version + 1
                       }
                 )
@@ -428,8 +442,11 @@ getUserRegularAccounts readModelTVar userId = do
     [ (accId, acc.name, acc.balance)
     | (accId, acc) <- allAccounts,
       acc.createdBy == userId,
-      acc.accountType == RegularAccount
+      isInternal acc.accountCategory
     ]
+  where
+    isInternal (Regular _) = True
+    isInternal External = False
 
 -- | Checks if an account exists in the read model.
 --

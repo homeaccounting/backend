@@ -42,8 +42,8 @@ import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
-  ( AccountId,
-    AccountType (..),
+  ( AccountCategory (..),
+    AccountId,
     Currency,
     ExchangeRate,
     ExpenseCategory,
@@ -174,7 +174,7 @@ initiateIncome userId targetAccountId amount incomeCat reason = do
           logWarn $ "Target account not found: " <> displayShow targetAccountId
           return $ Left $ NotFound "Account" (tshow targetAccountId)
         Just targetData ->
-          if targetData.accountType /= RegularAccount
+          if targetData.accountCategory == External
             then do
               logWarn "Target account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
@@ -240,7 +240,7 @@ initiateExpense userId sourceAccountId amount expenseCat reason = do
           logWarn $ "Source account not found: " <> displayShow sourceAccountId
           return $ Left $ NotFound "Account" (tshow sourceAccountId)
         Just sourceData ->
-          if sourceData.accountType /= RegularAccount
+          if sourceData.accountCategory == External
             then do
               logWarn "Source account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
@@ -297,7 +297,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount internalC
       logWarn $ "Source account not found: " <> displayShow sourceAccountId
       return $ Left $ NotFound "Account" (tshow sourceAccountId)
     Just sourceData ->
-      if sourceData.accountType /= RegularAccount
+      if sourceData.accountCategory == External
         then do
           logWarn "Source account is not a regular account"
           return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
@@ -308,7 +308,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount internalC
               logWarn $ "Target account not found: " <> displayShow targetAccountId
               return $ Left $ NotFound "Account" (tshow targetAccountId)
             Just targetData ->
-              if targetData.accountType /= RegularAccount
+              if targetData.accountCategory == External
                 then do
                   logWarn "Target account is not a regular account"
                   return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
