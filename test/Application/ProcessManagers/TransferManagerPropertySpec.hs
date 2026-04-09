@@ -22,7 +22,6 @@ import Domain.Account.Events
   )
 import Domain.Core.Types
   ( Currency (..),
-    TransferCategory (..),
     TransferType (..),
     unAccountId,
     unsafeAccountId,
@@ -74,15 +73,14 @@ genTransferInitiatedEvent = do
         (emptyMetadata "")
         ( TransferInitiatedEvent
             TransferInitiated
-              { fromAccountId = unsafeAccountId sourceId,
-                toAccountId = unsafeAccountId targetId,
+              { sourceAccountId = unsafeAccountId sourceId,
+                targetAccountId = unsafeAccountId targetId,
                 sourceAmount = unsafeMoney USD amt,
                 targetAmount = unsafeMoney USD amt,
                 exchangeRate = Nothing,
-                reason = "Property test transfer",
+                description = "Property test transfer",
                 by = unsafeUserId userId,
-                transferType = InternalTransfer,
-                category = InternalCat
+                transferType = Transfer
               }
         )
     )
@@ -98,7 +96,7 @@ genAccountDebitedFor txId td =
         AccountDebited
           { amount = td.sourceAmount,
             transactionId = unsafeTransactionId txId,
-            reason = td.reason
+            description = td.description
           }
     )
 
@@ -113,7 +111,7 @@ genAccountCreditedFor txId td =
         AccountCredited
           { amount = td.targetAmount,
             transactionId = unsafeTransactionId txId,
-            reason = td.reason
+            description = td.description
           }
     )
 
@@ -185,7 +183,7 @@ spec = describe "TransferManager Properties" $ do
          in case effects of
               [IssueCommandWithCompensation targetId _ _] ->
                 let StreamEvent _ _ _ (TransferInitiatedEvent ti) = initEvent
-                 in targetId === Domain.Core.Types.unAccountId ti.fromAccountId
+                 in targetId === Domain.Core.Types.unAccountId ti.sourceAccountId
               _ -> discard
 
     prop "compensation always produces exactly one effect"

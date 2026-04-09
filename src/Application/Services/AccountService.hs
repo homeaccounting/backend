@@ -49,9 +49,9 @@ import Domain.Account.Commands
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
-    AccountKind (..),
     AccountRole (..),
     AccountSubtype,
+    AccountType (..),
     Money,
     UserId,
     mkAccountId,
@@ -198,7 +198,7 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = do
               logWarn "User is not account owner"
               return $ Left $ AccountError "Only account owner can share access"
           -- Check account is not External
-          | summary.kind == External -> do
+          | summary.accountType == External -> do
               logWarn "Cannot share External account"
               return $ Left $ AccountError "External accounts cannot be shared"
           | otherwise -> do

@@ -62,7 +62,7 @@ import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
   ( AccountId,
-    AccountKind (..),
+    AccountType (..),
     DictionaryEntryId,
     DictionaryId,
     EntryName,
@@ -370,7 +370,7 @@ handleCreateAccountCurrency botState telegramId chatId name curText = do
                   { name = name,
                     initialBalance = unsafeMoney currency 0,
                     createdBy = userId,
-                    kind = Regular defaultCash,
+                    accountType = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
           result <- createAccount createCmd

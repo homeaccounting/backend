@@ -292,11 +292,11 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 {
   "id": "750e8400-e29b-41d4-a716-446655440002",
   "transferType": "transfer",
-  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
-  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+  "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+  "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 300.0,
   "category": "rebalance",
-  "reason": "Rent payment",
+  "description": "Rent payment",
   "status": "Pending",
   "failureReason": null
 }

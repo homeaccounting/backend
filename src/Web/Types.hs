@@ -84,7 +84,6 @@ module Web.Types
 
     -- * Serialization Helpers
     transferTypeToText,
-    transferCategoryToText,
   )
 where
 
@@ -101,7 +100,7 @@ import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountKind (..), AccountSubtype (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), DictionaryEntryId, EWalletProperties (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetType (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), DictionaryEntryId, EWalletProperties (..), LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -150,7 +149,7 @@ data AccountSubtypeRequest = AccountSubtypeRequest
     cardNetwork :: Maybe Text,
     provider :: Maybe Text,
     accountIdentifier :: Maybe Text,
-    assetKind :: Maybe Text,
+    assetType :: Maybe Text,
     description :: Maybe Text,
     lender :: Maybe Text,
     interestRate :: Maybe Double,
@@ -169,7 +168,7 @@ instance FromJSON AccountSubtypeRequest where
       <*> o .:? "cardNetwork"
       <*> o .:? "provider"
       <*> o .:? "accountIdentifier"
-      <*> o .:? "assetKind"
+      <*> o .:? "assetType"
       <*> o .:? "description"
       <*> o .:? "lender"
       <*> o .:? "interestRate"
@@ -187,7 +186,7 @@ instance ToJSON AccountSubtypeRequest where
           ("cardNetwork" .=) <$> r.cardNetwork,
           ("provider" .=) <$> r.provider,
           ("accountIdentifier" .=) <$> r.accountIdentifier,
-          ("assetKind" .=) <$> r.assetKind,
+          ("assetType" .=) <$> r.assetType,
           ("description" .=) <$> r.description,
           ("lender" .=) <$> r.lender,
           ("interestRate" .=) <$> r.interestRate,
@@ -295,34 +294,34 @@ instance FromJSON AccountListResponse
 -- | Request to initiate a money transfer between accounts.
 --
 -- Fields:
---  - fromAccountId: Source account UUID
---  - toAccountId: Destination account UUID
+--  - sourceAccountId: Source account UUID
+--  - targetAccountId: Destination account UUID
 --  - amount: Amount to transfer (must be positive)
---  - reason: Description of the transfer
+--  - description: Description of the transfer
 --
 -- Validation:
 --  - Both accounts must exist
 --  - Amount must be > 0
 --  - Source account must have sufficient funds
 --  - Source and destination must be different
---  - Reason should not be empty (best practice)
+--  - Description should not be empty (best practice)
 --
 -- Example JSON:
 -- @
 -- {
---  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
---  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+--  "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+--  "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
 --  "amount": 300.00,
---  "reason": "Rent payment"
+--  "description": "Rent payment"
 -- }
 -- @
 data TransferRequest
   = TransferRequest
-  { fromAccountId :: UUID,
-    toAccountId :: UUID,
+  { sourceAccountId :: UUID,
+    targetAccountId :: UUID,
     amount :: Double,
     currency :: Text,
-    reason :: Text
+    description :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -337,7 +336,7 @@ data IncomeRequest
     amount :: Double,
     currency :: Text,
     category :: Text,
-    reason :: Text
+    description :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -352,7 +351,7 @@ data ExpenseRequest
     amount :: Double,
     currency :: Text,
     category :: Text,
-    reason :: Text
+    description :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -363,11 +362,11 @@ instance FromJSON ExpenseRequest
 -- | Request to initiate an internal transfer (Regular -> Regular account).
 data InternalTransferRequest
   = InternalTransferRequest
-  { fromAccountId :: UUID,
-    toAccountId :: UUID,
+  { sourceAccountId :: UUID,
+    targetAccountId :: UUID,
     amount :: Double,
     currency :: Text,
-    reason :: Text,
+    description :: Text,
     exchangeRate :: Maybe Double
   }
   deriving (Show, Eq, Generic)
@@ -384,10 +383,10 @@ instance FromJSON InternalTransferRequest
 --
 -- Fields:
 --  - id: Unique identifier (UUID)
---  - fromAccountId: Source account UUID
---  - toAccountId: Destination account UUID
+--  - sourceAccountId: Source account UUID
+--  - targetAccountId: Destination account UUID
 --  - amount: Transfer amount
---  - reason: Transfer description
+--  - description: Transfer description
 --  - status: Current transaction status
 --  - failureReason: Reason for failure (if status is "Failed")
 --
@@ -395,10 +394,10 @@ instance FromJSON InternalTransferRequest
 -- @
 -- {
 --  "id": "750e8400-e29b-41d4-a716-446655440002",
---  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
---  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+--  "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+--  "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
 --  "amount": 300.00,
---  "reason": "Rent payment",
+--  "description": "Rent payment",
 --  "status": "Completed",
 --  "failureReason": null
 -- }
@@ -408,10 +407,10 @@ instance FromJSON InternalTransferRequest
 -- @
 -- {
 --  "id": "750e8400-e29b-41d4-a716-446655440002",
---  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
---  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+--  "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+--  "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
 --  "amount": 500.00,
---  "reason": "Bill payment",
+--  "description": "Bill payment",
 --  "status": "Failed",
 --  "failureReason": "Insufficient funds"
 -- }
@@ -419,18 +418,18 @@ instance FromJSON InternalTransferRequest
 data TransactionResponse
   = TransactionResponse
   { id :: UUID,
-    fromAccountId :: UUID,
-    toAccountId :: UUID,
+    sourceAccountId :: UUID,
+    targetAccountId :: UUID,
     sourceAmount :: Double,
     sourceCurrency :: Text,
     targetAmount :: Double,
     targetCurrency :: Text,
     exchangeRate :: Maybe Double,
-    reason :: Text,
+    description :: Text,
     status :: Text,
     failureReason :: Maybe Text,
     transferType :: Text,
-    category :: Text
+    category :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -593,7 +592,7 @@ toCreateAccountCommand createdBy CreateAccountRequest {..} = do
 -- Validates:
 --  - Amount is positive
 --  - Source and destination are different
---  - Reason is not empty (warning)
+--  - Description is not empty (warning)
 --
 -- Additional parameters:
 --  - initiatedBy: User ID of the user initiating the transfer
@@ -625,22 +624,21 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
   when (fromId == toId) $
     Left "Cannot transfer to the same account"
 
-  -- Validate reason (warning, not error)
-  when (T.null reason) $
-    Left "Transfer reason should not be empty"
+  -- Validate description (warning, not error)
+  when (T.null description) $
+    Left "Transfer description should not be empty"
 
   -- Create domain command with user who initiated
   return $
     InitiateTransfer
-      { fromAccountId = fromId,
-        toAccountId = toId,
+      { sourceAccountId = fromId,
+        targetAccountId = toId,
         sourceAmount = domainAmount,
         targetAmount = domainAmount,
         exchangeRate = Nothing,
-        reason = reason,
+        description = description,
         initiatedBy = initiatedBy,
-        transferType = InternalTransfer,
-        category = InternalCat
+        transferType = Transfer
       }
   where
     when :: Bool -> Either Text () -> Either Text ()
@@ -665,7 +663,7 @@ fromAccountData accountId AccountData {..} =
       balance = fromDomainMoney balance,
       currency = currencyToText (moneyCurrency balance),
       overdraftLimit = fmap fromDomainMoney overdraftLimit,
-      subtype = case kind of
+      subtype = case accountType of
         Regular at -> Just (fromAccountSubtype at)
         External -> Nothing,
       version = version
@@ -702,7 +700,7 @@ toAccountSubtype req = case req.type_ of
     Right $
       Asset
         AssetProperties
-          { assetKind = parseAssetKind <$> req.assetKind,
+          { assetType = parseAssetType <$> req.assetType,
             description = req.description,
             metadata = fromMaybe mempty req.metadata
           }
@@ -747,7 +745,7 @@ fromAccountSubtype (Asset props) =
   object $
     catMaybes
       [ Just ("type" .= ("asset" :: Text)),
-        ("assetKind" .=) . assetKindToText <$> props.assetKind,
+        ("assetType" .=) . assetTypeToText <$> props.assetType,
         ("description" .=) <$> props.description,
         if null props.metadata then Nothing else Just ("metadata" .= props.metadata)
       ]
@@ -773,19 +771,19 @@ cardNetworkToText Mastercard = "mastercard"
 cardNetworkToText Amex = "amex"
 cardNetworkToText (OtherCardNetwork t) = t
 
-parseAssetKind :: Text -> AssetKind
-parseAssetKind "property" = Property
-parseAssetKind "vehicle" = Vehicle
-parseAssetKind "stocks" = Stocks
-parseAssetKind "retirementFund" = RetirementFund
-parseAssetKind other = OtherAsset other
+parseAssetType :: Text -> AssetType
+parseAssetType "property" = Property
+parseAssetType "vehicle" = Vehicle
+parseAssetType "stocks" = Stocks
+parseAssetType "retirementFund" = RetirementFund
+parseAssetType other = OtherAsset other
 
-assetKindToText :: AssetKind -> Text
-assetKindToText Property = "property"
-assetKindToText Vehicle = "vehicle"
-assetKindToText Stocks = "stocks"
-assetKindToText RetirementFund = "retirementFund"
-assetKindToText (OtherAsset t) = t
+assetTypeToText :: AssetType -> Text
+assetTypeToText Property = "property"
+assetTypeToText Vehicle = "vehicle"
+assetTypeToText Stocks = "stocks"
+assetTypeToText RetirementFund = "retirementFund"
+assetTypeToText (OtherAsset t) = t
 
 parseDay :: Text -> Maybe Day
 parseDay = parseTimeM True defaultTimeLocale "%Y-%m-%d" . T.unpack
@@ -810,20 +808,20 @@ fromTransactionData :: TransactionId -> TransactionData -> TransactionResponse
 fromTransactionData txId TransactionData {..} =
   TransactionResponse
     { id = unTransactionId txId,
-      fromAccountId = unAccountId fromAccountId,
-      toAccountId = unAccountId toAccountId,
+      sourceAccountId = unAccountId sourceAccountId,
+      targetAccountId = unAccountId targetAccountId,
       sourceAmount = fromDomainMoney sourceAmount,
       sourceCurrency = T.pack (show (moneyCurrency sourceAmount)),
       targetAmount = fromDomainMoney targetAmount,
       targetCurrency = T.pack (show (moneyCurrency targetAmount)),
       exchangeRate = fmap (fromRational . exchangeRateValue) exchangeRate,
-      reason = reason,
+      description = description,
       status = fromTransactionStatus status,
       failureReason = case status of
         Failed failReason -> Just failReason
         _ -> Nothing,
       transferType = transferTypeToText transferType,
-      category = transferCategoryToText category
+      category = transferTypeCategoryText transferType
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -839,20 +837,20 @@ fromTransaction :: TransactionId -> Transaction -> TransactionResponse
 fromTransaction txId tx =
   TransactionResponse
     { id = unTransactionId txId,
-      fromAccountId = unAccountId tx.fromAccountId,
-      toAccountId = unAccountId tx.toAccountId,
+      sourceAccountId = unAccountId tx.sourceAccountId,
+      targetAccountId = unAccountId tx.targetAccountId,
       sourceAmount = fromDomainMoney tx.sourceAmount,
       sourceCurrency = T.pack (show (moneyCurrency tx.sourceAmount)),
       targetAmount = fromDomainMoney tx.targetAmount,
       targetCurrency = T.pack (show (moneyCurrency tx.targetAmount)),
       exchangeRate = fmap (fromRational . exchangeRateValue) tx.exchangeRate,
-      reason = tx.reason,
+      description = tx.description,
       status = fromTransactionStatus tx.status,
       failureReason = case tx.status of
         Failed failReason -> Just failReason
         _ -> Nothing,
       transferType = transferTypeToText tx.transferType,
-      category = transferCategoryToText tx.category
+      category = transferTypeCategoryText tx.transferType
     }
 
 -- | Converts TransactionStatus to Text representation.
@@ -877,18 +875,15 @@ fromTransactionStatus (Failed _) = "Failed"
 
 -- | Convert TransferType to lowercase text for JSON responses.
 transferTypeToText :: TransferType -> Text
-transferTypeToText Income = "income"
-transferTypeToText Expense = "expense"
-transferTypeToText InternalTransfer = "transfer"
+transferTypeToText (Income _) = "income"
+transferTypeToText (Expense _) = "expense"
+transferTypeToText Transfer = "transfer"
 
--- | Convert TransferCategory to text for JSON responses.
---
--- For dynamic categories (Income/Expense), the UUID of the DictionaryEntryId
--- is returned. Clients resolve the display name via the configuration API.
-transferCategoryToText :: TransferCategory -> Text
-transferCategoryToText (IncomeCat entryId) = T.pack $ UUID.toString $ unDictionaryEntryId entryId
-transferCategoryToText (ExpenseCat entryId) = T.pack $ UUID.toString $ unDictionaryEntryId entryId
-transferCategoryToText InternalCat = "internal"
+-- | Extract category UUID from TransferType, if present.
+transferTypeCategoryText :: TransferType -> Maybe Text
+transferTypeCategoryText (Income entryId) = Just $ T.pack $ UUID.toString $ unDictionaryEntryId entryId
+transferTypeCategoryText (Expense entryId) = Just $ T.pack $ UUID.toString $ unDictionaryEntryId entryId
+transferTypeCategoryText Transfer = Nothing
 
 -- -----------------------------------------------------------------------------
 -- Category Parsing

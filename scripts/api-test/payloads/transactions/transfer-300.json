@@ -1,7 +1,7 @@
 {
-  "fromAccountId": "REPLACE_WITH_SOURCE_ACCOUNT_ID",
-  "toAccountId": "REPLACE_WITH_TARGET_ACCOUNT_ID",
+  "sourceAccountId": "REPLACE_WITH_SOURCE_ACCOUNT_ID",
+  "targetAccountId": "REPLACE_WITH_TARGET_ACCOUNT_ID",
   "amount": 300.0,
   "currency": "USD",
-  "reason": "Rent payment"
+  "description": "Rent payment"
 }

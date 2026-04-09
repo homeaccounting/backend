@@ -40,7 +40,6 @@ import Application.Services.AuthorizationService
     TransferDenialReason (..),
     canTransfer,
   )
-import Data.Either (isLeft)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
@@ -48,11 +47,10 @@ import Domain.Account.CommandHandler (AccountCommand (CreateAccountAccountComman
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
   ( AccountAccess (..),
-    AccountKind (..),
     AccountRole (..),
+    AccountType (..),
     Currency (..),
     DictionaryEntryId,
-    TransferCategory (..),
     TransferType (..),
     defaultCash,
     unsafeAccountId,
@@ -108,7 +106,7 @@ setupRegularAccounts = do
           { name = "Source Account",
             initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
-            kind = Regular defaultCash,
+            accountType = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -120,7 +118,7 @@ setupRegularAccounts = do
           { name = "Target Account",
             initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
-            kind = Regular defaultCash,
+            accountType = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -144,7 +142,7 @@ setupRegularAccountsWithPM = do
           { name = "Source Account",
             initialBalance = unsafeMoney USD 1000,
             createdBy = unsafeUserId userUuid,
-            kind = Regular defaultCash,
+            accountType = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -155,7 +153,7 @@ setupRegularAccountsWithPM = do
           { name = "Target Account",
             initialBalance = unsafeMoney USD 500,
             createdBy = unsafeUserId userUuid,
-            kind = Regular defaultCash,
+            accountType = Regular defaultCash,
             overdraftLimit = Nothing
           }
 
@@ -186,15 +184,14 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
     applyTransactionCommand writer reader txUuid
       $ InitiateTransferTransactionCommand
         InitiateTransfer
-          { fromAccountId = unsafeAccountId fromUuid,
-            toAccountId = unsafeAccountId toUuid,
+          { sourceAccountId = unsafeAccountId fromUuid,
+            targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney USD amt,
             targetAmount = unsafeMoney USD amt,
             exchangeRate = Nothing,
-            reason = rsn,
+            description = rsn,
             initiatedBy = unsafeUserId userUuid,
-            transferType = InternalTransfer,
-            category = InternalCat
+            transferType = Transfer
           }
 
   -- Step 2: Complete the transfer (simulates TransferManager behavior)
@@ -224,15 +221,14 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
     applyTransactionCommand writer reader txUuid
       $ InitiateTransferTransactionCommand
         InitiateTransfer
-          { fromAccountId = unsafeAccountId fromUuid,
-            toAccountId = unsafeAccountId toUuid,
+          { sourceAccountId = unsafeAccountId fromUuid,
+            targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney USD amt,
             targetAmount = unsafeMoney USD amt,
             exchangeRate = Nothing,
-            reason = rsn,
+            description = rsn,
             initiatedBy = unsafeUserId userUuid,
-            transferType = InternalTransfer,
-            category = InternalCat
+            transferType = Transfer
           }
 
   return txUuid
@@ -269,8 +265,8 @@ successfulTransferSpec =
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model"
         Just txData -> do
-          txData.fromAccountId `shouldBe` unsafeAccountId acct1Uuid
-          txData.toAccountId `shouldBe` unsafeAccountId acct2Uuid
+          txData.sourceAccountId `shouldBe` unsafeAccountId acct1Uuid
+          txData.targetAccountId `shouldBe` unsafeAccountId acct2Uuid
           txData.sourceAmount `shouldBe` unsafeMoney USD 200
           txData.status `shouldBe` Completed
 
@@ -298,7 +294,7 @@ incomeFlowSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = External,
+                accountType = External,
                 overdraftLimit = Nothing
               }
 
@@ -310,7 +306,7 @@ incomeFlowSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -323,10 +319,10 @@ incomeFlowSpec =
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
-          txData.fromAccountId `shouldBe` unsafeAccountId extUuid
-          txData.toAccountId `shouldBe` unsafeAccountId regUuid
+          txData.sourceAccountId `shouldBe` unsafeAccountId extUuid
+          txData.targetAccountId `shouldBe` unsafeAccountId regUuid
           txData.sourceAmount `shouldBe` unsafeMoney USD 500
-          txData.reason `shouldBe` "Salary"
+          txData.description `shouldBe` "Salary"
           txData.status `shouldBe` Completed
 
 -- -----------------------------------------------------------------------------
@@ -353,7 +349,7 @@ expenseFlowSpec =
               { name = "Checking",
                 initialBalance = unsafeMoney USD 1000,
                 createdBy = unsafeUserId userUuid,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -365,7 +361,7 @@ expenseFlowSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = External,
+                accountType = External,
                 overdraftLimit = Nothing
               }
 
@@ -378,10 +374,10 @@ expenseFlowSpec =
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
-          txData.fromAccountId `shouldBe` unsafeAccountId regUuid
-          txData.toAccountId `shouldBe` unsafeAccountId extUuid
+          txData.sourceAccountId `shouldBe` unsafeAccountId regUuid
+          txData.targetAccountId `shouldBe` unsafeAccountId extUuid
           txData.sourceAmount `shouldBe` unsafeMoney USD 300
-          txData.reason `shouldBe` "Groceries"
+          txData.description `shouldBe` "Groceries"
           txData.status `shouldBe` Completed
 
 -- -----------------------------------------------------------------------------
@@ -401,13 +397,13 @@ authorizationSpec =
       let sourceOwnerData =
             AccountAuthData
               { createdBy = userId,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = [AccountAccess userId Owner]
               }
           targetEditorData =
             AccountAuthData
               { createdBy = otherUser,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceOwnerData targetEditorData srcId tgtId
@@ -417,7 +413,7 @@ authorizationSpec =
       let sourceEditorData =
             AccountAuthData
               { createdBy = otherUser,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceEditorData targetEditorData srcId tgtId
@@ -427,7 +423,7 @@ authorizationSpec =
       let targetOwnerData =
             AccountAuthData
               { createdBy = userId,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = [AccountAccess userId Owner]
               }
       canTransfer userId sourceOwnerData targetOwnerData srcId tgtId
@@ -443,13 +439,13 @@ authorizationSpec =
       let sourceViewerData =
             AccountAuthData
               { createdBy = otherUser,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = [AccountAccess userId Viewer]
               }
           targetEditorData =
             AccountAuthData
               { createdBy = otherUser,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = [AccountAccess userId Editor]
               }
       canTransfer userId sourceViewerData targetEditorData srcId tgtId
@@ -459,13 +455,13 @@ authorizationSpec =
       let sourceOwnerData =
             AccountAuthData
               { createdBy = userId,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = [AccountAccess userId Owner]
               }
           targetNoAccessData =
             AccountAuthData
               { createdBy = otherUser,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = []
               }
       canTransfer userId sourceOwnerData targetNoAccessData srcId tgtId
@@ -475,7 +471,7 @@ authorizationSpec =
       let sourceNoAccessData =
             AccountAuthData
               { createdBy = otherUser,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 accessList = []
               }
       canTransfer userId sourceNoAccessData targetEditorData srcId tgtId
@@ -545,7 +541,7 @@ processManagerDrivenSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = External,
+                accountType = External,
                 overdraftLimit = Nothing
               }
 
@@ -557,7 +553,7 @@ processManagerDrivenSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -653,7 +649,7 @@ categorizedTransferSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = External,
+                accountType = External,
                 overdraftLimit = Nothing
               }
 
@@ -665,7 +661,7 @@ categorizedTransferSpec =
               { name = "Wallet",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -675,25 +671,23 @@ categorizedTransferSpec =
         applyTransactionCommand writer reader txUuid
           $ InitiateTransferTransactionCommand
             InitiateTransfer
-              { fromAccountId = unsafeAccountId extUuid,
-                toAccountId = unsafeAccountId regUuid,
+              { sourceAccountId = unsafeAccountId extUuid,
+                targetAccountId = unsafeAccountId regUuid,
                 sourceAmount = unsafeMoney USD 3000,
                 targetAmount = unsafeMoney USD 3000,
                 exchangeRate = Nothing,
-                reason = "Monthly salary",
+                description = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
-                transferType = Income,
-                category = IncomeCat testSalaryCatId
+                transferType = Income testSalaryCatId
               }
 
-      -- Verify transaction read model has correct type and category
+      -- Verify transaction read model has correct type
       let txReadModel = env.transactionReadModel
       maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` Income
-          txData.category `shouldBe` IncomeCat testSalaryCatId
+          txData.transferType `shouldBe` Income testSalaryCatId
           txData.status `shouldBe` Completed
 
       -- Verify account balances
@@ -727,7 +721,7 @@ categorizedTransferSpec =
               { name = "Checking",
                 initialBalance = unsafeMoney USD 5000,
                 createdBy = unsafeUserId userUuid,
-                kind = Regular defaultCash,
+                accountType = Regular defaultCash,
                 overdraftLimit = Nothing
               }
 
@@ -739,7 +733,7 @@ categorizedTransferSpec =
               { name = "External",
                 initialBalance = unsafeMoney USD 0,
                 createdBy = unsafeUserId userUuid,
-                kind = External,
+                accountType = External,
                 overdraftLimit = Nothing
               }
 
@@ -749,25 +743,23 @@ categorizedTransferSpec =
         applyTransactionCommand writer reader txUuid
           $ InitiateTransferTransactionCommand
             InitiateTransfer
-              { fromAccountId = unsafeAccountId regUuid,
-                toAccountId = unsafeAccountId extUuid,
+              { sourceAccountId = unsafeAccountId regUuid,
+                targetAccountId = unsafeAccountId extUuid,
                 sourceAmount = unsafeMoney USD 150,
                 targetAmount = unsafeMoney USD 150,
                 exchangeRate = Nothing,
-                reason = "Grocery shopping",
+                description = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
-                transferType = Expense,
-                category = ExpenseCat testFoodCatId
+                transferType = Expense testFoodCatId
               }
 
-      -- Verify transaction read model has correct type and category
+      -- Verify transaction read model has correct type
       let txReadModel = env.transactionReadModel
       maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` Expense
-          txData.category `shouldBe` ExpenseCat testFoodCatId
+          txData.transferType `shouldBe` Expense testFoodCatId
           txData.status `shouldBe` Completed
 
       -- Verify account balances
@@ -784,7 +776,7 @@ categorizedTransferSpec =
         Just extData ->
           extData.balance `shouldBe` unsafeMoney USD 150
 
-    it "internal transfer with InternalCat category completes correctly" $ do
+    it "internal transfer completes correctly" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
 
       -- Initiate internal transfer
@@ -795,53 +787,21 @@ categorizedTransferSpec =
         applyTransactionCommand writer reader txUuid
           $ InitiateTransferTransactionCommand
             InitiateTransfer
-              { fromAccountId = unsafeAccountId acct1Uuid,
-                toAccountId = unsafeAccountId acct2Uuid,
+              { sourceAccountId = unsafeAccountId acct1Uuid,
+                targetAccountId = unsafeAccountId acct2Uuid,
                 sourceAmount = unsafeMoney USD 300,
                 targetAmount = unsafeMoney USD 300,
                 exchangeRate = Nothing,
-                reason = "Move to savings",
+                description = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
-                transferType = InternalTransfer,
-                category = InternalCat
+                transferType = Transfer
               }
 
-      -- Verify transaction read model has correct type and category
+      -- Verify transaction read model has correct type
       let txReadModel = env.transactionReadModel
       maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
       case maybeTx of
         Nothing -> expectationFailure "Internal transfer not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` InternalTransfer
-          txData.category `shouldBe` InternalCat
+          txData.transferType `shouldBe` Transfer
           txData.status `shouldBe` Completed
-
-    it "rejects transfer with mismatched type and category" $ do
-      (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
-
-      -- Attempt Income type with ExpenseCat testFoodCatId (mismatch)
-      txUuid <- UUID.nextRandom
-      let writer = env.eventStoreWriter
-          reader = env.eventStoreReader
-      result <-
-        applyTransactionCommand writer reader txUuid
-          $ InitiateTransferTransactionCommand
-            InitiateTransfer
-              { fromAccountId = unsafeAccountId acct1Uuid,
-                toAccountId = unsafeAccountId acct2Uuid,
-                sourceAmount = unsafeMoney USD 100,
-                targetAmount = unsafeMoney USD 100,
-                exchangeRate = Nothing,
-                reason = "Mismatched category",
-                initiatedBy = unsafeUserId userUuid,
-                transferType = Income,
-                category = ExpenseCat testFoodCatId
-              }
-
-      -- Should be rejected
-      result `shouldSatisfy` isLeft
-
-      -- Transaction should not exist in read model
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
-      maybeTx `shouldBe` Nothing

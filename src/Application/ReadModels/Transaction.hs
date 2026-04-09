@@ -53,7 +53,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, ExchangeRate, Money, TransactionId, TransferCategory, TransferType, mkTransactionIdSafe)
+import Domain.Core.Types (AccountId, ExchangeRate, Money, TransactionId, TransferType, mkTransactionIdSafe)
 import Domain.Models
   ( AccountingEvent (TransferCompletedEvent, TransferFailedEvent, TransferInitiatedEvent),
   )
@@ -76,15 +76,14 @@ import Safe (maximumDef)
 -- without requiring event replay. It's optimized for read operations.
 data TransactionData
   = TransactionData
-  { fromAccountId :: AccountId,
-    toAccountId :: AccountId,
+  { sourceAccountId :: AccountId,
+    targetAccountId :: AccountId,
     sourceAmount :: Money,
     targetAmount :: Money,
     exchangeRate :: Maybe ExchangeRate,
-    reason :: Text,
+    description :: Text,
     status :: TransactionStatus,
-    transferType :: TransferType,
-    category :: TransferCategory
+    transferType :: TransferType
   }
   deriving (Show, Eq, Generic)
 
@@ -187,15 +186,14 @@ processEvent summaries globalEvent =
               -- The merge function keeps the existing entry if one already exists.
               let newEntry =
                     TransactionData
-                      { fromAccountId = evt.fromAccountId,
-                        toAccountId = evt.toAccountId,
+                      { sourceAccountId = evt.sourceAccountId,
+                        targetAccountId = evt.targetAccountId,
                         sourceAmount = evt.sourceAmount,
                         targetAmount = evt.targetAmount,
                         exchangeRate = evt.exchangeRate,
-                        reason = evt.reason,
+                        description = evt.description,
                         status = Pending,
-                        transferType = evt.transferType,
-                        category = evt.category
+                        transferType = evt.transferType
                       }
                in Map.insertWith (\_ existing -> existing) transactionId newEntry summaries
         TransferCompletedEvent _evt ->

@@ -458,7 +458,7 @@ test_full_workflow() {
     TRANSFER_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"fromAccountId\": \"$SAVINGS_ID\", \"toAccountId\": \"$CHECKING_ID\", \"amount\": 200.0, \"currency\": \"USD\", \"category\": \"other\", \"reason\": \"Telegram test transfer\"}")
+        -d "{\"sourceAccountId\": \"$SAVINGS_ID\", \"targetAccountId\": \"$CHECKING_ID\", \"amount\": 200.0, \"currency\": \"USD\", \"category\": \"other\", \"description\": \"Telegram test transfer\"}")
 
     TRANSACTION_ID=$(echo "$TRANSFER_RESPONSE" | jq -r '.id')
     echo "$TRANSFER_RESPONSE" | jq '.'

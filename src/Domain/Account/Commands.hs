@@ -44,7 +44,7 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountKind, AccountRole, AccountSubtype, Currency, Money, TransactionId, UserId)
+import Domain.Core.Types (AccountRole, AccountSubtype, AccountType, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -94,8 +94,8 @@ data CreateAccount = CreateAccount
     initialBalance :: Money,
     -- | User who is creating the account (becomes Owner)
     createdBy :: UserId,
-    -- | Account kind (Regular with subtype, or External)
-    kind :: AccountKind,
+    -- | Account type (Regular with subtype, or External)
+    accountType :: AccountType,
     -- | Optional overdraft limit (Nothing = use default for account type)
     overdraftLimit :: Maybe (Maybe Money)
   }
@@ -167,8 +167,8 @@ data DebitAccount = DebitAccount
     amount :: Money,
     -- | Transaction ID for saga correlation
     transactionId :: TransactionId,
-    -- | Reason for the debit
-    reason :: Text
+    -- | Description for the debit
+    description :: Text
   }
   deriving (Show, Eq)
 
@@ -190,8 +190,8 @@ data CreditAccount = CreditAccount
     amount :: Money,
     -- | Transaction ID for saga correlation
     transactionId :: TransactionId,
-    -- | Reason for the credit
-    reason :: Text
+    -- | Description for the credit
+    description :: Text
   }
   deriving (Show, Eq)
 

@@ -49,7 +49,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
+import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -98,10 +98,10 @@ instance FromJSON TransactionStatus
 -- applying events through the projection.
 --
 -- Fields:
---   - fromAccountId: Source account for the transfer
---   - toAccountId: Destination account for the transfer
+--   - sourceAccountId: Source account for the transfer
+--   - targetAccountId: Destination account for the transfer
 --   - amount: Amount being transferred
---   - reason: Description/reason for the transfer
+--   - description: Description/reason for the transfer
 --   - status: Current status (Pending, Completed, Failed)
 --   - initiatedBy: User who initiated the transfer (for audit trail)
 --
@@ -116,30 +116,28 @@ instance FromJSON TransactionStatus
 --   Pending -[TransferFailed]-> Failed
 --
 -- Example:
--- >>> let tx = Transaction sourceId targetId (Money 500.0) "Rent" Pending userId
+-- >>> let tx = Transaction sourceId targetId (Money 500.0) (Money 500.0) Nothing "Rent" Pending userId
 -- >>> tx ^. #status
 -- Pending
 data Transaction = Transaction
   { -- | Account from which money is being debited
-    fromAccountId :: AccountId,
+    sourceAccountId :: AccountId,
     -- | Account to which money is being credited
-    toAccountId :: AccountId,
+    targetAccountId :: AccountId,
     -- | Amount debited from source account
     sourceAmount :: Money,
     -- | Amount credited to target account
     targetAmount :: Money,
     -- | Exchange rate used (Nothing if same-currency)
     exchangeRate :: Maybe ExchangeRate,
-    -- | Reason or description for the transfer
-    reason :: Text,
+    -- | Description of the transfer
+    description :: Text,
     -- | Current status of the transaction
     status :: TransactionStatus,
     -- | User who initiated the transfer
     initiatedBy :: UserId,
-    -- | Type of transfer (Income, Expense, InternalTransfer)
-    transferType :: TransferType,
-    -- | Category of the transfer
-    category :: TransferCategory
+    -- | Type of transfer (Income, Expense, Transfer)
+    transferType :: TransferType
   }
   deriving (Show, Eq)
 
@@ -160,15 +158,15 @@ deriveJSON defaultOptions ''Transaction
 -- We use dummy values that will be overwritten by the first event:
 --   - Empty UUIDs for account IDs and user ID (will be set by TransferInitiated)
 --   - Zero amount (will be set by TransferInitiated)
---   - Empty reason (will be set by TransferInitiated)
+--   - Empty description (will be set by TransferInitiated)
 --   - Pending status (initial status)
 transactionDefault :: Transaction
 transactionDefault =
   Transaction
-    { fromAccountId = case mkAccountId nil of
+    { sourceAccountId = case mkAccountId nil of
         Right aid -> aid
         Left _ -> error "transactionDefault: mkAccountId should never fail for nil UUID",
-      toAccountId = case mkAccountId nil of
+      targetAccountId = case mkAccountId nil of
         Right aid -> aid
         Left _ -> error "transactionDefault: mkAccountId should never fail for nil UUID",
       sourceAmount = case mkDefaultMoney 0 of
@@ -178,11 +176,10 @@ transactionDefault =
         Right m -> m
         Left _ -> error "transactionDefault: mkDefaultMoney 0 should never fail",
       exchangeRate = Nothing,
-      reason = "",
+      description = "",
       status = Pending,
       initiatedBy = unsafeUserId nil,
-      transferType = Income,
-      category = IncomeCat (unsafeDictionaryEntryId nil)
+      transferType = Income (unsafeDictionaryEntryId nil)
     }
 
 -- -----------------------------------------------------------------------------
@@ -220,7 +217,7 @@ deriving instance Eq TransactionEvent
 -- to the same state always produces the same result.
 --
 -- Event Handling:
---  - TransferInitiated: Initialize transaction with accounts, amount, reason, and Pending status
+--  - TransferInitiated: Initialize transaction with accounts, amount, description, and Pending status
 --  - TransferCompleted: Update status to Completed (terminal state)
 --  - TransferFailed: Update status to Failed with reason (terminal state)
 --
@@ -243,26 +240,24 @@ handleTransactionEvent :: Transaction -> TransactionEvent -> Transaction
 handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
   -- Initialize a new transaction with transfer details
   transaction
-    & #fromAccountId
-    .~ evt.fromAccountId
-    & #toAccountId
-    .~ evt.toAccountId
+    & #sourceAccountId
+    .~ evt.sourceAccountId
+    & #targetAccountId
+    .~ evt.targetAccountId
     & #sourceAmount
     .~ evt.sourceAmount
     & #targetAmount
     .~ evt.targetAmount
     & #exchangeRate
     .~ evt.exchangeRate
-    & #reason
-    .~ evt.reason
+    & #description
+    .~ evt.description
     & #status
     .~ Pending
     & #initiatedBy
     .~ evt.by
     & #transferType
     .~ evt.transferType
-    & #category
-    .~ evt.category
 handleTransactionEvent transaction (TransferCompletedTransactionEvent TransferCompleted) =
   -- Mark transaction as completed
   -- Only update if currently Pending (idempotent for other states)
@@ -295,7 +290,7 @@ handleTransactionEvent transaction (TransferFailedTransactionEvent evt) =
 -- Usage with eventium:
 -- >>> let events = [TransferInitiatedTransactionEvent (TransferInitiated sourceId targetId (Money 500.0) "Rent")]
 -- >>> latestProjection transactionProjection events
--- Transaction {fromAccountId = sourceId, ..., status = Pending}
+-- Transaction {sourceAccountId = sourceId, ..., status = Pending}
 --
 -- Mathematical Properties:
 --  - Identity: latestProjection p [] == projectionSeed p

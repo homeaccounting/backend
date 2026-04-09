@@ -109,8 +109,8 @@ data TransferData = TransferData
     sourceAmount :: Money,
     -- | Amount credited to target account
     targetAmount :: Money,
-    -- | Reason for the transfer
-    reason :: Text,
+    -- | Description of the transfer
+    description :: Text,
     -- | Current phase of the transfer saga
     phase :: TransferPhase
   }
@@ -153,11 +153,11 @@ handleTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)
             & #transfers
             % at txId
             ?~ TransferData
-              { sourceAccount = evt.fromAccountId,
-                targetAccount = evt.toAccountId,
+              { sourceAccount = evt.sourceAccountId,
+                targetAccount = evt.targetAccountId,
                 sourceAmount = evt.sourceAmount,
                 targetAmount = evt.targetAmount,
-                reason = evt.reason,
+                description = evt.description,
                 phase = AwaitingDebit
               }
         Just td
@@ -201,14 +201,14 @@ reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt
         Just td
           | td.phase == AwaitingDebit ->
               [ IssueCommandWithCompensation
-                  (unAccountId evt.fromAccountId)
+                  (unAccountId evt.sourceAccountId)
                   ( embedWith
                       accountCommandEmbedding
                       ( DebitAccountAccountCommand
                           DebitAccount
                             { amount = evt.sourceAmount,
                               transactionId = txId,
-                              reason = evt.reason
+                              description = evt.description
                             }
                       )
                   )
@@ -238,7 +238,7 @@ reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
                   CreditAccount
                     { amount = targetAmount,
                       transactionId = evt.transactionId,
-                      reason = reason
+                      description = description
                     }
               )
           ),

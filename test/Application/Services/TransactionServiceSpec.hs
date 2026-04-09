@@ -41,23 +41,23 @@ testUserUuid1 = UUID.fromWords 1 0 0 0
 testUserId1 :: UserId
 testUserId1 = mockUserId testUserUuid1
 
-mkCreateAccount :: Text -> UserId -> AccountKind -> CreateAccount
-mkCreateAccount acctName userId kind =
+mkCreateAccount :: Text -> UserId -> AccountType -> CreateAccount
+mkCreateAccount acctName userId accountType =
   CreateAccount
     { name = acctName,
       initialBalance = mockMoney 5000,
       createdBy = userId,
-      kind = kind,
+      accountType = accountType,
       overdraftLimit = Nothing
     }
 
-mkCreateAccountWith :: Currency -> Rational -> Text -> UserId -> AccountKind -> CreateAccount
-mkCreateAccountWith currency balance acctName userId kind =
+mkCreateAccountWith :: Currency -> Rational -> Text -> UserId -> AccountType -> CreateAccount
+mkCreateAccountWith currency balance acctName userId accountType =
   CreateAccount
     { name = acctName,
       initialBalance = mockMoneyWith currency balance,
       createdBy = userId,
-      kind = kind,
+      accountType = accountType,
       overdraftLimit = Nothing
     }
 
@@ -120,38 +120,36 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let transferCmd =
             InitiateTransfer
-              { fromAccountId = fromAccId,
-                toAccountId = toAccId,
+              { sourceAccountId = fromAccId,
+                targetAccountId = toAccId,
                 sourceAmount = mockMoney 100,
                 targetAmount = mockMoney 100,
                 exchangeRate = Nothing,
-                reason = "Test transfer",
+                description = "Test transfer",
                 initiatedBy = testUserId1,
-                transferType = InternalTransfer,
-                category = InternalCat
+                transferType = Transfer
               }
       result <- runAppM env $ initiateTransfer transferCmd
       shouldBeRight result
       let (_, summary) = fromRight' result
-      summary.fromAccountId `shouldBe` fromAccId
-      summary.toAccountId `shouldBe` toAccId
+      summary.sourceAccountId `shouldBe` fromAccId
+      summary.targetAccountId `shouldBe` toAccId
       summary.sourceAmount `shouldBe` mockMoney 100
-      summary.reason `shouldBe` "Test transfer"
+      summary.description `shouldBe` "Test transfer"
 
   describe "getTransaction" $ do
     it "retrieves a previously created transaction" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let transferCmd =
             InitiateTransfer
-              { fromAccountId = fromAccId,
-                toAccountId = toAccId,
+              { sourceAccountId = fromAccId,
+                targetAccountId = toAccId,
                 sourceAmount = mockMoney 250,
                 targetAmount = mockMoney 250,
                 exchangeRate = Nothing,
-                reason = "Retrieve test",
+                description = "Retrieve test",
                 initiatedBy = testUserId1,
-                transferType = InternalTransfer,
-                category = InternalCat
+                transferType = Transfer
               }
       createResult <- runAppM env $ initiateTransfer transferCmd
       let (txId, _) = fromRight' createResult
@@ -160,7 +158,7 @@ spec = describe "TransactionService" $ do
       let (retId, summary) = fromRight' result
       retId `shouldBe` txId
       summary.sourceAmount `shouldBe` mockMoney 250
-      summary.reason `shouldBe` "Retrieve test"
+      summary.description `shouldBe` "Retrieve test"
 
     it "returns NotFound for non-existent transaction" $ do
       env <- createTestAppEnv
@@ -176,15 +174,14 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let mkTransferCmd amt rsn =
             InitiateTransfer
-              { fromAccountId = fromAccId,
-                toAccountId = toAccId,
+              { sourceAccountId = fromAccId,
+                targetAccountId = toAccId,
                 sourceAmount = mockMoney amt,
                 targetAmount = mockMoney amt,
                 exchangeRate = Nothing,
-                reason = rsn,
+                description = rsn,
                 initiatedBy = testUserId1,
-                transferType = InternalTransfer,
-                category = InternalCat
+                transferType = Transfer
               }
       result1 <- runAppM env $ initiateTransfer (mkTransferCmd 100 "First")
       result2 <- runAppM env $ initiateTransfer (mkTransferCmd 200 "Second")
@@ -199,8 +196,8 @@ spec = describe "TransactionService" $ do
 
       let (_, s1) = fromRight' getResult1
       let (_, s2) = fromRight' getResult2
-      s1.reason `shouldBe` "First"
-      s2.reason `shouldBe` "Second"
+      s1.description `shouldBe` "First"
+      s2.description `shouldBe` "Second"
 
   describe "initiateInternalTransfer (cross-currency)" $ do
     it "converts USD to EUR using cached exchange rate" $ do

@@ -51,7 +51,7 @@ import qualified Data.Text as T
 import Domain.Account.Commands
 import Domain.Account.Events
 import Domain.Account.Projection
-import Domain.Core.Types (AccountKind (..), AccountSubtype (..), moneyCurrency, unMoney, unsafeMoney)
+import Domain.Core.Types (AccountSubtype (..), AccountType (..), moneyCurrency, unMoney, unsafeMoney)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
@@ -149,7 +149,7 @@ handleAccountCommand account (CreateAccountAccountCommand CreateAccount {..})
         _ -> Right ()
         >> let resolvedLimit = case overdraftLimit of
                  Just explicit -> explicit
-                 Nothing -> case kind of
+                 Nothing -> case accountType of
                    External -> Nothing
                    Regular (Loan _) -> Nothing
                    Regular _ -> Just (unsafeMoney (moneyCurrency initialBalance) 0)
@@ -159,14 +159,14 @@ handleAccountCommand account (CreateAccountAccountCommand CreateAccount {..})
                        { name = name,
                          initialBalance = initialBalance,
                          by = createdBy,
-                         kind = kind,
+                         accountType = accountType,
                          overdraftLimit = resolvedLimit
                        }
                  ]
 -- Handle ShareAccount command
 handleAccountCommand account (ShareAccountAccountCommand ShareAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
-  | account ^. #kind == External = Left ExternalAccountCannotBeShared
+  | account ^. #accountType == External = Left ExternalAccountCannotBeShared
   | not (isOwner grantedBy account) = Left NotAccountOwner
   | userId == grantedBy = Left CannotShareWithSelf
   | otherwise =
@@ -204,7 +204,7 @@ handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
                 AccountDebited
                   { amount = amount,
                     transactionId = transactionId,
-                    reason = reason
+                    description = description
                   }
             ]
         Just limit ->
@@ -217,7 +217,7 @@ handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
                         AccountDebited
                           { amount = amount,
                             transactionId = transactionId,
-                            reason = reason
+                            description = description
                           }
                     ]
                 else Left InsufficientFunds
@@ -248,7 +248,7 @@ handleAccountCommand account (SetOverdraftLimitAccountCommand SetOverdraftLimit 
 -- Handle SetAccountSubtype command
 handleAccountCommand account (SetAccountSubtypeAccountCommand SetAccountSubtype {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
-  | account ^. #kind == External = Left ExternalTypeNotSettable
+  | account ^. #accountType == External = Left ExternalTypeNotSettable
   | not (isOwner setBy account) = Left NotAccountOwner
   | otherwise =
       Right
@@ -273,7 +273,7 @@ handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
             AccountCredited
               { amount = amount,
                 transactionId = transactionId,
-                reason = reason
+                description = description
               }
         ]
 

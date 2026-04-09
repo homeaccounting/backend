@@ -69,8 +69,8 @@ import Domain.Account.Events
 import Domain.Core.Types
   ( AccountAccess (..),
     AccountId,
-    AccountKind (..),
     AccountRole (..),
+    AccountType (..),
     Money,
     UserId,
     addMoney,
@@ -105,7 +105,7 @@ data AccountData = AccountData
     -- | User who created the account (Owner)
     createdBy :: UserId,
     -- | Account category (Regular with type, or External)
-    kind :: AccountKind,
+    accountType :: AccountType,
     -- | Access control list (users and their roles)
     accessList :: [AccountAccess],
     -- | Overdraft limit (Nothing = unlimited)
@@ -233,7 +233,7 @@ processEvent summaries globalEvent =
                       { name = evt.name,
                         balance = evt.initialBalance,
                         createdBy = evt.by,
-                        kind = evt.kind,
+                        accountType = evt.accountType,
                         accessList = [initialAccess],
                         overdraftLimit = evt.overdraftLimit,
                         version = 1
@@ -322,7 +322,7 @@ processEvent summaries globalEvent =
               Map.adjust
                 ( \summary ->
                     summary
-                      { kind = Regular evt.subtype,
+                      { accountType = Regular evt.subtype,
                         version = summary.version + 1
                       }
                 )
@@ -442,7 +442,7 @@ getUserRegularAccounts readModelTVar userId = do
     [ (accId, acc.name, acc.balance)
     | (accId, acc) <- allAccounts,
       acc.createdBy == userId,
-      isRegular acc.kind
+      isRegular acc.accountType
     ]
   where
     isRegular (Regular _) = True

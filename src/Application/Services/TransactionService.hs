@@ -43,13 +43,12 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
-    AccountKind (..),
+    AccountType (..),
     Currency,
     DictionaryEntryId,
     ExchangeRate,
     Money,
     TransactionId,
-    TransferCategory (..),
     TransferType (..),
     UserId,
     convert,
@@ -151,7 +150,7 @@ initiateIncome ::
   DictionaryEntryId ->
   Text ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount categoryEntryId reason = do
+initiateIncome userId targetAccountId amount categoryEntryId description = do
   logInfo "Initiating income transfer..."
 
   -- 1. Look up user's External account
@@ -172,7 +171,7 @@ initiateIncome userId targetAccountId amount categoryEntryId reason = do
           logWarn $ "Target account not found: " <> displayShow targetAccountId
           return $ Left $ NotFound "Account" (tshow targetAccountId)
         Just targetData ->
-          if targetData.kind == External
+          if targetData.accountType == External
             then do
               logWarn "Target account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
@@ -193,15 +192,14 @@ initiateIncome userId targetAccountId amount categoryEntryId reason = do
                     Right (srcAmt, tgtAmt, rate) -> do
                       let cmd =
                             InitiateTransfer
-                              { fromAccountId = externalAccId,
-                                toAccountId = targetAccountId,
+                              { sourceAccountId = externalAccId,
+                                targetAccountId = targetAccountId,
                                 sourceAmount = srcAmt,
                                 targetAmount = tgtAmt,
                                 exchangeRate = rate,
-                                reason = reason,
+                                description = description,
                                 initiatedBy = userId,
-                                transferType = Income,
-                                category = IncomeCat categoryEntryId
+                                transferType = Income categoryEntryId
                               }
                       initiateTransfer cmd
 
@@ -217,7 +215,7 @@ initiateExpense ::
   DictionaryEntryId ->
   Text ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount categoryEntryId reason = do
+initiateExpense userId sourceAccountId amount categoryEntryId description = do
   logInfo "Initiating expense transfer..."
 
   -- 1. Look up user's External account
@@ -238,7 +236,7 @@ initiateExpense userId sourceAccountId amount categoryEntryId reason = do
           logWarn $ "Source account not found: " <> displayShow sourceAccountId
           return $ Left $ NotFound "Account" (tshow sourceAccountId)
         Just sourceData ->
-          if sourceData.kind == External
+          if sourceData.accountType == External
             then do
               logWarn "Source account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
@@ -259,15 +257,14 @@ initiateExpense userId sourceAccountId amount categoryEntryId reason = do
                     Right (srcAmt, tgtAmt, rate) -> do
                       let cmd =
                             InitiateTransfer
-                              { fromAccountId = sourceAccountId,
-                                toAccountId = externalAccId,
+                              { sourceAccountId = sourceAccountId,
+                                targetAccountId = externalAccId,
                                 sourceAmount = srcAmt,
                                 targetAmount = tgtAmt,
                                 exchangeRate = rate,
-                                reason = reason,
+                                description = description,
                                 initiatedBy = userId,
-                                transferType = Expense,
-                                category = ExpenseCat categoryEntryId
+                                transferType = Expense categoryEntryId
                               }
                       initiateTransfer cmd
 
@@ -283,7 +280,7 @@ initiateInternalTransfer ::
   Text ->
   Maybe Rational ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateInternalTransfer userId sourceAccountId targetAccountId amount reason maybeUserRate = do
+initiateInternalTransfer userId sourceAccountId targetAccountId amount description maybeUserRate = do
   logInfo "Initiating internal transfer..."
 
   -- 1. Validate both accounts exist and are Regular
@@ -294,7 +291,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount reason ma
       logWarn $ "Source account not found: " <> displayShow sourceAccountId
       return $ Left $ NotFound "Account" (tshow sourceAccountId)
     Just sourceData ->
-      if sourceData.kind == External
+      if sourceData.accountType == External
         then do
           logWarn "Source account is not a regular account"
           return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
@@ -305,7 +302,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount reason ma
               logWarn $ "Target account not found: " <> displayShow targetAccountId
               return $ Left $ NotFound "Account" (tshow targetAccountId)
             Just targetData ->
-              if targetData.kind == External
+              if targetData.accountType == External
                 then do
                   logWarn "Target account is not a regular account"
                   return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
@@ -319,15 +316,14 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount reason ma
                     Right (srcAmt, tgtAmt, rate) -> do
                       let cmd =
                             InitiateTransfer
-                              { fromAccountId = sourceAccountId,
-                                toAccountId = targetAccountId,
+                              { sourceAccountId = sourceAccountId,
+                                targetAccountId = targetAccountId,
                                 sourceAmount = srcAmt,
                                 targetAmount = tgtAmt,
                                 exchangeRate = rate,
-                                reason = reason,
+                                description = description,
                                 initiatedBy = userId,
-                                transferType = InternalTransfer,
-                                category = InternalCat
+                                transferType = Transfer
                               }
                       initiateTransfer cmd
 

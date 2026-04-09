@@ -3,5 +3,5 @@
   "amount": 500.0,
   "currency": "USD",
   "category": "REPLACE_WITH_CATEGORY_UUID",
-  "reason": "Monthly salary"
+  "description": "Monthly salary"
 }

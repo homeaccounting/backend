@@ -191,11 +191,11 @@ main() {
 
     TRANSFER_PAYLOAD=$(cat <<EOF
 {
-  "fromAccountId": "$SAVINGS_ID",
-  "toAccountId": "$CHECKING_ID",
+  "sourceAccountId": "$SAVINGS_ID",
+  "targetAccountId": "$CHECKING_ID",
   "amount": 300.0,
   "currency": "USD",
-  "reason": "Transfer to checking for bills"
+  "description": "Transfer to checking for bills"
 }
 EOF
 )

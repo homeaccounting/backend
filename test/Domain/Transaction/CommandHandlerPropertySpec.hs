@@ -54,15 +54,14 @@ createPendingTransaction fromId toId amt =
   applyEvents
     [ TransferInitiatedTransactionEvent
         $ TransferInitiated
-          { fromAccountId = fromId,
-            toAccountId = toId,
+          { sourceAccountId = fromId,
+            targetAccountId = toId,
             sourceAmount = amt,
             targetAmount = amt,
             exchangeRate = Nothing,
-            reason = "Test transfer",
+            description = "Test transfer",
             by = testUserId,
-            transferType = InternalTransfer,
-            category = InternalCat
+            transferType = Transfer
           }
     ]
 
@@ -78,7 +77,7 @@ determinismSpec = describe "Determinism Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId InternalTransfer InternalCat
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId Transfer
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
@@ -115,7 +114,7 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId InternalTransfer InternalCat,
+                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId Transfer,
                   TransferCompletedTransactionEvent TransferCompleted
                 ]
               transaction = applyEvents initialEvents
@@ -132,7 +131,7 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId InternalTransfer InternalCat,
+                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId Transfer,
                   TransferFailedTransactionEvent $ TransferFailed "Error"
                 ]
               transaction = applyEvents initialEvents
@@ -192,7 +191,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(accountId :: AccountId) (amt :: Money) ->
         unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer accountId accountId amt amt Nothing "Self-transfer" testUserId InternalTransfer InternalCat
+              command = InitiateTransferTransactionCommand $ InitiateTransfer accountId accountId amt amt Nothing "Self-transfer" testUserId Transfer
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -201,7 +200,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) ->
         fromId /= toId ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId InternalTransfer InternalCat
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId Transfer
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -210,7 +209,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing "Valid" testUserId InternalTransfer InternalCat
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing "Valid" testUserId Transfer
               result = handleTransactionCommand transaction command
            in case result of
                 Right [TransferInitiatedTransactionEvent _] -> property True
@@ -227,6 +226,6 @@ validationSpec = describe "Validation Properties" $ do
          (amount2 :: Money) ->
           fromId1 /= toId1 && fromId2 /= toId2 ==>
             let transaction = createPendingTransaction fromId1 toId1 amount1
-                command = InitiateTransferTransactionCommand $ InitiateTransfer fromId2 toId2 amount2 amount2 Nothing "Second" testUserId InternalTransfer InternalCat
+                command = InitiateTransferTransactionCommand $ InitiateTransfer fromId2 toId2 amount2 amount2 Nothing "Second" testUserId Transfer
                 result = handleTransactionCommand transaction command
              in isLeft result

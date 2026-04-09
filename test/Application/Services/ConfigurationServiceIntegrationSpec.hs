@@ -216,7 +216,7 @@ changeBaseCurrencySpec =
                     CreditAccount
                       { amount = unsafeMoney EUR 100,
                         transactionId = txId,
-                        reason = "Test income"
+                        description = "Test income"
                       }
 
               -- Now try to change base currency again - should fail

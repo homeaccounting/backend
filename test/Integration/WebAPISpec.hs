@@ -165,11 +165,10 @@ unauthenticatedRequestsSpec =
       it "returns 401 without Authorization header" $ do
         let payload =
               object
-                [ "fromAccountId" .= UUID.toText UUID.nil,
-                  "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
+                [ "sourceAccountId" .= UUID.toText UUID.nil,
+                  "targetAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
-                  "category" .= ("rebalance" :: Text),
-                  "reason" .= ("Test transfer" :: Text)
+                  "description" .= ("Test transfer" :: Text)
                 ]
         postJSON "/api/transactions/transfer" (encode payload)
           `shouldRespondWith` 401
@@ -202,11 +201,10 @@ authenticatedRequestsSpec =
         -- This should fail with 400 (validation error) not 401 (auth error)
         let payload =
               object
-                [ "fromAccountId" .= UUID.toText UUID.nil,
-                  "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
+                [ "sourceAccountId" .= UUID.toText UUID.nil,
+                  "targetAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
-                  "category" .= ("rebalance" :: Text),
-                  "reason" .= ("Test transfer" :: Text)
+                  "description" .= ("Test transfer" :: Text)
                 ]
         response <- postJSONAuth "/api/transactions/transfer" token (encode payload)
         liftIO $ do
@@ -244,11 +242,10 @@ invalidTokenSpec =
       it "returns 401" $ do
         let payload =
               object
-                [ "fromAccountId" .= UUID.toText UUID.nil,
-                  "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
+                [ "sourceAccountId" .= UUID.toText UUID.nil,
+                  "targetAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
-                  "category" .= ("rebalance" :: Text),
-                  "reason" .= ("Test transfer" :: Text)
+                  "description" .= ("Test transfer" :: Text)
                 ]
         postJSONAuth "/api/transactions/transfer" invalidToken (encode payload)
           `shouldRespondWith` 401
@@ -257,11 +254,10 @@ invalidTokenSpec =
       it "returns 401 for Basic auth instead of Bearer" $ do
         let payload =
               object
-                [ "fromAccountId" .= UUID.toText UUID.nil,
-                  "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
+                [ "sourceAccountId" .= UUID.toText UUID.nil,
+                  "targetAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
-                  "category" .= ("rebalance" :: Text),
-                  "reason" .= ("Test transfer" :: Text)
+                  "description" .= ("Test transfer" :: Text)
                 ]
         -- Send with Basic auth instead of Bearer
         request
@@ -276,11 +272,10 @@ invalidTokenSpec =
         token <- liftIO generateExpiredToken
         let payload =
               object
-                [ "fromAccountId" .= UUID.toText UUID.nil,
-                  "toAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
+                [ "sourceAccountId" .= UUID.toText UUID.nil,
+                  "targetAccountId" .= UUID.toText (UUID.fromWords 1 2 3 4),
                   "amount" .= (100.0 :: Double),
-                  "category" .= ("rebalance" :: Text),
-                  "reason" .= ("Test transfer" :: Text)
+                  "description" .= ("Test transfer" :: Text)
                 ]
         postJSONAuth "/api/transactions/transfer" token (encode payload)
           `shouldRespondWith` 401
@@ -483,11 +478,10 @@ transferInitiationSpec =
         let sameUuid = UUID.nil
         let payload =
               object
-                [ "fromAccountId" .= UUID.toText sameUuid,
-                  "toAccountId" .= UUID.toText sameUuid,
+                [ "sourceAccountId" .= UUID.toText sameUuid,
+                  "targetAccountId" .= UUID.toText sameUuid,
                   "amount" .= (100.0 :: Double),
-                  "category" .= ("rebalance" :: Text),
-                  "reason" .= ("Test" :: Text)
+                  "description" .= ("Test" :: Text)
                 ]
 
         -- Without authentication, returns 401
@@ -500,11 +494,10 @@ transferInitiationSpec =
         let uuid2 = UUID.fromWords 1 2 3 4
         let payload =
               object
-                [ "fromAccountId" .= UUID.toText uuid1,
-                  "toAccountId" .= UUID.toText uuid2,
+                [ "sourceAccountId" .= UUID.toText uuid1,
+                  "targetAccountId" .= UUID.toText uuid2,
                   "amount" .= (0.0 :: Double),
-                  "category" .= ("rebalance" :: Text),
-                  "reason" .= ("Test" :: Text)
+                  "description" .= ("Test" :: Text)
                 ]
 
         -- Without authentication, returns 401

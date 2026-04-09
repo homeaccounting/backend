@@ -39,7 +39,6 @@ module Testkit.Generators
     genEmail,
     genNonEmptyText,
     genTransferType,
-    genTransferCategory,
     genExchangeRate,
     genPositiveRational,
 
@@ -347,22 +346,15 @@ genEmail = do
 
 -- | Generate a valid TransferType.
 genTransferType :: Gen TransferType
-genTransferType = elements [Income, Expense, InternalTransfer]
+genTransferType =
+  oneof
+    [ Income <$> genDictionaryEntryId,
+      Expense <$> genDictionaryEntryId,
+      pure Transfer
+    ]
 
 instance Arbitrary TransferType where
   arbitrary = genTransferType
-
--- | Generate a valid TransferCategory.
-genTransferCategory :: Gen TransferCategory
-genTransferCategory =
-  oneof
-    [ IncomeCat <$> genDictionaryEntryId,
-      ExpenseCat <$> genDictionaryEntryId,
-      pure InternalCat
-    ]
-
-instance Arbitrary TransferCategory where
-  arbitrary = genTransferCategory
 
 -- -----------------------------------------------------------------------------
 -- Exchange Rate Generators

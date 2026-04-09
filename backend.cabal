@@ -245,7 +245,6 @@ test-suite backend-test
       Domain.Account.CommandHandlerSpec
       Domain.Configuration.CommandHandlerSpec
       Domain.Configuration.ProjectionSpec
-      Domain.Core.TransferCategoryPropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
       Domain.Transaction.CommandHandlerPropertySpec

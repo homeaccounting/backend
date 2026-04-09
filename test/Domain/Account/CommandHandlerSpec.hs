@@ -109,7 +109,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Savings",
                     initialBalance = mockMoney 1000,
                     createdBy = testOwnerId,
-                    kind = Regular defaultCash,
+                    accountType = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -122,7 +122,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                 created.name `shouldBe` "Savings"
                 created.initialBalance `shouldBe` mockMoney 1000
                 created.by `shouldBe` testOwnerId
-                created.kind `shouldBe` Regular defaultCash
+                created.accountType `shouldBe` Regular defaultCash
               _ -> expectationFailure "Expected AccountCreated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -134,7 +134,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Checking",
                     initialBalance = mockMoney 500,
                     createdBy = testOwnerId,
-                    kind = Regular defaultCash,
+                    accountType = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -145,7 +145,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
             newAccount ^. #name `shouldBe` "Checking"
             newAccount ^. #balance `shouldBe` mockMoney 500
             newAccount ^. #createdBy `shouldBe` testOwnerId
-            newAccount ^. #kind `shouldBe` Regular defaultCash
+            newAccount ^. #accountType `shouldBe` Regular defaultCash
             newAccount ^. #overdraftLimit `shouldBe` Just (mockMoney 0)
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -157,7 +157,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "My Account",
                     initialBalance = mockMoney 0,
                     createdBy = testOwnerId,
-                    kind = Regular defaultCash,
+                    accountType = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -181,7 +181,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "External",
                     initialBalance = mockMoney 0,
                     createdBy = testOwnerId,
-                    kind = External,
+                    accountType = External,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -191,7 +191,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
             length events `shouldBe` 1
             case head events of
               AccountCreatedAccountEvent created ->
-                created.kind `shouldBe` External
+                created.accountType `shouldBe` External
               _ -> expectationFailure "Expected AccountCreated event"
             let newAccount = applyEvents events
             newAccount ^. #overdraftLimit `shouldBe` Nothing
@@ -206,7 +206,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "",
                     initialBalance = mockMoney 1000,
                     createdBy = testOwnerId,
-                    kind = Regular defaultCash,
+                    accountType = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -223,7 +223,7 @@ createAccountSpec = describe "CreateAccount Command" $ do
                   { name = "Another Account",
                     initialBalance = mockMoney 500,
                     createdBy = testOwnerId,
-                    kind = Regular defaultCash,
+                    accountType = Regular defaultCash,
                     overdraftLimit = Nothing
                   }
         let result = handleAccountCommand account command
@@ -489,7 +489,7 @@ currencyMismatchSpec = describe "CurrencyMismatch" $ do
                 $ DebitAccount
                   { amount = mockMoneyWith EUR 100,
                     transactionId = testTransactionId,
-                    reason = "Transfer"
+                    description = "Transfer"
                   }
         let result = handleAccountCommand account command
         result `shouldBe` Left CurrencyMismatch
@@ -502,7 +502,7 @@ currencyMismatchSpec = describe "CurrencyMismatch" $ do
                 $ CreditAccount
                   { amount = mockMoneyWith EUR 100,
                     transactionId = testTransactionId,
-                    reason = "Transfer"
+                    description = "Transfer"
                   }
         let result = handleAccountCommand account command
         result `shouldBe` Left CurrencyMismatch

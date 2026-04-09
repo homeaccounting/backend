@@ -71,7 +71,7 @@ module Domain.Core.Types
 
     -- * Account Types
     CardNetwork (..),
-    AssetKind (..),
+    AssetType (..),
     CashProperties (..),
     BankAccountProperties (..),
     EWalletProperties (..),
@@ -88,14 +88,12 @@ module Domain.Core.Types
     defaultEWallet,
     defaultAsset,
     defaultLoan,
-    AccountKind (..),
+    AccountType (..),
     AccountRole (..),
     AccountAccess (..),
 
     -- * Transfer Types
     TransferType (..),
-    TransferCategory (..),
-    validateTransferCategory,
 
     -- * OAuth Types
     OAuthProvider (..),
@@ -688,8 +686,8 @@ instance ToJSON CardNetwork
 
 instance FromJSON CardNetwork
 
--- | Kind of asset held.
-data AssetKind
+-- | Type of asset held.
+data AssetType
   = Property
   | Vehicle
   | Stocks
@@ -697,9 +695,9 @@ data AssetKind
   | OtherAsset Text
   deriving (Show, Eq, Generic)
 
-instance ToJSON AssetKind
+instance ToJSON AssetType
 
-instance FromJSON AssetKind
+instance FromJSON AssetType
 
 -- | Properties specific to cash accounts.
 data CashProperties = CashProperties
@@ -739,7 +737,7 @@ instance FromJSON EWalletProperties
 
 -- | Properties specific to asset accounts (property, vehicles, stocks, etc.).
 data AssetProperties = AssetProperties
-  { assetKind :: Maybe AssetKind,
+  { assetType :: Maybe AssetType,
     description :: Maybe Text,
     metadata :: Map Text Text
   }
@@ -811,22 +809,22 @@ defaultLoan = Loan defaultLoanProperties
 --
 -- Regular accounts are user-created and carry an AccountSubtype for UI categorization.
 -- External accounts are system-created for tracking income/expenses.
-data AccountKind
+data AccountType
   = Regular AccountSubtype
   | External
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountKind where
+instance ToJSON AccountType where
   toJSON External = toJSON ("External" :: Text)
   toJSON (Regular st) = object ["tag" .= ("Regular" :: Text), "subtype" .= st]
 
-instance FromJSON AccountKind where
+instance FromJSON AccountType where
   parseJSON (Aeson.String "External") = pure External
-  parseJSON v = flip (withObject "AccountKind") v $ \o -> do
+  parseJSON v = flip (withObject "AccountType") v $ \o -> do
     tag <- o .: "tag"
     case (tag :: Text) of
       "Regular" -> Regular <$> o .: "subtype"
-      _ -> fail $ "Unknown AccountKind tag: " <> show tag
+      _ -> fail $ "Unknown AccountType tag: " <> show tag
 
 -- | Role-Based Access Control role for account access.
 --
@@ -860,37 +858,18 @@ instance FromJSON AccountAccess
 -- -----------------------------------------------------------------------------
 
 -- | Type of transfer operation.
+--
+-- Income and Expense carry a DictionaryEntryId referencing the user's
+-- configured category. Transfer (internal) has no category.
 data TransferType
-  = Income
-  | Expense
-  | InternalTransfer
+  = Income DictionaryEntryId
+  | Expense DictionaryEntryId
+  | Transfer
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransferType
 
 instance FromJSON TransferType
-
--- | Transfer category, scoped by transfer type.
---
--- Income and Expense categories reference a DictionaryEntryId from the user's
--- configuration, allowing dynamic user-defined categories.
-data TransferCategory
-  = IncomeCat DictionaryEntryId
-  | ExpenseCat DictionaryEntryId
-  | InternalCat
-  deriving (Show, Eq, Generic)
-
-instance ToJSON TransferCategory
-
-instance FromJSON TransferCategory
-
--- | Validate that a TransferCategory is consistent with its TransferType.
-validateTransferCategory :: TransferType -> TransferCategory -> Either Text ()
-validateTransferCategory Income (IncomeCat _) = Right ()
-validateTransferCategory Expense (ExpenseCat _) = Right ()
-validateTransferCategory InternalTransfer InternalCat = Right ()
-validateTransferCategory transferType category =
-  Left $ T.pack $ "Category " <> show category <> " is not valid for transfer type " <> show transferType
 
 -- -----------------------------------------------------------------------------
 -- OAuth Types

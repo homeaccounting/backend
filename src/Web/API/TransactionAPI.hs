@@ -145,7 +145,7 @@ incomeHandler user request = do
                   throwDomainError $ ValidationErr $ mkValidationError "amount" err err
                 Right money -> do
                   -- 5. Delegate to service
-                  result <- TransactionService.initiateIncome userId accountId money categoryEntryId request.reason
+                  result <- TransactionService.initiateIncome userId accountId money categoryEntryId request.description
                   case result of
                     Right (txId, summary) -> return $ fromTransactionData txId summary
                     Left err -> throwDomainError err
@@ -175,7 +175,7 @@ expenseHandler user request = do
                   throwDomainError $ ValidationErr $ mkValidationError "amount" err err
                 Right money -> do
                   -- 5. Delegate to service
-                  result <- TransactionService.initiateExpense userId accountId money categoryEntryId request.reason
+                  result <- TransactionService.initiateExpense userId accountId money categoryEntryId request.description
                   case result of
                     Right (txId, summary) -> return $ fromTransactionData txId summary
                     Left err -> throwDomainError err
@@ -184,15 +184,15 @@ expenseHandler user request = do
 transferHandler :: AuthenticatedUser -> InternalTransferRequest -> AppM TransactionResponse
 transferHandler user request = do
   let userId = user.userId
-  -- 1. Parse fromAccountId
-  case mkAccountId request.fromAccountId of
+  -- 1. Parse sourceAccountId
+  case mkAccountId request.sourceAccountId of
     Left err ->
-      throwDomainError $ ValidationErr $ mkValidationError "fromAccountId" err err
+      throwDomainError $ ValidationErr $ mkValidationError "sourceAccountId" err err
     Right fromAccId ->
-      -- 2. Parse toAccountId
-      case mkAccountId request.toAccountId of
+      -- 2. Parse targetAccountId
+      case mkAccountId request.targetAccountId of
         Left err ->
-          throwDomainError $ ValidationErr $ mkValidationError "toAccountId" err err
+          throwDomainError $ ValidationErr $ mkValidationError "targetAccountId" err err
         Right toAccId ->
           -- 3. Parse currency
           case parseCurrency request.currency of
@@ -206,7 +206,7 @@ transferHandler user request = do
                 Right money -> do
                   -- 5. Delegate to service
                   let maybeRate = fmap toRational request.exchangeRate
-                  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money request.reason maybeRate
+                  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money request.description maybeRate
                   case result of
                     Right (txId, summary) -> return $ fromTransactionData txId summary
                     Left err -> throwDomainError err

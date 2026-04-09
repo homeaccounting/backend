@@ -27,7 +27,7 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferCategory, TransferType, UserId)
+import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -63,23 +63,21 @@ transactionEvents =
 -- >>> TransferInitiated sourceId targetId (Money 500.0) "Rent payment" userId
 data TransferInitiated = TransferInitiated
   { -- | Account from which money will be debited
-    fromAccountId :: AccountId,
+    sourceAccountId :: AccountId,
     -- | Account to which money will be credited
-    toAccountId :: AccountId,
+    targetAccountId :: AccountId,
     -- | Amount debited from source account
     sourceAmount :: Money,
     -- | Amount credited to target account
     targetAmount :: Money,
     -- | Exchange rate used (Nothing if same-currency)
     exchangeRate :: Maybe ExchangeRate,
-    -- | Reason or description for the transfer
-    reason :: Text,
+    -- | Description of the transfer
+    description :: Text,
     -- | User who initiated the transfer (for audit trail)
     by :: UserId,
-    -- | Type of transfer (Income, Expense, InternalTransfer)
-    transferType :: TransferType,
-    -- | Category of the transfer
-    category :: TransferCategory
+    -- | Type of transfer (Income, Expense, Transfer)
+    transferType :: TransferType
   }
   deriving (Show, Eq)
 

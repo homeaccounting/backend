@@ -30,7 +30,6 @@ import Domain.Account.Events
   )
 import Domain.Core.Types
   ( Currency (..),
-    TransferCategory (..),
     TransferType (..),
     unsafeAccountId,
     unsafeMoney,
@@ -78,15 +77,14 @@ mkTransferInitiatedEvent =
     (emptyMetadata "")
     ( TransferInitiatedEvent
         TransferInitiated
-          { fromAccountId = unsafeAccountId sourceAcctUuid,
-            toAccountId = unsafeAccountId targetAcctUuid,
+          { sourceAccountId = unsafeAccountId sourceAcctUuid,
+            targetAccountId = unsafeAccountId targetAcctUuid,
             sourceAmount = unsafeMoney USD 200,
             targetAmount = unsafeMoney USD 200,
             exchangeRate = Nothing,
-            reason = "Test transfer",
+            description = "Test transfer",
             by = unsafeUserId userUuid,
-            transferType = InternalTransfer,
-            category = InternalCat
+            transferType = Transfer
           }
     )
 
@@ -101,7 +99,7 @@ mkAccountDebitedEvent =
         AccountDebited
           { amount = unsafeMoney USD 200,
             transactionId = unsafeTransactionId txUuid,
-            reason = "Test transfer"
+            description = "Test transfer"
           }
     )
 
@@ -116,7 +114,7 @@ mkAccountCreditedEvent =
         AccountCredited
           { amount = unsafeMoney USD 200,
             transactionId = unsafeTransactionId txUuid,
-            reason = "Test transfer"
+            description = "Test transfer"
           }
     )
 
@@ -158,7 +156,7 @@ spec = describe "TransferManager (Saga)" $ do
           td.sourceAccount `shouldBe` unsafeAccountId sourceAcctUuid
           td.targetAccount `shouldBe` unsafeAccountId targetAcctUuid
           td.sourceAmount `shouldBe` unsafeMoney USD 200
-          td.reason `shouldBe` "Test transfer"
+          td.description `shouldBe` "Test transfer"
 
     it "issues DebitAccount effect with compensation to source account" $ do
       let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
@@ -201,15 +199,14 @@ spec = describe "TransferManager (Saga)" $ do
               (emptyMetadata "")
               ( TransferInitiatedEvent
                   TransferInitiated
-                    { fromAccountId = unsafeAccountId sourceAcctUuid,
-                      toAccountId = unsafeAccountId targetAcctUuid,
+                    { sourceAccountId = unsafeAccountId sourceAcctUuid,
+                      targetAccountId = unsafeAccountId targetAcctUuid,
                       sourceAmount = unsafeMoney USD 100,
                       targetAmount = unsafeMoney USD 100,
                       exchangeRate = Nothing,
-                      reason = "Bad",
+                      description = "Bad",
                       by = unsafeUserId userUuid,
-                      transferType = InternalTransfer,
-                      category = InternalCat
+                      transferType = Transfer
                     }
               )
           state = handleTransferEvent emptyTransferManager badEvent

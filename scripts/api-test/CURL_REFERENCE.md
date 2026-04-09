@@ -499,7 +499,7 @@ curl -X POST $API_BASE/api/transactions/income \
     "amount": 500.0,
     "currency": "USD",
     "category": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "reason": "Monthly salary"
+    "description": "Monthly salary"
   }' | jq
 ```
 
@@ -511,7 +511,7 @@ curl -X POST $API_BASE/api/transactions/income \
   "accountId": "550e8400-e29b-41d4-a716-446655440000",
   "amount": 500.0,
   "category": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "reason": "Monthly salary",
+  "description": "Monthly salary",
   "status": "Pending",
   "failureReason": null
 }
@@ -531,7 +531,7 @@ curl -X POST $API_BASE/api/transactions/expense \
     "amount": 100.0,
     "currency": "USD",
     "category": "c9d0e1f2-a3b4-c5d6-e7f8-901234567890",
-    "reason": "Groceries"
+    "description": "Groceries"
   }' | jq
 ```
 
@@ -543,7 +543,7 @@ curl -X POST $API_BASE/api/transactions/expense \
   "accountId": "550e8400-e29b-41d4-a716-446655440000",
   "amount": 100.0,
   "category": "c9d0e1f2-a3b4-c5d6-e7f8-901234567890",
-  "reason": "Groceries",
+  "description": "Groceries",
   "status": "Pending",
   "failureReason": null
 }
@@ -559,11 +559,11 @@ curl -X POST $API_BASE/api/transactions/transfer \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
   -d '{
-    "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
-    "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+    "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+    "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
     "amount": 300.0,
     "currency": "USD",
-    "reason": "Rent payment"
+    "description": "Rent payment"
   }' | jq
 ```
 
@@ -572,10 +572,10 @@ curl -X POST $API_BASE/api/transactions/transfer \
 {
   "id": "750e8400-e29b-41d4-a716-446655440004",
   "transferType": "transfer",
-  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
-  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+  "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+  "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 300.0,
-  "reason": "Rent payment",
+  "description": "Rent payment",
   "status": "Pending",
   "failureReason": null
 }
@@ -596,11 +596,11 @@ curl -X GET $API_BASE/api/transactions/{transaction-id} | jq
 {
   "id": "750e8400-e29b-41d4-a716-446655440002",
   "transferType": "transfer",
-  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
-  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+  "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+  "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 300.0,
   "category": "rebalance",
-  "reason": "Rent payment",
+  "description": "Rent payment",
   "status": "Completed",
   "failureReason": null
 }
@@ -611,11 +611,11 @@ curl -X GET $API_BASE/api/transactions/{transaction-id} | jq
 {
   "id": "750e8400-e29b-41d4-a716-446655440002",
   "transferType": "transfer",
-  "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
-  "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
+  "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+  "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 500.0,
   "category": "other",
-  "reason": "Large transfer",
+  "description": "Large transfer",
   "status": "Failed",
   "failureReason": "Insufficient funds in source account"
 }
@@ -762,12 +762,12 @@ TRANSFER=$(curl -s -X POST $API_BASE/api/transactions/transfer \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d "{
-    \"fromAccountId\": \"$SAVINGS_ID\",
-    \"toAccountId\": \"$CHECKING_ID\",
+    \"sourceAccountId\": \"$SAVINGS_ID\",
+    \"targetAccountId\": \"$CHECKING_ID\",
     \"amount\": 300.0,
     \"currency\": \"USD\",
     \"category\": \"rebalance\",
-    \"reason\": \"Transfer\"
+    \"description\": \"Transfer\"
   }")
 TX_ID=$(echo $TRANSFER | jq -r '.id')
 echo "Transaction ID: $TX_ID"

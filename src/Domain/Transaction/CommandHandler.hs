@@ -40,7 +40,7 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import Domain.Core.Types (unAccountId, unMoney, validateTransferCategory)
+import Domain.Core.Types (unAccountId, unMoney)
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
@@ -58,7 +58,6 @@ data TransactionError
   | TransactionNotPending
   | TransferToSameAccount
   | TransferAmountNotPositive
-  | TransferCategoryMismatch
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -120,28 +119,25 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
   case transaction ^. #status of
     Pending
       | unMoney transaction.sourceAmount == 0 ->
-          if unAccountId fromAccountId == unAccountId toAccountId
+          if unAccountId sourceAccountId == unAccountId targetAccountId
             then Left TransferToSameAccount
             else
               if unMoney sourceAmount <= 0 || unMoney targetAmount <= 0
                 then Left TransferAmountNotPositive
-                else case validateTransferCategory transferType category of
-                  Left _ -> Left TransferCategoryMismatch
-                  Right () ->
-                    Right
-                      [ TransferInitiatedTransactionEvent
-                          TransferInitiated
-                            { fromAccountId = fromAccountId,
-                              toAccountId = toAccountId,
-                              sourceAmount = sourceAmount,
-                              targetAmount = targetAmount,
-                              exchangeRate = exchangeRate,
-                              reason = reason,
-                              by = initiatedBy,
-                              transferType = transferType,
-                              category = category
-                            }
-                      ]
+                else
+                  Right
+                    [ TransferInitiatedTransactionEvent
+                        TransferInitiated
+                          { sourceAccountId = sourceAccountId,
+                            targetAccountId = targetAccountId,
+                            sourceAmount = sourceAmount,
+                            targetAmount = targetAmount,
+                            exchangeRate = exchangeRate,
+                            description = description,
+                            by = initiatedBy,
+                            transferType = transferType
+                          }
+                    ]
       | otherwise -> Left TransactionAlreadyInitiated
     _ -> Left TransactionAlreadyInitiated
 -- Handle CompleteTransfer command

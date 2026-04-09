@@ -62,9 +62,9 @@ import Domain.Account.Events
   )
 import Domain.Core.Types
   ( AccountAccess (..),
-    AccountKind (..),
     AccountRole (..),
     AccountSubtype,
+    AccountType (..),
     Money,
     UserId,
     addMoney,
@@ -93,7 +93,7 @@ import Optics (makeFieldLabelsNoPrefix, (&), (.~), (^.))
 --   - balance: Current account balance
 --   - name: Human-readable name for the account
 --   - createdBy: User who created the account (Owner)
---   - kind: Regular or External account
+--   - accountType: Regular or External account
 --   - accessList: List of users with access and their roles
 --
 -- Invariants:
@@ -115,8 +115,8 @@ data Account = Account
     name :: Text,
     -- | User who created the account
     createdBy :: UserId,
-    -- | Account kind (Regular with subtype, or External)
-    kind :: AccountKind,
+    -- | Account type (Regular with subtype, or External)
+    accountType :: AccountType,
     -- | List of users with access and their roles
     accessList :: [AccountAccess],
     -- | Overdraft limit. Nothing = unlimited, Just limit = max negative balance
@@ -146,7 +146,7 @@ accountDefault = case mkDefaultMoney 0 of
       { balance = m,
         name = "",
         createdBy = unsafeUserId UUID.nil,
-        kind = Regular defaultCash,
+        accountType = Regular defaultCash,
         accessList = [],
         overdraftLimit = Just m,
         hasTransactions = False
@@ -240,8 +240,8 @@ handleAccountEvent account (AccountCreatedAccountEvent created) =
         .~ created.initialBalance
         & #createdBy
         .~ ownerId
-        & #kind
-        .~ created.kind
+        & #accountType
+        .~ created.accountType
         & #accessList
         .~ [AccountAccess ownerId Owner]
         & #overdraftLimit
@@ -273,7 +273,7 @@ handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
 handleAccountEvent account (OverdraftLimitSetAccountEvent OverdraftLimitSet {..}) =
   account & #overdraftLimit .~ overdraftLimit
 handleAccountEvent account (AccountSubtypeSetAccountEvent AccountSubtypeSet {..}) =
-  account & #kind .~ Regular subtype
+  account & #accountType .~ Regular subtype
 handleAccountEvent account (AccountCurrencyChangedAccountEvent AccountCurrencyChanged {..}) =
   -- Update the balance currency. Amount stays the same, only currency changes.
   let currentBalance = account ^. #balance

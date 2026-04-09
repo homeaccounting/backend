@@ -466,8 +466,6 @@ defaultIncomeCategories =
     "Investment",
     "Business",
     "Rental",
-    "Interest",
-    "Dividends",
     "Gift",
     "Refund",
     "Other"
@@ -477,23 +475,19 @@ defaultIncomeCategories =
 defaultExpenseCategories :: [Text]
 defaultExpenseCategories =
   [ "Food",
-    "Groceries",
-    "Dining",
     "Transport",
     "Utilities",
     "Rent",
     "Entertainment",
-    "Healthcare",
+    "Health & Wellness",
     "Education",
     "Clothing",
     "Insurance",
     "Subscriptions",
     "Household",
-    "Personal",
     "Travel",
     "Gifts",
     "Charity",
-    "Taxes",
-    "Fees",
+    "Taxes & Fees",
     "Other"
   ]

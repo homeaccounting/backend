@@ -91,7 +91,7 @@ test_initiate_income() {
   "amount": 500.0,
   "currency": "USD",
   "category": "$SALARY_CAT",
-  "reason": "Test income - Monthly salary"
+  "description": "Test income - Monthly salary"
 }
 EOF
 )
@@ -145,7 +145,7 @@ test_initiate_expense() {
   "amount": 100.0,
   "currency": "USD",
   "category": "$FOOD_CAT",
-  "reason": "Test expense - Groceries"
+  "description": "Test expense - Groceries"
 }
 EOF
 )
@@ -188,11 +188,11 @@ test_initiate_transfer() {
 
     TRANSFER_PAYLOAD=$(cat <<EOF
 {
-  "fromAccountId": "$SOURCE_ACCOUNT_ID",
-  "toAccountId": "$TARGET_ACCOUNT_ID",
+  "sourceAccountId": "$SOURCE_ACCOUNT_ID",
+  "targetAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 300.0,
   "currency": "USD",
-  "reason": "Test transfer - Rent payment"
+  "description": "Test transfer - Rent payment"
 }
 EOF
 )
@@ -225,11 +225,11 @@ test_transfer_unauthorized() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
         -d '{
-            "fromAccountId": "00000000-0000-0000-0000-000000000001",
-            "toAccountId": "00000000-0000-0000-0000-000000000002",
+            "sourceAccountId": "00000000-0000-0000-0000-000000000001",
+            "targetAccountId": "00000000-0000-0000-0000-000000000002",
             "amount": 100.0,
             "currency": "USD",
-            "reason": "Unauthorized transfer"
+            "description": "Unauthorized transfer"
         }')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -338,11 +338,11 @@ test_insufficient_funds_transfer() {
 
     TRANSFER_PAYLOAD=$(cat <<EOF
 {
-  "fromAccountId": "$SOURCE_ACCOUNT_ID",
-  "toAccountId": "$TARGET_ACCOUNT_ID",
+  "sourceAccountId": "$SOURCE_ACCOUNT_ID",
+  "targetAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 10000.0,
   "currency": "USD",
-  "reason": "Test transfer - Should fail"
+  "description": "Test transfer - Should fail"
 }
 EOF
 )
