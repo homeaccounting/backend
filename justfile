@@ -176,6 +176,16 @@ profile:
     @echo "Building with profiling enabled..."
     cabal build --enable-profiling
 
+# --- CI ---
+
+# Trigger CI workflow for the current branch
+ci:
+    gh workflow run CI --ref "$(git branch --show-current)"
+
+# Trigger CI workflow with deploy for the current branch
+ci-deploy:
+    gh workflow run CI --ref "$(git branch --show-current)" -f deploy=true
+
 # --- Deployment ---
 
 # Build and push Docker image to GHCR

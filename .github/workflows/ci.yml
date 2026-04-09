@@ -10,6 +10,13 @@ on:
   pull_request:
     branches:
       - '**'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Build image and deploy'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -122,7 +129,7 @@ jobs:
   build-image:
     name: Build & Push Docker Image
     needs: build-and-test
-    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    if: (github.ref == 'refs/heads/master' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -146,9 +153,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract short SHA
-        id: sha
-        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Extract metadata
+        id: meta
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          BRANCH_SLUG="${BRANCH//\//-}"
+          echo "branch_slug=$BRANCH_SLUG" >> "$GITHUB_OUTPUT"
+
+      - name: Determine image tags
+        id: tags
+        run: |
+          SHA_TAG="ghcr.io/${{ github.repository_owner }}/backend:${{ steps.meta.outputs.sha_short }}"
+          BRANCH_TAG="ghcr.io/${{ github.repository_owner }}/backend:${{ steps.meta.outputs.branch_slug }}"
+          if [ "${{ github.ref }}" = "refs/heads/master" ]; then
+            echo "tags=${SHA_TAG},$BRANCH_TAG,ghcr.io/${{ github.repository_owner }}/backend:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=${SHA_TAG},$BRANCH_TAG" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -156,9 +178,7 @@ jobs:
           context: .
           file: infra/docker/Dockerfile
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/backend:${{ steps.sha.outputs.short }}
-            ghcr.io/${{ github.repository_owner }}/backend:latest
+          tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
