@@ -82,6 +82,7 @@ library
       Infrastructure.ExchangeRate.ECB
       Infrastructure.ExchangeRate.NBU
       Infrastructure.ExchangeRate.Provider
+      Infrastructure.Version
       Telegram
       Telegram.Api
       Telegram.Bot
@@ -92,6 +93,7 @@ library
       Web.API.AccountAPI
       Web.API.AuthAPI
       Web.API.ConfigurationAPI
+      Web.API.InfoAPI
       Web.API.TelegramWebhookAPI
       Web.API.TransactionAPI
       Web.API.UserAPI

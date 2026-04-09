@@ -162,14 +162,17 @@ jobs:
           BRANCH="${GITHUB_REF#refs/heads/}"
           BRANCH_SLUG="${BRANCH//\//-}"
           echo "branch_slug=$BRANCH_SLUG" >> "$GITHUB_OUTPUT"
+          VERSION=$(grep '^version:' package.yaml | awk '{print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Determine image tags
         id: tags
         run: |
           SHA_TAG="ghcr.io/${{ github.repository_owner }}/backend:${{ steps.meta.outputs.sha_short }}"
           BRANCH_TAG="ghcr.io/${{ github.repository_owner }}/backend:${{ steps.meta.outputs.branch_slug }}"
+          VERSION_TAG="ghcr.io/${{ github.repository_owner }}/backend:${{ steps.meta.outputs.version }}"
           if [ "${{ github.ref }}" = "refs/heads/master" ]; then
-            echo "tags=${SHA_TAG},$BRANCH_TAG,ghcr.io/${{ github.repository_owner }}/backend:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=${SHA_TAG},$BRANCH_TAG,$VERSION_TAG,ghcr.io/${{ github.repository_owner }}/backend:latest" >> "$GITHUB_OUTPUT"
           else
             echo "tags=${SHA_TAG},$BRANCH_TAG" >> "$GITHUB_OUTPUT"
           fi
@@ -181,6 +184,8 @@ jobs:
           file: infra/docker/Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            APP_COMMIT_HASH=${{ steps.meta.outputs.sha_short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

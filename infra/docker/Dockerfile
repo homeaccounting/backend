@@ -27,6 +27,9 @@ RUN cabal build -j && \
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 
+ARG APP_COMMIT_HASH=dev
+ENV APP_COMMIT_HASH=${APP_COMMIT_HASH}
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       libpq5 \

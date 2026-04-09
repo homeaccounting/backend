@@ -19,6 +19,7 @@
 module Infrastructure.Config
   ( -- * Configuration Types
     AppConfig (..),
+    Environment (..),
     ServerConfig (..),
     DatabaseConfig (..),
     LoggingConfig (..),
@@ -72,12 +73,33 @@ import qualified Text.Read as Read
 -- Configuration Types
 -- -----------------------------------------------------------------------------
 
+-- | Application environment identifier.
+data Environment
+  = EnvLocal
+  | EnvTest
+  | EnvProd
+  deriving (Show, Eq, Generic)
+
+instance FromJSON Environment where
+  parseJSON = withText "Environment" $ \t ->
+    case T.toLower t of
+      "local" -> pure EnvLocal
+      "test" -> pure EnvTest
+      "prod" -> pure EnvProd
+      _ -> fail $ "Invalid environment: " <> T.unpack t
+
+instance ToJSON Environment where
+  toJSON EnvLocal = String "local"
+  toJSON EnvTest = String "test"
+  toJSON EnvProd = String "prod"
+
 -- | Top-level application configuration.
 --
 -- Contains all configuration sections for the application including server,
 -- database, logging, CORS, event store, and process manager settings.
 data AppConfig = AppConfig
-  { server :: !ServerConfig,
+  { environment :: !Environment,
+    server :: !ServerConfig,
     database :: !DatabaseConfig,
     logging :: !LoggingConfig,
     cors :: !CorsConfig,
@@ -93,7 +115,8 @@ data AppConfig = AppConfig
 instance FromJSON AppConfig where
   parseJSON = withObject "AppConfig" $ \v ->
     AppConfig
-      <$> v .: "server"
+      <$> v .: "environment"
+      <*> v .: "server"
       <*> v .: "database"
       <*> v .: "logging"
       <*> v .: "cors"

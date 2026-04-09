@@ -100,7 +100,7 @@ import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetType (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), DictionaryEntryId, EWalletProperties (..), LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), DictionaryEntryId, EWalletProperties (..), LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)

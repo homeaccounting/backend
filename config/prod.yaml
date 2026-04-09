@@ -2,6 +2,8 @@
 # All sensitive/environment-specific values are injected via ${VAR} substitution.
 # Required environment variables MUST be set — no defaults are provided.
 
+environment: prod
+
 server:
   host: "0.0.0.0"
   port: 8080

@@ -56,6 +56,7 @@ import Infrastructure.Config
   ( AppConfig (..),
     CorsConfig (..),
     DatabaseConfig (..),
+    Environment (..),
     EventStoreConfig (..),
     ExchangeRateConfig (..),
     JWTConfig (..),
@@ -79,6 +80,7 @@ import Infrastructure.Eventium
   )
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.Provider (newExchangeRateCache)
+import Infrastructure.Version (VersionInfo (..))
 import RIO hiding (atomically, newTVarIO)
 import qualified RIO
 import qualified RIO.Text as T
@@ -217,7 +219,8 @@ createTestAppEnv = do
   -- Create test configuration
   let config =
         AppConfig
-          { server =
+          { environment = EnvTest,
+            server =
               ServerConfig
                 { port = 8080,
                   host = T.pack "127.0.0.1"
@@ -263,6 +266,7 @@ createTestAppEnv = do
           }
 
       dbConfig = config.database
+      testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
 
   -- Build the AppEnv
   -- Note: We don't have a real connection pool, but handlers don't need it
@@ -289,7 +293,8 @@ createTestAppEnv = do
         telegramConfig = testTelegramConfig,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateCache = exchangeRateCache'
+        exchangeRateCache = exchangeRateCache',
+        versionInfo = testVersionInfo
       }
 
 -- | Create a test AppEnv with the Transfer Process Manager enabled.
@@ -341,7 +346,8 @@ createTestAppEnvWithProcessManager = do
 
   let config =
         AppConfig
-          { server =
+          { environment = EnvTest,
+            server =
               ServerConfig
                 { port = 8080,
                   host = T.pack "127.0.0.1"
@@ -387,6 +393,7 @@ createTestAppEnvWithProcessManager = do
           }
 
       dbConfig = config.database
+      testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
 
   botState <- RIO.newTVarIO emptyBotState
   exchangeRateCache <- newExchangeRateCache ecbProvider
@@ -409,7 +416,8 @@ createTestAppEnvWithProcessManager = do
         telegramConfig = testTelegramConfig,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateCache = exchangeRateCache
+        exchangeRateCache = exchangeRateCache,
+        versionInfo = testVersionInfo
       }
 
 -- -----------------------------------------------------------------------------

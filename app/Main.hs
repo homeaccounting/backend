@@ -85,6 +85,7 @@ import Infrastructure.App
     AppM,
     HasAppConfig (appConfigL),
     HasBotState (botStateL),
+    HasVersionInfo (versionInfoL),
     initializeAppEnv,
     runAppM,
   )
@@ -116,6 +117,7 @@ import Infrastructure.Eventium
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
 import Infrastructure.ExchangeRate.Provider (newExchangeRateCache, refreshCache)
+import Infrastructure.Version (VersionInfo, displayVersion, mkVersionInfo)
 import RIO
 import qualified RIO.Text as T
 -- Web Server
@@ -157,16 +159,19 @@ main = do
       exitFailure
     Right cfg -> return cfg
 
+  -- Build version info (reads APP_COMMIT_HASH env var)
+  versionInfo <- mkVersionInfo
+
   -- Setup logging
   logOptions <- createLogOptions config
   withLogFunc logOptions $ \logFunc -> do
     -- Run application with RIO
     runRIO logFunc $ do
       logInfo "Starting Accounting Backend..."
-      logInfo $ "Environment: " <> displayShow (appEnvironment config)
+      logInfo $ "Environment: " <> displayShow config.environment
 
       -- Initialize application environment
-      env <- initializeEnvironment logFunc config
+      env <- initializeEnvironment logFunc config versionInfo
 
       -- Run application
       liftIO $ runAppM env applicationMain
@@ -232,8 +237,8 @@ createLogOptions config = do
 -- Example:
 -- >>> env <- initializeEnvironment logFunc config
 -- >>> -- AppEnv ready to use
-initializeEnvironment :: LogFunc -> AppConfig -> RIO LogFunc AppEnv
-initializeEnvironment logFunc config = do
+initializeEnvironment :: LogFunc -> AppConfig -> VersionInfo -> RIO LogFunc AppEnv
+initializeEnvironment logFunc config versionInfo = do
   logInfo "Initializing application environment..."
 
   -- 1. Initialize database connection pool
@@ -342,22 +347,10 @@ initializeEnvironment logFunc config = do
           botState
           telegramClientEnv
           exchangeRateCache
+          versionInfo
 
   logInfo "Application environment initialized successfully"
   return env
-
--- Helper to get environment name from config
-appEnvironment :: AppConfig -> Text
-appEnvironment config =
-  -- This would come from config if we add it
-  -- For now, infer from database name
-  let dbName = config.database.database
-   in if "_dev" `T.isSuffixOf` dbName
-        then "development"
-        else
-          if "_test" `T.isSuffixOf` dbName
-            then "test"
-            else "production"
 
 -- -----------------------------------------------------------------------------
 -- Application Main
@@ -383,8 +376,9 @@ appEnvironment config =
 -- >>> -- HTTP server running at http://0.0.0.0:8080
 applicationMain :: AppM ()
 applicationMain = do
+  vi <- view versionInfoL
   logInfo "==================================="
-  logInfo "  Accounting Backend Started"
+  logInfo $ "  Accounting Backend " <> displayVersion vi
   logInfo "==================================="
 
   -- Seed default configuration if not present

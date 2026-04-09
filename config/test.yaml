@@ -1,6 +1,8 @@
 # Test Configuration for Accounting Backend
 # Used by the test suite and CI. Uses ${VAR:-default} substitution.
 
+environment: test
+
 server:
   host: "0.0.0.0"
   port: 8080

@@ -87,6 +87,7 @@ module Infrastructure.App
     HasBotState (..),
     HasTelegramClient (..),
     HasExchangeRateCache (..),
+    HasVersionInfo (..),
 
     -- * Running the Application
     runAppM,
@@ -116,6 +117,7 @@ import Infrastructure.Eventium
     AccountingVersionedEventStoreWriter,
   )
 import Infrastructure.ExchangeRate.Provider (ExchangeRateCache)
+import Infrastructure.Version (VersionInfo)
 import RIO
 import Servant.Client (ClientEnv)
 import Telegram.Types (BotState)
@@ -182,7 +184,9 @@ data AppEnv = AppEnv
     -- | Telegram API client environment (Nothing if bot token is empty)
     telegramClientEnv :: !(Maybe ClientEnv),
     -- | Exchange rate cache (daily rates from configured provider)
-    exchangeRateCache :: !ExchangeRateCache
+    exchangeRateCache :: !ExchangeRateCache,
+    -- | Application version information
+    versionInfo :: !VersionInfo
   }
 
 -- | Initialize the application environment.
@@ -217,8 +221,9 @@ initializeAppEnv ::
   TVar BotState ->
   Maybe ClientEnv ->
   ExchangeRateCache ->
+  VersionInfo ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateCache =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateCache versionInfo =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -236,7 +241,8 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       telegramConfig = telegramConfig,
       botState = botState,
       telegramClientEnv = telegramClientEnv,
-      exchangeRateCache = exchangeRateCache
+      exchangeRateCache = exchangeRateCache,
+      versionInfo = versionInfo
     }
 
 -- -----------------------------------------------------------------------------
@@ -362,6 +368,13 @@ class HasExchangeRateCache env where
 
 instance HasExchangeRateCache AppEnv where
   exchangeRateCacheL = lens (.exchangeRateCache) (\x y -> x {exchangeRateCache = y})
+
+-- | Type class for environments that have version information.
+class HasVersionInfo env where
+  versionInfoL :: Lens' env VersionInfo
+
+instance HasVersionInfo AppEnv where
+  versionInfoL = lens (.versionInfo) (\x y -> x {versionInfo = y})
 
 -- | Type class for environments that have application configuration.
 --

@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -137,6 +138,7 @@ import qualified Servant as S
 import Servant.Server (err500, errBody)
 import Servant.Server.Experimental.Auth (AuthHandler)
 import Web.API (API, api, server)
+import Web.API.InfoAPI (InfoAPI, infoAPI, infoHandler)
 import Web.Middleware.Auth (AuthenticatedUser, authHandler)
 
 -- -----------------------------------------------------------------------------
@@ -252,6 +254,9 @@ makeServerSettings env port =
 -- Example:
 --  >>> app <- buildApplication env
 --  >>> runSettings settings app
+-- | Full API including unauthenticated info endpoint.
+type FullAPI = InfoAPI S.:<|> API
+
 buildApplication :: AppEnv -> Application
 buildApplication env =
   -- Middleware applied bottom-to-top (last applied is outermost)
@@ -266,7 +271,14 @@ buildApplication env =
     jwtConfig = env.jwtConfig
     authContext = authHandler jwtConfig S.:. S.EmptyContext
 
-    servantApp = S.serveWithContext api authContext (hoistedServer env)
+    servantApp =
+      S.serveWithContext
+        (Proxy :: Proxy FullAPI)
+        authContext
+        (infoServer S.:<|> hoistedServer env)
+
+    infoServer :: S.ServerT InfoAPI S.Handler
+    infoServer = S.hoistServer infoAPI (appMToHandler env) infoHandler
 
 -- | Type alias for the authentication context.
 --

@@ -130,10 +130,33 @@ extractAccountId body = do
 
 spec :: Spec
 spec = do
+  infoAPISpec
   authenticationSpec
   accountAPISpec
   transactionAPISpec
   errorHandlingSpec
+
+-- -----------------------------------------------------------------------------
+-- Info API Tests
+-- -----------------------------------------------------------------------------
+
+infoAPISpec :: Spec
+infoAPISpec =
+  describe "Info API" $ with mkApp $ do
+    describe "GET /api/info" $ do
+      it "returns 200 with version info" $ do
+        resp <- getJSON "/api/info"
+        liftIO $ do
+          simpleStatus resp `shouldBe` status200
+          let body = decode (simpleBody resp) :: Maybe Value
+          body `shouldSatisfy` isJust
+          case body of
+            Just (Object obj) -> do
+              KeyMap.lookup "status" obj `shouldBe` Just (String "ok")
+              KeyMap.member "version" obj `shouldBe` True
+              KeyMap.member "commit" obj `shouldBe` True
+              KeyMap.lookup "environment" obj `shouldBe` Just (String "test")
+            _ -> expectationFailure "Expected JSON object"
 
 -- -----------------------------------------------------------------------------
 -- Authentication Tests
