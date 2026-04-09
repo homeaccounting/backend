@@ -48,25 +48,30 @@ import Application.ReadModels.Account
     getAccount,
   )
 import qualified Application.ReadModels.Account as AccountRM
+import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
 import Application.ReadModels.Transaction (TransactionData (..))
 import Application.ReadModels.User
-  ( getUserByTelegramId,
+  ( UserData (..),
+    getUserByTelegramId,
   )
 import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser)
+import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
   ( AccountId,
     AccountKind (..),
-    ExpenseCategory (..),
-    IncomeCategory (..),
+    DictionaryEntryId,
+    DictionaryId,
+    EntryName,
     Money,
     TelegramId (..),
     TelegramIdentity (..),
     UserId,
     defaultCash,
+    mkDictionaryEntryId,
     mkMoney,
     moneyCurrency,
     parseCurrency,
@@ -85,10 +90,9 @@ import Telegram.Keyboards
   ( InlineButton (..),
     InlineKeyboard (..),
     accountSelectionKeyboard,
+    categoryKeyboard,
     currencyKeyboard,
-    expenseCategoryKeyboard,
     formatMoney,
-    incomeCategoryKeyboard,
     showCurrency,
   )
 import Telegram.Types hiding (text)
@@ -281,9 +285,13 @@ handleIncome botState telegramId chatId = do
   case selected of
     Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
     Just _ -> do
-      atomically $ modifyTVar' botState $ \s ->
-        s {conversations = Map.insert telegramId IncomeSelectCategory s.conversations}
-      sendMsgWithKeyboard chatId "Select income category:" incomeCategoryKeyboard
+      entries <- getCategoryEntries telegramId incomeCategoryDictId
+      case entries of
+        Nothing -> sendMsg chatId "Could not load income categories. Please try again."
+        Just cats -> do
+          atomically $ modifyTVar' botState $ \s ->
+            s {conversations = Map.insert telegramId IncomeSelectCategory s.conversations}
+          sendMsgWithKeyboard chatId "Select income category:" (categoryKeyboard cats)
 
 -- | Handle /expense command.
 handleExpense :: TVar BotState -> TelegramId -> Int64 -> AppM ()
@@ -292,9 +300,13 @@ handleExpense botState telegramId chatId = do
   case selected of
     Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
     Just _ -> do
-      atomically $ modifyTVar' botState $ \s ->
-        s {conversations = Map.insert telegramId ExpenseSelectCategory s.conversations}
-      sendMsgWithKeyboard chatId "Select expense category:" expenseCategoryKeyboard
+      entries <- getCategoryEntries telegramId expenseCategoryDictId
+      case entries of
+        Nothing -> sendMsg chatId "Could not load expense categories. Please try again."
+        Just cats -> do
+          atomically $ modifyTVar' botState $ \s ->
+            s {conversations = Map.insert telegramId ExpenseSelectCategory s.conversations}
+          sendMsgWithKeyboard chatId "Select expense category:" (categoryKeyboard cats)
 
 -- | Handle /cancel command.
 handleCancel :: TVar BotState -> TelegramId -> Int64 -> AppM ()
@@ -379,7 +391,7 @@ handleCreateAccountCurrency botState telegramId chatId name curText = do
 -- | Handle income category selection callback.
 handleIncomeCategorySelected :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
 handleIncomeCategorySelected botState telegramId chatId catText =
-  case parseIncomeCategory catText of
+  case parseCategoryUUID catText of
     Nothing -> sendMsg chatId "Invalid category. Please select from the keyboard."
     Just _ -> do
       atomically $ modifyTVar' botState $ \s ->
@@ -417,9 +429,9 @@ handleIncomeAmount botState telegramId chatId cat text =
 handleIncomeReason :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
 handleIncomeReason botState telegramId chatId cat money reason = do
   clearConversation botState telegramId
-  case parseIncomeCategory cat of
+  case parseCategoryUUID cat of
     Nothing -> sendMsg chatId "Invalid category. Operation cancelled."
-    Just incomeCat -> do
+    Just categoryEntryId -> do
       maybeUserId <- getUserIdForTelegram telegramId
       case maybeUserId of
         Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
@@ -428,7 +440,7 @@ handleIncomeReason botState telegramId chatId cat money reason = do
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
             Just (accountId, _name) -> do
-              result <- initiateIncome userId accountId money incomeCat reason
+              result <- initiateIncome userId accountId money categoryEntryId reason
               case result of
                 Left err -> do
                   logError $ "Income failed: " <> displayShow err
@@ -447,7 +459,7 @@ handleIncomeReason botState telegramId chatId cat money reason = do
 -- | Handle expense category selection callback.
 handleExpenseCategorySelected :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
 handleExpenseCategorySelected botState telegramId chatId catText =
-  case parseExpenseCategory catText of
+  case parseCategoryUUID catText of
     Nothing -> sendMsg chatId "Invalid category. Please select from the keyboard."
     Just _ -> do
       atomically $ modifyTVar' botState $ \s ->
@@ -485,9 +497,9 @@ handleExpenseAmount botState telegramId chatId cat text =
 handleExpenseReason :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
 handleExpenseReason botState telegramId chatId cat money reason = do
   clearConversation botState telegramId
-  case parseExpenseCategory cat of
+  case parseCategoryUUID cat of
     Nothing -> sendMsg chatId "Invalid category. Operation cancelled."
-    Just expenseCat -> do
+    Just categoryEntryId -> do
       maybeUserId <- getUserIdForTelegram telegramId
       case maybeUserId of
         Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
@@ -496,7 +508,7 @@ handleExpenseReason botState telegramId chatId cat money reason = do
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
             Just (accountId, _name) -> do
-              result <- initiateExpense userId accountId money expenseCat reason
+              result <- initiateExpense userId accountId money categoryEntryId reason
               case result of
                 Left err -> do
                   logError $ "Expense failed: " <> displayShow err
@@ -586,24 +598,13 @@ handleTransferReason botState telegramId chatId srcId tgtId money reason = do
 -- Category Parsers
 -- -----------------------------------------------------------------------------
 
--- | Parse income category from callback text.
-parseIncomeCategory :: Text -> Maybe IncomeCategory
-parseIncomeCategory "salary" = Just Salary
-parseIncomeCategory "freelance" = Just Freelance
-parseIncomeCategory "investment" = Just Investment
-parseIncomeCategory "gift" = Just IncomeGift
-parseIncomeCategory "other" = Just IncomeOther
-parseIncomeCategory _ = Nothing
-
--- | Parse expense category from callback text.
-parseExpenseCategory :: Text -> Maybe ExpenseCategory
-parseExpenseCategory "food" = Just Food
-parseExpenseCategory "transport" = Just Transport
-parseExpenseCategory "utilities" = Just Utilities
-parseExpenseCategory "rent" = Just Rent
-parseExpenseCategory "entertainment" = Just Entertainment
-parseExpenseCategory "other" = Just ExpenseOther
-parseExpenseCategory _ = Nothing
+-- | Parse a category UUID from callback text into a DictionaryEntryId.
+parseCategoryUUID :: Text -> Maybe DictionaryEntryId
+parseCategoryUUID t = case UUID.fromString (T.unpack t) of
+  Nothing -> Nothing
+  Just uuid -> case mkDictionaryEntryId uuid of
+    Left _ -> Nothing
+    Right entryId -> Just entryId
 
 -- | Parse a positive amount from user text input.
 parseAmount :: Text -> Maybe Double
@@ -617,6 +618,30 @@ clearConversation :: TVar BotState -> TelegramId -> AppM ()
 clearConversation botState telegramId =
   atomically $ modifyTVar' botState $ \s ->
     s {conversations = Map.delete telegramId s.conversations}
+
+-- -----------------------------------------------------------------------------
+-- Configuration Lookup Helpers
+-- -----------------------------------------------------------------------------
+
+-- | Get category entries from the user's configuration for a given dictionary.
+--
+-- Looks up the user, their configuration, and returns the entries for the
+-- specified dictionary ID as a list of (DictionaryEntryId, EntryName) pairs.
+getCategoryEntries :: TelegramId -> DictionaryId -> AppM (Maybe [(DictionaryEntryId, EntryName)])
+getCategoryEntries telegramId dictId = do
+  userRM <- view userReadModelL
+  maybeUser <- getUserByTelegramId userRM telegramId
+  case maybeUser of
+    Nothing -> return Nothing
+    Just (_, userData) -> do
+      configRM <- view configurationReadModelL
+      maybeConfig <- liftIO $ getConfiguration configRM userData.configurationId
+      case maybeConfig of
+        Nothing -> return Nothing
+        Just configData ->
+          case Map.lookup dictId configData.dictionaries of
+            Nothing -> return $ Just []
+            Just dictData -> return $ Just $ Map.toList dictData.entries
 
 -- -----------------------------------------------------------------------------
 -- User/Account Lookup Helpers

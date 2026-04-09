@@ -24,6 +24,7 @@
 --     - Transaction operations (initiate transfer, query status)
 --     - Authentication (register, login, OAuth, Telegram, token refresh)
 --     - User profile (get, update, change password, unlink providers)
+--     - Configuration (currencies, dictionaries)
 --     - Telegram webhook (bot updates)
 module Web.API
   ( -- * Combined API
@@ -38,6 +39,7 @@ module Web.API
     module Web.API.TransactionAPI,
     module Web.API.AuthAPI,
     module Web.API.UserAPI,
+    module Web.API.ConfigurationAPI,
     module Web.API.TelegramWebhookAPI,
   )
 where
@@ -47,6 +49,7 @@ import RIO
 import Servant (ServerT, (:<|>) (..))
 import Web.API.AccountAPI
 import Web.API.AuthAPI
+import Web.API.ConfigurationAPI
 import Web.API.TelegramWebhookAPI
 import Web.API.TransactionAPI
 import Web.API.UserAPI
@@ -64,12 +67,14 @@ import Web.API.UserAPI
 --     :<|> TransactionAPI
 --     :<|> AuthAPI
 --     :<|> UserAPI
+--     :<|> ConfigurationAPI
 --     :<|> TelegramWebhookAPI
 type API =
   AccountAPI
     :<|> TransactionAPI
     :<|> AuthAPI
     :<|> UserAPI
+    :<|> ConfigurationAPI
     :<|> TelegramWebhookAPI
 
 -- | Proxy for the combined API.
@@ -91,4 +96,5 @@ server =
     :<|> transactionServer
     :<|> authServer
     :<|> userServer
+    :<|> configurationServer
     :<|> telegramWebhookServer

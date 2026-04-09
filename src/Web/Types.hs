@@ -80,8 +80,7 @@ module Web.Types
     fromTransactionStatus,
 
     -- * Category Parsing
-    parseIncomeCategory,
-    parseExpenseCategory,
+    parseCategoryId,
 
     -- * Serialization Helpers
     transferTypeToText,
@@ -100,8 +99,9 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Data.UUID (UUID)
+import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountKind (..), AccountSubtype (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), EWalletProperties (..), ExpenseCategory (..), IncomeCategory (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkMoney, moneyCurrency, parseCurrency, unAccountId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountKind (..), AccountSubtype (..), AssetKind (..), AssetProperties (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), DictionaryEntryId, EWalletProperties (..), LoanProperties (..), Money, TransactionId, TransferCategory (..), TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -881,42 +881,21 @@ transferTypeToText Income = "income"
 transferTypeToText Expense = "expense"
 transferTypeToText InternalTransfer = "transfer"
 
--- | Convert TransferCategory to lowercase text for JSON responses.
+-- | Convert TransferCategory to text for JSON responses.
+--
+-- For dynamic categories (Income/Expense), the UUID of the DictionaryEntryId
+-- is returned. Clients resolve the display name via the configuration API.
 transferCategoryToText :: TransferCategory -> Text
-transferCategoryToText (IncomeCat Salary) = "salary"
-transferCategoryToText (IncomeCat Freelance) = "freelance"
-transferCategoryToText (IncomeCat Investment) = "investment"
-transferCategoryToText (IncomeCat IncomeGift) = "gift"
-transferCategoryToText (IncomeCat IncomeOther) = "other"
-transferCategoryToText (ExpenseCat Food) = "food"
-transferCategoryToText (ExpenseCat Transport) = "transport"
-transferCategoryToText (ExpenseCat Utilities) = "utilities"
-transferCategoryToText (ExpenseCat Rent) = "rent"
-transferCategoryToText (ExpenseCat Entertainment) = "entertainment"
-transferCategoryToText (ExpenseCat ExpenseOther) = "other"
+transferCategoryToText (IncomeCat entryId) = T.pack $ UUID.toString $ unDictionaryEntryId entryId
+transferCategoryToText (ExpenseCat entryId) = T.pack $ UUID.toString $ unDictionaryEntryId entryId
 transferCategoryToText InternalCat = "internal"
 
 -- -----------------------------------------------------------------------------
 -- Category Parsing
 -- -----------------------------------------------------------------------------
 
--- | Parse a text string into an IncomeCategory.
-parseIncomeCategory :: Text -> Either Text IncomeCategory
-parseIncomeCategory t = case T.toLower t of
-  "salary" -> Right Salary
-  "freelance" -> Right Freelance
-  "investment" -> Right Investment
-  "gift" -> Right IncomeGift
-  "other" -> Right IncomeOther
-  _ -> Left $ "Unknown income category: " <> t
-
--- | Parse a text string into an ExpenseCategory.
-parseExpenseCategory :: Text -> Either Text ExpenseCategory
-parseExpenseCategory t = case T.toLower t of
-  "food" -> Right Food
-  "transport" -> Right Transport
-  "utilities" -> Right Utilities
-  "rent" -> Right Rent
-  "entertainment" -> Right Entertainment
-  "other" -> Right ExpenseOther
-  _ -> Left $ "Unknown expense category: " <> t
+-- | Parse a category UUID text into a DictionaryEntryId.
+parseCategoryId :: Text -> Either Text DictionaryEntryId
+parseCategoryId t = case UUID.fromString (T.unpack t) of
+  Nothing -> Left $ "Invalid category ID (expected UUID): " <> t
+  Just uuid -> mkDictionaryEntryId uuid

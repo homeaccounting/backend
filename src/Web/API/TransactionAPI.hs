@@ -56,8 +56,7 @@ import Web.Types
     InternalTransferRequest (..),
     TransactionResponse,
     fromTransactionData,
-    parseExpenseCategory,
-    parseIncomeCategory,
+    parseCategoryId,
     toDomainMoney,
   )
 
@@ -126,10 +125,10 @@ incomeHandler :: AuthenticatedUser -> IncomeRequest -> AppM TransactionResponse
 incomeHandler user request = do
   let userId = user.userId
   -- 1. Parse category
-  case parseIncomeCategory request.category of
+  case parseCategoryId request.category of
     Left err ->
       throwDomainError $ ValidationErr $ mkValidationError "category" err err
-    Right incomeCat ->
+    Right categoryEntryId ->
       -- 2. Parse accountId
       case mkAccountId request.accountId of
         Left err ->
@@ -146,7 +145,7 @@ incomeHandler user request = do
                   throwDomainError $ ValidationErr $ mkValidationError "amount" err err
                 Right money -> do
                   -- 5. Delegate to service
-                  result <- TransactionService.initiateIncome userId accountId money incomeCat request.reason
+                  result <- TransactionService.initiateIncome userId accountId money categoryEntryId request.reason
                   case result of
                     Right (txId, summary) -> return $ fromTransactionData txId summary
                     Left err -> throwDomainError err
@@ -156,10 +155,10 @@ expenseHandler :: AuthenticatedUser -> ExpenseRequest -> AppM TransactionRespons
 expenseHandler user request = do
   let userId = user.userId
   -- 1. Parse category
-  case parseExpenseCategory request.category of
+  case parseCategoryId request.category of
     Left err ->
       throwDomainError $ ValidationErr $ mkValidationError "category" err err
-    Right expenseCat ->
+    Right categoryEntryId ->
       -- 2. Parse accountId
       case mkAccountId request.accountId of
         Left err ->
@@ -176,7 +175,7 @@ expenseHandler user request = do
                   throwDomainError $ ValidationErr $ mkValidationError "amount" err err
                 Right money -> do
                   -- 5. Delegate to service
-                  result <- TransactionService.initiateExpense userId accountId money expenseCat request.reason
+                  result <- TransactionService.initiateExpense userId accountId money categoryEntryId request.reason
                   case result of
                     Right (txId, summary) -> return $ fromTransactionData txId summary
                     Left err -> throwDomainError err

@@ -104,9 +104,36 @@ main() {
     print_info "Has Password: $HAS_PASSWORD"
 
     # ============================================================
-    # Step 4: Create Savings Account
+    # Step 4: Check User Configuration
     # ============================================================
-    print_step "Step 4: Create Savings Account"
+    print_step "Step 4: Check User Configuration"
+
+    print_info "Fetching user configuration..."
+    CONFIG_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/users/me/configuration" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
+
+    echo "$CONFIG_RESPONSE" | jq '.'
+
+    BASE_CUR=$(echo "$CONFIG_RESPONSE" | jq -r '.baseCurrency')
+    INCOME_COUNT=$(echo "$CONFIG_RESPONSE" | jq '.dictionaries["income-category"].entries | length')
+    EXPENSE_COUNT=$(echo "$CONFIG_RESPONSE" | jq '.dictionaries["expense-category"].entries | length')
+
+    print_success "Configuration loaded"
+    print_info "Base currency: $BASE_CUR"
+    print_info "Income categories: $INCOME_COUNT"
+    print_info "Expense categories: $EXPENSE_COUNT"
+
+    # Save a category UUID for later income/expense tests
+    CONFIG_JSON="$CONFIG_RESPONSE"
+    SALARY_CAT_ID=$(echo "$CONFIG_JSON" | jq -r '.dictionaries["income-category"].entries[] | select(.name == "Salary") | .id')
+    FOOD_CAT_ID=$(echo "$CONFIG_JSON" | jq -r '.dictionaries["expense-category"].entries[] | select(.name == "Food") | .id')
+    print_info "Salary category ID: $SALARY_CAT_ID"
+    print_info "Food category ID: $FOOD_CAT_ID"
+
+    # ============================================================
+    # Step 5: Create Savings Account
+    # ============================================================
+    print_step "Step 5: Create Savings Account"
 
     print_info "Creating Savings Account with initial balance of \$1000..."
     SAVINGS_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
@@ -123,9 +150,9 @@ main() {
     print_balance "Initial Balance: \$${SAVINGS_BALANCE}"
 
     # ============================================================
-    # Step 5: Create Checking Account
+    # Step 6: Create Checking Account
     # ============================================================
-    print_step "Step 5: Create Checking Account"
+    print_step "Step 6: Create Checking Account"
 
     print_info "Creating Checking Account with initial balance of \$500..."
     CHECKING_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
@@ -142,9 +169,9 @@ main() {
     print_balance "Initial Balance: \$${CHECKING_BALANCE}"
 
     # ============================================================
-    # Step 6: List All Accounts
+    # Step 7: List All Accounts
     # ============================================================
-    print_step "Step 6: List All Accounts"
+    print_step "Step 7: List All Accounts"
 
     print_info "Retrieving list of all accounts..."
     LIST_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
@@ -156,9 +183,9 @@ main() {
     print_success "Found $TOTAL_ACCOUNTS account(s)"
 
     # ============================================================
-    # Step 7: Initiate Transfer (Savings -> Checking)
+    # Step 8: Initiate Transfer (Savings -> Checking)
     # ============================================================
-    print_step "Step 7: Initiate Transfer (Savings -> Checking)"
+    print_step "Step 8: Initiate Transfer (Savings -> Checking)"
 
     print_info "Transferring \$300 from Savings to Checking..."
 
@@ -168,7 +195,6 @@ main() {
   "toAccountId": "$CHECKING_ID",
   "amount": 300.0,
   "currency": "USD",
-  "category": "rebalance",
   "reason": "Transfer to checking for bills"
 }
 EOF
@@ -188,9 +214,9 @@ EOF
     print_info "Initial Status: $TRANSACTION_STATUS"
 
     # ============================================================
-    # Step 8: Poll Transaction Status
+    # Step 9: Poll Transaction Status
     # ============================================================
-    print_step "Step 8: Monitor Transaction Status"
+    print_step "Step 9: Monitor Transaction Status"
 
     print_info "Polling for transaction completion..."
 
@@ -221,9 +247,9 @@ EOF
     done
 
     # ============================================================
-    # Step 9: Share Account with Another User
+    # Step 10: Share Account with Another User
     # ============================================================
-    print_step "Step 9: Share Account with Another User"
+    print_step "Step 10: Share Account with Another User"
 
     SECOND_EMAIL="second-$(date +%s)@example.com"
     SECOND_PASSWORD="SecurePass456!"
@@ -255,9 +281,9 @@ EOF
     fi
 
     # ============================================================
-    # Step 10: Verify Final Balances
+    # Step 11: Verify Final Balances
     # ============================================================
-    print_step "Step 10: Verify Final Account Balances"
+    print_step "Step 11: Verify Final Account Balances"
 
     print_info "Retrieving final Savings Account balance..."
     FINAL_SAVINGS=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SAVINGS_ID}" \

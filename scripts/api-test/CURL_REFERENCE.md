@@ -365,11 +365,129 @@ curl -X DELETE $API_BASE/api/accounts/{account-id}/access/{user-id} \
 
 ---
 
+## Configuration Endpoints
+
+### 1. Get Configuration (Requires Auth)
+
+Get the current user's configuration including currencies and category dictionaries.
+
+**Request:**
+```bash
+curl -X GET $API_BASE/api/users/me/configuration \
+  -H "Authorization: Bearer ***REMOVED***" | jq
+```
+
+**Expected Response (200 OK):**
+```json
+{
+  "baseCurrency": "USD",
+  "defaultCurrency": "USD",
+  "dictionaries": {
+    "income-category": {
+      "entries": [
+        { "id": "a1b2c3d4-...", "name": "Salary" },
+        { "id": "e5f6a7b8-...", "name": "Freelance" }
+      ]
+    },
+    "expense-category": {
+      "entries": [
+        { "id": "c9d0e1f2-...", "name": "Food" },
+        { "id": "a3b4c5d6-...", "name": "Transport" }
+      ]
+    }
+  }
+}
+```
+
+### 2. Change Base Currency (Requires Auth)
+
+**Request:**
+```bash
+curl -X PUT $API_BASE/api/users/me/configuration/base-currency \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ***REMOVED***" \
+  -d '{"currency": "EUR"}' | jq
+```
+
+**Expected Response:** 204 No Content
+
+### 3. Change Default Currency (Requires Auth)
+
+**Request:**
+```bash
+curl -X PUT $API_BASE/api/users/me/configuration/default-currency \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ***REMOVED***" \
+  -d '{"currency": "UAH"}' | jq
+```
+
+**Expected Response:** 204 No Content
+
+### 4. List Dictionary Entries (Requires Auth)
+
+**Request:**
+```bash
+curl -X GET $API_BASE/api/users/me/configuration/dictionaries/income-category \
+  -H "Authorization: Bearer ***REMOVED***" | jq
+```
+
+**Expected Response (200 OK):**
+```json
+{
+  "entries": [
+    { "id": "a1b2c3d4-...", "name": "Salary" },
+    { "id": "e5f6a7b8-...", "name": "Freelance" }
+  ]
+}
+```
+
+### 5. Add Dictionary Entry (Requires Auth)
+
+**Request:**
+```bash
+curl -X POST $API_BASE/api/users/me/configuration/dictionaries/income-category/entries \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ***REMOVED***" \
+  -d '{"name": "Side Hustle"}' | jq
+```
+
+**Expected Response (201 Created):**
+```json
+{
+  "id": "f7a8b9c0-...",
+  "name": "Side Hustle"
+}
+```
+
+### 6. Rename Dictionary Entry (Requires Auth)
+
+**Request:**
+```bash
+curl -X PUT $API_BASE/api/users/me/configuration/dictionaries/income-category/entries/ENTRY_UUID \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ***REMOVED***" \
+  -d '{"name": "Gig Work"}' | jq
+```
+
+**Expected Response:** 204 No Content
+
+### 7. Remove Dictionary Entry (Requires Auth)
+
+**Request:**
+```bash
+curl -X DELETE $API_BASE/api/users/me/configuration/dictionaries/income-category/entries/ENTRY_UUID \
+  -H "Authorization: Bearer ***REMOVED***" | jq
+```
+
+**Expected Response:** 204 No Content
+
+---
+
 ## Transaction Endpoints
 
 ### 1. Record Income (Requires Auth)
 
-Record income to an account.
+Record income to an account. The `category` field must be a UUID from the user's income-category dictionary (see Configuration Endpoints above).
 
 **Request:**
 ```bash
@@ -380,12 +498,10 @@ curl -X POST $API_BASE/api/transactions/income \
     "accountId": "550e8400-e29b-41d4-a716-446655440000",
     "amount": 500.0,
     "currency": "USD",
-    "category": "salary",
+    "category": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "reason": "Monthly salary"
   }' | jq
 ```
-
-**Valid Categories:** `salary`, `freelance`, `investment`, `gift`, `other`
 
 **Expected Response (200 OK):**
 ```json
@@ -394,7 +510,7 @@ curl -X POST $API_BASE/api/transactions/income \
   "transferType": "income",
   "accountId": "550e8400-e29b-41d4-a716-446655440000",
   "amount": 500.0,
-  "category": "salary",
+  "category": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "reason": "Monthly salary",
   "status": "Pending",
   "failureReason": null
@@ -403,7 +519,7 @@ curl -X POST $API_BASE/api/transactions/income \
 
 ### 2. Record Expense (Requires Auth)
 
-Record an expense from an account.
+Record an expense from an account. The `category` field must be a UUID from the user's expense-category dictionary.
 
 **Request:**
 ```bash
@@ -414,12 +530,10 @@ curl -X POST $API_BASE/api/transactions/expense \
     "accountId": "550e8400-e29b-41d4-a716-446655440000",
     "amount": 100.0,
     "currency": "USD",
-    "category": "food",
+    "category": "c9d0e1f2-a3b4-c5d6-e7f8-901234567890",
     "reason": "Groceries"
   }' | jq
 ```
-
-**Valid Categories:** `food`, `transport`, `utilities`, `rent`, `entertainment`, `other`
 
 **Expected Response (200 OK):**
 ```json
@@ -428,7 +542,7 @@ curl -X POST $API_BASE/api/transactions/expense \
   "transferType": "expense",
   "accountId": "550e8400-e29b-41d4-a716-446655440000",
   "amount": 100.0,
-  "category": "food",
+  "category": "c9d0e1f2-a3b4-c5d6-e7f8-901234567890",
   "reason": "Groceries",
   "status": "Pending",
   "failureReason": null
@@ -449,12 +563,9 @@ curl -X POST $API_BASE/api/transactions/transfer \
     "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
     "amount": 300.0,
     "currency": "USD",
-    "category": "rebalance",
     "reason": "Rent payment"
   }' | jq
 ```
-
-**Valid Categories:** `rebalance`, `savings`, `other`
 
 **Expected Response (200 OK):**
 ```json
@@ -464,7 +575,6 @@ curl -X POST $API_BASE/api/transactions/transfer \
   "fromAccountId": "550e8400-e29b-41d4-a716-446655440000",
   "toAccountId": "650e8400-e29b-41d4-a716-446655440001",
   "amount": 300.0,
-  "category": "rebalance",
   "reason": "Rent payment",
   "status": "Pending",
   "failureReason": null

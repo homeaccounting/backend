@@ -29,12 +29,14 @@ library
       Application.ProcessManagers.TransferManager
       Application.ReadModels
       Application.ReadModels.Account
+      Application.ReadModels.Configuration
       Application.ReadModels.Transaction
       Application.ReadModels.User
       Application.Services
       Application.Services.AccountService
       Application.Services.AuthorizationService
       Application.Services.AuthService
+      Application.Services.ConfigurationService
       Application.Services.TransactionService
       Application.Services.UserService
       Data.Text.Display
@@ -45,6 +47,12 @@ library
       Domain.Account.Events
       Domain.Account.Projection
       Domain.Commands
+      Domain.Configuration
+      Domain.Configuration.CommandHandler
+      Domain.Configuration.Commands
+      Domain.Configuration.Errors
+      Domain.Configuration.Events
+      Domain.Configuration.Projection
       Domain.Core
       Domain.Core.Errors
       Domain.Core.Types
@@ -83,6 +91,7 @@ library
       Web.API
       Web.API.AccountAPI
       Web.API.AuthAPI
+      Web.API.ConfigurationAPI
       Web.API.TelegramWebhookAPI
       Web.API.TransactionAPI
       Web.API.UserAPI
@@ -229,10 +238,13 @@ test-suite backend-test
       Application.ProcessManagers.TransferManagerSpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
+      Application.Services.ConfigurationServiceIntegrationSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
+      Domain.Configuration.CommandHandlerSpec
+      Domain.Configuration.ProjectionSpec
       Domain.Core.TransferCategoryPropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec

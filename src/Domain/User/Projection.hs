@@ -49,9 +49,11 @@ import Data.Text (Text)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
+    ConfigurationId,
     OAuthIdentity (..),
     PasswordHash,
     TelegramIdentity,
+    defaultConfigurationId,
     unsafeAccountId,
   )
 import Domain.User.Events
@@ -98,6 +100,8 @@ data User = User
     telegramIdentity :: Maybe TelegramIdentity,
     -- | Reference to auto-created External account
     externalAccountId :: AccountId,
+    -- | Reference to the user's configuration
+    configurationId :: ConfigurationId,
     -- | Whether this user has been registered
     isRegistered :: Bool
   }
@@ -124,6 +128,7 @@ userDefault =
       oauthIdentities = [],
       telegramIdentity = Nothing,
       externalAccountId = unsafeAccountId UUID.nil,
+      configurationId = defaultConfigurationId,
       isRegistered = False
     }
 
@@ -251,6 +256,11 @@ handleUserEvent user (PasswordChangedUserEvent evt) =
   user
     & #passwordHash
     .~ Just evt.newHash
+handleUserEvent user (UserConfigurationAssignedUserEvent evt) =
+  -- Assign configuration to user
+  user
+    & #configurationId
+    .~ evt.configurationId
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

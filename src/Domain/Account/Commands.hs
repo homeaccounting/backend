@@ -38,12 +38,13 @@ module Domain.Account.Commands
     CreditAccount (..),
     SetOverdraftLimit (..),
     SetAccountSubtype (..),
+    ChangeAccountCurrency (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountKind, AccountRole, AccountSubtype, Money, TransactionId, UserId)
+import Domain.Core.Types (AccountKind, AccountRole, AccountSubtype, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -62,7 +63,8 @@ accountCommands =
     ''DebitAccount,
     ''CreditAccount,
     ''SetOverdraftLimit,
-    ''SetAccountSubtype
+    ''SetAccountSubtype,
+    ''ChangeAccountCurrency
   ]
 
 -- -----------------------------------------------------------------------------
@@ -223,6 +225,12 @@ data SetAccountSubtype = SetAccountSubtype
   }
   deriving (Show, Eq)
 
+-- | Command to change an account's currency. Only allowed before any transactions.
+data ChangeAccountCurrency = ChangeAccountCurrency
+  { newCurrency :: Currency
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all commands
 deriveJSON defaultOptions ''CreateAccount
 deriveJSON defaultOptions ''ShareAccount
@@ -231,3 +239,4 @@ deriveJSON defaultOptions ''DebitAccount
 deriveJSON defaultOptions ''CreditAccount
 deriveJSON defaultOptions ''SetOverdraftLimit
 deriveJSON defaultOptions ''SetAccountSubtype
+deriveJSON defaultOptions ''ChangeAccountCurrency

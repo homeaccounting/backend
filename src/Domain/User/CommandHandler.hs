@@ -200,6 +200,10 @@ handleUserCommand user (ChangePasswordUserCommand ChangePassword {..})
               { newHash = newHash
               }
         ]
+-- Handle AssignConfiguration command
+handleUserCommand user (AssignConfigurationUserCommand cmd)
+  | not (user ^. #isRegistered) = Left UserNotRegistered
+  | otherwise = Right [UserConfigurationAssignedUserEvent (UserConfigurationAssigned cmd.configurationId)]
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

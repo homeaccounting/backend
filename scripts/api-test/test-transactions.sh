@@ -75,6 +75,14 @@ test_initiate_income() {
 
     SOURCE_ACCOUNT_ID=$(cat /tmp/test_source_account_id.txt)
 
+    # Fetch a category UUID from the user's configuration
+    fetch_configuration
+    SALARY_CAT=$(lookup_category_id "income-category" "Salary")
+    if [ -z "$SALARY_CAT" ]; then
+        SALARY_CAT=$(first_category_id "income-category")
+    fi
+    print_info "Using income category: $SALARY_CAT"
+
     print_info "Recording income of \$500 to $SOURCE_ACCOUNT_ID"
 
     INCOME_PAYLOAD=$(cat <<EOF
@@ -82,7 +90,7 @@ test_initiate_income() {
   "accountId": "$SOURCE_ACCOUNT_ID",
   "amount": 500.0,
   "currency": "USD",
-  "category": "salary",
+  "category": "$SALARY_CAT",
   "reason": "Test income - Monthly salary"
 }
 EOF
@@ -121,6 +129,14 @@ test_initiate_expense() {
 
     SOURCE_ACCOUNT_ID=$(cat /tmp/test_source_account_id.txt)
 
+    # Fetch a category UUID from the user's configuration
+    fetch_configuration
+    FOOD_CAT=$(lookup_category_id "expense-category" "Food")
+    if [ -z "$FOOD_CAT" ]; then
+        FOOD_CAT=$(first_category_id "expense-category")
+    fi
+    print_info "Using expense category: $FOOD_CAT"
+
     print_info "Recording expense of \$100 from $SOURCE_ACCOUNT_ID"
 
     EXPENSE_PAYLOAD=$(cat <<EOF
@@ -128,7 +144,7 @@ test_initiate_expense() {
   "accountId": "$SOURCE_ACCOUNT_ID",
   "amount": 100.0,
   "currency": "USD",
-  "category": "food",
+  "category": "$FOOD_CAT",
   "reason": "Test expense - Groceries"
 }
 EOF
@@ -176,7 +192,6 @@ test_initiate_transfer() {
   "toAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 300.0,
   "currency": "USD",
-  "category": "other",
   "reason": "Test transfer - Rent payment"
 }
 EOF
@@ -214,7 +229,6 @@ test_transfer_unauthorized() {
             "toAccountId": "00000000-0000-0000-0000-000000000002",
             "amount": 100.0,
             "currency": "USD",
-            "category": "other",
             "reason": "Unauthorized transfer"
         }')
 
@@ -328,7 +342,6 @@ test_insufficient_funds_transfer() {
   "toAccountId": "$TARGET_ACCOUNT_ID",
   "amount": 10000.0,
   "currency": "USD",
-  "category": "other",
   "reason": "Test transfer - Should fail"
 }
 EOF

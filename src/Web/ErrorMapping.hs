@@ -12,6 +12,7 @@
 --   - ValidationErr     -> 400 Bad Request
 --   - AccountError      -> 400 Bad Request
 --   - TransactionError  -> 400 Bad Request
+--   - ConfigurationError -> 400 Bad Request
 --   - InsufficientFunds -> 422 Unprocessable Entity
 --   - NotFound          -> 404 Not Found
 --
@@ -50,6 +51,7 @@ import Web.Types (ErrorResponse (..), ValidationErrorResponse (..))
 --   - ValidationErr     -> 400 with field-level error details
 --   - AccountError      -> 400 with error message
 --   - TransactionError  -> 400 with error message
+--   - ConfigurationError -> 400 with error message
 --   - InsufficientFunds -> 422 with source/required amounts
 --   - NotFound          -> 404 with entity type and ID
 mapDomainError :: DomainError -> ServerError
@@ -95,6 +97,16 @@ mapDomainError (UserError msg) =
               details = Nothing
             }
     }
+mapDomainError (ConfigurationError msg) =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = msg,
+              code = "CONFIGURATION_ERROR",
+              details = Nothing
+            }
+    }
 mapDomainError (InsufficientFunds srcAmount reqAmount) =
   err422
     { errBody =
@@ -108,6 +120,16 @@ mapDomainError (InsufficientFunds srcAmount reqAmount) =
                     [ ("sourceAmount", tshow srcAmount),
                       ("requiredAmount", tshow reqAmount)
                     ]
+            }
+    }
+mapDomainError (ExchangeRateUnavailable msg) =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = msg,
+              code = "EXCHANGE_RATE_UNAVAILABLE",
+              details = Nothing
             }
     }
 mapDomainError (NotFound etype eid) =

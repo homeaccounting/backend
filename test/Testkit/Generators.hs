@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -23,6 +24,13 @@ module Testkit.Generators
     genAccountId,
     genTransactionId,
     genUserId,
+    genConfigurationId,
+    genDictionaryEntryId,
+    genDictionaryId,
+    genEntryName,
+    genDictionaryEntry,
+    genDictionary,
+    genCreatedBy,
     genTelegramId,
     genTelegramIdentity,
     genOAuthProvider,
@@ -30,8 +38,6 @@ module Testkit.Generators
     genPasswordHash,
     genEmail,
     genNonEmptyText,
-    genIncomeCategory,
-    genExpenseCategory,
     genTransferType,
     genTransferCategory,
     genExchangeRate,
@@ -201,6 +207,44 @@ instance Arbitrary UserId where
   arbitrary = genUserId
 
 -- -----------------------------------------------------------------------------
+-- Configuration Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a valid ConfigurationId.
+genConfigurationId :: Gen ConfigurationId
+genConfigurationId = unsafeConfigurationId <$> genUUID `suchThat` (/= UUID.nil)
+
+-- | Generate a valid DictionaryEntryId.
+genDictionaryEntryId :: Gen DictionaryEntryId
+genDictionaryEntryId = unsafeDictionaryEntryId <$> genUUID `suchThat` (/= UUID.nil)
+
+instance Arbitrary DictionaryEntryId where
+  arbitrary = genDictionaryEntryId
+
+-- | Generate a valid DictionaryId.
+genDictionaryId :: Gen DictionaryId
+genDictionaryId = DictionaryId <$> elements ["income-category", "expense-category", "label", "tag"]
+
+-- | Generate a valid EntryName.
+genEntryName :: Gen EntryName
+genEntryName =
+  unsafeEntryName
+    <$> elements
+      ["Salary", "Food", "Transport", "Rent", "Gift", "Other", "Utilities", "Entertainment"]
+
+-- | Generate a valid DictionaryEntry.
+genDictionaryEntry :: Gen DictionaryEntry
+genDictionaryEntry = DictionaryEntry <$> genDictionaryEntryId <*> genEntryName
+
+-- | Generate a valid Dictionary with at least one entry.
+genDictionary :: Gen Dictionary
+genDictionary = Dictionary <$> listOf1 genDictionaryEntry
+
+-- | Generate a valid CreatedBy value.
+genCreatedBy :: Gen CreatedBy
+genCreatedBy = oneof [pure System, ClonedBy <$> genUserId <*> genConfigurationId]
+
+-- -----------------------------------------------------------------------------
 -- Telegram Generators
 -- -----------------------------------------------------------------------------
 
@@ -301,20 +345,6 @@ genEmail = do
 -- Transfer Category Generators
 -- -----------------------------------------------------------------------------
 
--- | Generate a valid IncomeCategory.
-genIncomeCategory :: Gen IncomeCategory
-genIncomeCategory = elements [Salary, Freelance, Investment, IncomeGift, IncomeOther]
-
-instance Arbitrary IncomeCategory where
-  arbitrary = genIncomeCategory
-
--- | Generate a valid ExpenseCategory.
-genExpenseCategory :: Gen ExpenseCategory
-genExpenseCategory = elements [Food, Transport, Utilities, Rent, Entertainment, ExpenseOther]
-
-instance Arbitrary ExpenseCategory where
-  arbitrary = genExpenseCategory
-
 -- | Generate a valid TransferType.
 genTransferType :: Gen TransferType
 genTransferType = elements [Income, Expense, InternalTransfer]
@@ -326,8 +356,8 @@ instance Arbitrary TransferType where
 genTransferCategory :: Gen TransferCategory
 genTransferCategory =
   oneof
-    [ IncomeCat <$> arbitrary,
-      ExpenseCat <$> arbitrary,
+    [ IncomeCat <$> genDictionaryEntryId,
+      ExpenseCat <$> genDictionaryEntryId,
       pure InternalCat
     ]
 

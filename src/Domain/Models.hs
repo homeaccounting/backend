@@ -63,10 +63,18 @@ module Domain.Models
     transactionAccountingProjection,
     userAccountingProjection,
 
+    -- * Configuration Embeddings
+    configurationEventEmbedding,
+    configurationCommandEmbedding,
+
     -- * Embedded Command Handlers
     accountAccountingCommandHandler,
     transactionAccountingCommandHandler,
     userAccountingCommandHandler,
+    configurationAccountingCommandHandler,
+
+    -- * Embedded Configuration Projection
+    configurationAccountingProjection,
 
     -- * Re-exports
     module X,
@@ -76,6 +84,7 @@ where
 import Data.Aeson (Options (constructorTagModifier), defaultOptions)
 import Data.Aeson.TH (deriveJSON)
 import Domain.Account as X
+import Domain.Configuration as X
 import Domain.Transaction as X
 import Domain.User as X
 import Eventium (CommandHandler, Projection, TypeEmbedding (..), embeddedCommandHandler, embeddedProjection)
@@ -109,7 +118,7 @@ import Eventium.TH.SumType (SumTypeTagOptions (ConstructTagName), constructSumTy
 constructSumType
   "AccountingEvent"
   (withTagOptions (ConstructTagName (++ "Event")) defaultSumTypeOptions)
-  (accountEvents ++ transactionEvents ++ userEvents)
+  (accountEvents ++ transactionEvents ++ userEvents ++ configurationEvents)
 
 -- Derive Show and Eq for the unified event type
 deriving instance Show AccountingEvent
@@ -146,7 +155,7 @@ deriveJSON (defaultOptions {constructorTagModifier = dropSuffix "Event"}) ''Acco
 constructSumType
   "AccountingCommand"
   (withTagOptions (ConstructTagName (++ "Command")) defaultSumTypeOptions)
-  (accountCommands ++ transactionCommands ++ userCommands)
+  (accountCommands ++ transactionCommands ++ userCommands ++ configurationCommands)
 
 -- Derive Show and Eq for the unified command type
 deriving instance Show AccountingCommand
@@ -271,3 +280,43 @@ userAccountingCommandHandler =
     userEventEmbedding
     userCommandEmbedding
     userCommandHandler
+
+-- -----------------------------------------------------------------------------
+-- Configuration Embeddings
+-- -----------------------------------------------------------------------------
+
+-- | TypeEmbedding for Configuration events.
+--
+-- Embeds aggregate-specific ConfigurationEvent into unified AccountingEvent.
+mkSumTypeEmbedding "configurationEventEmbedding" ''ConfigurationEvent ''AccountingEvent
+
+-- | TypeEmbedding for Configuration commands.
+--
+-- Embeds aggregate-specific ConfigurationCommand into unified AccountingCommand.
+mkSumTypeEmbedding "configurationCommandEmbedding" ''ConfigurationCommand ''AccountingCommand
+
+-- -----------------------------------------------------------------------------
+-- Embedded Configuration Projection
+-- -----------------------------------------------------------------------------
+
+-- | Embedded Configuration projection that works with unified events.
+--
+-- Wraps the Configuration projection to work with AccountingEvent instead of
+-- ConfigurationEvent. Non-matching events are silently skipped.
+configurationAccountingProjection :: Projection Configuration AccountingEvent
+configurationAccountingProjection = embeddedProjection configurationEventEmbedding configurationProjection
+
+-- -----------------------------------------------------------------------------
+-- Embedded Configuration Command Handler
+-- -----------------------------------------------------------------------------
+
+-- | Embedded Configuration command handler that works with unified types.
+--
+-- Non-matching commands return @Right []@ (no events produced), enabling
+-- safe multi-aggregate command dispatching.
+configurationAccountingCommandHandler :: CommandHandler Configuration AccountingEvent AccountingCommand ConfigurationError
+configurationAccountingCommandHandler =
+  embeddedCommandHandler
+    configurationEventEmbedding
+    configurationCommandEmbedding
+    configurationCommandHandler

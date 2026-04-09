@@ -47,11 +47,17 @@ This will register a user, login, create accounts, transfer money, share account
 # Share an account with another user
 ./scripts/api-test/quick-test.sh share <account-id> <user-id> editor
 
-# Record income (requires auth)
-./scripts/api-test/quick-test.sh income <account-id> 500 salary
+# Configuration (requires auth)
+./scripts/api-test/quick-test.sh config
+./scripts/api-test/quick-test.sh config-dict income-category
+./scripts/api-test/quick-test.sh config-add expense-category "Coffee"
+./scripts/api-test/quick-test.sh config-base-currency EUR
 
-# Record expense (requires auth)
-./scripts/api-test/quick-test.sh expense <account-id> 100 food
+# Record income (requires auth - category is a UUID from config)
+./scripts/api-test/quick-test.sh income <account-id> 500 <category-uuid>
+
+# Record expense (requires auth - category is a UUID from config)
+./scripts/api-test/quick-test.sh expense <account-id> 100 <category-uuid>
 
 # Transfer money (requires auth)
 ./scripts/api-test/quick-test.sh transfer <from-id> <to-id> 300
@@ -77,6 +83,9 @@ This will register a user, login, create accounts, transfer money, share account
 
 # Test all account operations
 ./scripts/api-test/test-accounts.sh all
+
+# Test all configuration operations
+./scripts/api-test/test-configuration.sh all
 
 # Test all transaction operations
 ./scripts/api-test/test-transactions.sh all
@@ -104,6 +113,14 @@ This will register a user, login, create accounts, transfer money, share account
 ./scripts/api-test/test-accounts.sh list
 ./scripts/api-test/test-accounts.sh share
 ./scripts/api-test/test-accounts.sh revoke
+
+# Configuration tests
+./scripts/api-test/test-configuration.sh get
+./scripts/api-test/test-configuration.sh base-currency
+./scripts/api-test/test-configuration.sh list
+./scripts/api-test/test-configuration.sh add
+./scripts/api-test/test-configuration.sh rename
+./scripts/api-test/test-configuration.sh remove
 
 # Transaction tests
 ./scripts/api-test/test-transactions.sh setup
@@ -148,6 +165,7 @@ scripts/api-test/
 ├── test-auth.sh                 # Authentication tests
 ├── test-user.sh                 # User profile tests
 ├── test-accounts.sh             # Account operations tests
+├── test-configuration.sh        # Configuration operations tests
 ├── test-transactions.sh         # Transaction operations tests
 ├── test-full-workflow.sh        # Complete workflow demonstration
 └── payloads/
@@ -187,16 +205,20 @@ scripts/api-test/
 # 3. List accounts to get IDs
 ./scripts/api-test/quick-test.sh list
 
-# 4. Record income
-./scripts/api-test/quick-test.sh income <savings-id> 500 salary
+# 4. Get configuration to find category UUIDs
+./scripts/api-test/quick-test.sh config-dict income-category
+./scripts/api-test/quick-test.sh config-dict expense-category
 
-# 5. Record expense
-./scripts/api-test/quick-test.sh expense <checking-id> 100 food
+# 5. Record income (use a category UUID from step 4)
+./scripts/api-test/quick-test.sh income <savings-id> 500 <category-uuid>
 
-# 6. Transfer money between accounts
+# 6. Record expense (use a category UUID from step 4)
+./scripts/api-test/quick-test.sh expense <checking-id> 100 <category-uuid>
+
+# 7. Transfer money between accounts
 ./scripts/api-test/quick-test.sh transfer <savings-id> <checking-id> 300
 
-# 7. Check transaction status
+# 8. Check transaction status
 ./scripts/api-test/quick-test.sh tx <transaction-id>
 ```
 

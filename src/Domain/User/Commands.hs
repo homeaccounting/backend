@@ -31,6 +31,7 @@ module Domain.User.Commands
     UnlinkOAuthAccount (..),
     UnlinkTelegramAccount (..),
     ChangePassword (..),
+    AssignConfiguration (..),
   )
 where
 
@@ -38,6 +39,7 @@ import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types
   ( AccountId,
+    ConfigurationId,
     OAuthIdentity,
     PasswordHash,
     TelegramIdentity,
@@ -60,7 +62,8 @@ userCommands =
     ''LinkTelegramAccount,
     ''UnlinkOAuthAccount,
     ''UnlinkTelegramAccount,
-    ''ChangePassword
+    ''ChangePassword,
+    ''AssignConfiguration
   ]
 
 -- -----------------------------------------------------------------------------
@@ -207,6 +210,24 @@ data ChangePassword = ChangePassword
   }
   deriving (Show, Eq)
 
+-- | Command to assign a configuration to a user.
+--
+-- Represents the intent to assign a configuration (categories, currencies, etc.)
+-- to a user.
+--
+-- If accepted, produces a UserConfigurationAssigned event.
+--
+-- Business Rules:
+--   - User must be registered
+--
+-- Example:
+-- >>> AssignConfiguration configId
+data AssignConfiguration = AssignConfiguration
+  { -- | Configuration to assign
+    configurationId :: ConfigurationId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -219,3 +240,4 @@ deriveJSON defaultOptions ''LinkTelegramAccount
 deriveJSON defaultOptions ''UnlinkOAuthAccount
 deriveJSON defaultOptions ''UnlinkTelegramAccount
 deriveJSON defaultOptions ''ChangePassword
+deriveJSON defaultOptions ''AssignConfiguration

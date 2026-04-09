@@ -54,6 +54,7 @@ import Domain.Account.Events
     AccountAccessRevoked (..),
     AccountCreated (..),
     AccountCredited (..),
+    AccountCurrencyChanged (..),
     AccountDebited (..),
     AccountSubtypeSet (..),
     OverdraftLimitSet (..),
@@ -70,6 +71,8 @@ import Domain.Core.Types
     defaultCash,
     mkDefaultMoney,
     subtractMoney,
+    unMoney,
+    unsafeMoney,
     unsafeUserId,
   )
 import Eventium (Projection (..))
@@ -117,7 +120,9 @@ data Account = Account
     -- | List of users with access and their roles
     accessList :: [AccountAccess],
     -- | Overdraft limit. Nothing = unlimited, Just limit = max negative balance
-    overdraftLimit :: Maybe Money
+    overdraftLimit :: Maybe Money,
+    -- | Whether the account has had any debit or credit transactions
+    hasTransactions :: Bool
   }
   deriving (Show, Eq)
 
@@ -143,7 +148,8 @@ accountDefault = case mkDefaultMoney 0 of
         createdBy = unsafeUserId UUID.nil,
         kind = Regular defaultCash,
         accessList = [],
-        overdraftLimit = Just m
+        overdraftLimit = Just m,
+        hasTransactions = False
       }
   Left _ -> error "accountDefault: mkDefaultMoney 0 should never fail"
 
@@ -257,17 +263,22 @@ handleAccountEvent account (AccountDebitedAccountEvent AccountDebited {..}) =
   -- The command handler already validated currency match; subtractMoney allows negative results
   -- (overdraft enforcement is at account level).
   case subtractMoney (account ^. #balance) amount of
-    Right newBalance -> account & #balance .~ newBalance
+    Right newBalance -> account & #balance .~ newBalance & #hasTransactions .~ True
     Left _ -> account -- Impossible: currency was validated by command handler
 handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
   -- Add the credited amount to balance. Credits always succeed (currency validated by command handler).
   case addMoney (account ^. #balance) amount of
-    Right newBalance -> account & #balance .~ newBalance
+    Right newBalance -> account & #balance .~ newBalance & #hasTransactions .~ True
     Left _ -> account -- Impossible: currency was validated by command handler
 handleAccountEvent account (OverdraftLimitSetAccountEvent OverdraftLimitSet {..}) =
   account & #overdraftLimit .~ overdraftLimit
 handleAccountEvent account (AccountSubtypeSetAccountEvent AccountSubtypeSet {..}) =
   account & #kind .~ Regular subtype
+handleAccountEvent account (AccountCurrencyChangedAccountEvent AccountCurrencyChanged {..}) =
+  -- Update the balance currency. Amount stays the same, only currency changes.
+  let currentBalance = account ^. #balance
+      newBalance = unsafeMoney newCurrency (unMoney currentBalance)
+   in account & #balance .~ newBalance
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

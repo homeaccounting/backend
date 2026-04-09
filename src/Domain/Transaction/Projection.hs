@@ -49,7 +49,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ExchangeRate, IncomeCategory (..), Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeUserId)
+import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferCategory (..), TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -182,7 +182,7 @@ transactionDefault =
       status = Pending,
       initiatedBy = unsafeUserId nil,
       transferType = Income,
-      category = IncomeCat IncomeOther
+      category = IncomeCat (unsafeDictionaryEntryId nil)
     }
 
 -- -----------------------------------------------------------------------------

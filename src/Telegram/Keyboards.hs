@@ -14,8 +14,7 @@ module Telegram.Keyboards
     confirmCancelKeyboard,
     cancelKeyboard,
     currencyKeyboard,
-    incomeCategoryKeyboard,
-    expenseCategoryKeyboard,
+    categoryKeyboard,
 
     -- * Formatting
     formatMoney,
@@ -30,7 +29,7 @@ where
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.UUID as UUID
-import Domain.Core.Types (AccountId, Currency (..), Money, moneyCurrency, unAccountId, unMoney)
+import Domain.Core.Types (AccountId, Currency (..), DictionaryEntryId, EntryName, Money, moneyCurrency, unAccountId, unDictionaryEntryId, unEntryName, unMoney)
 
 -- -----------------------------------------------------------------------------
 -- Types
@@ -119,28 +118,16 @@ currencyKeyboard =
         ]
     }
 
--- | Income category keyboard.
-incomeCategoryKeyboard :: InlineKeyboard
-incomeCategoryKeyboard =
+-- | Dynamic category keyboard built from dictionary entries.
+--
+-- Each entry becomes a button with the entry name as label and the
+-- DictionaryEntryId UUID as callback data (prefixed with "cat:").
+categoryKeyboard :: [(DictionaryEntryId, EntryName)] -> InlineKeyboard
+categoryKeyboard entries =
   InlineKeyboard
     { rows =
-        [ [InlineButton "Salary" "cat:salary", InlineButton "Freelance" "cat:freelance"],
-          [InlineButton "Investment" "cat:investment", InlineButton "Gift" "cat:gift"],
-          [InlineButton "Other" "cat:other"],
-          [cancelButton]
-        ]
-    }
-
--- | Expense category keyboard.
-expenseCategoryKeyboard :: InlineKeyboard
-expenseCategoryKeyboard =
-  InlineKeyboard
-    { rows =
-        [ [InlineButton "Food" "cat:food", InlineButton "Transport" "cat:transport"],
-          [InlineButton "Utilities" "cat:utilities", InlineButton "Rent" "cat:rent"],
-          [InlineButton "Entertainment" "cat:entertainment", InlineButton "Other" "cat:other"],
-          [cancelButton]
-        ]
+        map (\(eid, name) -> [InlineButton (unEntryName name) ("cat:" <> T.pack (UUID.toString (unDictionaryEntryId eid)))]) entries
+          ++ [[cancelButton]]
     }
 
 -- | Cancel button.

@@ -46,10 +46,19 @@ print_usage() {
     echo "  revoke <acct-id> <user-id>   - Revoke access (requires auth)"
     echo ""
     echo "Transaction Commands:"
-    echo "  income <acct-id> <amt> <cat> - Record income (requires auth)"
-    echo "  expense <acct-id> <amt> <cat> - Record expense (requires auth)"
-    echo "  transfer <from> <to> <amt>   - Transfer money (requires auth)"
-    echo "  tx <id>                      - Get transaction status"
+    echo "  income <acct-id> <amt> <cat-uuid>  - Record income (requires auth)"
+    echo "  expense <acct-id> <amt> <cat-uuid> - Record expense (requires auth)"
+    echo "  transfer <from> <to> <amt>         - Transfer money (requires auth)"
+    echo "  tx <id>                             - Get transaction status"
+    echo ""
+    echo "Configuration Commands:"
+    echo "  config                              - Get current configuration"
+    echo "  config-dict <dict-id>               - List dictionary entries"
+    echo "  config-add <dict-id> <name>         - Add dictionary entry"
+    echo "  config-rename <dict-id> <id> <name> - Rename entry"
+    echo "  config-remove <dict-id> <id>        - Remove entry"
+    echo "  config-base-currency <cur>          - Change base currency"
+    echo "  config-default-currency <cur>       - Change default currency"
     echo ""
     echo "User Profile Commands:"
     echo "  profile                      - Get current user profile (requires auth)"
@@ -76,8 +85,10 @@ print_usage() {
     echo "  $0 telegram-login                          # Uses env var defaults"
     echo "  $0 telegram-login 12345 John johndoe       # Override with args"
     echo "  $0 create \"My Account\" 1000"
-    echo "  $0 income <account-id> 500 salary"
-    echo "  $0 expense <account-id> 100 food"
+    echo "  $0 config"
+    echo "  $0 config-dict income-category"
+    echo "  $0 income <account-id> 500 <category-uuid>"
+    echo "  $0 expense <account-id> 100 <category-uuid>"
     echo "  $0 transfer <from-id> <to-id> 300"
     echo "  $0 profile"
 }
@@ -269,14 +280,26 @@ case "${1:-help}" in
 
     income)
         if [ -z "$2" ] || [ -z "$3" ]; then
-            echo "Usage: $0 income <account-id> <amount> [category]"
-            echo "  Categories: salary, freelance, investment, gift, other"
+            echo "Usage: $0 income <account-id> <amount> <category-uuid>"
+            echo "  Category must be a UUID from your configuration."
+            echo "  Use '$0 config-dict income-category' to list available categories."
             exit 1
         fi
         ACCOUNT_ID="$2"
         AMOUNT="$3"
-        CATEGORY="${4:-salary}"
-        echo -e "${YELLOW}Recording income of \$$AMOUNT to $ACCOUNT_ID (category: $CATEGORY)${NC}"
+        CATEGORY="$4"
+        if [ -z "$CATEGORY" ]; then
+            echo -e "${YELLOW}No category UUID provided. Fetching first income category...${NC}"
+            AUTH_TOKEN=$(get_saved_token)
+            fetch_configuration
+            CATEGORY=$(first_category_id "income-category")
+            if [ -z "$CATEGORY" ]; then
+                echo -e "${RED}Could not find any income categories in configuration${NC}"
+                exit 1
+            fi
+            echo -e "${YELLOW}Using category: $CATEGORY${NC}"
+        fi
+        echo -e "${YELLOW}Recording income of \$$AMOUNT to $ACCOUNT_ID${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/income" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
@@ -286,14 +309,26 @@ case "${1:-help}" in
 
     expense)
         if [ -z "$2" ] || [ -z "$3" ]; then
-            echo "Usage: $0 expense <account-id> <amount> [category]"
-            echo "  Categories: food, transport, utilities, rent, entertainment, other"
+            echo "Usage: $0 expense <account-id> <amount> <category-uuid>"
+            echo "  Category must be a UUID from your configuration."
+            echo "  Use '$0 config-dict expense-category' to list available categories."
             exit 1
         fi
         ACCOUNT_ID="$2"
         AMOUNT="$3"
-        CATEGORY="${4:-other}"
-        echo -e "${YELLOW}Recording expense of \$$AMOUNT from $ACCOUNT_ID (category: $CATEGORY)${NC}"
+        CATEGORY="$4"
+        if [ -z "$CATEGORY" ]; then
+            echo -e "${YELLOW}No category UUID provided. Fetching first expense category...${NC}"
+            AUTH_TOKEN=$(get_saved_token)
+            fetch_configuration
+            CATEGORY=$(first_category_id "expense-category")
+            if [ -z "$CATEGORY" ]; then
+                echo -e "${RED}Could not find any expense categories in configuration${NC}"
+                exit 1
+            fi
+            echo -e "${YELLOW}Using category: $CATEGORY${NC}"
+        fi
+        echo -e "${YELLOW}Recording expense of \$$AMOUNT from $ACCOUNT_ID${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/expense" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
@@ -303,19 +338,17 @@ case "${1:-help}" in
 
     transfer)
         if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
-            echo "Usage: $0 transfer <from-id> <to-id> <amount> [category]"
-            echo "  Categories: rebalance, savings, other"
+            echo "Usage: $0 transfer <from-id> <to-id> <amount>"
             exit 1
         fi
         FROM_ID="$2"
         TO_ID="$3"
         AMOUNT="$4"
-        CATEGORY="${5:-other}"
-        echo -e "${YELLOW}Transferring \$$AMOUNT from $FROM_ID to $TO_ID (category: $CATEGORY)${NC}"
+        echo -e "${YELLOW}Transferring \$$AMOUNT from $FROM_ID to $TO_ID${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
             -H "Content-Type: application/json" \
             -H "$(auth_header)" \
-            -d "{\"fromAccountId\": \"$FROM_ID\", \"toAccountId\": \"$TO_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"category\": \"$CATEGORY\", \"reason\": \"Quick transfer\"}")
+            -d "{\"fromAccountId\": \"$FROM_ID\", \"toAccountId\": \"$TO_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"reason\": \"Quick transfer\"}")
         check_jq "$RESPONSE"
         ;;
 
@@ -357,6 +390,130 @@ case "${1:-help}" in
         if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
             echo -e "${GREEN}✓ Password changed successfully${NC}"
             echo "$NEW" > /tmp/test_auth_password.txt
+        else
+            check_jq "$BODY"
+        fi
+        ;;
+
+    # --- Configuration ---
+
+    config)
+        echo -e "${YELLOW}Getting configuration...${NC}"
+        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/users/me/configuration" \
+            -H "$(auth_header)")
+        check_jq "$RESPONSE"
+        ;;
+
+    config-dict)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 config-dict <dict-id>"
+            echo "  Dict IDs: income-category, expense-category"
+            exit 1
+        fi
+        DICT_ID="$2"
+        echo -e "${YELLOW}Listing dictionary entries for: $DICT_ID${NC}"
+        RESPONSE=$(curl -s -X GET \
+            "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}" \
+            -H "$(auth_header)")
+        check_jq "$RESPONSE"
+        ;;
+
+    config-add)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Usage: $0 config-add <dict-id> <name>"
+            exit 1
+        fi
+        DICT_ID="$2"
+        ENTRY_NAME="$3"
+        echo -e "${YELLOW}Adding entry '$ENTRY_NAME' to $DICT_ID...${NC}"
+        RESPONSE=$(curl -s -X POST \
+            "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}/entries" \
+            -H "Content-Type: application/json" \
+            -H "$(auth_header)" \
+            -d "{\"name\": \"$ENTRY_NAME\"}")
+        check_jq "$RESPONSE"
+        ;;
+
+    config-rename)
+        if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
+            echo "Usage: $0 config-rename <dict-id> <entry-id> <new-name>"
+            exit 1
+        fi
+        DICT_ID="$2"
+        ENTRY_ID="$3"
+        NEW_NAME="$4"
+        echo -e "${YELLOW}Renaming entry $ENTRY_ID to '$NEW_NAME'...${NC}"
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+            "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}/entries/${ENTRY_ID}" \
+            -H "Content-Type: application/json" \
+            -H "$(auth_header)" \
+            -d "{\"name\": \"$NEW_NAME\"}")
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+        if [ "$HTTP_CODE" = "204" ]; then
+            echo -e "${GREEN}Entry renamed (204 No Content)${NC}"
+        else
+            check_jq "$BODY"
+        fi
+        ;;
+
+    config-remove)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo "Usage: $0 config-remove <dict-id> <entry-id>"
+            exit 1
+        fi
+        DICT_ID="$2"
+        ENTRY_ID="$3"
+        echo -e "${YELLOW}Removing entry $ENTRY_ID from $DICT_ID...${NC}"
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
+            "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}/entries/${ENTRY_ID}" \
+            -H "$(auth_header)")
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+        if [ "$HTTP_CODE" = "204" ]; then
+            echo -e "${GREEN}Entry removed (204 No Content)${NC}"
+        else
+            check_jq "$BODY"
+        fi
+        ;;
+
+    config-base-currency)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 config-base-currency <currency>"
+            exit 1
+        fi
+        CURRENCY="$2"
+        echo -e "${YELLOW}Changing base currency to $CURRENCY...${NC}"
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+            "${API_BASE_URL}/api/users/me/configuration/base-currency" \
+            -H "Content-Type: application/json" \
+            -H "$(auth_header)" \
+            -d "{\"currency\": \"$CURRENCY\"}")
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+        if [ "$HTTP_CODE" = "204" ]; then
+            echo -e "${GREEN}Base currency changed to $CURRENCY (204 No Content)${NC}"
+        else
+            check_jq "$BODY"
+        fi
+        ;;
+
+    config-default-currency)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 config-default-currency <currency>"
+            exit 1
+        fi
+        CURRENCY="$2"
+        echo -e "${YELLOW}Changing default currency to $CURRENCY...${NC}"
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
+            "${API_BASE_URL}/api/users/me/configuration/default-currency" \
+            -H "Content-Type: application/json" \
+            -H "$(auth_header)" \
+            -d "{\"currency\": \"$CURRENCY\"}")
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+        if [ "$HTTP_CODE" = "204" ]; then
+            echo -e "${GREEN}Default currency changed to $CURRENCY (204 No Content)${NC}"
         else
             check_jq "$BODY"
         fi

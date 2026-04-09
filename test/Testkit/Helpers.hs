@@ -19,6 +19,9 @@ module Testkit.Helpers
     mockAccountId,
     mockTransactionId,
     mockUserId,
+    mockConfigurationId,
+    mockDictionaryEntryId,
+    mockEntryName,
     mockTelegramId,
     mockPasswordHash,
     mockExchangeRate,
@@ -91,6 +94,24 @@ mockTransactionId = unsafeTransactionId
 -- UserId uuid
 mockUserId :: UUID -> UserId
 mockUserId = unsafeUserId
+
+-- | Create a ConfigurationId without validation.
+--
+-- WARNING: Only use in tests where you need to bypass validation.
+mockConfigurationId :: UUID -> ConfigurationId
+mockConfigurationId = unsafeConfigurationId
+
+-- | Create a DictionaryEntryId without validation.
+--
+-- WARNING: Only use in tests where you need to bypass validation.
+mockDictionaryEntryId :: UUID -> DictionaryEntryId
+mockDictionaryEntryId = unsafeDictionaryEntryId
+
+-- | Create an EntryName without validation.
+--
+-- WARNING: Only use in tests where you need to bypass validation.
+mockEntryName :: Text -> EntryName
+mockEntryName = unsafeEntryName
 
 -- | Create a TelegramId.
 --

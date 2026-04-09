@@ -51,12 +51,12 @@ import Domain.Core.Types
     AccountKind (..),
     AccountRole (..),
     Currency (..),
-    ExpenseCategory (..),
-    IncomeCategory (..),
+    DictionaryEntryId,
     TransferCategory (..),
     TransferType (..),
     defaultCash,
     unsafeAccountId,
+    unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
     unsafeUserId,
@@ -74,6 +74,14 @@ import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
 import RIO
 import Test.Hspec
 import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
+
+-- | Test DictionaryEntryId for "Salary" income category.
+testSalaryCatId :: DictionaryEntryId
+testSalaryCatId = unsafeDictionaryEntryId (UUID.fromWords 100 0 0 1)
+
+-- | Test DictionaryEntryId for "Food" expense category.
+testFoodCatId :: DictionaryEntryId
+testFoodCatId = unsafeDictionaryEntryId (UUID.fromWords 200 0 0 2)
 
 -- -----------------------------------------------------------------------------
 -- Test Helpers
@@ -675,7 +683,7 @@ categorizedTransferSpec =
                 reason = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Income,
-                category = IncomeCat Salary
+                category = IncomeCat testSalaryCatId
               }
 
       -- Verify transaction read model has correct type and category
@@ -685,7 +693,7 @@ categorizedTransferSpec =
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
           txData.transferType `shouldBe` Income
-          txData.category `shouldBe` IncomeCat Salary
+          txData.category `shouldBe` IncomeCat testSalaryCatId
           txData.status `shouldBe` Completed
 
       -- Verify account balances
@@ -749,7 +757,7 @@ categorizedTransferSpec =
                 reason = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Expense,
-                category = ExpenseCat Food
+                category = ExpenseCat testFoodCatId
               }
 
       -- Verify transaction read model has correct type and category
@@ -759,7 +767,7 @@ categorizedTransferSpec =
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
           txData.transferType `shouldBe` Expense
-          txData.category `shouldBe` ExpenseCat Food
+          txData.category `shouldBe` ExpenseCat testFoodCatId
           txData.status `shouldBe` Completed
 
       -- Verify account balances
@@ -811,7 +819,7 @@ categorizedTransferSpec =
     it "rejects transfer with mismatched type and category" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
 
-      -- Attempt Income type with ExpenseCat Food (mismatch)
+      -- Attempt Income type with ExpenseCat testFoodCatId (mismatch)
       txUuid <- UUID.nextRandom
       let writer = env.eventStoreWriter
           reader = env.eventStoreReader
@@ -827,7 +835,7 @@ categorizedTransferSpec =
                 reason = "Mismatched category",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Income,
-                category = ExpenseCat Food
+                category = ExpenseCat testFoodCatId
               }
 
       -- Should be rejected

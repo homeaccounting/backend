@@ -20,6 +20,7 @@ scripts/api-test/
 ├── test-user.sh           # User profile tests (get, update, change password)
 ├── test-accounts.sh       # Account operations tests (create, share, revoke)
 ├── test-transactions.sh   # Transaction operations tests (transfer, status)
+├── test-configuration.sh  # Configuration operations tests
 ├── test-full-workflow.sh  # Complete workflow demonstration
 └── payloads/
     ├── auth/              # Authentication payloads
@@ -65,12 +66,13 @@ This will:
 1. Register a new user
 2. Login with credentials
 3. Get user profile
-4. Create two accounts (Savings and Checking)
-5. List all accounts
-6. Transfer money between accounts
-7. Poll transaction status
-8. Share an account with another user
-9. Verify final balances
+4. Check user configuration (currencies and category dictionaries)
+5. Create two accounts (Savings and Checking)
+6. List all accounts
+7. Transfer money between accounts
+8. Poll transaction status
+9. Share an account with another user
+10. Verify final balances
 
 ### Individual Test Scripts
 
@@ -116,6 +118,23 @@ Available operations:
 - Share account with another user
 - Revoke account access
 
+#### Test Configuration Operations
+
+```bash
+./scripts/api-test/test-configuration.sh all
+```
+
+Available operations:
+- Get current configuration
+- Change base currency
+- Change default currency
+- Test invalid currency (expected 400)
+- List dictionary entries
+- Add dictionary entry
+- Rename dictionary entry
+- Remove dictionary entry
+- Test without auth (expected 401)
+
 #### Test Transaction Operations
 
 ```bash
@@ -124,8 +143,8 @@ Available operations:
 
 Available operations:
 - Setup test accounts
-- Record income (requires auth)
-- Record expense (requires auth)
+- Record income (requires auth, category is a UUID from configuration)
+- Record expense (requires auth, category is a UUID from configuration)
 - Initiate transfer (requires auth)
 - Test transfer without auth (expected 401)
 - Get transaction status
@@ -159,9 +178,19 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 ./scripts/api-test/quick-test.sh get <account-id>
 ./scripts/api-test/quick-test.sh share <account-id> <user-id> editor
 
-# Transactions (requires auth)
-./scripts/api-test/quick-test.sh income <account-id> 500 salary
-./scripts/api-test/quick-test.sh expense <account-id> 100 food
+# Configuration (requires auth)
+./scripts/api-test/quick-test.sh config
+./scripts/api-test/quick-test.sh config-dict income-category
+./scripts/api-test/quick-test.sh config-dict expense-category
+./scripts/api-test/quick-test.sh config-add income-category "Side Hustle"
+./scripts/api-test/quick-test.sh config-rename income-category <entry-id> "Gig Work"
+./scripts/api-test/quick-test.sh config-remove income-category <entry-id>
+./scripts/api-test/quick-test.sh config-base-currency EUR
+./scripts/api-test/quick-test.sh config-default-currency UAH
+
+# Transactions (requires auth - categories are UUIDs from configuration)
+./scripts/api-test/quick-test.sh income <account-id> 500 <category-uuid>
+./scripts/api-test/quick-test.sh expense <account-id> 100 <category-uuid>
 ./scripts/api-test/quick-test.sh transfer <from-id> <to-id> 300
 ./scripts/api-test/quick-test.sh tx <transaction-id>
 
@@ -205,6 +234,18 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 | POST | `/api/accounts/:id/share` | JWT | Share account with another user |
 | DELETE | `/api/accounts/:id/access/:userId` | JWT | Revoke user's access |
 
+### Configuration Endpoints
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/users/me/configuration` | JWT | Get current user configuration |
+| PUT | `/api/users/me/configuration/base-currency` | JWT | Change base currency |
+| PUT | `/api/users/me/configuration/default-currency` | JWT | Change default currency |
+| GET | `/api/users/me/configuration/dictionaries/:dictId` | JWT | List dictionary entries |
+| POST | `/api/users/me/configuration/dictionaries/:dictId/entries` | JWT | Add dictionary entry |
+| PUT | `/api/users/me/configuration/dictionaries/:dictId/entries/:entryId` | JWT | Rename dictionary entry |
+| DELETE | `/api/users/me/configuration/dictionaries/:dictId/entries/:entryId` | JWT | Remove dictionary entry |
+
 ### Transaction Endpoints
 
 | Method | Endpoint | Auth | Description |
@@ -212,7 +253,7 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 | POST | `/api/transactions/income` | JWT | Record income to an account |
 | POST | `/api/transactions/expense` | JWT | Record an expense from an account |
 | POST | `/api/transactions/transfer` | JWT | Transfer money between accounts |
-| GET | `/api/transactions/:id` | No | Get transaction status |
+| GET | `/api/transactions/:id` | JWT | Get transaction status |
 
 ### Telegram Webhook
 
@@ -348,8 +389,11 @@ sudo apt-get install jq
 
 - All amounts are in dollars (decimal format)
 - Account IDs, User IDs, and Transaction IDs are UUIDs
+- **Income/expense categories are UUIDs** — get them from your configuration via `GET /api/users/me/configuration` or `config-dict income-category`
+- Internal transfers no longer require a category field
 - Transactions (income, expense, transfer) are processed asynchronously by the TransferManager process
 - Transaction status will be "Pending" initially, then "Completed" or "Failed"
 - You may need to poll the transaction status endpoint to see the final result
 - JWT tokens expire after the configured duration (check `expiresIn` in the response)
 - Test scripts store credentials and tokens in `/tmp/test_*.txt` files for reuse
+- Each new user gets a default configuration with preset income/expense categories

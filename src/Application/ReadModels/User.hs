@@ -60,11 +60,13 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Domain.Core.Types
   ( AccountId,
+    ConfigurationId,
     OAuthIdentity (..),
     OAuthProvider,
     TelegramId (..),
     TelegramIdentity (..),
     UserId,
+    defaultConfigurationId,
     mkUserIdSafe,
   )
 import Domain.Models (AccountingEvent (..))
@@ -72,6 +74,7 @@ import Domain.User.Events
   ( OAuthAccountLinked (..),
     OAuthAccountUnlinked (..),
     TelegramAccountLinked (..),
+    UserConfigurationAssigned (..),
     UserRegistered (..),
     UserRegisteredViaTelegram (..),
   )
@@ -98,6 +101,8 @@ data UserData = UserData
     telegramIdentity :: Maybe TelegramIdentity,
     -- | Reference to auto-created External account
     externalAccountId :: AccountId,
+    -- | User's assigned configuration (defaults to defaultConfigurationId)
+    configurationId :: ConfigurationId,
     -- | Version number from event stream for optimistic concurrency
     version :: Int
   }
@@ -214,6 +219,7 @@ processUserEvent model globalEvent =
                         oauthIdentities = [],
                         telegramIdentity = Nothing,
                         externalAccountId = evt.externalAccountId,
+                        configurationId = defaultConfigurationId,
                         version = 1
                       }
                in model
@@ -232,6 +238,7 @@ processUserEvent model globalEvent =
                         oauthIdentities = [],
                         telegramIdentity = Just ident,
                         externalAccountId = evt.externalAccountId,
+                        configurationId = defaultConfigurationId,
                         version = 1
                       }
                in model
@@ -333,6 +340,22 @@ processUserEvent model globalEvent =
                       ( \s ->
                           s
                             { hasPassword = True,
+                              version = s.version + 1
+                            }
+                      )
+                      userId
+                      model.summaryData
+                }
+        UserConfigurationAssignedEvent evt ->
+          case mkUserIdSafe streamUuid of
+            Nothing -> model
+            Just userId ->
+              model
+                { summaryData =
+                    Map.adjust
+                      ( \s ->
+                          s
+                            { configurationId = evt.configurationId,
                               version = s.version + 1
                             }
                       )

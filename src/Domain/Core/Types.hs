@@ -48,6 +48,25 @@ module Domain.Core.Types
     mkUserIdSafe,
     unsafeUserId,
     unUserId,
+    ConfigurationId,
+    mkConfigurationId,
+    mkConfigurationIdSafe,
+    unsafeConfigurationId,
+    unConfigurationId,
+    defaultConfigurationId,
+    DictionaryEntryId,
+    mkDictionaryEntryId,
+    unsafeDictionaryEntryId,
+    unDictionaryEntryId,
+    DictionaryId (..),
+    unDictionaryId,
+    EntryName,
+    mkEntryName,
+    unsafeEntryName,
+    unEntryName,
+    CreatedBy (..),
+    DictionaryEntry (..),
+    Dictionary (..),
     TelegramId (..),
 
     -- * Account Types
@@ -75,8 +94,6 @@ module Domain.Core.Types
 
     -- * Transfer Types
     TransferType (..),
-    IncomeCategory (..),
-    ExpenseCategory (..),
     TransferCategory (..),
     validateTransferCategory,
 
@@ -99,6 +116,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
+import Data.Maybe (fromJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
@@ -482,6 +500,157 @@ unsafeUserId :: UUID -> UserId
 unsafeUserId = UserId
 
 -- -----------------------------------------------------------------------------
+-- Configuration Identifier
+-- -----------------------------------------------------------------------------
+
+-- | Unique identifier for a configuration aggregate.
+newtype ConfigurationId = ConfigurationId
+  { unConfigurationId :: UUID
+  }
+  deriving (Show, Eq, Ord, Generic)
+
+-- | Extract the UUID from a ConfigurationId.
+unConfigurationId :: ConfigurationId -> UUID
+unConfigurationId (ConfigurationId uuid) = uuid
+
+instance ToJSON ConfigurationId where
+  toJSON = toJSON . unConfigurationId
+
+instance FromJSON ConfigurationId where
+  parseJSON v = ConfigurationId <$> parseJSON v
+
+mkConfigurationId :: UUID -> Either Text ConfigurationId
+mkConfigurationId uuid
+  | uuid == UUID.nil = Left "ConfigurationId cannot be nil UUID"
+  | otherwise = Right (ConfigurationId uuid)
+
+mkConfigurationIdSafe :: UUID -> Maybe ConfigurationId
+mkConfigurationIdSafe uuid
+  | uuid == UUID.nil = Nothing
+  | otherwise = Just (ConfigurationId uuid)
+
+unsafeConfigurationId :: UUID -> ConfigurationId
+unsafeConfigurationId = ConfigurationId
+
+-- | Well-known ID for the system default configuration.
+defaultConfigurationId :: ConfigurationId
+defaultConfigurationId = ConfigurationId (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))
+
+-- -----------------------------------------------------------------------------
+-- Dictionary Entry Identifier
+-- -----------------------------------------------------------------------------
+
+-- | Unique identifier for a dictionary entry.
+newtype DictionaryEntryId = DictionaryEntryId
+  { unDictionaryEntryId :: UUID
+  }
+  deriving (Show, Eq, Ord, Generic)
+
+-- | Extract the UUID from a DictionaryEntryId.
+unDictionaryEntryId :: DictionaryEntryId -> UUID
+unDictionaryEntryId (DictionaryEntryId uuid) = uuid
+
+instance ToJSON DictionaryEntryId where
+  toJSON = toJSON . unDictionaryEntryId
+
+instance FromJSON DictionaryEntryId where
+  parseJSON v = DictionaryEntryId <$> parseJSON v
+
+mkDictionaryEntryId :: UUID -> Either Text DictionaryEntryId
+mkDictionaryEntryId uuid
+  | uuid == UUID.nil = Left "DictionaryEntryId cannot be nil UUID"
+  | otherwise = Right (DictionaryEntryId uuid)
+
+unsafeDictionaryEntryId :: UUID -> DictionaryEntryId
+unsafeDictionaryEntryId = DictionaryEntryId
+
+-- -----------------------------------------------------------------------------
+-- Dictionary Id
+-- -----------------------------------------------------------------------------
+
+-- | Opaque dictionary key — no domain semantics in Configuration context.
+newtype DictionaryId = DictionaryId
+  { unDictionaryId :: Text
+  }
+  deriving (Show, Eq, Ord, Generic)
+
+-- | Extract the Text from a DictionaryId.
+unDictionaryId :: DictionaryId -> Text
+unDictionaryId (DictionaryId t) = t
+
+instance ToJSON DictionaryId where
+  toJSON = toJSON . unDictionaryId
+
+instance FromJSON DictionaryId where
+  parseJSON v = DictionaryId <$> parseJSON v
+
+-- -----------------------------------------------------------------------------
+-- Entry Name
+-- -----------------------------------------------------------------------------
+
+-- | Display name for a dictionary entry (non-empty, trimmed, max 50 chars).
+newtype EntryName = EntryName
+  { unEntryName :: Text
+  }
+  deriving (Show, Eq, Ord, Generic)
+
+-- | Extract the Text from an EntryName.
+unEntryName :: EntryName -> Text
+unEntryName (EntryName t) = t
+
+instance ToJSON EntryName where
+  toJSON = toJSON . unEntryName
+
+instance FromJSON EntryName where
+  parseJSON v = EntryName <$> parseJSON v
+
+mkEntryName :: Text -> Either Text EntryName
+mkEntryName raw
+  | T.null trimmed = Left "EntryName cannot be empty"
+  | T.length trimmed > 50 = Left "EntryName cannot exceed 50 characters"
+  | otherwise = Right (EntryName trimmed)
+  where
+    trimmed = T.strip raw
+
+unsafeEntryName :: Text -> EntryName
+unsafeEntryName = EntryName
+
+-- -----------------------------------------------------------------------------
+-- Configuration Types
+-- -----------------------------------------------------------------------------
+
+-- | Who created a configuration.
+data CreatedBy
+  = System
+  | ClonedBy UserId ConfigurationId
+  deriving (Show, Eq, Generic)
+
+instance ToJSON CreatedBy
+
+instance FromJSON CreatedBy
+
+-- | A single dictionary entry.
+data DictionaryEntry = DictionaryEntry
+  { entryId :: DictionaryEntryId,
+    name :: EntryName
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON DictionaryEntry
+
+instance FromJSON DictionaryEntry
+
+-- | A collection of entries.
+data Dictionary = Dictionary
+  { entries :: [DictionaryEntry]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON Dictionary
+
+instance FromJSON Dictionary
+
+-- -----------------------------------------------------------------------------
 -- Telegram Identifier
 -- -----------------------------------------------------------------------------
 
@@ -701,37 +870,13 @@ instance ToJSON TransferType
 
 instance FromJSON TransferType
 
--- | Category for income transfers.
-data IncomeCategory
-  = Salary
-  | Freelance
-  | Investment
-  | IncomeGift
-  | IncomeOther
-  deriving (Show, Eq, Generic)
-
-instance ToJSON IncomeCategory
-
-instance FromJSON IncomeCategory
-
--- | Category for expense transfers.
-data ExpenseCategory
-  = Food
-  | Transport
-  | Utilities
-  | Rent
-  | Entertainment
-  | ExpenseOther
-  deriving (Show, Eq, Generic)
-
-instance ToJSON ExpenseCategory
-
-instance FromJSON ExpenseCategory
-
 -- | Transfer category, scoped by transfer type.
+--
+-- Income and Expense categories reference a DictionaryEntryId from the user's
+-- configuration, allowing dynamic user-defined categories.
 data TransferCategory
-  = IncomeCat IncomeCategory
-  | ExpenseCat ExpenseCategory
+  = IncomeCat DictionaryEntryId
+  | ExpenseCat DictionaryEntryId
   | InternalCat
   deriving (Show, Eq, Generic)
 

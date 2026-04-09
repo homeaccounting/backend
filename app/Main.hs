@@ -77,6 +77,8 @@ module Main (main) where
 -- Event Store
 
 -- Application
+
+import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Data.Text.Display (displayText)
 import Infrastructure.App
   ( AppEnv,
@@ -333,6 +335,7 @@ initializeEnvironment logFunc config = do
           readModels.account
           readModels.transaction
           readModels.user
+          readModels.configuration
           jwtConfig
           oauthConfig
           telegramConfig
@@ -383,6 +386,9 @@ applicationMain = do
   logInfo "==================================="
   logInfo "  Accounting Backend Started"
   logInfo "==================================="
+
+  -- Seed default configuration if not present
+  seedDefaultConfiguration
 
   -- Display configuration info
   config <- view appConfigL

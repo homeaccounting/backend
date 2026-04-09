@@ -36,6 +36,8 @@ data DomainError
     TransactionError Text
   | -- | User-related error
     UserError Text
+  | -- | Configuration-related error
+    ConfigurationError Text
   | -- | Insufficient funds for operation
     InsufficientFunds
       { sourceAmount :: Double,

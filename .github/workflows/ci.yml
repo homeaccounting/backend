@@ -134,6 +134,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.sha_short }}
     steps:
       - uses: actions/checkout@v4
 
@@ -186,6 +188,8 @@ jobs:
     name: Deploy to Production
     needs: build-image
     runs-on: ubuntu-latest
+    env:
+      BACKEND_TAG: ${{ needs.build-image.outputs.image_tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -198,8 +202,10 @@ jobs:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
           key_path: infra/deploy_key
+          envs: BACKEND_TAG
           script: |
             cd /opt/backend
+            sed -i "s/^BACKEND_TAG=.*/BACKEND_TAG=$BACKEND_TAG/" .env
             docker compose pull api
             docker compose up -d api
             docker image prune -f

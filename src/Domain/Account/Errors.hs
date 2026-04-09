@@ -38,6 +38,7 @@ module Domain.Account.Errors
     mkExternalAccountNotShareable,
     mkCurrencyMismatch,
     mkExternalTypeNotSettable,
+    mkAccountCurrencyLocked,
   )
 where
 
@@ -110,6 +111,11 @@ data AccountError
   | -- | Cannot set type on external account
     ExternalTypeNotSettable
       { externalTypeNotSettableId :: AccountId
+      }
+  | -- | Account currency is locked (has transactions)
+    AccountCurrencyLocked
+      { -- | The account whose currency is locked
+        accountCurrencyLockedId :: AccountId
       }
   | -- | Currency mismatch between account and operation
     CurrencyMismatch
@@ -315,4 +321,17 @@ mkExternalTypeNotSettable ::
 mkExternalTypeNotSettable accountId =
   ExternalTypeNotSettable
     { externalTypeNotSettableId = accountId
+    }
+
+-- | Create an AccountCurrencyLocked error.
+--
+-- This error indicates that an account's currency cannot be changed
+-- because the account already has transactions.
+mkAccountCurrencyLocked ::
+  -- | Account ID whose currency is locked
+  AccountId ->
+  AccountError
+mkAccountCurrencyLocked accountId =
+  AccountCurrencyLocked
+    { accountCurrencyLockedId = accountId
     }

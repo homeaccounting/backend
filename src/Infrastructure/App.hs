@@ -101,6 +101,7 @@ where
 
 -- Local imports
 import Application.ReadModels.Account (AccountReadModel)
+import Application.ReadModels.Configuration (ConfigurationReadModel)
 import Application.ReadModels.Transaction (TransactionReadModel)
 import Application.ReadModels.User (UserReadModel)
 import Control.Monad.Logger (LoggingT, runStdoutLoggingT)
@@ -168,6 +169,8 @@ data AppEnv = AppEnv
     transactionReadModel :: !(TVar TransactionReadModel),
     -- | In-memory user summary read model (STM)
     userReadModel :: !(TVar UserReadModel),
+    -- | In-memory configuration read model (STM)
+    configurationReadModel :: !(TVar ConfigurationReadModel),
     -- | JWT authentication configuration
     jwtConfig :: !JWTConfig,
     -- | OAuth authentication configuration
@@ -207,6 +210,7 @@ initializeAppEnv ::
   TVar AccountReadModel ->
   TVar TransactionReadModel ->
   TVar UserReadModel ->
+  TVar ConfigurationReadModel ->
   JWTConfig ->
   OAuthConfig ->
   TelegramConfig ->
@@ -214,7 +218,7 @@ initializeAppEnv ::
   Maybe ClientEnv ->
   ExchangeRateCache ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateCache =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateCache =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -226,6 +230,7 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       accountReadModel = accountReadModel,
       transactionReadModel = transactionReadModel,
       userReadModel = userReadModel,
+      configurationReadModel = configurationReadModel,
       jwtConfig = jwtConfig,
       oauthConfig = oauthConfig,
       telegramConfig = telegramConfig,
@@ -310,11 +315,13 @@ class HasReadModel env where
   accountReadModelL :: Lens' env (TVar AccountReadModel)
   transactionReadModelL :: Lens' env (TVar TransactionReadModel)
   userReadModelL :: Lens' env (TVar UserReadModel)
+  configurationReadModelL :: Lens' env (TVar ConfigurationReadModel)
 
 instance HasReadModel AppEnv where
   accountReadModelL = lens (.accountReadModel) (\x y -> x {accountReadModel = y})
   transactionReadModelL = lens (.transactionReadModel) (\x y -> x {transactionReadModel = y})
   userReadModelL = lens (.userReadModel) (\x y -> x {userReadModel = y})
+  configurationReadModelL = lens (.configurationReadModel) (\x y -> x {configurationReadModel = y})
 
 -- | Type class for environments that have auth configuration access.
 --

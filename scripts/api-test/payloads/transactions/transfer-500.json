@@ -3,6 +3,5 @@
   "toAccountId": "REPLACE_WITH_TARGET_ACCOUNT_ID",
   "amount": 500.0,
   "currency": "USD",
-  "category": "savings",
   "reason": "Transfer to savings"
 }

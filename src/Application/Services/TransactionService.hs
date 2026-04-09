@@ -45,9 +45,8 @@ import Domain.Core.Types
   ( AccountId,
     AccountKind (..),
     Currency,
+    DictionaryEntryId,
     ExchangeRate,
-    ExpenseCategory,
-    IncomeCategory,
     Money,
     TransactionId,
     TransferCategory (..),
@@ -149,10 +148,10 @@ initiateIncome ::
   UserId ->
   AccountId ->
   Money ->
-  IncomeCategory ->
+  DictionaryEntryId ->
   Text ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount incomeCat reason = do
+initiateIncome userId targetAccountId amount categoryEntryId reason = do
   logInfo "Initiating income transfer..."
 
   -- 1. Look up user's External account
@@ -202,7 +201,7 @@ initiateIncome userId targetAccountId amount incomeCat reason = do
                                 reason = reason,
                                 initiatedBy = userId,
                                 transferType = Income,
-                                category = IncomeCat incomeCat
+                                category = IncomeCat categoryEntryId
                               }
                       initiateTransfer cmd
 
@@ -215,10 +214,10 @@ initiateExpense ::
   UserId ->
   AccountId ->
   Money ->
-  ExpenseCategory ->
+  DictionaryEntryId ->
   Text ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount expenseCat reason = do
+initiateExpense userId sourceAccountId amount categoryEntryId reason = do
   logInfo "Initiating expense transfer..."
 
   -- 1. Look up user's External account
@@ -268,7 +267,7 @@ initiateExpense userId sourceAccountId amount expenseCat reason = do
                                 reason = reason,
                                 initiatedBy = userId,
                                 transferType = Expense,
-                                category = ExpenseCat expenseCat
+                                category = ExpenseCat categoryEntryId
                               }
                       initiateTransfer cmd
 

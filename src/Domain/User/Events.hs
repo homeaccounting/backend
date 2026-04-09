@@ -30,6 +30,7 @@ module Domain.User.Events
     OAuthAccountUnlinked (..),
     TelegramAccountUnlinked (..),
     PasswordChanged (..),
+    UserConfigurationAssigned (..),
   )
 where
 
@@ -37,6 +38,7 @@ import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
 import Domain.Core.Types
   ( AccountId,
+    ConfigurationId,
     OAuthIdentity,
     PasswordHash,
     TelegramIdentity,
@@ -59,7 +61,8 @@ userEvents =
     ''TelegramAccountLinked,
     ''OAuthAccountUnlinked,
     ''TelegramAccountUnlinked,
-    ''PasswordChanged
+    ''PasswordChanged,
+    ''UserConfigurationAssigned
   ]
 
 -- -----------------------------------------------------------------------------
@@ -152,6 +155,18 @@ data PasswordChanged = PasswordChanged
   }
   deriving (Show, Eq)
 
+-- | Event emitted when a configuration is assigned to a user.
+--
+-- Records the configuration that was assigned.
+--
+-- Example:
+-- >>> UserConfigurationAssigned configId
+data UserConfigurationAssigned = UserConfigurationAssigned
+  { -- | Configuration that was assigned
+    configurationId :: ConfigurationId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -164,3 +179,4 @@ deriveJSON defaultOptions ''TelegramAccountLinked
 deriveJSON defaultOptions ''OAuthAccountUnlinked
 deriveJSON defaultOptions ''TelegramAccountUnlinked
 deriveJSON defaultOptions ''PasswordChanged
+deriveJSON defaultOptions ''UserConfigurationAssigned

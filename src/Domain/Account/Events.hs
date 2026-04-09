@@ -36,12 +36,13 @@ module Domain.Account.Events
     AccountCredited (..),
     OverdraftLimitSet (..),
     AccountSubtypeSet (..),
+    AccountCurrencyChanged (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountKind, AccountRole, AccountSubtype, Money, TransactionId, UserId)
+import Domain.Core.Types (AccountKind, AccountRole, AccountSubtype, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -60,7 +61,8 @@ accountEvents =
     ''AccountDebited,
     ''AccountCredited,
     ''OverdraftLimitSet,
-    ''AccountSubtypeSet
+    ''AccountSubtypeSet,
+    ''AccountCurrencyChanged
   ]
 
 -- -----------------------------------------------------------------------------
@@ -178,6 +180,14 @@ data AccountSubtypeSet = AccountSubtypeSet
   }
   deriving (Show, Eq)
 
+-- | Event emitted when an account's currency is changed.
+--
+-- Currency can only be changed before the account has any transactions.
+data AccountCurrencyChanged = AccountCurrencyChanged
+  { newCurrency :: Currency
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all events
 deriveJSON defaultOptions ''AccountCreated
 deriveJSON defaultOptions ''AccountAccessGranted
@@ -186,3 +196,4 @@ deriveJSON defaultOptions ''AccountDebited
 deriveJSON defaultOptions ''AccountCredited
 deriveJSON defaultOptions ''OverdraftLimitSet
 deriveJSON defaultOptions ''AccountSubtypeSet
+deriveJSON defaultOptions ''AccountCurrencyChanged

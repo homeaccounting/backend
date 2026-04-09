@@ -165,3 +165,33 @@ auth_header() {
     fi
     echo "Authorization: Bearer $token"
 }
+
+# --- Configuration helpers ----------------------------------------------------
+
+# Fetch the current user's configuration JSON.
+# Requires AUTH_TOKEN to be set. Stores result in CONFIG_JSON.
+fetch_configuration() {
+    CONFIG_JSON=$(curl -s -X GET "${API_BASE_URL}/api/users/me/configuration" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
+}
+
+# Look up a category entry UUID by name from a dictionary.
+# Usage: lookup_category_id <dict-id> <entry-name>
+# Requires CONFIG_JSON to be set (call fetch_configuration first).
+# Returns the UUID or empty string if not found.
+lookup_category_id() {
+    local dict_id="$1"
+    local entry_name="$2"
+    echo "$CONFIG_JSON" | jq -r \
+        --arg d "$dict_id" --arg n "$entry_name" \
+        '.dictionaries[$d].entries[] | select(.name == $n) | .id // empty'
+}
+
+# Look up the first category entry UUID in a dictionary.
+# Usage: first_category_id <dict-id>
+first_category_id() {
+    local dict_id="$1"
+    echo "$CONFIG_JSON" | jq -r \
+        --arg d "$dict_id" \
+        '.dictionaries[$d].entries[0].id // empty'
+}

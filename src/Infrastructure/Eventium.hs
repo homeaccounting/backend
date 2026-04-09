@@ -52,6 +52,7 @@ module Infrastructure.Eventium
     applyAccountCommand,
     applyTransactionCommand,
     applyUserCommand,
+    applyConfigurationCommand,
 
     -- * Command Dispatcher (for testing)
     commandDispatcher,
@@ -76,6 +77,11 @@ import Application.ReadModels.Account
   ( AccountReadModel,
     createAccountReadModel,
     handleAccountEvents,
+  )
+import Application.ReadModels.Configuration
+  ( ConfigurationReadModel,
+    createConfigurationReadModel,
+    handleConfigurationEvents,
   )
 import Application.ReadModels.Transaction
   ( TransactionReadModel,
@@ -274,7 +280,8 @@ commandDispatcher writer reader =
     reader
     [ mkAggregateHandlerWith formatAccountError accountAccountingCommandHandler,
       mkAggregateHandler transactionAccountingCommandHandler,
-      mkAggregateHandler userAccountingCommandHandler
+      mkAggregateHandler userAccountingCommandHandler,
+      mkAggregateHandler configurationAccountingCommandHandler
     ]
 
 -- | Human-readable formatting for account errors.
@@ -283,6 +290,7 @@ commandDispatcher writer reader =
 formatAccountError :: AccountError -> RejectionReason
 formatAccountError InsufficientFunds = RejectionReason (T.pack "Insufficient funds")
 formatAccountError AccountDoesNotExist = RejectionReason (T.pack "Account does not exist")
+formatAccountError AccountCurrencyLocked = RejectionReason (T.pack "Account currency is locked")
 formatAccountError err = RejectionReason (T.pack (show err))
 
 -- | Lift an IO event handler to any MonadIO monad.
@@ -299,7 +307,8 @@ liftIOEventHandler (EventHandler h) = EventHandler $ \e -> liftIO (h e)
 data ReadModels = ReadModels
   { account :: TVar AccountReadModel,
     transaction :: TVar TransactionReadModel,
-    user :: TVar UserReadModel
+    user :: TVar UserReadModel,
+    configuration :: TVar ConfigurationReadModel
   }
 
 -- | Create all read models and their event bus handlers.
@@ -310,15 +319,17 @@ createReadModelHandlers = do
   accountRM <- createAccountReadModel
   transactionRM <- createTransactionReadModel
   userRM <- createUserReadModel
+  configRM <- createConfigurationReadModel
   let mkHandler handle rm = EventHandler $ \versionedEvent -> do
         let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
         handle rm [globalEvent]
       handlers =
         [ mkHandler handleAccountEvents accountRM,
           mkHandler handleTransactionEvents transactionRM,
-          mkHandler handleUserEvents userRM
+          mkHandler handleUserEvents userRM,
+          mkHandler handleConfigurationEvents configRM
         ]
-      readModels = ReadModels accountRM transactionRM userRM
+      readModels = ReadModels accountRM transactionRM userRM configRM
   return (readModels, handlers)
 
 -- -----------------------------------------------------------------------------
@@ -372,6 +383,22 @@ applyUserCommand writer reader userId cmd =
     userAccountingCommandHandler
     userId
     (embedWith userCommandEmbedding cmd)
+
+-- | Apply a Configuration command.
+applyConfigurationCommand ::
+  (Monad m) =>
+  AccountingVersionedEventStoreWriter m ->
+  AccountingVersionedEventStoreReader m ->
+  UUID ->
+  ConfigurationCommand ->
+  m (Either (CommandHandlerError ConfigurationError) [AccountingEvent])
+applyConfigurationCommand writer reader configId cmd =
+  applyCommandHandler
+    writer
+    reader
+    configurationAccountingCommandHandler
+    configId
+    (embedWith configurationCommandEmbedding cmd)
 
 -- -----------------------------------------------------------------------------
 -- Aggregate Loading
@@ -435,6 +462,7 @@ replayReadModels globalReader' readModels = do
   handleAccountEvents readModels.account events
   handleTransactionEvents readModels.transaction events
   handleUserEvents readModels.user events
+  handleConfigurationEvents readModels.configuration events
   pure (length events)
 
 -- | Print an event as pretty-printed JSON.

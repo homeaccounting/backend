@@ -77,6 +77,7 @@ data AccountError
   | InsufficientFunds
   | CurrencyMismatch
   | ExternalTypeNotSettable
+  | AccountCurrencyLocked
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -257,6 +258,11 @@ handleAccountCommand account (SetAccountSubtypeAccountCommand SetAccountSubtype 
                 by = setBy
               }
         ]
+-- Handle ChangeAccountCurrency command
+handleAccountCommand account (ChangeAccountCurrencyAccountCommand cmd)
+  | account.name == "" = Left AccountDoesNotExist
+  | account.hasTransactions = Left AccountCurrencyLocked
+  | otherwise = Right [AccountCurrencyChangedAccountEvent (AccountCurrencyChanged cmd.newCurrency)]
 -- Handle CreditAccount command (internal, issued by TransferManager saga)
 handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist

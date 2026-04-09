@@ -26,13 +26,13 @@ spec = describe "TransferCategory validation" $ do
   describe "validateTransferCategory" $ do
     it "accepts Income with IncomeCat"
       $ property
-      $ \(cat :: IncomeCategory) ->
-        validateTransferCategory Income (IncomeCat cat) === Right ()
+      $ \(entryId :: DictionaryEntryId) ->
+        validateTransferCategory Income (IncomeCat entryId) === Right ()
 
     it "accepts Expense with ExpenseCat"
       $ property
-      $ \(cat :: ExpenseCategory) ->
-        validateTransferCategory Expense (ExpenseCat cat) === Right ()
+      $ \(entryId :: DictionaryEntryId) ->
+        validateTransferCategory Expense (ExpenseCat entryId) === Right ()
 
     it "accepts InternalTransfer with InternalCat"
       $ validateTransferCategory InternalTransfer InternalCat

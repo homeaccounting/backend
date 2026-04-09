@@ -45,6 +45,7 @@ module Application.Services.AuthService
   )
 where
 
+import Application.ReadModels.Configuration (ConfigurationData (..), getConfiguration)
 import Application.ReadModels.User
   ( UserData (..),
     emailExists,
@@ -63,6 +64,7 @@ import Domain.Core.Types
     OAuthProvider (..),
     TelegramIdentity (..),
     UserId,
+    defaultConfigurationId,
     mkAccountId,
     mkUserId,
     unUserId,
@@ -70,7 +72,8 @@ import Domain.Core.Types
   )
 import Domain.User.CommandHandler (UserCommand (..))
 import Domain.User.Commands
-  ( LinkOAuthAccount (..),
+  ( AssignConfiguration (..),
+    LinkOAuthAccount (..),
     LinkTelegramAccount (..),
     RegisterUser (..),
     RegisterViaTelegram (..),
@@ -175,12 +178,21 @@ register email password = do
                   logError $ "User registration rejected: " <> displayShow err
                   return $ Left $ AccountError "User registration rejected by domain"
                 Right _ -> do
+                  -- Assign default configuration
+                  let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
+                  _ <- liftIO $ applyUserCommand writer reader userUuid assignConfigCmd
+
+                  -- Read baseCurrency from default configuration
+                  configRM <- view configurationReadModelL
+                  maybeConfig <- getConfiguration configRM defaultConfigurationId
+                  let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
+
                   -- 5. Issue CreateAccount command for External account
                   let createAccountCmd =
                         CreateAccountAccountCommand
                           CreateAccount
                             { name = "External",
-                              initialBalance = unsafeMoney USD 0,
+                              initialBalance = unsafeMoney baseCur 0,
                               createdBy = userId,
                               kind = External,
                               overdraftLimit = Nothing
@@ -532,12 +544,21 @@ createUserViaOAuth email oauthIdentity = do
               logError $ "OAuth user registration rejected: " <> displayShow err
               return $ Left $ AccountError "User registration rejected by domain"
             Right _ -> do
+              -- Assign default configuration
+              let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
+              _ <- liftIO $ applyUserCommand writer reader userUuid assignConfigCmd
+
+              -- Read baseCurrency from default configuration
+              configRM <- view configurationReadModelL
+              maybeConfig <- getConfiguration configRM defaultConfigurationId
+              let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
+
               -- Create External account
               let createAccountCmd =
                     CreateAccountAccountCommand
                       CreateAccount
                         { name = "External",
-                          initialBalance = unsafeMoney USD 0,
+                          initialBalance = unsafeMoney baseCur 0,
                           createdBy = uid,
                           kind = External,
                           overdraftLimit = Nothing
@@ -586,12 +607,21 @@ createUserViaTelegram telegramIdentity = do
               logError $ "Telegram user registration rejected: " <> displayShow err
               return $ Left $ AccountError "User registration rejected by domain"
             Right _ -> do
+              -- Assign default configuration
+              let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
+              _ <- liftIO $ applyUserCommand writer reader userUuid assignConfigCmd
+
+              -- Read baseCurrency from default configuration
+              configRM <- view configurationReadModelL
+              maybeConfig <- getConfiguration configRM defaultConfigurationId
+              let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
+
               -- Create External account
               let createAccountCmd =
                     CreateAccountAccountCommand
                       CreateAccount
                         { name = "External",
-                          initialBalance = unsafeMoney USD 0,
+                          initialBalance = unsafeMoney baseCur 0,
                           createdBy = uid,
                           kind = External,
                           overdraftLimit = Nothing
