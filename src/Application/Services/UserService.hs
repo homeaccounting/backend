@@ -122,7 +122,7 @@ changePassword userId _currentPassword newPassword = do
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
       let userUuid = unUserId userId
-      result <- liftIO $ applyUserCommand writer reader userUuid changeCmd
+      result <- liftIO $ applyUserCommand writer reader id userUuid changeCmd
       case result of
         Left err -> do
           logError $ "Password change rejected: " <> displayShow err
@@ -183,7 +183,7 @@ unlinkOAuth userId providerText = do
                   writer <- view eventStoreWriterL
                   reader <- view eventStoreReaderL
                   let userUuid = unUserId userId
-                  result <- liftIO $ applyUserCommand writer reader userUuid unlinkCmd
+                  result <- liftIO $ applyUserCommand writer reader id userUuid unlinkCmd
                   case result of
                     Left err -> do
                       logError $ "Unlink OAuth rejected: " <> displayShow err
@@ -236,7 +236,7 @@ unlinkTelegram userId = do
               writer <- view eventStoreWriterL
               reader <- view eventStoreReaderL
               let userUuid = unUserId userId
-              result <- liftIO $ applyUserCommand writer reader userUuid unlinkCmd
+              result <- liftIO $ applyUserCommand writer reader id userUuid unlinkCmd
               case result of
                 Left err -> do
                   logError $ "Unlink Telegram rejected: " <> displayShow err

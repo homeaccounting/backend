@@ -181,7 +181,7 @@ spec = describe "TransferManager Properties" $ do
         let state = handleTransferEvent emptyManager initEvent
             effects = reactToTransferEvent state initEvent
          in case effects of
-              [IssueCommandWithCompensation targetId _ _] ->
+              [IssueCommandWithCompensation targetId _ _ _] ->
                 let StreamEvent _ _ _ (TransferInitiatedEvent ti) = initEvent
                  in targetId === Domain.Core.Types.unAccountId ti.sourceAccountId
               _ -> discard
@@ -192,7 +192,7 @@ spec = describe "TransferManager Properties" $ do
         let state = handleTransferEvent emptyManager initEvent
             effects = reactToTransferEvent state initEvent
          in case effects of
-              [IssueCommandWithCompensation _ _ onFailure] ->
+              [IssueCommandWithCompensation _ _ _ onFailure] ->
                 length (onFailure (RejectionReason "any reason")) === 1
               _ -> discard
 
@@ -202,8 +202,8 @@ spec = describe "TransferManager Properties" $ do
         let state = handleTransferEvent emptyManager initEvent
             effects = reactToTransferEvent state initEvent
          in case effects of
-              [IssueCommandWithCompensation _ _ onFailure] ->
+              [IssueCommandWithCompensation _ _ _ onFailure] ->
                 case onFailure (RejectionReason "any reason") of
-                  [IssueCommand failTarget _] -> failTarget === txId
+                  [IssueCommand failTarget _ _] -> failTarget === txId
                   _ -> discard
               _ -> discard

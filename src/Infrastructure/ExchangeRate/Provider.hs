@@ -1,13 +1,12 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
 -- Module      : Infrastructure.ExchangeRate.Provider
--- Description : Exchange rate provider abstraction and cache
+-- Description : Exchange rate provider abstraction
 --
 -- Defines the RateProvider record-of-functions and the provider-agnostic
--- ExchangeRateCache. Providers (ECB, NBU) plug into the cache via RateProvider.
--- Cache refreshes daily on first request after UTC midnight.
+-- rate map utilities. Providers (ECB, NBU) plug into the ExchangeRateStore
+-- via RateProvider.
 module Infrastructure.ExchangeRate.Provider
   ( -- * Provider Abstraction
     RateProvider (..),
@@ -18,16 +17,9 @@ module Infrastructure.ExchangeRate.Provider
 
     -- * Cross-Rate Derivation
     deriveCrossRates,
-
-    -- * Cache
-    ExchangeRateCache,
-    newExchangeRateCache,
-    getCachedRate,
-    refreshCache,
   )
 where
 
-import Data.Time (UTCTime, getCurrentTime, utctDay)
 import Domain.Core.Types (Currency, ExchangeRate, mkExchangeRate)
 import RIO
 import qualified RIO.Map as Map
@@ -81,52 +73,3 @@ deriveCrossRates base baseRates =
           Right er -> [((src, tgt), er)]
           Left _ -> []
    in Map.fromList pairs
-
--- | Exchange rate cache with daily refresh.
---
--- Opaque type — use 'newExchangeRateCache', 'getCachedRate', 'refreshCache'.
-data ExchangeRateCache = ExchangeRateCache
-  { provider :: !RateProvider,
-    cacheRef :: !(IORef (Maybe (UTCTime, ExchangeRateMap)))
-  }
-
--- | Create a new empty cache backed by the given provider.
-newExchangeRateCache :: RateProvider -> IO ExchangeRateCache
-newExchangeRateCache prov = ExchangeRateCache prov <$> newIORef Nothing
-
--- | Refresh the cache by fetching from the configured provider.
-refreshCache :: ExchangeRateCache -> IO (Either Text ())
-refreshCache cache = do
-  result <- cache.provider.fetchRates
-  case result of
-    Left err -> pure (Left err)
-    Right rates -> do
-      now <- getCurrentTime
-      writeIORef cache.cacheRef (Just (now, rates))
-      pure (Right ())
-
--- | Get a cached rate. Refreshes if cache is from a previous day (UTC).
-getCachedRate :: ExchangeRateCache -> Currency -> Currency -> IO (Either Text ExchangeRate)
-getCachedRate cache src tgt
-  | src == tgt = pure $ Left "Same currency, no conversion needed"
-  | otherwise = do
-      cached <- readIORef cache.cacheRef
-      now <- getCurrentTime
-      let needsRefresh = case cached of
-            Nothing -> True
-            Just (fetchTime, _) -> utctDay fetchTime /= utctDay now
-      when needsRefresh $ void $ refreshCache cache
-      cached' <- readIORef cache.cacheRef
-      case cached' of
-        Nothing -> pure $ Left $ cache.provider.providerName <> ": exchange rates unavailable"
-        Just (_, rates) ->
-          case getRate rates src tgt of
-            Just er -> pure (Right er)
-            Nothing ->
-              pure
-                $ Left
-                $ cache.provider.providerName
-                <> ": no rate for "
-                <> tshow src
-                <> " -> "
-                <> tshow tgt

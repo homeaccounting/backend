@@ -33,6 +33,7 @@ module Infrastructure.Eventium
     AccountingEventStoreWriter,
     AccountingVersionedEventStoreReader,
     AccountingVersionedEventStoreWriter,
+    AccountingTaggedEventStoreWriter,
     AccountingGlobalEventStoreReader,
     AccountingEventHandler,
 
@@ -43,7 +44,7 @@ module Infrastructure.Eventium
     accountingGlobalEventStoreReader,
 
     -- * Event Store Lifting
-    liftVersionedWriter,
+    liftTaggedWriter,
     liftVersionedReader,
     liftGlobalReader,
     liftIOEventHandler,
@@ -113,10 +114,14 @@ import Eventium
     CommandHandlerError (..),
     EventHandler (..),
     EventStoreReader (..),
+    EventStoreWriter,
+    EventVersion,
     GlobalEventStoreReader,
+    MetadataEnricher,
     QueryRange,
     RejectionReason (..),
     StreamEvent (..),
+    TaggedEvent,
     TypeEmbedding (..),
     UUID,
     VersionedEventStoreReader,
@@ -124,16 +129,16 @@ import Eventium
     VersionedStreamEvent,
     allEvents,
     applyCommandHandler,
-    codecEventStoreWriter,
     codecGlobalEventStoreReader,
     codecVersionedEventStoreReader,
     commandHandlerDispatcher,
     emptyMetadata,
     latestProjection,
+    metadataEnrichingEventStoreWriterWithEnricher,
     mkAggregateHandler,
     mkAggregateHandlerWith,
     processManagerEventHandler,
-    publishingEventStoreWriter,
+    publishingTaggedCodecEventStoreWriter,
     runEventStoreReaderUsing,
     runEventStoreWriterUsing,
     synchronousPublisher,
@@ -142,7 +147,7 @@ import Eventium.Store.Postgresql
   ( JSONString,
     SqlEventStoreConfig,
     jsonStringCodec,
-    postgresqlEventStoreWriter,
+    postgresqlTaggedEventStoreWriter,
     sqlEventStoreReader,
     sqlGlobalEventStoreReader,
   )
@@ -165,6 +170,9 @@ type AccountingVersionedEventStoreReader m = VersionedEventStoreReader m Account
 
 -- | Versioned event store writer for AccountingEvent.
 type AccountingVersionedEventStoreWriter m = VersionedEventStoreWriter m AccountingEvent
+
+-- | Tagged event store writer (pre-codec, for per-call MetadataEnricher support).
+type AccountingTaggedEventStoreWriter m = EventStoreWriter UUID EventVersion m (TaggedEvent JSONString)
 
 -- | Global event store reader for AccountingEvent.
 type AccountingGlobalEventStoreReader m = GlobalEventStoreReader m AccountingEvent
@@ -228,16 +236,23 @@ accountingEventStoreWriter ::
   (MonadIO m, PersistEntity entity, PersistEntityBackend entity ~ SqlBackend, SafeToInsert entity) =>
   SqlEventStoreConfig entity JSONString ->
   [AccountingEventHandler (SqlPersistT m)] ->
-  AccountingVersionedEventStoreWriter (SqlPersistT m)
+  AccountingTaggedEventStoreWriter (SqlPersistT m)
 accountingEventStoreWriter config extraHandlers =
-  let publishingWriter = publishingEventStoreWriter rawWriter (synchronousPublisher combinedHandler)
-      rawWriter = codecEventStoreWriter jsonStringCodec (postgresqlEventStoreWriter config)
+  let rawWriter = postgresqlTaggedEventStoreWriter config
       globalReader = accountingGlobalEventStoreReader config
       versionedReader = accountingVersionedEventStoreReader config
       combinedHandler =
         eventLoggerHandler
           <> mconcat extraHandlers
+          -- Process manager receives publishingWriter so that events produced by
+          -- dispatched commands (e.g. AccountDebited from DebitAccount) re-enter
+          -- the event bus and trigger the next saga step. The circular reference
+          -- is resolved by Haskell's laziness.
           <> transferManagerHandler publishingWriter globalReader versionedReader
+      -- Wrap the raw tagged writer with event bus publishing.
+      -- Writes TaggedEvent JSONString to DB, decodes via jsonStringCodec for handlers.
+      publishingWriter =
+        publishingTaggedCodecEventStoreWriter jsonStringCodec rawWriter (synchronousPublisher combinedHandler)
    in publishingWriter
 
 -- -----------------------------------------------------------------------------
@@ -255,7 +270,7 @@ eventLoggerHandler = EventHandler $ \versionedEvent ->
 -- process manager to the global reader and command dispatcher.
 transferManagerHandler ::
   (MonadIO m) =>
-  AccountingVersionedEventStoreWriter m ->
+  AccountingTaggedEventStoreWriter m ->
   AccountingGlobalEventStoreReader m ->
   AccountingVersionedEventStoreReader m ->
   AccountingEventHandler m
@@ -271,11 +286,12 @@ transferManagerHandler writer globalReader versionedReader =
 -- Adding a new aggregate: append an 'mkAggregateHandler' entry to the list.
 commandDispatcher ::
   (MonadIO m) =>
-  AccountingVersionedEventStoreWriter m ->
+  AccountingTaggedEventStoreWriter m ->
   AccountingVersionedEventStoreReader m ->
   CommandDispatcher m AccountingCommand
 commandDispatcher writer reader =
   commandHandlerDispatcher
+    jsonStringCodec
     writer
     reader
     [ mkAggregateHandlerWith formatAccountError accountAccountingCommandHandler,
@@ -338,67 +354,75 @@ createReadModelHandlers = do
 
 -- | Apply an Account command.
 applyAccountCommand ::
-  (Monad m) =>
-  AccountingVersionedEventStoreWriter m ->
+  (MonadIO m) =>
+  AccountingTaggedEventStoreWriter m ->
   AccountingVersionedEventStoreReader m ->
+  MetadataEnricher ->
   UUID ->
   AccountCommand ->
   m (Either (CommandHandlerError AccountError) [AccountingEvent])
-applyAccountCommand writer reader accountId cmd =
-  applyCommandHandler
-    writer
-    reader
-    accountAccountingCommandHandler
-    accountId
-    (embedWith accountCommandEmbedding cmd)
+applyAccountCommand writer reader enricher accountId cmd =
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+   in applyCommandHandler
+        enrichedWriter
+        reader
+        accountAccountingCommandHandler
+        accountId
+        (embedWith accountCommandEmbedding cmd)
 
 -- | Apply a Transaction command.
 applyTransactionCommand ::
-  (Monad m) =>
-  AccountingVersionedEventStoreWriter m ->
+  (MonadIO m) =>
+  AccountingTaggedEventStoreWriter m ->
   AccountingVersionedEventStoreReader m ->
+  MetadataEnricher ->
   UUID ->
   TransactionCommand ->
   m (Either (CommandHandlerError TransactionError) [AccountingEvent])
-applyTransactionCommand writer reader txId cmd =
-  applyCommandHandler
-    writer
-    reader
-    transactionAccountingCommandHandler
-    txId
-    (embedWith transactionCommandEmbedding cmd)
+applyTransactionCommand writer reader enricher txId cmd =
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+   in applyCommandHandler
+        enrichedWriter
+        reader
+        transactionAccountingCommandHandler
+        txId
+        (embedWith transactionCommandEmbedding cmd)
 
 -- | Apply a User command.
 applyUserCommand ::
-  (Monad m) =>
-  AccountingVersionedEventStoreWriter m ->
+  (MonadIO m) =>
+  AccountingTaggedEventStoreWriter m ->
   AccountingVersionedEventStoreReader m ->
+  MetadataEnricher ->
   UUID ->
   UserCommand ->
   m (Either (CommandHandlerError UserError) [AccountingEvent])
-applyUserCommand writer reader userId cmd =
-  applyCommandHandler
-    writer
-    reader
-    userAccountingCommandHandler
-    userId
-    (embedWith userCommandEmbedding cmd)
+applyUserCommand writer reader enricher userId cmd =
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+   in applyCommandHandler
+        enrichedWriter
+        reader
+        userAccountingCommandHandler
+        userId
+        (embedWith userCommandEmbedding cmd)
 
 -- | Apply a Configuration command.
 applyConfigurationCommand ::
-  (Monad m) =>
-  AccountingVersionedEventStoreWriter m ->
+  (MonadIO m) =>
+  AccountingTaggedEventStoreWriter m ->
   AccountingVersionedEventStoreReader m ->
+  MetadataEnricher ->
   UUID ->
   ConfigurationCommand ->
   m (Either (CommandHandlerError ConfigurationError) [AccountingEvent])
-applyConfigurationCommand writer reader configId cmd =
-  applyCommandHandler
-    writer
-    reader
-    configurationAccountingCommandHandler
-    configId
-    (embedWith configurationCommandEmbedding cmd)
+applyConfigurationCommand writer reader enricher configId cmd =
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+   in applyCommandHandler
+        enrichedWriter
+        reader
+        configurationAccountingCommandHandler
+        configId
+        (embedWith configurationCommandEmbedding cmd)
 
 -- -----------------------------------------------------------------------------
 -- Aggregate Loading
@@ -421,12 +445,12 @@ loadUserAggregate reader userId = do
 -- Event Store Lifting Helpers
 -- -----------------------------------------------------------------------------
 
--- | Lift a versioned event store writer from SqlPersistT IO to IO.
-liftVersionedWriter ::
+-- | Lift a tagged event store writer from SqlPersistT IO to IO.
+liftTaggedWriter ::
   ConnectionPool ->
-  AccountingVersionedEventStoreWriter (SqlPersistT IO) ->
-  AccountingVersionedEventStoreWriter IO
-liftVersionedWriter pool = runEventStoreWriterUsing (runDbDirect pool)
+  AccountingTaggedEventStoreWriter (SqlPersistT IO) ->
+  AccountingTaggedEventStoreWriter IO
+liftTaggedWriter pool = runEventStoreWriterUsing (runDbDirect pool)
 
 -- | Lift a versioned event store reader from SqlPersistT IO to IO.
 liftVersionedReader ::

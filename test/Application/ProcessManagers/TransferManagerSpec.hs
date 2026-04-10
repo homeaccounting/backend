@@ -22,6 +22,7 @@ module Application.ProcessManagers.TransferManagerSpec (spec) where
 
 import Application.ProcessManagers.TransferManager
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreditAccount (..), DebitAccount (..))
 import Domain.Account.Events
@@ -42,7 +43,8 @@ import Domain.Models
   )
 import Domain.Transaction.Commands (CompleteTransfer (..), FailTransfer (..))
 import Domain.Transaction.Events (TransferCompleted (..), TransferInitiated (..))
-import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
+import Eventium (EventMetadata (..), ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
+import qualified Eventium (EventMetadata (occurredAt))
 import Optics ((^.))
 import RIO hiding (view, (^.))
 import Test.Hspec
@@ -163,7 +165,7 @@ spec = describe "TransferManager (Saga)" $ do
           effects = reactToTransferEvent stateAfterInit mkTransferInitiatedEvent
       length effects `shouldBe` 1
       case effects of
-        [IssueCommandWithCompensation targetId cmd onFailure] -> do
+        [IssueCommandWithCompensation targetId cmd _ onFailure] -> do
           targetId `shouldBe` sourceAcctUuid
           case cmd of
             DebitAccountCommand (DebitAccount amt txId rsn) -> do
@@ -175,7 +177,7 @@ spec = describe "TransferManager (Saga)" $ do
           let compensationEffects = onFailure (RejectionReason "Insufficient funds")
           length compensationEffects `shouldBe` 1
           case compensationEffects of
-            [IssueCommand failTarget failCmd] -> do
+            [IssueCommand failTarget failCmd _] -> do
               failTarget `shouldBe` txUuid
               case failCmd of
                 FailTransferCommand (FailTransfer rsn) ->
@@ -222,7 +224,7 @@ spec = describe "TransferManager (Saga)" $ do
       length effects `shouldBe` 2
 
       case effects of
-        [IssueCommand creditTarget creditCmd, IssueCommand completeTarget completeCmd] -> do
+        [IssueCommand creditTarget creditCmd _, IssueCommand completeTarget completeCmd _] -> do
           -- First effect: CreditAccount to target
           creditTarget `shouldBe` targetAcctUuid
           case creditCmd of
@@ -270,3 +272,74 @@ spec = describe "TransferManager (Saga)" $ do
           stateAfterUnrelated = handleTransferEvent stateAfterInit mkUnrelatedEvent
       -- State should remain unchanged (transfer still tracked)
       transferCount stateAfterUnrelated `shouldBe` 1
+
+  describe "occurredAt Propagation" $ do
+    it "propagates occurredAt from TransferInitiated to saga effects" $ do
+      let pastTime = UTCTime (fromGregorian 2025 3 15) 0
+          metadata = (emptyMetadata "") {Eventium.occurredAt = Just pastTime}
+          event =
+            StreamEvent
+              txUuid
+              0
+              metadata
+              ( TransferInitiatedEvent
+                  TransferInitiated
+                    { sourceAccountId = unsafeAccountId sourceAcctUuid,
+                      targetAccountId = unsafeAccountId targetAcctUuid,
+                      sourceAmount = unsafeMoney USD 200,
+                      targetAmount = unsafeMoney USD 200,
+                      exchangeRate = Nothing,
+                      description = "Backdated transfer",
+                      by = unsafeUserId userUuid,
+                      transferType = Transfer
+                    }
+              )
+          stateAfterInit = handleTransferEvent emptyTransferManager event
+          effects = reactToTransferEvent stateAfterInit event
+      case effects of
+        [IssueCommandWithCompensation _ _ enricher onFailure] -> do
+          (enricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
+          -- Compensation effects should also carry the enricher
+          let compensationEffects = onFailure (RejectionReason "Insufficient funds")
+          case compensationEffects of
+            [IssueCommand _ _ compEnricher] ->
+              (compEnricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
+            _ -> expectationFailure "Expected exactly 1 compensation effect"
+        _ -> expectationFailure $ "Expected IssueCommandWithCompensation, got " ++ show (length effects) ++ " effects"
+
+    it "propagates occurredAt from TransferData to AccountDebited reactions" $ do
+      let pastTime = UTCTime (fromGregorian 2025 3 15) 0
+          metadata = (emptyMetadata "") {Eventium.occurredAt = Just pastTime}
+          initEvent =
+            StreamEvent
+              txUuid
+              0
+              metadata
+              ( TransferInitiatedEvent
+                  TransferInitiated
+                    { sourceAccountId = unsafeAccountId sourceAcctUuid,
+                      targetAccountId = unsafeAccountId targetAcctUuid,
+                      sourceAmount = unsafeMoney USD 200,
+                      targetAmount = unsafeMoney USD 200,
+                      exchangeRate = Nothing,
+                      description = "Backdated transfer",
+                      by = unsafeUserId userUuid,
+                      transferType = Transfer
+                    }
+              )
+          stateAfterInit = handleTransferEvent emptyTransferManager initEvent
+          stateAfterDebit = handleTransferEvent stateAfterInit mkAccountDebitedEvent
+          effects = reactToTransferEvent stateAfterDebit mkAccountDebitedEvent
+      case effects of
+        [IssueCommand _ _ creditEnricher, IssueCommand _ _ completeEnricher] -> do
+          (creditEnricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
+          (completeEnricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
+        _ -> expectationFailure $ "Expected 2 IssueCommand effects, got " ++ show (length effects)
+
+    it "uses id enricher when occurredAt is Nothing" $ do
+      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
+          effects = reactToTransferEvent stateAfterInit mkTransferInitiatedEvent
+      case effects of
+        [IssueCommandWithCompensation _ _ enricher _] ->
+          (enricher (emptyMetadata "test")).occurredAt `shouldBe` Nothing
+        _ -> expectationFailure "Expected IssueCommandWithCompensation"

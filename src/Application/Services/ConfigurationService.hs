@@ -152,7 +152,7 @@ changeBaseCurrency userId newCurrency = do
           let accountCmd = ChangeAccountCurrencyAccountCommand ChangeAccountCurrency {newCurrency = newCurrency}
           writer <- view eventStoreWriterL
           reader <- view eventStoreReaderL
-          accountResult <- liftIO $ applyAccountCommand writer reader extAccountUuid accountCmd
+          accountResult <- liftIO $ applyAccountCommand writer reader id extAccountUuid accountCmd
           case accountResult of
             Left err -> do
               logError $ "ChangeAccountCurrency rejected: " <> displayShow err
@@ -161,7 +161,7 @@ changeBaseCurrency userId newCurrency = do
               -- Step 2: Apply ChangeBaseCurrency on the configuration
               let configUuid = unConfigurationId configId
               let configCmd = ChangeBaseCurrencyConfigurationCommand ChangeBaseCurrency {baseCurrency = newCurrency}
-              configResult <- liftIO $ applyConfigurationCommand writer reader configUuid configCmd
+              configResult <- liftIO $ applyConfigurationCommand writer reader id configUuid configCmd
               case configResult of
                 Left err -> do
                   logError $ "ChangeBaseCurrency rejected: " <> displayShow err
@@ -183,7 +183,7 @@ changeDefaultCurrency userId newCurrency = do
       let cmd = ChangeDefaultCurrencyConfigurationCommand ChangeDefaultCurrency {defaultCurrency = newCurrency}
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyConfigurationCommand writer reader configUuid cmd
+      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
       case result of
         Left err -> do
           logError $ "ChangeDefaultCurrency rejected: " <> displayShow err
@@ -213,7 +213,7 @@ addDictionaryEntry userId dictId entryName = do
                 }
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyConfigurationCommand writer reader configUuid cmd
+      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
       case result of
         Left err -> do
           logError $ "AddDictionaryEntry rejected: " <> displayShow err
@@ -241,7 +241,7 @@ renameDictionaryEntry userId dictId entryId newName = do
                 }
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyConfigurationCommand writer reader configUuid cmd
+      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
       case result of
         Left err -> do
           logError $ "RenameDictionaryEntry rejected: " <> displayShow err
@@ -268,7 +268,7 @@ removeDictionaryEntry userId dictId entryId = do
                 }
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyConfigurationCommand writer reader configUuid cmd
+      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
       case result of
         Left err -> do
           logError $ "RemoveDictionaryEntry rejected: " <> displayShow err
@@ -305,7 +305,7 @@ seedDefaultConfiguration = do
 
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      createResult <- liftIO $ applyConfigurationCommand writer reader configUuid createCmd
+      createResult <- liftIO $ applyConfigurationCommand writer reader id configUuid createCmd
       case createResult of
         Left err -> do
           logError $ "Failed to create default configuration: " <> displayShow err
@@ -322,7 +322,7 @@ seedDefaultConfiguration = do
                         entryId = entryId,
                         name = unsafeEntryName catName
                       }
-            result <- liftIO $ applyConfigurationCommand writer reader configUuid cmd
+            result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
             case result of
               Left err -> logWarn $ "Failed to add income category '" <> display catName <> "': " <> displayShow err
               Right _ -> return ()
@@ -337,7 +337,7 @@ seedDefaultConfiguration = do
                         entryId = entryId,
                         name = unsafeEntryName catName
                       }
-            result <- liftIO $ applyConfigurationCommand writer reader configUuid cmd
+            result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
             case result of
               Left err -> logWarn $ "Failed to add expense category '" <> display catName <> "': " <> displayShow err
               Right _ -> return ()
@@ -415,7 +415,7 @@ cloneConfiguration userId sourceConfigId configData = do
                   defaultCurrency = configData.defaultCurrency,
                   createdBy = ClonedBy userId sourceConfigId
                 }
-      createResult <- liftIO $ applyConfigurationCommand writer reader newConfigUuidVal createCmd
+      createResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal createCmd
       case createResult of
         Left err -> do
           logError $ "Failed to create cloned configuration: " <> displayShow err
@@ -433,7 +433,7 @@ cloneConfiguration userId sourceConfigId configData = do
                           entryId = eId,
                           name = eName
                         }
-              addResult <- liftIO $ applyConfigurationCommand writer reader newConfigUuidVal cmd
+              addResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
               case addResult of
                 Left err -> logWarn $ "Failed to clone dictionary entry: " <> displayShow err
                 Right _ -> return ()
@@ -445,7 +445,7 @@ cloneConfiguration userId sourceConfigId configData = do
                   AssignConfiguration
                     { configurationId = newConfigId
                     }
-          assignResult <- liftIO $ applyUserCommand writer reader userUuid assignCmd
+          assignResult <- liftIO $ applyUserCommand writer reader id userUuid assignCmd
           case assignResult of
             Left err -> do
               logError $ "Failed to assign configuration to user: " <> displayShow err

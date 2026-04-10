@@ -100,7 +100,7 @@ setupRegularAccounts = do
 
   -- Create source account with initial balance of 1000
   _ <-
-    applyAccountCommand writer reader acctUuid1
+    applyAccountCommand writer reader id acctUuid1
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Source Account",
@@ -112,7 +112,7 @@ setupRegularAccounts = do
 
   -- Create target account with initial balance of 500
   _ <-
-    applyAccountCommand writer reader acctUuid2
+    applyAccountCommand writer reader id acctUuid2
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Target Account",
@@ -136,7 +136,7 @@ setupRegularAccountsWithPM = do
   acctUuid2 <- UUID.nextRandom
 
   _ <-
-    applyAccountCommand writer reader acctUuid1
+    applyAccountCommand writer reader id acctUuid1
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Source Account",
@@ -147,7 +147,7 @@ setupRegularAccountsWithPM = do
           }
 
   _ <-
-    applyAccountCommand writer reader acctUuid2
+    applyAccountCommand writer reader id acctUuid2
       $ CreateAccountAccountCommand
         CreateAccount
           { name = "Target Account",
@@ -181,7 +181,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
 
   -- Step 1: Initiate the transfer
   _ <-
-    applyTransactionCommand writer reader txUuid
+    applyTransactionCommand writer reader id txUuid
       $ InitiateTransferTransactionCommand
         InitiateTransfer
           { sourceAccountId = unsafeAccountId fromUuid,
@@ -196,7 +196,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
 
   -- Step 2: Complete the transfer (simulates TransferManager behavior)
   _ <-
-    applyTransactionCommand writer reader txUuid
+    applyTransactionCommand writer reader id txUuid
       $ CompleteTransferTransactionCommand CompleteTransfer
 
   return txUuid
@@ -218,7 +218,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
   txUuid <- UUID.nextRandom
 
   _ <-
-    applyTransactionCommand writer reader txUuid
+    applyTransactionCommand writer reader id txUuid
       $ InitiateTransferTransactionCommand
         InitiateTransfer
           { sourceAccountId = unsafeAccountId fromUuid,
@@ -288,7 +288,7 @@ incomeFlowSpec =
 
       -- Create external account (income source)
       _ <-
-        applyAccountCommand writer reader extUuid
+        applyAccountCommand writer reader id extUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
@@ -300,7 +300,7 @@ incomeFlowSpec =
 
       -- Create regular account (income destination)
       _ <-
-        applyAccountCommand writer reader regUuid
+        applyAccountCommand writer reader id regUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Wallet",
@@ -343,7 +343,7 @@ expenseFlowSpec =
 
       -- Create regular account (expense source)
       _ <-
-        applyAccountCommand writer reader regUuid
+        applyAccountCommand writer reader id regUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Checking",
@@ -355,7 +355,7 @@ expenseFlowSpec =
 
       -- Create external account (expense destination)
       _ <-
-        applyAccountCommand writer reader extUuid
+        applyAccountCommand writer reader id extUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
@@ -535,7 +535,7 @@ processManagerDrivenSpec =
 
       -- Create external account with 0 balance
       _ <-
-        applyAccountCommand writer reader extUuid
+        applyAccountCommand writer reader id extUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
@@ -547,7 +547,7 @@ processManagerDrivenSpec =
 
       -- Create regular account
       _ <-
-        applyAccountCommand writer reader regUuid
+        applyAccountCommand writer reader id regUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Wallet",
@@ -643,7 +643,7 @@ categorizedTransferSpec =
 
       -- Create external account (income source)
       _ <-
-        applyAccountCommand writer reader extUuid
+        applyAccountCommand writer reader id extUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
@@ -655,7 +655,7 @@ categorizedTransferSpec =
 
       -- Create regular account (income destination)
       _ <-
-        applyAccountCommand writer reader regUuid
+        applyAccountCommand writer reader id regUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Wallet",
@@ -668,7 +668,7 @@ categorizedTransferSpec =
       -- Initiate income transfer with Income type and Salary category
       txUuid <- UUID.nextRandom
       _ <-
-        applyTransactionCommand writer reader txUuid
+        applyTransactionCommand writer reader id txUuid
           $ InitiateTransferTransactionCommand
             InitiateTransfer
               { sourceAccountId = unsafeAccountId extUuid,
@@ -715,7 +715,7 @@ categorizedTransferSpec =
 
       -- Create regular account (expense source) with balance
       _ <-
-        applyAccountCommand writer reader regUuid
+        applyAccountCommand writer reader id regUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "Checking",
@@ -727,7 +727,7 @@ categorizedTransferSpec =
 
       -- Create external account (expense destination)
       _ <-
-        applyAccountCommand writer reader extUuid
+        applyAccountCommand writer reader id extUuid
           $ CreateAccountAccountCommand
             CreateAccount
               { name = "External",
@@ -740,7 +740,7 @@ categorizedTransferSpec =
       -- Initiate expense transfer with Expense type and Food category
       txUuid <- UUID.nextRandom
       _ <-
-        applyTransactionCommand writer reader txUuid
+        applyTransactionCommand writer reader id txUuid
           $ InitiateTransferTransactionCommand
             InitiateTransfer
               { sourceAccountId = unsafeAccountId regUuid,
@@ -784,7 +784,7 @@ categorizedTransferSpec =
       let writer = env.eventStoreWriter
           reader = env.eventStoreReader
       _ <-
-        applyTransactionCommand writer reader txUuid
+        applyTransactionCommand writer reader id txUuid
           $ InitiateTransferTransactionCommand
             InitiateTransfer
               { sourceAccountId = unsafeAccountId acct1Uuid,

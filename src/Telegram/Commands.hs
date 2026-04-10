@@ -58,6 +58,7 @@ import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser)
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
+import Data.Time (getCurrentTime)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
@@ -440,7 +441,8 @@ handleIncomeReason botState telegramId chatId cat money reason = do
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
             Just (accountId, _name) -> do
-              result <- initiateIncome userId accountId money categoryEntryId reason
+              now <- liftIO getCurrentTime
+              result <- initiateIncome userId accountId money categoryEntryId reason now
               case result of
                 Left err -> do
                   logError $ "Income failed: " <> displayShow err
@@ -508,7 +510,8 @@ handleExpenseReason botState telegramId chatId cat money reason = do
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
             Just (accountId, _name) -> do
-              result <- initiateExpense userId accountId money categoryEntryId reason
+              now <- liftIO getCurrentTime
+              result <- initiateExpense userId accountId money categoryEntryId reason now
               case result of
                 Left err -> do
                   logError $ "Expense failed: " <> displayShow err
@@ -582,7 +585,8 @@ handleTransferReason botState telegramId chatId srcId tgtId money reason = do
   case maybeUserId of
     Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
     Just userId -> do
-      result <- initiateInternalTransfer userId srcId tgtId money reason Nothing
+      now <- liftIO getCurrentTime
+      result <- initiateInternalTransfer userId srcId tgtId money reason Nothing now
       case result of
         Left err -> do
           logError $ "Transfer failed: " <> displayShow err

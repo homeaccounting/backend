@@ -79,7 +79,7 @@ registerTestUser env = runAppM env $ do
             }
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
-  _ <- liftIO $ applyUserCommand writer reader testUserUuid registerCmd
+  _ <- liftIO $ applyUserCommand writer reader id testUserUuid registerCmd
   return ()
 
 -- | Link an OAuth identity to the test user.
@@ -92,7 +92,7 @@ linkOAuth env ident = runAppM env $ do
             }
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
-  _ <- liftIO $ applyUserCommand writer reader testUserUuid linkCmd
+  _ <- liftIO $ applyUserCommand writer reader id testUserUuid linkCmd
   return ()
 
 -- | Link Telegram to the test user.
@@ -105,7 +105,7 @@ linkTelegram env = runAppM env $ do
             }
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
-  _ <- liftIO $ applyUserCommand writer reader testUserUuid linkCmd
+  _ <- liftIO $ applyUserCommand writer reader id testUserUuid linkCmd
   return ()
 
 -- -----------------------------------------------------------------------------

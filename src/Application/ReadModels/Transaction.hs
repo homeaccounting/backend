@@ -52,7 +52,10 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import Data.Time (UTCTime (..))
+import Data.Time.Calendar (fromGregorian)
 import Domain.Core.Types (AccountId, ExchangeRate, Money, TransactionId, TransferType, mkTransactionIdSafe)
 import Domain.Models
   ( AccountingEvent (TransferCompletedEvent, TransferFailedEvent, TransferInitiatedEvent),
@@ -62,7 +65,7 @@ import Domain.Transaction.Events
     TransferInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Completed, Failed, Pending))
-import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (EventMetadata (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
 import Safe (maximumDef)
 
@@ -83,7 +86,8 @@ data TransactionData
     exchangeRate :: Maybe ExchangeRate,
     description :: Text,
     status :: TransactionStatus,
-    transferType :: TransferType
+    transferType :: TransferType,
+    date :: UTCTime
   }
   deriving (Show, Eq, Generic)
 
@@ -184,7 +188,11 @@ processEvent summaries globalEvent =
               -- In depth-first event bus dispatch, TransferCompleted/TransferFailed
               -- may be processed before TransferInitiated for the same transaction.
               -- The merge function keeps the existing entry if one already exists.
-              let newEntry =
+              let eventDate =
+                    fromMaybe
+                      (fromMaybe (UTCTime (fromGregorian 1970 1 1) 0) versionedEvent.metadata.createdAt)
+                      versionedEvent.metadata.occurredAt
+                  newEntry =
                     TransactionData
                       { sourceAccountId = evt.sourceAccountId,
                         targetAccountId = evt.targetAccountId,
@@ -193,7 +201,8 @@ processEvent summaries globalEvent =
                         exchangeRate = evt.exchangeRate,
                         description = evt.description,
                         status = Pending,
-                        transferType = evt.transferType
+                        transferType = evt.transferType,
+                        date = eventDate
                       }
                in Map.insertWith (\_ existing -> existing) transactionId newEntry summaries
         TransferCompletedEvent _evt ->

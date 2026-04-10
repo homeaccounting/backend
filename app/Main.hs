@@ -110,13 +110,13 @@ import Infrastructure.Eventium
     createReadModelHandlers,
     liftGlobalReader,
     liftIOEventHandler,
+    liftTaggedWriter,
     liftVersionedReader,
-    liftVersionedWriter,
     replayReadModels,
   )
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
-import Infrastructure.ExchangeRate.Provider (newExchangeRateCache, refreshCache)
+import Infrastructure.ExchangeRate.Store (newExchangeRateStore, publishRates)
 import Infrastructure.Version (VersionInfo, displayVersion, mkVersionInfo)
 import RIO
 import qualified RIO.Text as T
@@ -271,7 +271,7 @@ initializeEnvironment logFunc config versionInfo = do
       sqlReader = accountingVersionedEventStoreReader eventStoreConfig
       sqlGlobalReader = accountingGlobalEventStoreReader eventStoreConfig
       -- Lift to IO by running through the connection pool
-      writer = liftVersionedWriter pool sqlWriter
+      writer = liftTaggedWriter pool sqlWriter
       reader = liftVersionedReader pool sqlReader
       globalReader = liftGlobalReader pool sqlGlobalReader
   logInfo "Event store configured with read model handlers"
@@ -314,17 +314,19 @@ initializeEnvironment logFunc config versionInfo = do
   -- The transferProcessManager is already wired in accountingEventStoreWriter
   logInfo "Process managers registered via event bus"
 
-  -- 6b. Initialize exchange rate cache (best-effort, app starts even if ECB is unreachable)
-  logInfo "Initializing exchange rate cache..."
+  -- 6b. Initialize exchange rate store (best-effort, app starts even if provider is unreachable)
+  logInfo "Initializing exchange rate store..."
   rateProvider <- case config.exchangeRate.provider of
     "nbu" -> pure nbuProvider
     "ecb" -> pure ecbProvider
     unknown -> throwString $ "Unknown exchange rate provider: " <> T.unpack unknown
-  exchangeRateCache <- liftIO $ newExchangeRateCache rateProvider
-  refreshResult <- liftIO $ refreshCache exchangeRateCache
-  case refreshResult of
-    Right () -> logInfo $ "Exchange rate cache populated from " <> display (config.exchangeRate.provider)
-    Left err -> logWarn $ "Exchange rate cache initialization failed (will retry on first use): " <> display err
+  exchangeRateStore <- liftIO $ newExchangeRateStore rateProvider
+  -- TODO: persist ExchangeRatesPublished events and replay them here on startup
+  -- (similar to replayReadModels) so historical rates survive restarts
+  publishResult <- liftIO $ publishRates exchangeRateStore
+  case publishResult of
+    Right _ -> logInfo $ "Today's rates published from " <> display (config.exchangeRate.provider)
+    Left msg -> logWarn $ "Rate publish skipped: " <> display msg
 
   -- 7. Build application environment
   let configDbConfig = config.database -- Config.DatabaseConfig for AppEnv
@@ -346,7 +348,7 @@ initializeEnvironment logFunc config versionInfo = do
           telegramConfig
           botState
           telegramClientEnv
-          exchangeRateCache
+          exchangeRateStore
           versionInfo
 
   logInfo "Application environment initialized successfully"
