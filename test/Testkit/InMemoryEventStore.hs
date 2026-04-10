@@ -40,7 +40,7 @@ import Application.ReadModels.Transaction (createTransactionReadModel)
 import Application.ReadModels.User ()
 import Control.Concurrent.STM (TVar, atomically)
 import Domain.Models (AccountingEvent)
-import Eventium (EventHandler (..), EventStoreReader (..), EventStoreWriter (..), VersionedStreamEvent, processManagerEventHandler, publishingEventStoreWriter, synchronousPublisher)
+import Eventium (Codec (..), EventHandler (..), EventStoreReader (..), EventStoreWriter (..), TaggedEvent (..), VersionedStreamEvent, processManagerEventHandler, publishingTaggedCodecEventStoreWriter, synchronousPublisher)
 import Eventium.Store.Memory
   ( EventMap,
     emptyEventMap,
@@ -48,6 +48,7 @@ import Eventium.Store.Memory
     tvarEventStoreWriter,
     tvarGlobalEventStoreReader,
   )
+import Eventium.Store.Postgresql (JSONString, jsonStringCodec)
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Auth.JWT (defaultJWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig (..))
@@ -72,6 +73,7 @@ import qualified Infrastructure.Database as DB
 import Infrastructure.Eventium
   ( AccountingEventHandler,
     AccountingGlobalEventStoreReader,
+    AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
     AccountingVersionedEventStoreWriter,
     ReadModels (..),
@@ -79,7 +81,7 @@ import Infrastructure.Eventium
     createReadModelHandlers,
   )
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
-import Infrastructure.ExchangeRate.Provider (newExchangeRateCache)
+import Infrastructure.ExchangeRate.Store (newExchangeRateStore)
 import Infrastructure.Version (VersionInfo (..))
 import RIO hiding (atomically, newTVarIO)
 import qualified RIO
@@ -195,8 +197,14 @@ createTestAppEnv = do
       reader = liftSTMReader stores.inMemoryReader
       globalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
 
-      -- Wrap writer with event bus to update read models synchronously
-      writer = publishingEventStoreWriter baseWriter (synchronousPublisher (mconcat readModelHandlers))
+      -- Wrap the in-memory versioned writer as a tagged writer with event bus.
+      -- The base store accepts AccountingEvent, so we decode TaggedEvent payloads
+      -- and publish decoded domain events to read model handlers.
+      writer =
+        publishingTaggedCodecEventStoreWriter
+          (jsonStringCodec :: Codec AccountingEvent JSONString)
+          (decodingTaggedWriter baseWriter)
+          (synchronousPublisher (mconcat readModelHandlers))
 
   -- Create test auth configs
   let testJWTConfig = defaultJWTConfig
@@ -273,7 +281,7 @@ createTestAppEnv = do
   -- because they work through the event store abstraction
   -- Using undefined instead of error so it's only evaluated if actually used
   botState <- RIO.newTVarIO emptyBotState
-  exchangeRateCache' <- newExchangeRateCache ecbProvider
+  exchangeRateStore' <- newExchangeRateStore ecbProvider
 
   return
     AppEnv
@@ -293,7 +301,7 @@ createTestAppEnv = do
         telegramConfig = testTelegramConfig,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateCache = exchangeRateCache',
+        exchangeRateStore = exchangeRateStore',
         versionInfo = testVersionInfo
       }
 
@@ -322,10 +330,13 @@ createTestAppEnvWithProcessManager = do
 
       -- CRITICAL: Read model handlers FIRST, then process manager LAST.
       -- See accountingEventStoreWriter for the depth-first dispatch explanation.
-      publishingWriter = publishingEventStoreWriter baseWriter (synchronousPublisher combinedHandler)
-      pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher publishingWriter reader)
+      writer =
+        publishingTaggedCodecEventStoreWriter
+          (jsonStringCodec :: Codec AccountingEvent JSONString)
+          (decodingTaggedWriter baseWriter)
+          (synchronousPublisher combinedHandler)
+      pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher writer reader)
       combinedHandler = mconcat readModelHandlers <> pmHandler
-      writer = publishingWriter
 
   let testJWTConfig = defaultJWTConfig
       testOAuthConfig =
@@ -396,7 +407,7 @@ createTestAppEnvWithProcessManager = do
       testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
 
   botState <- RIO.newTVarIO emptyBotState
-  exchangeRateCache <- newExchangeRateCache ecbProvider
+  exchangeRateStore <- newExchangeRateStore ecbProvider
 
   return
     AppEnv
@@ -416,7 +427,7 @@ createTestAppEnvWithProcessManager = do
         telegramConfig = testTelegramConfig,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateCache = exchangeRateCache,
+        exchangeRateStore = exchangeRateStore,
         versionInfo = testVersionInfo
       }
 
@@ -454,3 +465,20 @@ liftSTMGlobalReader ::
 liftSTMGlobalReader (EventStoreReader stmRead) =
   EventStoreReader $ \range ->
     atomically $ stmRead range
+
+-- -----------------------------------------------------------------------------
+-- Tagged Writer Adapter (test-only)
+-- -----------------------------------------------------------------------------
+
+-- | Adapt a versioned (domain-event) writer to accept TaggedEvent by decoding
+-- each payload through a Codec. Used for in-memory test stores that natively
+-- store domain events but need a tagged writer interface.
+decodingTaggedWriter ::
+  (Monad m) =>
+  AccountingVersionedEventStoreWriter m ->
+  AccountingTaggedEventStoreWriter m
+decodingTaggedWriter (EventStoreWriter write) =
+  EventStoreWriter $ \uuid expectedVersion taggedEvents ->
+    case traverse (jsonStringCodec.decode . (.payload)) taggedEvents of
+      Nothing -> error "decodingTaggedWriter: codec decode failure"
+      Just events -> write uuid expectedVersion events

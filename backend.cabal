@@ -82,6 +82,7 @@ library
       Infrastructure.ExchangeRate.ECB
       Infrastructure.ExchangeRate.NBU
       Infrastructure.ExchangeRate.Provider
+      Infrastructure.ExchangeRate.Store
       Infrastructure.Version
       Telegram
       Telegram.Api
@@ -127,10 +128,10 @@ library
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.2.0 && <0.3.0
-    , eventium-memory >=0.2.0 && <0.3.0
-    , eventium-postgresql >=0.2.0 && <0.3.0
-    , eventium-sql-common >=0.2.0 && <0.3.0
+    , eventium-core >=0.3.0 && <0.4.0
+    , eventium-memory >=0.3.0 && <0.4.0
+    , eventium-postgresql >=0.3.0 && <0.4.0
+    , eventium-sql-common >=0.3.0 && <0.4.0
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
@@ -194,10 +195,10 @@ executable backend
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.2.0 && <0.3.0
-    , eventium-memory >=0.2.0 && <0.3.0
-    , eventium-postgresql >=0.2.0 && <0.3.0
-    , eventium-sql-common >=0.2.0 && <0.3.0
+    , eventium-core >=0.3.0 && <0.4.0
+    , eventium-memory >=0.3.0 && <0.4.0
+    , eventium-postgresql >=0.3.0 && <0.4.0
+    , eventium-sql-common >=0.3.0 && <0.4.0
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
@@ -254,10 +255,12 @@ test-suite backend-test
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Auth.TelegramSpec
-      Infrastructure.ExchangeRate.CacheSpec
       Infrastructure.ExchangeRate.NBUIntegrationSpec
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
+      Infrastructure.ExchangeRate.StoreIntegrationSpec
+      Infrastructure.ExchangeRate.StorePropertySpec
+      Infrastructure.ExchangeRate.StoreSpec
       Infrastructure.ExchangeRateIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
@@ -294,11 +297,11 @@ test-suite backend-test
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.2.0 && <0.3.0
-    , eventium-memory >=0.2.0 && <0.3.0
-    , eventium-postgresql >=0.2.0 && <0.3.0
-    , eventium-sql-common >=0.2.0 && <0.3.0
-    , eventium-testkit >=0.2.0 && <0.3.0
+    , eventium-core >=0.3.0 && <0.4.0
+    , eventium-memory >=0.3.0 && <0.4.0
+    , eventium-postgresql >=0.3.0 && <0.4.0
+    , eventium-sql-common >=0.3.0 && <0.4.0
+    , eventium-testkit >=0.3.0 && <0.4.0
     , hspec >=2.10 && <2.12
     , hspec-discover >=2.10 && <2.12
     , hspec-wai ==0.11.*

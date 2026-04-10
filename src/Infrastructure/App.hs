@@ -86,7 +86,7 @@ module Infrastructure.App
     HasAuthConfig (..),
     HasBotState (..),
     HasTelegramClient (..),
-    HasExchangeRateCache (..),
+    HasExchangeRateStore (..),
     HasVersionInfo (..),
 
     -- * Running the Application
@@ -113,10 +113,10 @@ import Infrastructure.Auth.Telegram (TelegramConfig)
 import Infrastructure.Config (AppConfig, DatabaseConfig)
 import Infrastructure.Eventium
   ( AccountingGlobalEventStoreReader,
+    AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
-    AccountingVersionedEventStoreWriter,
   )
-import Infrastructure.ExchangeRate.Provider (ExchangeRateCache)
+import Infrastructure.ExchangeRate.Store (ExchangeRateStore)
 import Infrastructure.Version (VersionInfo)
 import RIO
 import Servant.Client (ClientEnv)
@@ -159,8 +159,8 @@ data AppEnv = AppEnv
     databaseConfig :: !DatabaseConfig,
     -- | PostgreSQL connection pool (lazy to support in-memory tests)
     dbPool :: ConnectionPool,
-    -- | Event store writer (with synchronous event bus)
-    eventStoreWriter :: !(AccountingVersionedEventStoreWriter IO),
+    -- | Tagged event store writer (with synchronous event bus and per-call MetadataEnricher support)
+    eventStoreWriter :: !(AccountingTaggedEventStoreWriter IO),
     -- | Event store reader for loading aggregate state
     eventStoreReader :: !(AccountingVersionedEventStoreReader IO),
     -- | Global event store reader for read models
@@ -183,8 +183,8 @@ data AppEnv = AppEnv
     botState :: !(TVar BotState),
     -- | Telegram API client environment (Nothing if bot token is empty)
     telegramClientEnv :: !(Maybe ClientEnv),
-    -- | Exchange rate cache (daily rates from configured provider)
-    exchangeRateCache :: !ExchangeRateCache,
+    -- | Exchange rate store (event-sourced historical rates)
+    exchangeRateStore :: !ExchangeRateStore,
     -- | Application version information
     versionInfo :: !VersionInfo
   }
@@ -208,7 +208,7 @@ initializeAppEnv ::
   AppConfig ->
   DatabaseConfig ->
   ConnectionPool ->
-  AccountingVersionedEventStoreWriter IO ->
+  AccountingTaggedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
   AccountingGlobalEventStoreReader IO ->
   TVar AccountReadModel ->
@@ -220,10 +220,10 @@ initializeAppEnv ::
   TelegramConfig ->
   TVar BotState ->
   Maybe ClientEnv ->
-  ExchangeRateCache ->
+  ExchangeRateStore ->
   VersionInfo ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateCache versionInfo =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateStore versionInfo =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -241,7 +241,7 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       telegramConfig = telegramConfig,
       botState = botState,
       telegramClientEnv = telegramClientEnv,
-      exchangeRateCache = exchangeRateCache,
+      exchangeRateStore = exchangeRateStore,
       versionInfo = versionInfo
     }
 
@@ -299,7 +299,7 @@ instance HasDbPool AppEnv where
 -- >>>   reader <- view eventStoreReaderL
 -- >>>   liftIO $ loadAggregate reader accountId
 class HasEventStore env where
-  eventStoreWriterL :: Lens' env (AccountingVersionedEventStoreWriter IO)
+  eventStoreWriterL :: Lens' env (AccountingTaggedEventStoreWriter IO)
   eventStoreReaderL :: Lens' env (AccountingVersionedEventStoreReader IO)
   globalEventStoreReaderL :: Lens' env (AccountingGlobalEventStoreReader IO)
 
@@ -362,12 +362,12 @@ class HasTelegramClient env where
 instance HasTelegramClient AppEnv where
   telegramClientEnvL = lens (.telegramClientEnv) (\x y -> x {telegramClientEnv = y})
 
--- | Type class for environments that have an exchange rate cache.
-class HasExchangeRateCache env where
-  exchangeRateCacheL :: Lens' env ExchangeRateCache
+-- | Type class for environments that have an exchange rate store.
+class HasExchangeRateStore env where
+  exchangeRateStoreL :: Lens' env ExchangeRateStore
 
-instance HasExchangeRateCache AppEnv where
-  exchangeRateCacheL = lens (.exchangeRateCache) (\x y -> x {exchangeRateCache = y})
+instance HasExchangeRateStore AppEnv where
+  exchangeRateStoreL = lens (.exchangeRateStore) (\x y -> x {exchangeRateStore = y})
 
 -- | Type class for environments that have version information.
 class HasVersionInfo env where

@@ -95,8 +95,9 @@ import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time (UTCTime)
 import Data.Time.Calendar (Day)
-import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
@@ -336,7 +337,8 @@ data IncomeRequest
     amount :: Double,
     currency :: Text,
     category :: Text,
-    description :: Text
+    description :: Text,
+    date :: Maybe UTCTime
   }
   deriving (Show, Eq, Generic)
 
@@ -351,7 +353,8 @@ data ExpenseRequest
     amount :: Double,
     currency :: Text,
     category :: Text,
-    description :: Text
+    description :: Text,
+    date :: Maybe UTCTime
   }
   deriving (Show, Eq, Generic)
 
@@ -367,7 +370,8 @@ data InternalTransferRequest
     amount :: Double,
     currency :: Text,
     description :: Text,
-    exchangeRate :: Maybe Double
+    exchangeRate :: Maybe Double,
+    date :: Maybe UTCTime
   }
   deriving (Show, Eq, Generic)
 
@@ -429,7 +433,8 @@ data TransactionResponse
     status :: Text,
     failureReason :: Maybe Text,
     transferType :: Text,
-    category :: Maybe Text
+    category :: Maybe Text,
+    date :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -821,7 +826,8 @@ fromTransactionData txId TransactionData {..} =
         Failed failReason -> Just failReason
         _ -> Nothing,
       transferType = transferTypeToText transferType,
-      category = transferTypeCategoryText transferType
+      category = transferTypeCategoryText transferType,
+      date = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" date
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -850,7 +856,8 @@ fromTransaction txId tx =
         Failed failReason -> Just failReason
         _ -> Nothing,
       transferType = transferTypeToText tx.transferType,
-      category = transferTypeCategoryText tx.transferType
+      category = transferTypeCategoryText tx.transferType,
+      date = ""
     }
 
 -- | Converts TransactionStatus to Text representation.

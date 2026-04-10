@@ -172,7 +172,7 @@ register email password = do
                           externalAccountId = externalAccountId
                         }
 
-              result1 <- liftIO $ applyUserCommand writer reader userUuid registerCmd
+              result1 <- liftIO $ applyUserCommand writer reader id userUuid registerCmd
               case result1 of
                 Left err -> do
                   logError $ "User registration rejected: " <> displayShow err
@@ -180,7 +180,7 @@ register email password = do
                 Right _ -> do
                   -- Assign default configuration
                   let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
-                  _ <- liftIO $ applyUserCommand writer reader userUuid assignConfigCmd
+                  _ <- liftIO $ applyUserCommand writer reader id userUuid assignConfigCmd
 
                   -- Read baseCurrency from default configuration
                   configRM <- view configurationReadModelL
@@ -198,7 +198,7 @@ register email password = do
                               overdraftLimit = Nothing
                             }
 
-                  result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
+                  result2 <- liftIO $ applyAccountCommand writer reader id externalAccountUuid createAccountCmd
                   case result2 of
                     Left err -> do
                       logError $ "External account creation rejected: " <> displayShow err
@@ -347,7 +347,7 @@ linkOAuth userId provider oauthCode = do
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
       let userUuid = unUserId userId
-      result <- liftIO $ applyUserCommand writer reader userUuid linkCmd
+      result <- liftIO $ applyUserCommand writer reader id userUuid linkCmd
       case result of
         Left err -> do
           logError $ "Link OAuth rejected: " <> displayShow err
@@ -418,7 +418,7 @@ linkTelegram userId authData = do
           writer <- view eventStoreWriterL
           reader <- view eventStoreReaderL
           let userUuid = unUserId userId
-          result' <- liftIO $ applyUserCommand writer reader userUuid linkCmd
+          result' <- liftIO $ applyUserCommand writer reader id userUuid linkCmd
           case result' of
             Left err -> do
               logError $ "Link Telegram rejected: " <> displayShow err
@@ -538,7 +538,7 @@ createUserViaOAuth email oauthIdentity = do
                       passwordHash = pwHash,
                       externalAccountId = externalAccountId
                     }
-          result1 <- liftIO $ applyUserCommand writer reader userUuid registerCmd
+          result1 <- liftIO $ applyUserCommand writer reader id userUuid registerCmd
           case result1 of
             Left err -> do
               logError $ "OAuth user registration rejected: " <> displayShow err
@@ -546,7 +546,7 @@ createUserViaOAuth email oauthIdentity = do
             Right _ -> do
               -- Assign default configuration
               let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
-              _ <- liftIO $ applyUserCommand writer reader userUuid assignConfigCmd
+              _ <- liftIO $ applyUserCommand writer reader id userUuid assignConfigCmd
 
               -- Read baseCurrency from default configuration
               configRM <- view configurationReadModelL
@@ -563,7 +563,7 @@ createUserViaOAuth email oauthIdentity = do
                           accountType = External,
                           overdraftLimit = Nothing
                         }
-              result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
+              result2 <- liftIO $ applyAccountCommand writer reader id externalAccountUuid createAccountCmd
               case result2 of
                 Left err -> do
                   logError $ "External account creation rejected: " <> displayShow err
@@ -571,7 +571,7 @@ createUserViaOAuth email oauthIdentity = do
                 Right _ -> do
                   -- Link OAuth identity
                   let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
-                  result3 <- liftIO $ applyUserCommand writer reader userUuid linkCmd
+                  result3 <- liftIO $ applyUserCommand writer reader id userUuid linkCmd
                   case result3 of
                     Left err -> do
                       logError $ "Link OAuth identity rejected: " <> displayShow err
@@ -601,7 +601,7 @@ createUserViaTelegram telegramIdentity = do
                     { identity = telegramIdentity,
                       externalAccountId = externalAccountId
                     }
-          result1 <- liftIO $ applyUserCommand writer reader userUuid registerCmd
+          result1 <- liftIO $ applyUserCommand writer reader id userUuid registerCmd
           case result1 of
             Left err -> do
               logError $ "Telegram user registration rejected: " <> displayShow err
@@ -609,7 +609,7 @@ createUserViaTelegram telegramIdentity = do
             Right _ -> do
               -- Assign default configuration
               let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
-              _ <- liftIO $ applyUserCommand writer reader userUuid assignConfigCmd
+              _ <- liftIO $ applyUserCommand writer reader id userUuid assignConfigCmd
 
               -- Read baseCurrency from default configuration
               configRM <- view configurationReadModelL
@@ -626,7 +626,7 @@ createUserViaTelegram telegramIdentity = do
                           accountType = External,
                           overdraftLimit = Nothing
                         }
-              result2 <- liftIO $ applyAccountCommand writer reader externalAccountUuid createAccountCmd
+              result2 <- liftIO $ applyAccountCommand writer reader id externalAccountUuid createAccountCmd
               case result2 of
                 Left err -> do
                   logError $ "External account creation rejected: " <> displayShow err

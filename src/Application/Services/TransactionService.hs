@@ -38,6 +38,7 @@ import Application.ReadModels.Transaction (TransactionData)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.ReadModels.User (UserData (..))
 import qualified Application.ReadModels.User as UserRM
+import Data.Time (Day, UTCTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
@@ -59,14 +60,15 @@ import Domain.Core.Types
   )
 import Domain.Transaction.CommandHandler (TransactionCommand (InitiateTransferTransactionCommand))
 import Domain.Transaction.Commands (InitiateTransfer (..))
+import Eventium (EventMetadata (..), MetadataEnricher)
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),
-    HasExchangeRateCache (..),
+    HasExchangeRateStore (..),
     HasReadModel (..),
   )
 import Infrastructure.Eventium (applyTransactionCommand)
-import Infrastructure.ExchangeRate.Provider (getCachedRate)
+import Infrastructure.ExchangeRate.Store (lookupHistoricalRate)
 import RIO
 
 -- -----------------------------------------------------------------------------
@@ -90,9 +92,10 @@ import RIO
 --
 -- Returns the TransactionId and TransactionData on success.
 initiateTransfer ::
+  MetadataEnricher ->
   InitiateTransfer ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateTransfer transferCmd = do
+initiateTransfer enricher transferCmd = do
   logInfo "Initiating money transfer..."
 
   -- 1. Generate new transaction ID
@@ -107,7 +110,7 @@ initiateTransfer transferCmd = do
       -- 2. Execute command in event store
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyTransactionCommand writer reader transactionUuid (InitiateTransferTransactionCommand transferCmd)
+      result <- liftIO $ applyTransactionCommand writer reader enricher transactionUuid (InitiateTransferTransactionCommand transferCmd)
       case result of
         Left err -> do
           logError $ "Transfer initiation rejected: " <> displayShow err
@@ -149,8 +152,9 @@ initiateIncome ::
   Money ->
   DictionaryEntryId ->
   Text ->
+  UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount categoryEntryId description = do
+initiateIncome userId targetAccountId amount categoryEntryId description transferDate = do
   logInfo "Initiating income transfer..."
 
   -- 1. Look up user's External account
@@ -176,32 +180,27 @@ initiateIncome userId targetAccountId amount categoryEntryId description = do
               logWarn "Target account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
             else do
-              -- 3. Look up External account to get its currency
-              maybeExternal <- AccountRM.getAccount accountRM externalAccId
-              case maybeExternal of
+              -- 3. Look up External (source) account to get its currency
+              maybeSource <- AccountRM.getAccount accountRM externalAccId
+              case maybeSource of
                 Nothing -> do
-                  logWarn $ "External account not found: " <> displayShow externalAccId
+                  logWarn $ "Source account not found: " <> displayShow externalAccId
                   return $ Left $ NotFound "Account" (tshow externalAccId)
-                Just externalData -> do
-                  let srcCurrency = moneyCurrency externalData.balance
+                Just sourceData -> do
+                  let srcCurrency = moneyCurrency sourceData.balance
                       tgtCurrency = moneyCurrency targetData.balance
                   -- Income: user provides amount in target (Regular) currency
-                  resolveResult <- resolveAmounts amount srcCurrency tgtCurrency False Nothing
-                  case resolveResult of
-                    Left err -> return $ Left err
-                    Right (srcAmt, tgtAmt, rate) -> do
-                      let cmd =
-                            InitiateTransfer
-                              { sourceAccountId = externalAccId,
-                                targetAccountId = targetAccountId,
-                                sourceAmount = srcAmt,
-                                targetAmount = tgtAmt,
-                                exchangeRate = rate,
-                                description = description,
-                                initiatedBy = userId,
-                                transferType = Income categoryEntryId
-                              }
-                      initiateTransfer cmd
+                  resolveAndInitiate transferDate amount srcCurrency tgtCurrency False Nothing $ \srcAmt tgtAmt rate ->
+                    InitiateTransfer
+                      { sourceAccountId = externalAccId,
+                        targetAccountId = targetAccountId,
+                        sourceAmount = srcAmt,
+                        targetAmount = tgtAmt,
+                        exchangeRate = rate,
+                        description = description,
+                        initiatedBy = userId,
+                        transferType = Income categoryEntryId
+                      }
 
 -- | Initiate an expense transfer (Regular -> External account).
 --
@@ -214,8 +213,9 @@ initiateExpense ::
   Money ->
   DictionaryEntryId ->
   Text ->
+  UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount categoryEntryId description = do
+initiateExpense userId sourceAccountId amount categoryEntryId description transferDate = do
   logInfo "Initiating expense transfer..."
 
   -- 1. Look up user's External account
@@ -241,32 +241,27 @@ initiateExpense userId sourceAccountId amount categoryEntryId description = do
               logWarn "Source account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
             else do
-              -- 3. Look up External account to get its currency
-              maybeExternal <- AccountRM.getAccount accountRM externalAccId
-              case maybeExternal of
+              -- 3. Look up External (target) account to get its currency
+              maybeTarget <- AccountRM.getAccount accountRM externalAccId
+              case maybeTarget of
                 Nothing -> do
-                  logWarn $ "External account not found: " <> displayShow externalAccId
+                  logWarn $ "Target account not found: " <> displayShow externalAccId
                   return $ Left $ NotFound "Account" (tshow externalAccId)
-                Just externalData -> do
+                Just targetData -> do
                   let srcCurrency = moneyCurrency sourceData.balance
-                      tgtCurrency = moneyCurrency externalData.balance
+                      tgtCurrency = moneyCurrency targetData.balance
                   -- Expense: user provides amount in source (Regular) currency
-                  resolveResult <- resolveAmounts amount srcCurrency tgtCurrency True Nothing
-                  case resolveResult of
-                    Left err -> return $ Left err
-                    Right (srcAmt, tgtAmt, rate) -> do
-                      let cmd =
-                            InitiateTransfer
-                              { sourceAccountId = sourceAccountId,
-                                targetAccountId = externalAccId,
-                                sourceAmount = srcAmt,
-                                targetAmount = tgtAmt,
-                                exchangeRate = rate,
-                                description = description,
-                                initiatedBy = userId,
-                                transferType = Expense categoryEntryId
-                              }
-                      initiateTransfer cmd
+                  resolveAndInitiate transferDate amount srcCurrency tgtCurrency True Nothing $ \srcAmt tgtAmt rate ->
+                    InitiateTransfer
+                      { sourceAccountId = sourceAccountId,
+                        targetAccountId = externalAccId,
+                        sourceAmount = srcAmt,
+                        targetAmount = tgtAmt,
+                        exchangeRate = rate,
+                        description = description,
+                        initiatedBy = userId,
+                        transferType = Expense categoryEntryId
+                      }
 
 -- | Initiate an internal transfer (Regular -> Regular account).
 --
@@ -279,8 +274,9 @@ initiateInternalTransfer ::
   Money ->
   Text ->
   Maybe Rational ->
+  UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateInternalTransfer userId sourceAccountId targetAccountId amount description maybeUserRate = do
+initiateInternalTransfer userId sourceAccountId targetAccountId amount description maybeUserRate transferDate = do
   logInfo "Initiating internal transfer..."
 
   -- 1. Validate both accounts exist and are Regular
@@ -310,26 +306,43 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount descripti
                   let srcCurrency = moneyCurrency sourceData.balance
                       tgtCurrency = moneyCurrency targetData.balance
                   -- Internal: user provides amount in source currency
-                  resolveResult <- resolveAmounts amount srcCurrency tgtCurrency True maybeUserRate
-                  case resolveResult of
-                    Left err -> return $ Left err
-                    Right (srcAmt, tgtAmt, rate) -> do
-                      let cmd =
-                            InitiateTransfer
-                              { sourceAccountId = sourceAccountId,
-                                targetAccountId = targetAccountId,
-                                sourceAmount = srcAmt,
-                                targetAmount = tgtAmt,
-                                exchangeRate = rate,
-                                description = description,
-                                initiatedBy = userId,
-                                transferType = Transfer
-                              }
-                      initiateTransfer cmd
+                  resolveAndInitiate transferDate amount srcCurrency tgtCurrency True maybeUserRate $ \srcAmt tgtAmt rate ->
+                    InitiateTransfer
+                      { sourceAccountId = sourceAccountId,
+                        targetAccountId = targetAccountId,
+                        sourceAmount = srcAmt,
+                        targetAmount = tgtAmt,
+                        exchangeRate = rate,
+                        description = description,
+                        initiatedBy = userId,
+                        transferType = Transfer
+                      }
 
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
 -- -----------------------------------------------------------------------------
+
+-- | Resolve cross-currency amounts and initiate a transfer.
+--
+-- Computes the enricher and rate date from the transfer date, resolves
+-- amounts via exchange rates, then delegates to 'initiateTransfer'.
+resolveAndInitiate ::
+  UTCTime ->
+  Money ->
+  Currency ->
+  Currency ->
+  Bool ->
+  Maybe Rational ->
+  (Money -> Money -> Maybe ExchangeRate -> InitiateTransfer) ->
+  AppM (Either DomainError (TransactionId, TransactionData))
+resolveAndInitiate transferDate userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate mkCmd = do
+  let rateDay = utctDay transferDate
+      enricher m = m {occurredAt = Just transferDate}
+  resolveResult <- resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate rateDay
+  case resolveResult of
+    Left err -> return $ Left err
+    Right (srcAmt, tgtAmt, rate) ->
+      initiateTransfer enricher (mkCmd srcAmt tgtAmt rate)
 
 -- | Query the read model for a transaction and return the result.
 queryTransactionResult ::
@@ -356,15 +369,17 @@ queryTransactionResult transactionId = do
 --   tgtCurrency: target account currency
 --   userAmountIsSource: True if userAmount is in source currency, False if in target
 --   maybeUserRate: optional user-provided exchange rate override (src -> tgt)
+--   rateDate: the date to look up exchange rates for
 resolveAmounts ::
-  (MonadReader env m, HasExchangeRateCache env, MonadIO m) =>
+  (MonadReader env m, HasExchangeRateStore env, MonadIO m) =>
   Money ->
   Currency ->
   Currency ->
   Bool ->
   Maybe Rational ->
+  Day ->
   m (Either DomainError (Money, Money, Maybe ExchangeRate))
-resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate
+resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate rateDate
   | srcCurrency == tgtCurrency =
       pure $ Right (userAmount, userAmount, Nothing)
   | otherwise = do
@@ -373,10 +388,17 @@ resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRa
         Just r ->
           pure $ first ExchangeRateUnavailable $ mkExchangeRate srcCurrency tgtCurrency r
         Nothing -> do
-          cache <- view exchangeRateCacheL
-          liftIO
-            $ getCachedRate cache srcCurrency tgtCurrency
-            <&> first ExchangeRateUnavailable
+          store <- view exchangeRateStoreL
+          maybeRate <- liftIO $ lookupHistoricalRate store rateDate srcCurrency tgtCurrency
+          pure $ case maybeRate of
+            Just er -> Right er
+            Nothing ->
+              Left
+                $ ExchangeRateUnavailable
+                $ "No rate for "
+                <> tshow srcCurrency
+                <> " -> "
+                <> tshow tgtCurrency
       case rateResult of
         Left err -> pure $ Left err
         Right er ->

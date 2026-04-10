@@ -141,7 +141,7 @@ jobs:
 
       - name: Generate .cabal from package.yaml
         run: |
-          curl -sSL https://github.com/sol/hpack/releases/download/0.37.0/hpack_linux.gz | gunzip > hpack
+          curl -sSL https://github.com/sol/hpack/releases/download/0.38.3/hpack_linux.gz | gunzip > hpack
           chmod +x hpack
           ./hpack
 

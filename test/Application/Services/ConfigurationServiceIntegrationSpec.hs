@@ -211,7 +211,7 @@ changeBaseCurrencySpec =
               let extAcctUuid = unAccountId userData.externalAccountId
                   txId = unsafeTransactionId (UUID.fromWords 999 0 0 1)
               _ <-
-                applyAccountCommand env.eventStoreWriter env.eventStoreReader extAcctUuid
+                applyAccountCommand env.eventStoreWriter env.eventStoreReader id extAcctUuid
                   $ CreditAccountAccountCommand
                     CreditAccount
                       { amount = unsafeMoney EUR 100,

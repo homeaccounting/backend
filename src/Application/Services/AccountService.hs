@@ -99,7 +99,7 @@ createAccount createCmd = do
       -- 2. Execute command in event store
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyAccountCommand writer reader accountUuid (CreateAccountAccountCommand createCmd)
+      result <- liftIO $ applyAccountCommand writer reader id accountUuid (CreateAccountAccountCommand createCmd)
       case result of
         Left err -> do
           logError $ "Account creation rejected: " <> displayShow err
@@ -221,7 +221,7 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = do
 
                       writer <- view eventStoreWriterL
                       reader <- view eventStoreReaderL
-                      result <- liftIO $ applyAccountCommand writer reader accountUuid shareCmd
+                      result <- liftIO $ applyAccountCommand writer reader id accountUuid shareCmd
                       case result of
                         Left err -> do
                           logError $ "Share account rejected: " <> displayShow err
@@ -280,7 +280,7 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = do
 
                       writer <- view eventStoreWriterL
                       reader <- view eventStoreReaderL
-                      result <- liftIO $ applyAccountCommand writer reader accountUuid revokeCmd
+                      result <- liftIO $ applyAccountCommand writer reader id accountUuid revokeCmd
                       case result of
                         Left err -> do
                           logError $ "Revoke access rejected: " <> displayShow err
@@ -322,7 +322,7 @@ setOverdraftLimit requestingUserId accountUuid newLimit = do
 
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyAccountCommand writer reader accountUuid setLimitCmd
+      result <- liftIO $ applyAccountCommand writer reader id accountUuid setLimitCmd
       case result of
         Left err -> do
           logError $ "Set overdraft limit rejected: " <> displayShow err
@@ -352,7 +352,7 @@ setAccountSubtype requestingUserId accountUuid newType = do
 
       writer <- view eventStoreWriterL
       reader <- view eventStoreReaderL
-      result <- liftIO $ applyAccountCommand writer reader accountUuid setTypeCmd
+      result <- liftIO $ applyAccountCommand writer reader id accountUuid setTypeCmd
       case result of
         Left err -> do
           logError $ "Set account type rejected: " <> displayShow err
