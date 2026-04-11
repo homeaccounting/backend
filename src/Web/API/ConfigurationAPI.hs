@@ -46,7 +46,6 @@ import qualified Application.Services.ConfigurationService as ConfigService
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import Data.UUID (UUID)
-import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( DictionaryId (..),
     mkDictionaryEntryId,
@@ -61,6 +60,7 @@ import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
+import Web.Validation (validateFieldCtx)
 
 -- -----------------------------------------------------------------------------
 -- API Type Definition
@@ -249,24 +249,20 @@ getConfigurationHandler user = do
 -- | Handler for PUT /api/users/me/configuration/base-currency
 changeBaseCurrencyHandler :: AuthenticatedUser -> ChangeCurrencyRequest -> AppM NoContent
 changeBaseCurrencyHandler user req = do
-  case parseCurrency req.currency of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "currency" err req.currency
-    Right cur -> do
-      result <- ConfigService.changeBaseCurrency user.userId cur
-      case result of
-        Left err -> throwDomainError err
-        Right () -> return NoContent
+  cur <- validateFieldCtx "currency" req.currency $ parseCurrency req.currency
+  result <- ConfigService.changeBaseCurrency user.userId cur
+  case result of
+    Left err -> throwDomainError err
+    Right () -> return NoContent
 
 -- | Handler for PUT /api/users/me/configuration/default-currency
 changeDefaultCurrencyHandler :: AuthenticatedUser -> ChangeCurrencyRequest -> AppM NoContent
 changeDefaultCurrencyHandler user req = do
-  case parseCurrency req.currency of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "currency" err req.currency
-    Right cur -> do
-      result <- ConfigService.changeDefaultCurrency user.userId cur
-      case result of
-        Left err -> throwDomainError err
-        Right () -> return NoContent
+  cur <- validateFieldCtx "currency" req.currency $ parseCurrency req.currency
+  result <- ConfigService.changeDefaultCurrency user.userId cur
+  case result of
+    Left err -> throwDomainError err
+    Right () -> return NoContent
 
 -- | Handler for GET /api/users/me/configuration/dictionaries/:dictId
 listDictionaryHandler :: AuthenticatedUser -> Text -> AppM DictionaryResponse
@@ -291,44 +287,37 @@ listDictionaryHandler user dictIdText = do
 addEntryHandler :: AuthenticatedUser -> Text -> AddEntryRequest -> AppM AddEntryResponse
 addEntryHandler user dictIdText req = do
   let dictId = DictionaryId dictIdText
-  case mkEntryName req.name of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "name" err req.name
-    Right entryName -> do
-      result <- ConfigService.addDictionaryEntry user.userId dictId entryName
-      case result of
-        Left err -> throwDomainError err
-        Right entryId ->
-          return
-            $ AddEntryResponse
-              { id = unDictionaryEntryId entryId,
-                name = unEntryName entryName
-              }
+  entryName <- validateFieldCtx "name" req.name $ mkEntryName req.name
+  result <- ConfigService.addDictionaryEntry user.userId dictId entryName
+  case result of
+    Left err -> throwDomainError err
+    Right entryId ->
+      return
+        $ AddEntryResponse
+          { id = unDictionaryEntryId entryId,
+            name = unEntryName entryName
+          }
 
 -- | Handler for PUT /api/users/me/configuration/dictionaries/:dictId/entries/:entryId
 renameEntryHandler :: AuthenticatedUser -> Text -> UUID -> RenameEntryRequest -> AppM NoContent
 renameEntryHandler user dictIdText entryUuid req = do
   let dictId = DictionaryId dictIdText
-  case mkDictionaryEntryId entryUuid of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "entryId" err (tshow entryUuid)
-    Right entryId -> case mkEntryName req.name of
-      Left err -> throwDomainError $ ValidationErr $ mkValidationError "name" err req.name
-      Right entryName -> do
-        result <- ConfigService.renameDictionaryEntry user.userId dictId entryId entryName
-        case result of
-          Left err -> throwDomainError err
-          Right () -> return NoContent
+  entryId <- validateFieldCtx "entryId" (tshow entryUuid) $ mkDictionaryEntryId entryUuid
+  entryName <- validateFieldCtx "name" req.name $ mkEntryName req.name
+  result <- ConfigService.renameDictionaryEntry user.userId dictId entryId entryName
+  case result of
+    Left err -> throwDomainError err
+    Right () -> return NoContent
 
 -- | Handler for DELETE /api/users/me/configuration/dictionaries/:dictId/entries/:entryId
 removeEntryHandler :: AuthenticatedUser -> Text -> UUID -> AppM NoContent
 removeEntryHandler user dictIdText entryUuid = do
   let dictId = DictionaryId dictIdText
-  case mkDictionaryEntryId entryUuid of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "entryId" err (tshow entryUuid)
-    Right entryId -> do
-      result <- ConfigService.removeDictionaryEntry user.userId dictId entryId
-      case result of
-        Left err -> throwDomainError err
-        Right () -> return NoContent
+  entryId <- validateFieldCtx "entryId" (tshow entryUuid) $ mkDictionaryEntryId entryUuid
+  result <- ConfigService.removeDictionaryEntry user.userId dictId entryId
+  case result of
+    Left err -> throwDomainError err
+    Right () -> return NoContent
 
 -- -----------------------------------------------------------------------------
 -- Response Conversion

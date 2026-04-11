@@ -207,7 +207,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "Cross-currency transfer" Nothing now
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "Cross-currency transfer" Nothing (Just now)
       shouldBeRight result
       let (_, summary) = fromRight' result
       -- Source: 100 USD, Target: 90 EUR (100 * 9/10)
@@ -218,7 +218,7 @@ spec = describe "TransactionService" $ do
     it "skips conversion for same-currency transfer" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts -- both USD
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) "Same currency" Nothing now
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) "Same currency" Nothing (Just now)
       shouldBeRight result
       let (_, summary) = fromRight' result
       summary.sourceAmount `shouldBe` mockMoney 100
@@ -231,7 +231,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "User rate" (Just (17 % 20)) now
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "User rate" (Just (17 % 20)) (Just now)
       shouldBeRight result
       let (_, summary) = fromRight' result
       summary.sourceAmount `shouldBe` mockMoneyWith USD 100
@@ -244,7 +244,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "No rate for pair" Nothing now
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "No rate for pair" Nothing (Just now)
       shouldBeLeft result
       case result of
         Left (ExchangeRateUnavailable _) -> pure ()

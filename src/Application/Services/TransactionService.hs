@@ -38,7 +38,7 @@ import Application.ReadModels.Transaction (TransactionData)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.ReadModels.User (UserData (..))
 import qualified Application.ReadModels.User as UserRM
-import Data.Time (Day, UTCTime, utctDay)
+import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
@@ -152,10 +152,11 @@ initiateIncome ::
   Money ->
   DictionaryEntryId ->
   Text ->
-  UTCTime ->
+  Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount categoryEntryId description transferDate = do
+initiateIncome userId targetAccountId amount categoryEntryId description maybeTransferDate = do
   logInfo "Initiating income transfer..."
+  now <- liftIO getCurrentTime
 
   -- 1. Look up user's External account
   userRM <- view userReadModelL
@@ -190,7 +191,7 @@ initiateIncome userId targetAccountId amount categoryEntryId description transfe
                   let srcCurrency = moneyCurrency sourceData.balance
                       tgtCurrency = moneyCurrency targetData.balance
                   -- Income: user provides amount in target (Regular) currency
-                  resolveAndInitiate transferDate amount srcCurrency tgtCurrency False Nothing $ \srcAmt tgtAmt rate ->
+                  resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency False Nothing $ \srcAmt tgtAmt rate ->
                     InitiateTransfer
                       { sourceAccountId = externalAccId,
                         targetAccountId = targetAccountId,
@@ -213,10 +214,11 @@ initiateExpense ::
   Money ->
   DictionaryEntryId ->
   Text ->
-  UTCTime ->
+  Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount categoryEntryId description transferDate = do
+initiateExpense userId sourceAccountId amount categoryEntryId description maybeTransferDate = do
   logInfo "Initiating expense transfer..."
+  now <- liftIO getCurrentTime
 
   -- 1. Look up user's External account
   userRM <- view userReadModelL
@@ -251,7 +253,7 @@ initiateExpense userId sourceAccountId amount categoryEntryId description transf
                   let srcCurrency = moneyCurrency sourceData.balance
                       tgtCurrency = moneyCurrency targetData.balance
                   -- Expense: user provides amount in source (Regular) currency
-                  resolveAndInitiate transferDate amount srcCurrency tgtCurrency True Nothing $ \srcAmt tgtAmt rate ->
+                  resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True Nothing $ \srcAmt tgtAmt rate ->
                     InitiateTransfer
                       { sourceAccountId = sourceAccountId,
                         targetAccountId = externalAccId,
@@ -274,10 +276,11 @@ initiateInternalTransfer ::
   Money ->
   Text ->
   Maybe Rational ->
-  UTCTime ->
+  Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateInternalTransfer userId sourceAccountId targetAccountId amount description maybeUserRate transferDate = do
+initiateInternalTransfer userId sourceAccountId targetAccountId amount description maybeUserRate maybeTransferDate = do
   logInfo "Initiating internal transfer..."
+  now <- liftIO getCurrentTime
 
   -- 1. Validate both accounts exist and are Regular
   accountRM <- view accountReadModelL
@@ -306,7 +309,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount descripti
                   let srcCurrency = moneyCurrency sourceData.balance
                       tgtCurrency = moneyCurrency targetData.balance
                   -- Internal: user provides amount in source currency
-                  resolveAndInitiate transferDate amount srcCurrency tgtCurrency True maybeUserRate $ \srcAmt tgtAmt rate ->
+                  resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate $ \srcAmt tgtAmt rate ->
                     InitiateTransfer
                       { sourceAccountId = sourceAccountId,
                         targetAccountId = targetAccountId,
@@ -327,6 +330,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount descripti
 -- Computes the enricher and rate date from the transfer date, resolves
 -- amounts via exchange rates, then delegates to 'initiateTransfer'.
 resolveAndInitiate ::
+  Maybe UTCTime ->
   UTCTime ->
   Money ->
   Currency ->
@@ -335,9 +339,12 @@ resolveAndInitiate ::
   Maybe Rational ->
   (Money -> Money -> Maybe ExchangeRate -> InitiateTransfer) ->
   AppM (Either DomainError (TransactionId, TransactionData))
-resolveAndInitiate transferDate userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate mkCmd = do
-  let rateDay = utctDay transferDate
-      enricher m = m {occurredAt = Just transferDate}
+resolveAndInitiate maybeTransferDate now userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate mkCmd = do
+  let transferDate = fromMaybe now maybeTransferDate
+      rateDay = utctDay transferDate
+      enricher = case maybeTransferDate of
+        Just d -> \m -> m {occurredAt = Just d}
+        Nothing -> id
   resolveResult <- resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate rateDay
   case resolveResult of
     Left err -> return $ Left err

@@ -55,7 +55,6 @@ where
 import qualified Application.Services.AccountService as AccountService
 import Data.Aeson (FromJSON, ToJSON)
 import Data.UUID (UUID)
-import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types (mkMoney, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
@@ -71,6 +70,7 @@ import Web.Types
     toAccountSubtype,
     toCreateAccountCommand,
   )
+import Web.Validation (validateField, validateFieldCtx)
 
 -- -----------------------------------------------------------------------------
 -- API Type Definition
@@ -197,15 +197,13 @@ createAccountHandler :: AuthenticatedUser -> CreateAccountRequest -> AppM Accoun
 createAccountHandler user request = do
   let userId = user.userId
   -- 1. Convert DTO to domain command (Web layer responsibility)
-  case toCreateAccountCommand userId request of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "request" err err
-    Right createCmd -> do
-      -- 2. Delegate to service
-      result <- AccountService.createAccount createCmd
-      case result of
-        -- 3. Convert domain result to response DTO
-        Right (accountId, summary) -> return $ fromAccountData accountId summary
-        Left err -> throwDomainError err
+  createCmd <- validateField "request" $ toCreateAccountCommand userId request
+  -- 2. Delegate to service
+  result <- AccountService.createAccount createCmd
+  case result of
+    -- 3. Convert domain result to response DTO
+    Right (accountId, summary) -> return $ fromAccountData accountId summary
+    Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts/:id - Get account by ID.
 getAccountHandler :: AuthenticatedUser -> UUID -> AppM AccountResponse
@@ -251,12 +249,9 @@ setOverdraftLimitHandler user accountUuid SetOverdraftLimitRequest {..} = do
     Nothing -> return Nothing
     Just amt -> do
       let curText = fromMaybe "USD" currency
-      case parseCurrency curText of
-        Left err -> throwDomainError $ ValidationErr $ mkValidationError "currency" err curText
-        Right cur ->
-          case mkMoney cur (toRational amt) of
-            Left err -> throwDomainError $ ValidationErr $ mkValidationError "overdraftLimit" err (tshow amt)
-            Right money -> return (Just money)
+      cur <- validateFieldCtx "currency" curText $ parseCurrency curText
+      money <- validateFieldCtx "overdraftLimit" (tshow amt) $ mkMoney cur (toRational amt)
+      return (Just money)
 
   result <- AccountService.setOverdraftLimit userId accountUuid domainLimit
   case result of
@@ -267,10 +262,8 @@ setOverdraftLimitHandler user accountUuid SetOverdraftLimitRequest {..} = do
 setAccountSubtypeHandler :: AuthenticatedUser -> UUID -> SetAccountSubtypeRequest -> AppM NoContent
 setAccountSubtypeHandler user accountUuid SetAccountSubtypeRequest {..} = do
   let userId = user.userId
-  case toAccountSubtype subtype of
-    Left err -> throwDomainError $ ValidationErr $ mkValidationError "subtype" err err
-    Right domainType -> do
-      result <- AccountService.setAccountSubtype userId accountUuid domainType
-      case result of
-        Right () -> return NoContent
-        Left err -> throwDomainError err
+  domainType <- validateField "subtype" $ toAccountSubtype subtype
+  result <- AccountService.setAccountSubtype userId accountUuid domainType
+  case result of
+    Right () -> return NoContent
+    Left err -> throwDomainError err

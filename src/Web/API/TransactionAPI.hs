@@ -42,9 +42,7 @@ module Web.API.TransactionAPI
 where
 
 import qualified Application.Services.TransactionService as TransactionService
-import Data.Time (getCurrentTime)
 import Data.UUID (UUID)
-import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types (mkAccountId, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
@@ -60,6 +58,7 @@ import Web.Types
     parseCategoryId,
     toDomainMoney,
   )
+import Web.Validation (validateDateNotInFuture, validateField)
 
 -- -----------------------------------------------------------------------------
 -- API Type Definition
@@ -125,113 +124,44 @@ transactionServer =
 incomeHandler :: AuthenticatedUser -> IncomeRequest -> AppM TransactionResponse
 incomeHandler user request = do
   let userId = user.userId
-  -- 0. Resolve and validate date
-  now <- liftIO getCurrentTime
-  let transferDate = fromMaybe now request.date
-  when (transferDate > now)
-    $ throwDomainError
-    $ ValidationErr
-    $ mkValidationError "date" "Date cannot be in the future" "date"
-  -- 1. Parse category
-  case parseCategoryId request.category of
-    Left err ->
-      throwDomainError $ ValidationErr $ mkValidationError "category" err err
-    Right categoryEntryId ->
-      -- 2. Parse accountId
-      case mkAccountId request.accountId of
-        Left err ->
-          throwDomainError $ ValidationErr $ mkValidationError "accountId" err err
-        Right accountId ->
-          -- 3. Parse currency
-          case parseCurrency request.currency of
-            Left err ->
-              throwDomainError $ ValidationErr $ mkValidationError "currency" err err
-            Right cur -> do
-              -- 4. Parse amount
-              case toDomainMoney cur request.amount of
-                Left err ->
-                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
-                Right money -> do
-                  -- 5. Delegate to service
-                  result <- TransactionService.initiateIncome userId accountId money categoryEntryId request.description transferDate
-                  case result of
-                    Right (txId, summary) -> return $ fromTransactionData txId summary
-                    Left err -> throwDomainError err
+  validateDateNotInFuture request.date
+  categoryEntryId <- validateField "category" $ parseCategoryId request.category
+  accountId <- validateField "accountId" $ mkAccountId request.accountId
+  cur <- validateField "currency" $ parseCurrency request.currency
+  money <- validateField "amount" $ toDomainMoney cur request.amount
+  result <- TransactionService.initiateIncome userId accountId money categoryEntryId request.description request.date
+  case result of
+    Right (txId, summary) -> return $ fromTransactionData txId summary
+    Left err -> throwDomainError err
 
 -- | Handler for POST /api/transactions/expense - Record an expense transaction.
 expenseHandler :: AuthenticatedUser -> ExpenseRequest -> AppM TransactionResponse
 expenseHandler user request = do
   let userId = user.userId
-  -- 0. Resolve and validate date
-  now <- liftIO getCurrentTime
-  let transferDate = fromMaybe now request.date
-  when (transferDate > now)
-    $ throwDomainError
-    $ ValidationErr
-    $ mkValidationError "date" "Date cannot be in the future" "date"
-  -- 1. Parse category
-  case parseCategoryId request.category of
-    Left err ->
-      throwDomainError $ ValidationErr $ mkValidationError "category" err err
-    Right categoryEntryId ->
-      -- 2. Parse accountId
-      case mkAccountId request.accountId of
-        Left err ->
-          throwDomainError $ ValidationErr $ mkValidationError "accountId" err err
-        Right accountId ->
-          -- 3. Parse currency
-          case parseCurrency request.currency of
-            Left err ->
-              throwDomainError $ ValidationErr $ mkValidationError "currency" err err
-            Right cur -> do
-              -- 4. Parse amount
-              case toDomainMoney cur request.amount of
-                Left err ->
-                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
-                Right money -> do
-                  -- 5. Delegate to service
-                  result <- TransactionService.initiateExpense userId accountId money categoryEntryId request.description transferDate
-                  case result of
-                    Right (txId, summary) -> return $ fromTransactionData txId summary
-                    Left err -> throwDomainError err
+  validateDateNotInFuture request.date
+  categoryEntryId <- validateField "category" $ parseCategoryId request.category
+  accountId <- validateField "accountId" $ mkAccountId request.accountId
+  cur <- validateField "currency" $ parseCurrency request.currency
+  money <- validateField "amount" $ toDomainMoney cur request.amount
+  result <- TransactionService.initiateExpense userId accountId money categoryEntryId request.description request.date
+  case result of
+    Right (txId, summary) -> return $ fromTransactionData txId summary
+    Left err -> throwDomainError err
 
 -- | Handler for POST /api/transactions/transfer - Initiate an internal transfer.
 transferHandler :: AuthenticatedUser -> InternalTransferRequest -> AppM TransactionResponse
 transferHandler user request = do
   let userId = user.userId
-  -- 0. Resolve and validate date
-  now <- liftIO getCurrentTime
-  let transferDate = fromMaybe now request.date
-  when (transferDate > now)
-    $ throwDomainError
-    $ ValidationErr
-    $ mkValidationError "date" "Date cannot be in the future" "date"
-  -- 1. Parse sourceAccountId
-  case mkAccountId request.sourceAccountId of
-    Left err ->
-      throwDomainError $ ValidationErr $ mkValidationError "sourceAccountId" err err
-    Right fromAccId ->
-      -- 2. Parse targetAccountId
-      case mkAccountId request.targetAccountId of
-        Left err ->
-          throwDomainError $ ValidationErr $ mkValidationError "targetAccountId" err err
-        Right toAccId ->
-          -- 3. Parse currency
-          case parseCurrency request.currency of
-            Left err ->
-              throwDomainError $ ValidationErr $ mkValidationError "currency" err err
-            Right cur -> do
-              -- 4. Parse amount
-              case toDomainMoney cur request.amount of
-                Left err ->
-                  throwDomainError $ ValidationErr $ mkValidationError "amount" err err
-                Right money -> do
-                  -- 5. Delegate to service
-                  let maybeRate = fmap toRational request.exchangeRate
-                  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money request.description maybeRate transferDate
-                  case result of
-                    Right (txId, summary) -> return $ fromTransactionData txId summary
-                    Left err -> throwDomainError err
+  validateDateNotInFuture request.date
+  fromAccId <- validateField "sourceAccountId" $ mkAccountId request.sourceAccountId
+  toAccId <- validateField "targetAccountId" $ mkAccountId request.targetAccountId
+  cur <- validateField "currency" $ parseCurrency request.currency
+  money <- validateField "amount" $ toDomainMoney cur request.amount
+  let maybeRate = fmap toRational request.exchangeRate
+  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money request.description maybeRate request.date
+  case result of
+    Right (txId, summary) -> return $ fromTransactionData txId summary
+    Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions/:id - Get transaction status.
 getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse
