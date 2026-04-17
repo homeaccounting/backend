@@ -116,6 +116,8 @@ One-time `scripts/setup-server.sh` (run via `just infra-setup` after `tofu apply
 - Create `.env` on the server with required production env vars (see below)
 - Log into GHCR (`docker login ghcr.io`) for image pulls
 
+> **Note (2026-04-17):** The env-var layout shown below reflects the deployment as originally designed. The OAuth `*_REDIRECT_URI` variables and `TELEGRAM_WEBHOOK_URL` are no longer set by the operator — they are derived from `API_BASE_URL` in `config/prod.yaml`. See `docs/specs/2026-04-17-api-base-url-derived-urls-design.md` for the current layout.
+
 ### Required Server Environment Variables
 
 The `.env` file on the VPS must contain all variables referenced by `config/prod.yaml`:

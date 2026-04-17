@@ -471,31 +471,57 @@ substituteEnvVars = go
       result <- substituteText text
       case result of
         Left err -> pure $ Left err
-        Right newText -> pure $ Right $ coerceValue newText
+        Right (wasWholeString, newText)
+          | wasWholeString -> pure $ Right $ coerceValue newText
+          | otherwise -> pure $ Right $ String newText
     go other = pure $ Right other
 
-    -- \| Parse and resolve a single @${…}@ reference.
+    -- \| Scan the input text, resolving every @${…}@ occurrence in place and
+    -- concatenating the results with the surrounding literal text.
     --
-    -- Accepted forms:
-    --
-    --   * @${VAR}@        — required, error if unset
-    --   * @${VAR:-value}@ — optional, falls back to @value@
-    --   * @${VAR:-}@      — optional, falls back to empty string
-    substituteText :: Text -> IO (Either Text Text)
-    substituteText text
-      | "${" `T.isPrefixOf` text && "}" `T.isSuffixOf` text =
-          let inner = T.drop 2 $ T.dropEnd 1 text
-              (varName, mDefault) = parseVarExpr inner
-           in do
-                envValue <- lookupEnv (T.unpack varName)
-                case (envValue, mDefault) of
-                  (Just val, _) -> pure $ Right $ T.pack val
-                  (Nothing, Just def') -> pure $ Right def'
-                  (Nothing, Nothing) ->
-                    pure $
-                      Left $
-                        "Environment variable not set: " <> varName
-      | otherwise = pure $ Right text
+    -- Returns @(wasWholeString, result)@.  @wasWholeString@ is 'True' when the
+    -- entire input was exactly one @${…}@ expression with no surrounding
+    -- literals — the caller uses this to decide whether 'coerceValue' should
+    -- run (preserving the legacy behaviour where @${PORT}@ becomes a
+    -- 'Number').
+    substituteText :: Text -> IO (Either Text (Bool, Text))
+    substituteText input = scan input mempty
+      where
+        scan remaining acc =
+          case T.breakOn "${" remaining of
+            (prefix, rest)
+              | T.null rest ->
+                  -- No more ${ in the remainder: we're done.
+                  pure $ Right (wasWholeString prefix acc, acc <> prefix)
+              | otherwise ->
+                  let afterOpen = T.drop 2 rest
+                   in case T.breakOn "}" afterOpen of
+                        (_, closeRest)
+                          | T.null closeRest ->
+                              -- No closing brace: treat the rest as literal text.
+                              pure $ Right (False, acc <> prefix <> rest)
+                        (expr, closeRest) -> do
+                          let afterClose = T.drop 1 closeRest
+                              (varName, mDefault) = parseVarExpr expr
+                          envValue <- lookupEnv (T.unpack varName)
+                          case (envValue, mDefault) of
+                            (Just val, _) ->
+                              scan afterClose (acc <> prefix <> T.pack val)
+                            (Nothing, Just def') ->
+                              scan afterClose (acc <> prefix <> def')
+                            (Nothing, Nothing) ->
+                              pure $
+                                Left $
+                                  "Environment variable not set: " <> varName
+
+        -- True when the entire original input was exactly one @${…}@ with no
+        -- surrounding literal characters.
+        wasWholeString prefix acc =
+          T.null prefix
+            && not (T.null acc)
+            && "${" `T.isPrefixOf` input
+            && "}" `T.isSuffixOf` input
+            && T.count "${" input == 1
 
     -- \| Split @VAR_NAME:-default@ into the variable name and an optional
     -- default value.  If the @:-@ separator is absent, no default is

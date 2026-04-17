@@ -510,6 +510,8 @@ requireAuth :: AppM UserId
 
 Add to `config/test.yaml`:
 
+> **Note (2026-04-17):** The `${TELEGRAM_WEBHOOK_URL}` reference below reflects the design as originally written. That env var is no longer set by the operator — the Telegram webhook URL is derived from `${API_BASE_URL}` in `config/prod.yaml`. See `docs/specs/2026-04-17-api-base-url-derived-urls-design.md` for the current layout.
+
 ```yaml
 auth:
   jwtSecret: ${JWT_SECRET}

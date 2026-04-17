@@ -276,6 +276,8 @@ git commit -m "feat: add Caddyfile for reverse proxy with automatic HTTPS"
 
 - [ ] **Step 1: Write docker-compose.prod.yaml**
 
+> **Note (2026-04-17):** The docker-compose env block shown below reflects the deployment as originally designed. `TELEGRAM_WEBHOOK_URL` and the three `*_REDIRECT_URI` entries are no longer passed to the container — they are derived from `API_BASE_URL`. See `docs/plans/2026-04-17-api-base-url-derived-urls.md` for the current layout.
+
 ```yaml
 services:
   caddy:

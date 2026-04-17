@@ -57,15 +57,15 @@ oauth:
   google:
     client_id: ${GOOGLE_CLIENT_ID:-}
     client_secret: ${GOOGLE_CLIENT_SECRET:-}
-    redirect_uri: "http://localhost:8080/api/auth/oauth/google/callback"
+    redirect_uri: "${API_BASE_URL:-http://localhost:8080}/api/auth/oauth/google/callback"
   github:
     client_id: ${GITHUB_CLIENT_ID:-}
     client_secret: ${GITHUB_CLIENT_SECRET:-}
-    redirect_uri: "http://localhost:8080/api/auth/oauth/github/callback"
+    redirect_uri: "${API_BASE_URL:-http://localhost:8080}/api/auth/oauth/github/callback"
   microsoft:
     client_id: ${MICROSOFT_CLIENT_ID:-}
     client_secret: ${MICROSOFT_CLIENT_SECRET:-}
-    redirect_uri: "http://localhost:8080/api/auth/oauth/microsoft/callback"
+    redirect_uri: "${API_BASE_URL:-http://localhost:8080}/api/auth/oauth/microsoft/callback"
 
 # Telegram bot configuration
 telegram:
