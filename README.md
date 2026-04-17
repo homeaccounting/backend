@@ -48,7 +48,7 @@ This system implements a clean hexagonal architecture with the following layers:
 
 ### Without Nix
 
-- GHC 9.6.7
+- GHC 9.10.3
 - Cabal 3.10+
 - PostgreSQL 15+
 - [just](https://github.com/casey/just) command runner (optional but recommended)
@@ -56,12 +56,7 @@ This system implements a clean hexagonal architecture with the following layers:
 
 ## Quick Start
 
-### 1. Clone and Setup
-
-```bash
-```
-
-### 2. Start Development Environment
+### 1. Start Development Environment
 
 #### With Nix (Recommended)
 
@@ -81,11 +76,11 @@ cabal update
 cabal build --only-dependencies
 ```
 
-### 3. Start PostgreSQL
+### 2. Start PostgreSQL
 
 ```bash
 # Start PostgreSQL with Docker Compose
-just docker-up
+just db-up
 
 # Or manually with docker compose
 docker compose up -d
@@ -94,16 +89,16 @@ docker compose up -d
 docker compose ps
 ```
 
-### 4. Build and Run
+### 3. Build and Run
 
 ```bash
-# Build the project
+# Build the project (runs hpack + cabal build)
 just build
 
 # Run the server
 just run
 
-# Or with specific config
+# Or with a specific config
 just run-config config/local.yaml
 
 # Or manually with cabal
@@ -135,36 +130,63 @@ accounting/
 ├── package.yaml            # Hpack configuration
 ├── cabal.project           # Multi-package project
 ├── flake.nix              # Nix development environment
-└── docker-compose.yaml     # PostgreSQL container
+├── docker-compose.yaml     # PostgreSQL container (local dev)
+└── infra/                  # Deployment: Docker, Caddy, Terraform, scripts
 ```
 
 ### Common Commands
 
 ```bash
-# Format code
-just format
+# Build / run
+just build                  # hpack + cabal build
+just rebuild                # clean + build
+just run                    # run the server
+just run-config CONFIG      # run with a specific config path
 
-# Lint code
-just lint
+# Code quality
+just format                 # ormolu -i on src/app/test
+just format-check           # ormolu --mode check
+just lint                   # hlint src test
+just check                  # format + lint
 
-# Run tests
-just test
+# Tests
+just test                   # cabal test --test-show-details=direct
+just test-coverage          # tests with --enable-coverage
+just watch                  # ghcid continuous compilation
+just watch-test             # ghcid --test=:test
 
-# Continuous compilation
-just watch
+# Database (PostgreSQL via docker compose)
+just db-up                  # start PostgreSQL
+just db-down                # stop PostgreSQL
+just db-reset               # stop and remove volumes
+just db-restart             # restart
+just db-logs                # tail logs
+just db-psql                # psql shell
 
-# Generate cabal file from package.yaml
-just hpack
+# Dev environment
+just dev-setup              # hpack + db-up
+just hpack                  # regenerate backend.cabal from package.yaml
+just update                 # cabal update
+just repl                   # cabal repl
+just clean                  # remove build artifacts
+just all                    # check + test + build
 
-# Database management
-just docker-up              # Start PostgreSQL
-just docker-logs            # View logs
-just docker-down            # Stop PostgreSQL
-just docker-psql            # Connect to PostgreSQL
+# CI / deployment
+just ci                     # trigger CI workflow for current branch
+just ci-deploy              # trigger CI with deploy=true
+just image-push [tag]       # build & push Docker image to GHCR
+just deploy                 # pull & restart on server
+just deploy-sync            # sync compose + Caddyfile to server
+just deploy-status          # service status on server
+just deploy-logs [service]  # tail server logs
+just deploy-rollback SHA    # roll back to a specific image SHA
+just infra-setup            # run setup script on a fresh server
 
 # Show all available commands
 just --list
 ```
+
+See [`docs/deployment.md`](docs/deployment.md) for the full deployment runbook.
 
 ### Configuration
 
@@ -288,8 +310,6 @@ cabal clean
 cabal build all
 ```
 
-See [EVENTIUM_MIGRATION_COMPLETE.md](docs/EVENTIUM_MIGRATION_COMPLETE.md) for details.
-
 ## Testing
 
 ```bash
@@ -318,12 +338,12 @@ The project uses GitHub Actions for automated testing and quality checks. The CI
 - Version tags
 
 The pipeline includes:
-- ✅ **Build**: Compiles the project with GHC 9.6.7
+- ✅ **Build**: Compiles the project with GHC 9.10.3
 - ✅ **Lint**: Runs hlint for code quality checks
 - ✅ **Test**: Executes all test suites with PostgreSQL
 - ✅ **Cache**: Optimizes build times with dependency caching
 
-See [docs/CI_SETUP.md](docs/CI_SETUP.md) for detailed CI configuration and local replication instructions.
+Trigger CI manually with `just ci` (or `just ci-deploy` to include a deploy step).
 
 ## Troubleshooting
 
@@ -331,16 +351,16 @@ See [docs/CI_SETUP.md](docs/CI_SETUP.md) for detailed CI configuration and local
 
 ```bash
 # Check if PostgreSQL is running
-just docker-up
+just db-up
 
 # View logs
-just docker-logs
+just db-logs
 
 # Restart PostgreSQL
-just docker-restart
+just db-restart
 
 # Connect to PostgreSQL
-just docker-psql
+just db-psql
 ```
 
 ### Build Issues
@@ -375,22 +395,12 @@ nix develop --refresh
 nix-collect-garbage -d
 ```
 
-## Implementation Status
-
-See [docs/prompts/plan.md](docs/prompts/plan.md) for detailed implementation roadmap.
-
-**Phase 1: Foundation Setup** ✅ COMPLETED
-- ✅ Build system configuration
-- 🚧 Core domain types
-- 🚧 Configuration infrastructure
-
-**Phase 2-8**: In Progress
-
 ## References
 
+- [`docs/architecture.md`](docs/architecture.md) - Living architecture doc
+- [`docs/deployment.md`](docs/deployment.md) - Deployment runbook
+- [`CLAUDE.md`](CLAUDE.md) - Coding conventions and monad/error handling guidance
 - [Eventium on Hackage](https://hackage.haskell.org/package/eventium-core) - Event sourcing framework
-- [Eventium GitHub](https://github.com/evtm/eventium) - Source repository
-- [Implementation Plan](docs/prompts/plan.md) - Detailed roadmap
 
 ## License
 

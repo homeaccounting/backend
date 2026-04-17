@@ -54,7 +54,7 @@ Web → Application → Domain (pure, no IO)
 
 ### Domain Layer (`src/Domain/`)
 
-Pure business logic with no IO. Contains aggregates, commands, events, projections, and error types. Smart constructors return `Either AppError a`. Three bounded contexts:
+Pure business logic with no IO. Contains aggregates, commands, events, projections, and error types. Smart constructors return `Either DomainError a`. Three bounded contexts:
 
 - **Account** — account lifecycle, balance tracking, access control
 - **Transaction** — transfer saga orchestration
@@ -89,10 +89,10 @@ type AppM = RIO AppEnv
 
 ## Error Handling
 
-- **Domain (pure)**: Smart constructors and validation return `Either AppError a`
-- **Application/Infrastructure (effectful)**: Use `AppM` (which provides `MonadError AppError`)
-- All errors use the unified `AppError` record type from `Infrastructure.App`
-- Use `mkAppError` with function name context and input values
+- **Domain (pure)**: Smart constructors and validation return `Either DomainError a`
+- **Application/Infrastructure (effectful)**: Use `AppM` (which provides `MonadError DomainError`)
+- All errors use the unified `DomainError` sum type from `Domain.Core.Errors`
+- For validation errors, use `mkValidationError` with field/message/value context
 - No `error`, `undefined`, or other partial functions
 - No exceptions for expected error flows
 - Validation logic must be pure; push effects to boundaries
@@ -198,7 +198,7 @@ RDD (define refinements) → TDD (write tests) → Implementation → Verificati
 Project documentation lives in `docs/` with a precedence hierarchy:
 
 - **L1 (highest)**: `mission-statement.md`, `operational-context.md`, `user-experience-spec.md`
-- **L2**: `architecture.md` (living doc), `guides/` (coding guidelines)
+- **L2**: `architecture.md` (living doc), `deployment.md` (ops runbook)
 - **L3**: `specs/` (design specs, `*-design.md`), `plans/` (implementation plans), `decisions/` (ADRs)
 
 Specs and plans use `YYYY-MM-DD-feature-name.md` naming (`-design.md` suffix for specs) and require frontmatter with `status: draft|in-progress|completed|superseded`. In case of conflict, higher-level documents take precedence.
