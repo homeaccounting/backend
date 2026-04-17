@@ -80,7 +80,8 @@ genTransferInitiatedEvent = do
                 exchangeRate = Nothing,
                 description = "Property test transfer",
                 by = unsafeUserId userId,
-                transferType = Transfer
+                transferType = Transfer,
+                externalTransactionId = Nothing
               }
         )
     )

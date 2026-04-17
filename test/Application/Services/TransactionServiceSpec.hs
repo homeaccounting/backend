@@ -128,7 +128,8 @@ spec = describe "TransactionService" $ do
                 exchangeRate = Nothing,
                 description = "Test transfer",
                 initiatedBy = testUserId1,
-                transferType = Transfer
+                transferType = Transfer,
+                externalTransactionId = Nothing
               }
       result <- runAppM env $ initiateTransfer id transferCmd
       shouldBeRight result
@@ -150,7 +151,8 @@ spec = describe "TransactionService" $ do
                 exchangeRate = Nothing,
                 description = "Retrieve test",
                 initiatedBy = testUserId1,
-                transferType = Transfer
+                transferType = Transfer,
+                externalTransactionId = Nothing
               }
       createResult <- runAppM env $ initiateTransfer id transferCmd
       let (txId, _) = fromRight' createResult
@@ -182,7 +184,8 @@ spec = describe "TransactionService" $ do
                 exchangeRate = Nothing,
                 description = rsn,
                 initiatedBy = testUserId1,
-                transferType = Transfer
+                transferType = Transfer,
+                externalTransactionId = Nothing
               }
       result1 <- runAppM env $ initiateTransfer id (mkTransferCmd 100 "First")
       result2 <- runAppM env $ initiateTransfer id (mkTransferCmd 200 "Second")

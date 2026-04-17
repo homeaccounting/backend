@@ -86,7 +86,8 @@ mkTransferInitiatedEvent =
             exchangeRate = Nothing,
             description = "Test transfer",
             by = unsafeUserId userUuid,
-            transferType = Transfer
+            transferType = Transfer,
+            externalTransactionId = Nothing
           }
     )
 
@@ -208,7 +209,8 @@ spec = describe "TransferManager (Saga)" $ do
                       exchangeRate = Nothing,
                       description = "Bad",
                       by = unsafeUserId userUuid,
-                      transferType = Transfer
+                      transferType = Transfer,
+                      externalTransactionId = Nothing
                     }
               )
           state = handleTransferEvent emptyTransferManager badEvent
@@ -291,7 +293,8 @@ spec = describe "TransferManager (Saga)" $ do
                       exchangeRate = Nothing,
                       description = "Backdated transfer",
                       by = unsafeUserId userUuid,
-                      transferType = Transfer
+                      transferType = Transfer,
+                      externalTransactionId = Nothing
                     }
               )
           stateAfterInit = handleTransferEvent emptyTransferManager event
@@ -324,7 +327,8 @@ spec = describe "TransferManager (Saga)" $ do
                       exchangeRate = Nothing,
                       description = "Backdated transfer",
                       by = unsafeUserId userUuid,
-                      transferType = Transfer
+                      transferType = Transfer,
+                      externalTransactionId = Nothing
                     }
               )
           stateAfterInit = handleTransferEvent emptyTransferManager initEvent

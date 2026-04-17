@@ -36,9 +36,11 @@ where
 
 import Application.ProcessManagers (transferProcessManager)
 import Application.ReadModels.Account (createAccountReadModel)
+import Application.ReadModels.BankImportReadModel (createBankImportReadModel)
 import Application.ReadModels.Transaction (createTransactionReadModel)
 import Application.ReadModels.User ()
 import Control.Concurrent.STM (TVar, atomically)
+import qualified Data.Set as Set
 import Domain.Models (AccountingEvent)
 import Eventium (Codec (..), EventHandler (..), EventStoreReader (..), EventStoreWriter (..), TaggedEvent (..), VersionedStreamEvent, processManagerEventHandler, publishingTaggedCodecEventStoreWriter, synchronousPublisher)
 import Eventium.Store.Memory
@@ -49,12 +51,14 @@ import Eventium.Store.Memory
     tvarGlobalEventStoreReader,
   )
 import Eventium.Store.Postgresql (JSONString, jsonStringCodec)
-import Infrastructure.App (AppEnv (..))
+import Infrastructure.App (AppEnv (..), BankingEnv (..))
 import Infrastructure.Auth.JWT (defaultJWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import Infrastructure.Config
   ( AppConfig (..),
+    BankingConfig (..),
+    BankingProvidersConfig (..),
     CorsConfig (..),
     DatabaseConfig (..),
     Environment (..),
@@ -64,6 +68,7 @@ import Infrastructure.Config
     LogFormat (..),
     LogLevel (..),
     LoggingConfig (..),
+    MonobankProviderConfig (..),
     OAuthConfig (..),
     ProcessManagerConfig (..),
     ServerConfig (..),
@@ -83,6 +88,7 @@ import Infrastructure.Eventium
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.Store (newExchangeRateStore)
 import Infrastructure.Version (VersionInfo (..))
+import Network.HTTP.Client (defaultManagerSettings, newManager)
 import RIO hiding (atomically, newTVarIO)
 import qualified RIO
 import qualified RIO.Text as T
@@ -231,7 +237,8 @@ createTestAppEnv = do
             server =
               ServerConfig
                 { port = 8080,
-                  host = T.pack "127.0.0.1"
+                  host = T.pack "127.0.0.1",
+                  apiBaseUrl = T.pack "http://localhost:8080"
                 },
             database =
               DatabaseConfig
@@ -270,6 +277,11 @@ createTestAppEnv = do
             exchangeRate =
               ExchangeRateConfig
                 { provider = "ecb"
+                },
+            banking =
+              BankingConfig
+                { enabled = False,
+                  providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua")
                 }
           }
 
@@ -282,6 +294,8 @@ createTestAppEnv = do
   -- Using undefined instead of error so it's only evaluated if actually used
   botState <- RIO.newTVarIO emptyBotState
   exchangeRateStore' <- newExchangeRateStore ecbProvider
+  testHttpManager <- newManager defaultManagerSettings
+  bankImportLocksVar <- RIO.newTVarIO Set.empty
 
   return
     AppEnv
@@ -302,7 +316,13 @@ createTestAppEnv = do
         botState = botState,
         telegramClientEnv = Nothing,
         exchangeRateStore = exchangeRateStore',
-        versionInfo = testVersionInfo
+        versionInfo = testVersionInfo,
+        bankingEnv =
+          BankingEnv
+            { bankImportReadModel = readModels.bankImport,
+              bankImportLocks = bankImportLocksVar,
+              httpManager = testHttpManager
+            }
       }
 
 -- | Create a test AppEnv with the Transfer Process Manager enabled.
@@ -361,7 +381,8 @@ createTestAppEnvWithProcessManager = do
             server =
               ServerConfig
                 { port = 8080,
-                  host = T.pack "127.0.0.1"
+                  host = T.pack "127.0.0.1",
+                  apiBaseUrl = T.pack "http://localhost:8080"
                 },
             database =
               DatabaseConfig
@@ -400,6 +421,11 @@ createTestAppEnvWithProcessManager = do
             exchangeRate =
               ExchangeRateConfig
                 { provider = "ecb"
+                },
+            banking =
+              BankingConfig
+                { enabled = False,
+                  providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua")
                 }
           }
 
@@ -408,6 +434,8 @@ createTestAppEnvWithProcessManager = do
 
   botState <- RIO.newTVarIO emptyBotState
   exchangeRateStore <- newExchangeRateStore ecbProvider
+  testHttpManager <- newManager defaultManagerSettings
+  bankImportLocksVar <- RIO.newTVarIO Set.empty
 
   return
     AppEnv
@@ -428,7 +456,13 @@ createTestAppEnvWithProcessManager = do
         botState = botState,
         telegramClientEnv = Nothing,
         exchangeRateStore = exchangeRateStore,
-        versionInfo = testVersionInfo
+        versionInfo = testVersionInfo,
+        bankingEnv =
+          BankingEnv
+            { bankImportReadModel = readModels.bankImport,
+              bankImportLocks = bankImportLocksVar,
+              httpManager = testHttpManager
+            }
       }
 
 -- -----------------------------------------------------------------------------

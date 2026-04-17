@@ -142,6 +142,26 @@ mapDomainError (NotFound etype eid) =
               details = Just $ Map.singleton "entityId" eid
             }
     }
+mapDomainError (BankingError msg) =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = msg,
+              code = "BANKING_ERROR",
+              details = Nothing
+            }
+    }
+mapDomainError (FeatureDisabled feature) =
+  err404
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Feature not available",
+              code = "FEATURE_DISABLED",
+              details = Just $ Map.singleton "feature" feature
+            }
+    }
 
 -- -----------------------------------------------------------------------------
 -- Convenience Functions

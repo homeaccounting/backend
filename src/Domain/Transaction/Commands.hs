@@ -32,7 +32,7 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferType, UserId)
+import Domain.Core.Types (AccountId, ExchangeRate, ExternalTransactionId, Money, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -92,7 +92,9 @@ data InitiateTransfer = InitiateTransfer
     -- | User who initiated the transfer (for audit trail)
     initiatedBy :: UserId,
     -- | Type of transfer (Income, Expense, Transfer)
-    transferType :: TransferType
+    transferType :: TransferType,
+    -- | Identifier for this transaction in an external system (e.g., Monobank)
+    externalTransactionId :: Maybe ExternalTransactionId
   }
   deriving (Show, Eq)
 

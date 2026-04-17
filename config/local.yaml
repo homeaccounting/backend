@@ -5,6 +5,7 @@ environment: local
 server:
   host: "127.0.0.1"
   port: 8080
+  api_base_url: "${API_BASE_URL:-http://localhost:8080}"
 
 database:
   host: "${DB_HOST:-127.0.0.1}"
@@ -78,3 +79,11 @@ telegram:
 # Exchange rate provider
 exchange_rate:
   provider: nbu
+
+# Banking integration
+banking:
+  enabled: ${BANKING_ENABLED:-false}
+  providers:
+    monobank:
+      enabled: ${MONOBANK_ENABLED:-false}
+      api_base_url: "${MONOBANK_API_BASE_URL:-https://api.monobank.ua}"

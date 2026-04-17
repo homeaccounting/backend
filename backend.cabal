@@ -29,6 +29,7 @@ library
       Application.ProcessManagers.TransferManager
       Application.ReadModels
       Application.ReadModels.Account
+      Application.ReadModels.BankImportReadModel
       Application.ReadModels.Configuration
       Application.ReadModels.Transaction
       Application.ReadModels.User
@@ -36,6 +37,7 @@ library
       Application.Services.AccountService
       Application.Services.AuthorizationService
       Application.Services.AuthService
+      Application.Services.BankImportService
       Application.Services.ConfigurationService
       Application.Services.TransactionService
       Application.Services.UserService
@@ -76,9 +78,13 @@ library
       Infrastructure.Auth.OAuth
       Infrastructure.Auth.Password
       Infrastructure.Auth.Telegram
+      Infrastructure.Banking.Monobank
+      Infrastructure.Banking.Monobank.Internal
+      Infrastructure.Banking.Provider
       Infrastructure.Config
       Infrastructure.Database
       Infrastructure.Eventium
+      Infrastructure.Eventium.GlobalEvent
       Infrastructure.ExchangeRate.ECB
       Infrastructure.ExchangeRate.NBU
       Infrastructure.ExchangeRate.Provider
@@ -93,6 +99,7 @@ library
       Web.API
       Web.API.AccountAPI
       Web.API.AuthAPI
+      Web.API.BankingAPI
       Web.API.ConfigurationAPI
       Web.API.InfoAPI
       Web.API.TelegramWebhookAPI
@@ -242,6 +249,7 @@ test-suite backend-test
       Application.ProcessManagers.TransferManagerSpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
+      Application.Services.BankImportServiceSpec
       Application.Services.ConfigurationServiceIntegrationSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec
@@ -249,13 +257,17 @@ test-suite backend-test
       Domain.Account.CommandHandlerSpec
       Domain.Configuration.CommandHandlerSpec
       Domain.Configuration.ProjectionSpec
+      Domain.Core.CurrencyNumericSpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
       Domain.Transaction.CommandHandlerPropertySpec
       Domain.Transaction.CommandHandlerSpec
+      Domain.Transaction.EventsSpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Auth.TelegramSpec
+      Infrastructure.Banking.MonobankSpec
+      Infrastructure.Banking.ProviderSpec
       Infrastructure.ExchangeRate.NBUIntegrationSpec
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
@@ -263,11 +275,14 @@ test-suite backend-test
       Infrastructure.ExchangeRate.StorePropertySpec
       Infrastructure.ExchangeRate.StoreSpec
       Infrastructure.ExchangeRateIntegrationSpec
+      Integration.BankImportWorkflowSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
+      Testkit.BankingHelpers
       Testkit.Generators
       Testkit.Helpers
       Testkit.InMemoryEventStore
+      Web.API.BankingAPISpec
       Paths_backend
   hs-source-dirs:
       test

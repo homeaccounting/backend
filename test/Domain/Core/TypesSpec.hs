@@ -15,13 +15,17 @@
 module Domain.Core.TypesSpec (spec) where
 
 import Data.Aeson (Result (..), fromJSON, toJSON)
+import qualified Data.Aeson as Aeson
 import Data.Text (isInfixOf)
+import qualified Data.Text as T
 import Data.UUID (nil)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types
 import RIO
 import Test.Hspec
+import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck (NonEmptyList (..))
 import Testkit.Helpers
 
 spec :: Spec
@@ -29,6 +33,7 @@ spec = do
   moneySpec
   accountIdSpec
   transactionIdSpec
+  externalTransactionIdSpec
 
 -- -----------------------------------------------------------------------------
 -- Money Tests
@@ -193,3 +198,27 @@ transactionIdSpec = describe "TransactionId" $ do
         case result of
           Left err -> err `shouldSatisfy` (\msg -> "cannot be nil" `isInfixOf` msg)
           Right _ -> expectationFailure "Expected Left"
+
+-- -----------------------------------------------------------------------------
+-- ExternalTransactionId Tests
+-- -----------------------------------------------------------------------------
+
+externalTransactionIdSpec :: Spec
+externalTransactionIdSpec = describe "ExternalTransactionId" $ do
+  it "rejects empty text"
+    $ mkExternalTransactionId ""
+    `shouldSatisfy` isLeft
+
+  prop "accepts any non-empty text" $ \(NonEmpty cs) ->
+    let txt = T.pack cs
+     in case mkExternalTransactionId txt of
+          Right eid -> unExternalTransactionId eid == txt
+          Left _ -> False
+
+  it "FromJSON rejects empty string"
+    $ (Aeson.eitherDecode "\"\"" :: Either String ExternalTransactionId)
+    `shouldSatisfy` isLeft
+
+  it "FromJSON accepts non-empty string"
+    $ (Aeson.eitherDecode "\"tx-123\"" :: Either String ExternalTransactionId)
+    `shouldSatisfy` isRight

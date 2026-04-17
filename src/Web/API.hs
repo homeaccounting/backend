@@ -26,6 +26,7 @@
 --     - User profile (get, update, change password, unlink providers)
 --     - Configuration (currencies, dictionaries)
 --     - Telegram webhook (bot updates)
+--     - Banking (webhook handling, manual resync)
 module Web.API
   ( -- * Combined API
     API,
@@ -41,6 +42,7 @@ module Web.API
     module Web.API.UserAPI,
     module Web.API.ConfigurationAPI,
     module Web.API.TelegramWebhookAPI,
+    module Web.API.BankingAPI,
   )
 where
 
@@ -49,6 +51,7 @@ import RIO
 import Servant (ServerT, (:<|>) (..))
 import Web.API.AccountAPI
 import Web.API.AuthAPI
+import Web.API.BankingAPI
 import Web.API.ConfigurationAPI
 import Web.API.TelegramWebhookAPI
 import Web.API.TransactionAPI
@@ -69,6 +72,7 @@ import Web.API.UserAPI
 --     :<|> UserAPI
 --     :<|> ConfigurationAPI
 --     :<|> TelegramWebhookAPI
+--     :<|> BankingAPI
 type API =
   AccountAPI
     :<|> TransactionAPI
@@ -76,6 +80,7 @@ type API =
     :<|> UserAPI
     :<|> ConfigurationAPI
     :<|> TelegramWebhookAPI
+    :<|> BankingAPI
 
 -- | Proxy for the combined API.
 api :: Proxy API
@@ -98,3 +103,4 @@ server =
     :<|> userServer
     :<|> configurationServer
     :<|> telegramWebhookServer
+    :<|> bankingServer

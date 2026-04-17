@@ -200,7 +200,8 @@ initiateIncome userId targetAccountId amount categoryEntryId description maybeTr
                         exchangeRate = rate,
                         description = description,
                         initiatedBy = userId,
-                        transferType = Income categoryEntryId
+                        transferType = Income categoryEntryId,
+                        externalTransactionId = Nothing
                       }
 
 -- | Initiate an expense transfer (Regular -> External account).
@@ -262,7 +263,8 @@ initiateExpense userId sourceAccountId amount categoryEntryId description maybeT
                         exchangeRate = rate,
                         description = description,
                         initiatedBy = userId,
-                        transferType = Expense categoryEntryId
+                        transferType = Expense categoryEntryId,
+                        externalTransactionId = Nothing
                       }
 
 -- | Initiate an internal transfer (Regular -> Regular account).
@@ -318,7 +320,8 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount descripti
                         exchangeRate = rate,
                         description = description,
                         initiatedBy = userId,
-                        transferType = Transfer
+                        transferType = Transfer,
+                        externalTransactionId = Nothing
                       }
 
 -- -----------------------------------------------------------------------------

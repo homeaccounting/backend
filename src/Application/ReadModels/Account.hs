@@ -82,6 +82,7 @@ import Domain.Models
   )
 import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
+import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 import Safe (maximumDef)
 
 -- -----------------------------------------------------------------------------
@@ -218,9 +219,7 @@ processEvent ::
   GlobalStreamEvent AccountingEvent ->
   Map AccountId AccountData
 processEvent summaries globalEvent =
-  let versionedEvent = globalEvent.payload
-      streamUuid = versionedEvent.key
-      payload = versionedEvent.payload
+  let (streamUuid, payload) = unpackGlobalEvent globalEvent
    in case payload of
         AccountCreatedEvent evt ->
           case mkAccountIdSafe streamUuid of

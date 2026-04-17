@@ -12,6 +12,8 @@ module Domain.Core.Types
   ( -- * Currency Type
     Currency (..),
     parseCurrency,
+    currencyNumericCode,
+    currencyFromNumericCode,
 
     -- * Money Type
     Money,
@@ -102,6 +104,12 @@ module Domain.Core.Types
     -- * Telegram Types
     TelegramIdentity (..),
 
+    -- * External Transaction Identifier
+    ExternalTransactionId,
+    mkExternalTransactionId,
+    unsafeExternalTransactionId,
+    unExternalTransactionId,
+
     -- * Password Types
     PasswordHash (..),
     unPasswordHash,
@@ -122,6 +130,7 @@ import Data.Time.Calendar (Day)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import GHC.Generics (Generic)
+import RIO (Display (..))
 
 -- -----------------------------------------------------------------------------
 -- Currency Type
@@ -157,6 +166,21 @@ parseCurrency t = case T.toUpper t of
   "EUR" -> Right EUR
   "GBP" -> Right GBP
   _ -> Left $ "Unknown currency: " <> t
+
+-- | Convert a Currency to its ISO 4217 numeric code.
+currencyNumericCode :: Currency -> Int
+currencyNumericCode UAH = 980
+currencyNumericCode USD = 840
+currencyNumericCode EUR = 978
+currencyNumericCode GBP = 826
+
+-- | Parse a Currency from its ISO 4217 numeric code.
+currencyFromNumericCode :: Int -> Either Text Currency
+currencyFromNumericCode 980 = Right UAH
+currencyFromNumericCode 840 = Right USD
+currencyFromNumericCode 978 = Right EUR
+currencyFromNumericCode 826 = Right GBP
+currencyFromNumericCode code = Left $ "Unsupported currency code: " <> T.pack (show code)
 
 -- -----------------------------------------------------------------------------
 -- Money Type
@@ -917,6 +941,38 @@ data TelegramIdentity = TelegramIdentity
 instance ToJSON TelegramIdentity
 
 instance FromJSON TelegramIdentity
+
+-- -----------------------------------------------------------------------------
+-- External Transaction Identifier
+-- -----------------------------------------------------------------------------
+
+-- | Identifier for a transaction in an external system (e.g., Monobank).
+--   Must be non-empty.
+newtype ExternalTransactionId = ExternalTransactionId Text
+  deriving (Show, Eq, Ord, Generic)
+
+unExternalTransactionId :: ExternalTransactionId -> Text
+unExternalTransactionId (ExternalTransactionId t) = t
+
+mkExternalTransactionId :: Text -> Either Text ExternalTransactionId
+mkExternalTransactionId t
+  | T.null t = Left "ExternalTransactionId must not be empty"
+  | otherwise = Right (ExternalTransactionId t)
+
+unsafeExternalTransactionId :: Text -> ExternalTransactionId
+unsafeExternalTransactionId = ExternalTransactionId
+
+instance Display ExternalTransactionId where
+  display (ExternalTransactionId t) = display t
+
+instance ToJSON ExternalTransactionId where
+  toJSON (ExternalTransactionId t) = toJSON t
+
+instance FromJSON ExternalTransactionId where
+  parseJSON = withText "ExternalTransactionId" $ \t ->
+    case mkExternalTransactionId t of
+      Right eid -> pure eid
+      Left err -> fail (T.unpack err)
 
 -- -----------------------------------------------------------------------------
 -- Password Types

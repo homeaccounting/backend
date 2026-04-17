@@ -135,7 +135,8 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
                             exchangeRate = exchangeRate,
                             description = description,
                             by = initiatedBy,
-                            transferType = transferType
+                            transferType = transferType,
+                            externalTransactionId = externalTransactionId
                           }
                     ]
       | otherwise -> Left TransactionAlreadyInitiated

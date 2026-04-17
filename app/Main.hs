@@ -83,6 +83,7 @@ import Data.Text.Display (displayText)
 import Infrastructure.App
   ( AppEnv,
     AppM,
+    BankingEnv (..),
     HasAppConfig (appConfigL),
     HasBotState (botStateL),
     HasVersionInfo (versionInfoL),
@@ -118,7 +119,9 @@ import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
 import Infrastructure.ExchangeRate.Store (newExchangeRateStore, publishRates)
 import Infrastructure.Version (VersionInfo, displayVersion, mkVersionInfo)
+import Network.HTTP.Client.TLS (newTlsManager)
 import RIO
+import qualified RIO.Set as Set
 import qualified RIO.Text as T
 -- Web Server
 
@@ -328,6 +331,20 @@ initializeEnvironment logFunc config versionInfo = do
     Right _ -> logInfo $ "Today's rates published from " <> display (config.exchangeRate.provider)
     Left msg -> logWarn $ "Rate publish skipped: " <> display msg
 
+  -- 6c. Create HTTP manager for bank API calls
+  logInfo "Creating HTTP manager..."
+  httpManager <- liftIO newTlsManager
+
+  -- 6d. Per-user bank-import serialization locks
+  bankImportLocksVar <- liftIO $ newTVarIO Set.empty
+
+  let bankingEnv' =
+        BankingEnv
+          { bankImportReadModel = readModels.bankImport,
+            bankImportLocks = bankImportLocksVar,
+            httpManager = httpManager
+          }
+
   -- 7. Build application environment
   let configDbConfig = config.database -- Config.DatabaseConfig for AppEnv
       env =
@@ -350,6 +367,7 @@ initializeEnvironment logFunc config versionInfo = do
           telegramClientEnv
           exchangeRateStore
           versionInfo
+          bankingEnv'
 
   logInfo "Application environment initialized successfully"
   return env

@@ -72,6 +72,7 @@
 module Infrastructure.App
   ( -- * Application Environment
     AppEnv (..),
+    BankingEnv (..),
     initializeAppEnv,
 
     -- * Application Monad
@@ -88,12 +89,19 @@ module Infrastructure.App
     HasTelegramClient (..),
     HasExchangeRateStore (..),
     HasVersionInfo (..),
+    HasBankingEnv (..),
+    HasBankImportReadModel (..),
+    HasBankImportLocks (..),
+    HasHttpManager (..),
 
     -- * Running the Application
     runAppM,
 
     -- * Database Helpers
     runDb,
+
+    -- * Concurrency Helpers
+    withUserLock,
 
     -- * RIO Re-exports
     module RIO,
@@ -102,11 +110,15 @@ where
 
 -- Local imports
 import Application.ReadModels.Account (AccountReadModel)
+import Application.ReadModels.BankImportReadModel (BankImportReadModel)
 import Application.ReadModels.Configuration (ConfigurationReadModel)
 import Application.ReadModels.Transaction (TransactionReadModel)
 import Application.ReadModels.User (UserReadModel)
+import Control.Concurrent.STM (retry)
 import Control.Monad.Logger (LoggingT, runStdoutLoggingT)
+import qualified Data.Set as Set
 import Database.Persist.Postgresql (ConnectionPool, SqlBackend, runSqlPool)
+import Domain.Core.Types (UserId)
 import Infrastructure.Auth.JWT (JWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig)
 import Infrastructure.Auth.Telegram (TelegramConfig)
@@ -118,6 +130,7 @@ import Infrastructure.Eventium
   )
 import Infrastructure.ExchangeRate.Store (ExchangeRateStore)
 import Infrastructure.Version (VersionInfo)
+import Network.HTTP.Client (Manager)
 import RIO
 import Servant.Client (ClientEnv)
 import Telegram.Types (BotState)
@@ -186,7 +199,33 @@ data AppEnv = AppEnv
     -- | Exchange rate store (event-sourced historical rates)
     exchangeRateStore :: !ExchangeRateStore,
     -- | Application version information
-    versionInfo :: !VersionInfo
+    versionInfo :: !VersionInfo,
+    -- | Banking-subsystem runtime dependencies (dedup read model,
+    -- per-user import locks, shared HTTP manager). Grouped into a
+    -- 'BankingEnv' to keep 'AppEnv' uncluttered; access the individual
+    -- resources through their capability classes ('HasBankImportReadModel',
+    -- 'HasBankImportLocks', 'HasHttpManager') which are re-exported from
+    -- 'BankingEnv'. Named 'bankingEnv' to avoid clashing with
+    -- 'AppConfig.banking'.
+    bankingEnv :: !BankingEnv
+  }
+
+-- | Runtime dependencies scoped to the banking subsystem.
+--
+-- Held as a single field on 'AppEnv' so the top-level environment stays
+-- focused on cross-cutting resources (logging, DB, event store, read
+-- models, auth). The narrow capability classes ('HasBankImportReadModel',
+-- 'HasBankImportLocks', 'HasHttpManager') still give call-sites dependency
+-- injection without leaking the full 'AppEnv' — the grouping is purely
+-- organisational.
+data BankingEnv = BankingEnv
+  { -- | Bank import dedup read model (STM).
+    bankImportReadModel :: !(TVar BankImportReadModel),
+    -- | Per-user bank-import serialization locks (STM). Holds the set of
+    -- 'UserId' values whose bank import is currently in flight.
+    bankImportLocks :: !(TVar (Set.Set UserId)),
+    -- | HTTP client manager (shared, for bank API calls).
+    httpManager :: !Manager
   }
 
 -- | Initialize the application environment.
@@ -222,8 +261,9 @@ initializeAppEnv ::
   Maybe ClientEnv ->
   ExchangeRateStore ->
   VersionInfo ->
+  BankingEnv ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateStore versionInfo =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateStore versionInfo bankingEnv =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -242,7 +282,8 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       botState = botState,
       telegramClientEnv = telegramClientEnv,
       exchangeRateStore = exchangeRateStore,
-      versionInfo = versionInfo
+      versionInfo = versionInfo,
+      bankingEnv = bankingEnv
     }
 
 -- -----------------------------------------------------------------------------
@@ -376,6 +417,55 @@ class HasVersionInfo env where
 instance HasVersionInfo AppEnv where
   versionInfoL = lens (.versionInfo) (\x y -> x {versionInfo = y})
 
+-- | Type class for environments that expose the banking subsystem's
+-- runtime dependencies as a group.
+--
+-- The narrow capability classes ('HasBankImportReadModel',
+-- 'HasBankImportLocks', 'HasHttpManager') are defined in terms of this one
+-- so that any env with a 'BankingEnv' automatically gets all three.
+class HasBankingEnv env where
+  bankingEnvL :: Lens' env BankingEnv
+
+instance HasBankingEnv AppEnv where
+  bankingEnvL = lens (.bankingEnv) (\x y -> x {bankingEnv = y})
+
+instance HasBankingEnv BankingEnv where
+  bankingEnvL = id
+
+-- | Type class for environments that have bank import read model.
+class HasBankImportReadModel env where
+  bankImportReadModelL :: Lens' env (TVar BankImportReadModel)
+
+instance HasBankImportReadModel AppEnv where
+  bankImportReadModelL = bankingEnvL . bankImportReadModelL
+
+instance HasBankImportReadModel BankingEnv where
+  bankImportReadModelL = lens (.bankImportReadModel) (\x y -> x {bankImportReadModel = y})
+
+-- | Type class for environments that have the per-user bank-import lock set.
+--
+-- The lock set serializes @resync@/import operations per user so that a
+-- second request does not race the first and produce duplicate transfers
+-- through a dedup TOCTOU window.
+class HasBankImportLocks env where
+  bankImportLocksL :: Lens' env (TVar (Set.Set UserId))
+
+instance HasBankImportLocks AppEnv where
+  bankImportLocksL = bankingEnvL . bankImportLocksL
+
+instance HasBankImportLocks BankingEnv where
+  bankImportLocksL = lens (.bankImportLocks) (\x y -> x {bankImportLocks = y})
+
+-- | Type class for environments that have an HTTP client manager.
+class HasHttpManager env where
+  httpManagerL :: Lens' env Manager
+
+instance HasHttpManager AppEnv where
+  httpManagerL = bankingEnvL . httpManagerL
+
+instance HasHttpManager BankingEnv where
+  httpManagerL = lens (.httpManager) (\x y -> x {httpManager = y})
+
 -- | Type class for environments that have application configuration.
 --
 -- Provides a lens to access the application configuration.
@@ -464,3 +554,44 @@ runDb ::
 runDb action = do
   pool <- view dbPoolL
   liftIO $ runStdoutLoggingT $ runSqlPool action pool
+
+-- -----------------------------------------------------------------------------
+-- Concurrency Helpers
+-- -----------------------------------------------------------------------------
+
+-- | Serialize an action per user using the 'bankImportLocks' STM set.
+--
+-- Acquires a per-user lock by inserting the 'UserId' into the shared
+-- @TVar (Set UserId)@. If the user is already present, the STM
+-- transaction 'retry's — which blocks the caller until a transaction
+-- mutating the set commits (i.e. until the first holder releases).
+-- On exit (normal or exception) the 'UserId' is removed.
+--
+-- This closes the TOCTOU window between the bank-import dedup check
+-- ('isImported') and the 'TransferInitiated' emit: with the lock held,
+-- two concurrent @resync@ calls for the same user are serialized, so
+-- at most one in-flight resync per user per process.
+--
+-- __Warning:__ this lock is non-reentrant. Do not nest 'withUserLock'
+-- for the same 'UserId' — the inner call will @retry@ forever and
+-- deadlock the thread.
+--
+-- Example:
+-- >>> resync provider userId link defaultCategory from to =
+-- >>>   withUserLock userId $ do
+-- >>>     ... -- existing body
+withUserLock ::
+  (MonadReader env m, HasBankImportLocks env, MonadUnliftIO m) =>
+  UserId ->
+  m a ->
+  m a
+withUserLock uid action = do
+  locksVar <- view bankImportLocksL
+  bracket_ (acquire locksVar) (release locksVar) action
+  where
+    acquire locksVar = atomically $ do
+      locks <- readTVar locksVar
+      if Set.member uid locks
+        then retry
+        else writeTVar locksVar (Set.insert uid locks)
+    release locksVar = atomically $ modifyTVar' locksVar (Set.delete uid)

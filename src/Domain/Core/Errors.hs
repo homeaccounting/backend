@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- |
 -- Module      : Domain.Core.Errors
@@ -12,11 +14,13 @@ module Domain.Core.Errors
     DomainError (..),
     ValidationError (..),
     mkValidationError,
+    renderDomainError,
   )
 where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------
@@ -50,6 +54,13 @@ data DomainError
       { entityType :: Text,
         entityId :: Text
       }
+  | -- | Banking integration error
+    BankingError Text
+  | -- | A feature is disabled via configuration. The payload names the
+    -- feature (e.g. @"banking"@) for diagnostic logs; HTTP mapping
+    -- translates this to a 404 so the endpoint is hidden entirely when
+    -- the feature flag is off.
+    FeatureDisabled Text
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -87,3 +98,33 @@ mkValidationError field msg value =
       validationMessage = msg,
       validationValue = value
     }
+
+-- | Render a 'DomainError' as user-facing prose.
+--
+-- Suitable for HTTP response bodies and per-transaction failure strings
+-- returned by 'Application.Services.BankImportService.resync'. Unlike the
+-- derived 'Show' instance (which produces Haskell constructor syntax like
+-- @"BankingError \"...\""@), this formatter emits plain prose.
+renderDomainError :: DomainError -> Text
+renderDomainError err = case err of
+  ValidationErr ve ->
+    "Validation failed for "
+      <> ve.validationField
+      <> ": "
+      <> ve.validationMessage
+      <> " (value: "
+      <> ve.validationValue
+      <> ")"
+  AccountError msg -> "Account error: " <> msg
+  TransactionError msg -> "Transaction error: " <> msg
+  UserError msg -> "User error: " <> msg
+  ConfigurationError msg -> "Configuration error: " <> msg
+  InsufficientFunds src req ->
+    "Insufficient funds: have "
+      <> T.pack (show src)
+      <> ", need "
+      <> T.pack (show req)
+  ExchangeRateUnavailable msg -> "Exchange rate unavailable: " <> msg
+  NotFound ty eid -> ty <> " not found: " <> eid
+  BankingError msg -> "Banking error: " <> msg
+  FeatureDisabled feature -> "Feature disabled: " <> feature

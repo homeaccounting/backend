@@ -6,6 +6,7 @@ environment: test
 server:
   host: "0.0.0.0"
   port: 8080
+  api_base_url: "http://localhost:8080"
 
 database:
   host: "${DB_HOST:-127.0.0.1}"
@@ -79,3 +80,11 @@ telegram:
 # Exchange rate provider
 exchange_rate:
   provider: nbu
+
+# Banking integration
+banking:
+  enabled: false
+  providers:
+    monobank:
+      enabled: false
+      api_base_url: "http://localhost:0"

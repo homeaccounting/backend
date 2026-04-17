@@ -68,6 +68,7 @@ import Domain.Core.Types
 import Domain.Models (AccountingEvent (..))
 import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
+import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 import Safe (maximumDef)
 
 -- -----------------------------------------------------------------------------
@@ -182,9 +183,7 @@ processConfigurationEvent ::
   GlobalStreamEvent AccountingEvent ->
   Map ConfigurationId ConfigurationData
 processConfigurationEvent summaries globalEvent =
-  let versionedEvent = globalEvent.payload
-      streamUuid = versionedEvent.key
-      payload = versionedEvent.payload
+  let (streamUuid, payload) = unpackGlobalEvent globalEvent
    in case payload of
         ConfigurationCreatedEvent evt ->
           case mkConfigurationIdSafe streamUuid of

@@ -80,6 +80,7 @@ import Domain.User.Events
   )
 import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
+import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 import Safe (maximumDef)
 
 -- -----------------------------------------------------------------------------
@@ -204,9 +205,7 @@ processUserEvent ::
   GlobalStreamEvent AccountingEvent ->
   UserReadModel
 processUserEvent model globalEvent =
-  let versionedEvent = globalEvent.payload
-      streamUuid = versionedEvent.key
-      payload = versionedEvent.payload
+  let (streamUuid, payload) = unpackGlobalEvent globalEvent
    in case payload of
         UserRegisteredEvent evt ->
           case mkUserIdSafe streamUuid of

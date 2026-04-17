@@ -79,6 +79,11 @@ import Application.ReadModels.Account
     createAccountReadModel,
     handleAccountEvents,
   )
+import Application.ReadModels.BankImportReadModel
+  ( BankImportReadModel,
+    createBankImportReadModel,
+    handleBankImportEvents,
+  )
 import Application.ReadModels.Configuration
   ( ConfigurationReadModel,
     createConfigurationReadModel,
@@ -324,7 +329,8 @@ data ReadModels = ReadModels
   { account :: TVar AccountReadModel,
     transaction :: TVar TransactionReadModel,
     user :: TVar UserReadModel,
-    configuration :: TVar ConfigurationReadModel
+    configuration :: TVar ConfigurationReadModel,
+    bankImport :: TVar BankImportReadModel
   }
 
 -- | Create all read models and their event bus handlers.
@@ -336,6 +342,7 @@ createReadModelHandlers = do
   transactionRM <- createTransactionReadModel
   userRM <- createUserReadModel
   configRM <- createConfigurationReadModel
+  bankImportRM <- createBankImportReadModel
   let mkHandler handle rm = EventHandler $ \versionedEvent -> do
         let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
         handle rm [globalEvent]
@@ -343,9 +350,10 @@ createReadModelHandlers = do
         [ mkHandler handleAccountEvents accountRM,
           mkHandler handleTransactionEvents transactionRM,
           mkHandler handleUserEvents userRM,
-          mkHandler handleConfigurationEvents configRM
+          mkHandler handleConfigurationEvents configRM,
+          mkHandler handleBankImportEvents bankImportRM
         ]
-      readModels = ReadModels accountRM transactionRM userRM configRM
+      readModels = ReadModels accountRM transactionRM userRM configRM bankImportRM
   return (readModels, handlers)
 
 -- -----------------------------------------------------------------------------
@@ -487,6 +495,7 @@ replayReadModels globalReader' readModels = do
   handleTransactionEvents readModels.transaction events
   handleUserEvents readModels.user events
   handleConfigurationEvents readModels.configuration events
+  handleBankImportEvents readModels.bankImport events
   pure (length events)
 
 -- | Print an event as pretty-printed JSON.

@@ -29,6 +29,9 @@ module Infrastructure.Config
     EventStoreConfig (..),
     ProcessManagerConfig (..),
     ExchangeRateConfig (..),
+    BankingConfig (..),
+    BankingProvidersConfig (..),
+    MonobankProviderConfig (..),
 
     -- * Auth Configuration (re-exports)
     JWTConfig (..),
@@ -54,6 +57,7 @@ import Data.Aeson
     Value (..),
     withObject,
     withText,
+    (.!=),
     (.:),
     (.:?),
   )
@@ -108,7 +112,8 @@ data AppConfig = AppConfig
     auth :: !JWTConfig,
     oauth :: !OAuthConfig,
     telegram :: !TelegramConfig,
-    exchangeRate :: !ExchangeRateConfig
+    exchangeRate :: !ExchangeRateConfig,
+    banking :: !BankingConfig
   }
   deriving (Show, Eq, Generic)
 
@@ -126,6 +131,7 @@ instance FromJSON AppConfig where
       <*> v .: "oauth"
       <*> v .: "telegram"
       <*> v .: "exchange_rate"
+      <*> v .:? "banking" .!= defaultBankingConfig
 
 instance ToJSON AppConfig
 
@@ -138,7 +144,8 @@ instance ToJSON AppConfig
 --  - serverPort: TCP port to listen on (1-65535)
 data ServerConfig = ServerConfig
   { host :: !Text,
-    port :: !Int
+    port :: !Int,
+    apiBaseUrl :: !Text
   }
   deriving (Show, Eq, Generic)
 
@@ -147,6 +154,7 @@ instance FromJSON ServerConfig where
     ServerConfig
       <$> v .: "host"
       <*> v .: "port"
+      <*> v .:? "api_base_url" .!= "http://localhost:8080"
 
 instance ToJSON ServerConfig
 
@@ -313,6 +321,59 @@ instance FromJSON ExchangeRateConfig where
       <$> v .: "provider"
 
 instance ToJSON ExchangeRateConfig
+
+-- | Banking integration configuration.
+data BankingConfig = BankingConfig
+  { enabled :: !Bool,
+    providers :: !BankingProvidersConfig
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON BankingConfig where
+  parseJSON = withObject "BankingConfig" $ \v ->
+    BankingConfig
+      <$> v .:? "enabled" .!= False
+      <*> v .:? "providers" .!= defaultBankingProviders
+
+instance ToJSON BankingConfig
+
+defaultBankingConfig :: BankingConfig
+defaultBankingConfig = BankingConfig False defaultBankingProviders
+
+data BankingProvidersConfig = BankingProvidersConfig
+  { monobank :: !MonobankProviderConfig
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON BankingProvidersConfig where
+  parseJSON = withObject "BankingProvidersConfig" $ \v ->
+    BankingProvidersConfig
+      <$> v .:? "monobank" .!= MonobankProviderConfig False defaultMonoApiBaseUrl
+
+instance ToJSON BankingProvidersConfig
+
+defaultBankingProviders :: BankingProvidersConfig
+defaultBankingProviders = BankingProvidersConfig (MonobankProviderConfig False defaultMonoApiBaseUrl)
+
+-- | Upstream Monobank API base URL, used as the fallback when no override is
+-- supplied in the YAML config. Tests and production deployments override via
+-- the @api_base_url@ key under @banking.providers.monobank@.
+defaultMonoApiBaseUrl :: Text
+defaultMonoApiBaseUrl = "https://api.monobank.ua"
+
+data MonobankProviderConfig = MonobankProviderConfig
+  { enabled :: !Bool,
+    apiBaseUrl :: !Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON MonobankProviderConfig where
+  parseJSON = withObject "MonobankProviderConfig" $ \v ->
+    MonobankProviderConfig
+      <$> v .:? "enabled" .!= False
+      <*> v .:? "api_base_url" .!= defaultMonoApiBaseUrl
+
+instance ToJSON MonobankProviderConfig
 
 -- -----------------------------------------------------------------------------
 -- Configuration Loading

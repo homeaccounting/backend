@@ -64,7 +64,8 @@ pendingTransaction fromId toId amt =
             exchangeRate = Nothing,
             description = "Test transfer",
             by = testUserId,
-            transferType = Transfer
+            transferType = Transfer,
+            externalTransactionId = Nothing
           }
     ]
 
@@ -81,7 +82,8 @@ completedTransaction fromId toId amt =
             exchangeRate = Nothing,
             description = "Test transfer",
             by = testUserId,
-            transferType = Transfer
+            transferType = Transfer,
+            externalTransactionId = Nothing
           },
       TransferCompletedTransactionEvent TransferCompleted
     ]
@@ -99,7 +101,8 @@ failedTransaction fromId toId amt =
             exchangeRate = Nothing,
             description = "Test transfer",
             by = testUserId,
-            transferType = Transfer
+            transferType = Transfer,
+            externalTransactionId = Nothing
           },
       TransferFailedTransactionEvent $ TransferFailed "Insufficient funds"
     ]
@@ -125,7 +128,8 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 500,
                     exchangeRate = Nothing,
                     description = "Payment",
-                    transferType = Transfer
+                    transferType = Transfer,
+                    externalTransactionId = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -154,7 +158,8 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 500,
                     exchangeRate = Nothing,
                     description = "Test",
-                    transferType = Transfer
+                    transferType = Transfer,
+                    externalTransactionId = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -177,7 +182,8 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 500,
                     exchangeRate = Nothing,
                     description = "Self-transfer",
-                    transferType = Transfer
+                    transferType = Transfer,
+                    externalTransactionId = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -197,7 +203,8 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 0,
                     exchangeRate = Nothing,
                     description = "Zero transfer",
-                    transferType = Transfer
+                    transferType = Transfer,
+                    externalTransactionId = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -220,7 +227,8 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 200,
                     exchangeRate = Nothing,
                     description = "Second attempt",
-                    transferType = Transfer
+                    transferType = Transfer,
+                    externalTransactionId = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -258,7 +266,7 @@ completeTransferSpec = describe "CompleteTransfer Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer] <> events
+            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer Nothing] <> events
             newTransaction ^. #status `shouldBe` Completed
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -317,7 +325,7 @@ failTransferSpec = describe "FailTransfer Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer] <> events
+            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer Nothing] <> events
             newTransaction ^. #status `shouldBe` Failed "Error"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 

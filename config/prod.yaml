@@ -7,6 +7,7 @@ environment: prod
 server:
   host: "0.0.0.0"
   port: 8080
+  api_base_url: "${API_BASE_URL}"
 
 database:
   host: "${DB_HOST}"
@@ -67,3 +68,11 @@ telegram:
 # Exchange rate provider
 exchange_rate:
   provider: ${EXCHANGE_RATE_PROVIDER:-nbu}
+
+# Banking integration
+banking:
+  enabled: ${BANKING_ENABLED:-true}
+  providers:
+    monobank:
+      enabled: ${MONOBANK_ENABLED:-true}
+      api_base_url: "${MONOBANK_API_BASE_URL:-https://api.monobank.ua}"

@@ -191,7 +191,8 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             exchangeRate = Nothing,
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
-            transferType = Transfer
+            transferType = Transfer,
+            externalTransactionId = Nothing
           }
 
   -- Step 2: Complete the transfer (simulates TransferManager behavior)
@@ -228,7 +229,8 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             exchangeRate = Nothing,
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
-            transferType = Transfer
+            transferType = Transfer,
+            externalTransactionId = Nothing
           }
 
   return txUuid
@@ -678,7 +680,8 @@ categorizedTransferSpec =
                 exchangeRate = Nothing,
                 description = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
-                transferType = Income testSalaryCatId
+                transferType = Income testSalaryCatId,
+                externalTransactionId = Nothing
               }
 
       -- Verify transaction read model has correct type
@@ -750,7 +753,8 @@ categorizedTransferSpec =
                 exchangeRate = Nothing,
                 description = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
-                transferType = Expense testFoodCatId
+                transferType = Expense testFoodCatId,
+                externalTransactionId = Nothing
               }
 
       -- Verify transaction read model has correct type
@@ -794,7 +798,8 @@ categorizedTransferSpec =
                 exchangeRate = Nothing,
                 description = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
-                transferType = Transfer
+                transferType = Transfer,
+                externalTransactionId = Nothing
               }
 
       -- Verify transaction read model has correct type
