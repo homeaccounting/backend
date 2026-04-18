@@ -99,6 +99,17 @@ handleBankImportEvents rmTVar events = do
       }
 
 -- | Processes a single event and updates the external transaction ID index.
+--
+-- Two cases matter:
+--   * 'TransferInitiatedEvent' with an external transaction id -> record the
+--     mapping so future imports of the same bank tx are deduplicated.
+--   * 'TransferFailedEvent' -> drop any mapping that pointed at the failing
+--     stream. The transfer saga emits 'TransferInitiated' before running the
+--     debit/credit and 'TransferFailed' when a step (e.g. insufficient
+--     funds) aborts the transfer. Without this eviction, a failed bank
+--     import would be permanently marked as imported and could never be
+--     retried, even after the user corrects the underlying issue
+--     (overdraft, top-up, etc.).
 processEvent ::
   Map ExternalTransactionId TransactionId ->
   GlobalStreamEvent AccountingEvent ->
@@ -112,5 +123,9 @@ processEvent txMap globalEvent =
               case mkTransactionIdSafe streamUuid of
                 Just txId -> Map.insert extId txId txMap
                 Nothing -> txMap
+            Nothing -> txMap
+        TransferFailedEvent _ ->
+          case mkTransactionIdSafe streamUuid of
+            Just failedTxId -> Map.filter (/= failedTxId) txMap
             Nothing -> txMap
         _ -> txMap

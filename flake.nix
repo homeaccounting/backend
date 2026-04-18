@@ -56,6 +56,9 @@
           # Command runner
           just
 
+          # Shell utilities (envsubst for scripts/api-test templates)
+          gettext
+
           # Infrastructure
           opentofu
 

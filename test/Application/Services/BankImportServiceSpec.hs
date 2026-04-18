@@ -161,7 +161,12 @@ setupTestEnv = do
           }
     let (extId, _) = fromRight' extResult
 
-    -- Create bank account
+    -- Create bank account. Give it a generous overdraft so the imported
+    -- transfers clear: bank imports debit the BankAccount from a zero
+    -- initial balance; without room to overdraw, every expense saga would
+    -- emit TransferFailed, which the dedup read model now evicts (so the
+    -- same tx could be re-imported). The overdraft keeps the test focused
+    -- on dedup semantics rather than balance accounting.
     bankResult <-
       createAccount
         CreateAccount
@@ -169,7 +174,7 @@ setupTestEnv = do
             initialBalance = mockMoneyWith UAH 0,
             createdBy = testUserId,
             accountType = Regular defaultBankAccount,
-            overdraftLimit = Nothing
+            overdraftLimit = Just (Just (mockMoneyWith UAH 1000000))
           }
     let (bankId, _) = fromRight' bankResult
     return (extId, bankId)

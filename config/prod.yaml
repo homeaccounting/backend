@@ -19,7 +19,7 @@ database:
   connection_timeout: 30
 
 logging:
-  level: "info"
+  level: "${LOG_LEVEL:-info}"
   format: "json"
 
 cors:

@@ -1,0 +1,11 @@
+{
+  "name": "${ACCOUNT_NAME}",
+  "initialBalance": 0,
+  "currency": "${CURRENCY}",
+  "overdraftLimit": ${OVERDRAFT_LIMIT},
+  "subtype": {
+    "type": "bankAccount",
+    "bankName": "${BANK_NAME}",
+    "accountNumber": "${MONOBANK_IBAN}"
+  }
+}

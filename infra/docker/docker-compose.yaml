@@ -38,6 +38,7 @@ services:
       - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
       - TELEGRAM_POLLING_TIMEOUT=${TELEGRAM_POLLING_TIMEOUT:-30}
       - EXCHANGE_RATE_PROVIDER=${EXCHANGE_RATE_PROVIDER:-nbu}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
       postgres:
         condition: service_healthy

@@ -20,6 +20,7 @@ scripts/api-test/
 ├── test-user.sh           # User profile tests (get, update, change password)
 ├── test-accounts.sh       # Account operations tests (create, share, revoke)
 ├── test-transactions.sh   # Transaction operations tests (transfer, status)
+├── test-banking.sh        # Monobank resync smoke test (setup, resync, verify)
 ├── test-configuration.sh  # Configuration operations tests
 ├── test-full-workflow.sh  # Complete workflow demonstration
 └── payloads/
@@ -35,11 +36,14 @@ scripts/api-test/
     │   ├── create-savings.json
     │   ├── create-checking.json
     │   └── share-account.json
-    └── transactions/      # Transaction operation payloads
-        ├── income-500.json
-        ├── expense-100.json
-        ├── transfer-300.json
-        └── transfer-500.json
+    ├── transactions/      # Transaction operation payloads
+    │   ├── income-500.json
+    │   ├── expense-100.json
+    │   ├── transfer-300.json
+    │   └── transfer-500.json
+    └── banking/           # Banking payload templates (rendered via envsubst)
+        ├── create-account.template.json
+        └── resync.template.json
 ```
 
 ## Authentication
@@ -161,6 +165,51 @@ export TELEGRAM_BOT_TOKEN='your-bot-token'
 ./scripts/api-test/test-telegram.sh login       # Login via Telegram
 ./scripts/api-test/test-telegram.sh workflow    # Full workflow: login → accounts → transfer
 ```
+
+#### Test Banking (Monobank resync)
+
+Smoke-tests `POST /api/banking/resync` end-to-end with a real Monobank
+personal token.
+
+**Prerequisites**
+
+1. A cached JWT in `/tmp/test_auth_token.txt`. Three ways to obtain one:
+   - **Password user:** `./scripts/api-test/test-auth.sh login`
+   - **Bot-registered Telegram user:** `./scripts/api-test/test-telegram.sh login <YOUR_TG_ID> <FirstName> <username>` — the widget endpoint resolves your existing bot-registered user by `TelegramId` and returns a matching JWT.
+   - **Pasted JWT:** `export TEST_AUTH_TOKEN='<jwt>'` and the script will seed the cache on the next run.
+2. A Monobank personal token from <https://api.monobank.ua/>. Export as `MONOBANK_TOKEN`.
+3. The exact IBAN Monobank reports for the account you want to import. Export as `MONOBANK_IBAN`.
+
+**Caveats**
+
+- Monobank enforces a **60-second rate limit** between `/personal/statement` calls. Running `resync` or `all` repeatedly will start failing until the cooldown elapses.
+- The local `BankAccount.accountNumber` must match the Monobank-reported IBAN **verbatim** — the backend matches on string equality (see `src/Web/API/BankingAPI.hs:327`).
+- The resync date range must not exceed **31 days** (enforced at `src/Web/API/BankingAPI.hs:216-220`).
+- A future endpoint for listing transactions by account is tracked in homeaccounting/backend#47. Until that ships, `verify` relies on balance diffs + response counts.
+
+**Usage**
+
+```bash
+export MONOBANK_TOKEN='your-personal-token'
+export MONOBANK_IBAN='UA000000000000000000000000000'
+
+./scripts/api-test/test-banking.sh setup    # find-or-create a BankAccount
+./scripts/api-test/test-banking.sh resync   # import statements
+./scripts/api-test/test-banking.sh verify   # balance diff + counts
+./scripts/api-test/test-banking.sh all      # setup -> resync -> verify
+```
+
+**Optional env vars**
+
+| Variable       | Default                | Notes                                                |
+| -------------- | ---------------------- | ---------------------------------------------------- |
+| `ACCOUNT_ID`   | —                      | Skip `setup` and reuse an existing local account id  |
+| `CATEGORY_ID`  | first expense-category | `defaultCategory` UUID sent in the request body      |
+| `CURRENCY`     | `UAH`                  | Currency of the created BankAccount                  |
+| `BANK_NAME`    | `Monobank`             | Stored in `BankAccount.bankName`                     |
+| `ACCOUNT_NAME` | `Mono <CURRENCY>`      | Display name of the created account                  |
+| `OVERDRAFT_LIMIT` | `100000`            | Overdraft limit of the created BankAccount (same currency). Large default so imports don't hit "Insufficient funds" |
+| `FROM`, `TO`   | last 30 days / now     | ISO-8601 UTC. Max range is 31 days                   |
 
 ### Quick Commands
 

@@ -183,7 +183,12 @@ setupTestEnv = do
             initialBalance = mockMoneyWith UAH 0,
             createdBy = testUserId,
             accountType = Regular defaultBankAccount,
-            overdraftLimit = Nothing
+            -- Bank account starts at 0 and the saga debits it for each imported tx.
+            -- Without an overdraft, every transfer would emit TransferFailed
+            -- (Insufficient Funds), which the new dedup eviction reclaims --
+            -- breaking these dedup-focused tests. Give the account enough
+            -- headroom so transfers actually complete and stay deduped.
+            overdraftLimit = Just (Just (mockMoneyWith UAH 1000000))
           }
     let (bankId, _) = fromRight' bankResult
     return (extId, bankId)
