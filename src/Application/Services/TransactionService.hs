@@ -29,15 +29,17 @@ module Application.Services.TransactionService
     initiateExpense,
     initiateInternalTransfer,
     getTransaction,
+    listTransactions,
   )
 where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
-import Application.ReadModels.Transaction (TransactionData)
+import Application.ReadModels.Transaction (TransactionData, TransactionQuery)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.ReadModels.User (UserData (..))
 import qualified Application.ReadModels.User as UserRM
+import qualified Data.Set as Set
 import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
@@ -140,6 +142,31 @@ getTransaction transactionUuid = do
       logWarn $ "Transaction ID validation failed (treating as not found): " <> displayShow transactionUuid
       return $ Left $ NotFound "Transaction" (tshow transactionUuid)
     Right transactionId -> queryTransactionResult transactionId
+
+-- | List transactions visible to the given user, filtered by the provided
+-- query. A transaction is visible when its source or target belongs to an
+-- account the user has any role on (Owner / Editor / Viewer).
+--
+-- Returns '[]' — never an error — when the user has no accessible accounts
+-- or when the query's accountId is outside the visible set. The HTTP layer
+-- surfaces this as a 200 empty list (see
+-- docs/specs/2026-04-18-list-transactions-endpoint-design.md §4).
+listTransactions ::
+  UserId ->
+  TransactionQuery ->
+  AppM [(TransactionId, TransactionData)]
+listTransactions userId query = do
+  logDebug $ "Listing transactions for user " <> displayShow userId
+  accountRM <- view accountReadModelL
+  accessible <- AccountRM.getAccessibleAccounts accountRM userId
+  let visible = Set.fromList [aid | (aid, _, _) <- accessible]
+  if Set.null visible
+    then do
+      logDebug "User has no accessible accounts; returning empty list"
+      pure []
+    else do
+      readModel <- view transactionReadModelL
+      ReadModel.listTransactions readModel visible query
 
 -- | Initiate an income transfer (External -> Regular account).
 --

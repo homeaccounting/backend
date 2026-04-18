@@ -27,7 +27,6 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types
   ( AccountAccess (..),
     AccountRole (..),
@@ -36,11 +35,9 @@ import Domain.Core.Types
     BankAccountProperties (..),
     Money,
     defaultBankAccountProperties,
-    mkUserIdSafe,
   )
 import qualified Domain.Core.Types as Core
 import Infrastructure.App (AppEnv (..), runAppM)
-import Infrastructure.Auth.JWT (defaultJWTConfig, generateToken)
 import qualified Infrastructure.Banking.Provider as Banking
 import Infrastructure.Config
   ( AppConfig (..),
@@ -55,6 +52,7 @@ import RIO
 import Servant.Server (ServerError (..))
 import Test.Hspec
 import Test.Hspec.Wai
+import Testkit.Auth (generateTestToken)
 import Testkit.Helpers
   ( mockAccountId,
     mockMoneyWith,
@@ -208,24 +206,6 @@ mkAppBankingEnabled = do
           }
       cfg' = cfg {banking = bankingCfg}
   pure $ buildApplication env {config = cfg'}
-
--- | Produce a signed JWT suitable for @Authorization: Bearer@ in tests.
---
--- Historically this used 'error' for the "impossible" UUID / signing
--- failures. That violates the project's no-partial-functions rule (it
--- applies equally to test code), so failures are now surfaced through
--- 'throwString' — still total at the type level, and Hspec will render
--- them as an explicit test failure rather than a crash.
-generateTestToken :: IO Text
-generateTestToken = do
-  uuid <- UUID.nextRandom
-  uid <- case mkUserIdSafe uuid of
-    Nothing -> throwString "generateTestToken: random UUID rejected by mkUserIdSafe"
-    Just u -> pure u
-  r <- generateToken defaultJWTConfig uid "test@example.com"
-  case r of
-    Left err -> throwString $ "generateTestToken: JWT signing failed: " <> show err
-    Right t -> pure t
 
 featureFlagSpec :: Spec
 featureFlagSpec = do

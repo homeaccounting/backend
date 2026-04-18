@@ -621,6 +621,61 @@ curl -X GET $API_BASE/api/transactions/{transaction-id} | jq
 }
 ```
 
+### 5. List Transactions (Requires Auth)
+
+List transactions visible to the authenticated user, with optional filters by
+account and inclusive business-time date range.
+
+- All query parameters are optional. Omitting them all returns every
+  transaction the caller can see.
+- `from` / `to` are full ISO-8601 UTC datetimes (e.g. `2026-04-10T14:30:00Z`).
+  Date-only values are rejected with 400.
+- If both bounds are supplied, `from > to` returns 400 (validation).
+- Unknown or forbidden `accountId` yields `200` with an empty list (filter
+  semantics — does not leak account existence).
+
+**Request (no filters):**
+```bash
+curl -X GET $API_BASE/api/transactions \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+**Request (filter by account + date range):**
+```bash
+curl -X GET "$API_BASE/api/transactions?accountId=550e8400-e29b-41d4-a716-446655440000&from=2026-01-01T00:00:00Z&to=2026-12-31T23:59:59Z" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+**Expected Response (200 OK):**
+```json
+{
+  "transactions": [
+    {
+      "id": "750e8400-e29b-41d4-a716-446655440002",
+      "transferType": "transfer",
+      "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+      "targetAccountId": "650e8400-e29b-41d4-a716-446655440001",
+      "amount": 300.0,
+      "category": "rebalance",
+      "description": "Rent payment",
+      "status": "Completed",
+      "failureReason": null
+    }
+  ],
+  "totalCount": 1
+}
+```
+
+**Expected Response - Invalid Range (400 Bad Request):**
+```json
+{
+  "validationMessage": "Validation failed",
+  "fieldErrors": {
+    "query": "from must be <= to"
+  }
+}
+```
+
 ---
 
 ## Telegram Webhook

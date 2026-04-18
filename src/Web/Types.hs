@@ -59,6 +59,7 @@ module Web.Types
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
+    TransactionListResponse (..),
     TransactionStatusResponse (..),
 
     -- * Error Response DTOs
@@ -441,6 +442,29 @@ data TransactionResponse
 instance ToJSON TransactionResponse
 
 instance FromJSON TransactionResponse
+
+-- | Response envelope for GET /api/transactions.
+--
+-- Modelled on 'AccountListResponse'; leaves room for adding
+-- 'nextCursor'/'total' later without a breaking change.
+--
+-- Example JSON:
+--
+-- @
+-- {
+--   "transactions": [ ... ],
+--   "totalCount": 2
+-- }
+-- @
+data TransactionListResponse = TransactionListResponse
+  { transactions :: [TransactionResponse],
+    totalCount :: Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON TransactionListResponse
+
+instance FromJSON TransactionListResponse
 
 -- | Simplified response for transaction status queries.
 --

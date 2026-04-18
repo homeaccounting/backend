@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.2.2
+version:        0.2.3
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -94,6 +94,7 @@ library
       Telegram.Api
       Telegram.Bot
       Telegram.Commands
+      Telegram.Formatting
       Telegram.Keyboards
       Telegram.Types
       Web.API
@@ -247,6 +248,9 @@ test-suite backend-test
   other-modules:
       Application.ProcessManagers.TransferManagerPropertySpec
       Application.ProcessManagers.TransferManagerSpec
+      Application.ReadModels.TransactionListPropertySpec
+      Application.ReadModels.TransactionListSpec
+      Application.ReadModels.TransactionQuerySpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
       Application.Services.BankImportServiceSpec
@@ -279,11 +283,13 @@ test-suite backend-test
       Integration.BankImportWorkflowSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
+      Testkit.Auth
       Testkit.BankingHelpers
       Testkit.Generators
       Testkit.Helpers
       Testkit.InMemoryEventStore
       Web.API.BankingAPISpec
+      Web.API.TransactionAPISpec
       Paths_backend
   hs-source-dirs:
       test

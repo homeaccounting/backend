@@ -16,10 +16,6 @@ module Telegram.Keyboards
     currencyKeyboard,
     categoryKeyboard,
 
-    -- * Formatting
-    formatMoney,
-    showCurrency,
-
     -- * Types
     InlineKeyboard (..),
     InlineButton (..),
@@ -29,7 +25,8 @@ where
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.UUID as UUID
-import Domain.Core.Types (AccountId, Currency (..), DictionaryEntryId, EntryName, Money, moneyCurrency, unAccountId, unDictionaryEntryId, unEntryName, unMoney)
+import Domain.Core.Types (AccountId, DictionaryEntryId, EntryName, Money, moneyCurrency, unAccountId, unDictionaryEntryId, unEntryName)
+import Telegram.Formatting (formatMoney, showCurrency)
 
 -- -----------------------------------------------------------------------------
 -- Types
@@ -77,17 +74,6 @@ accountSelectionKeyboard accounts context =
       ]
     shortId accountId = T.take 8 $ T.pack $ UUID.toString $ unAccountId accountId
     showMoney m = formatMoney m <> " " <> showCurrency (moneyCurrency m)
-
--- | Format a Money amount as a human-readable number.
-formatMoney :: Money -> Text
-formatMoney m = T.pack $ show (fromRational (unMoney m) :: Double)
-
--- | Show currency code.
-showCurrency :: Currency -> Text
-showCurrency UAH = "UAH"
-showCurrency USD = "USD"
-showCurrency EUR = "EUR"
-showCurrency GBP = "GBP"
 
 -- | Build a confirm/cancel keyboard.
 confirmCancelKeyboard :: InlineKeyboard

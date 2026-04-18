@@ -50,6 +50,7 @@ print_usage() {
     echo "  expense <acct-id> <amt> <cat-uuid> - Record expense (requires auth)"
     echo "  transfer <from> <to> <amt>         - Transfer money (requires auth)"
     echo "  tx <id>                             - Get transaction status"
+    echo "  list-tx [account-id] [from] [to]    - List transactions (filters optional; ISO-8601 UTC)"
     echo ""
     echo "Configuration Commands:"
     echo "  config                              - Get current configuration"
@@ -90,6 +91,9 @@ print_usage() {
     echo "  $0 income <account-id> 500 <category-uuid>"
     echo "  $0 expense <account-id> 100 <category-uuid>"
     echo "  $0 transfer <from-id> <to-id> 300"
+    echo "  $0 list-tx"
+    echo "  $0 list-tx <account-id>"
+    echo "  $0 list-tx <account-id> 2026-01-01T00:00:00Z 2026-12-31T23:59:59Z"
     echo "  $0 profile"
 }
 
@@ -360,6 +364,30 @@ case "${1:-help}" in
         TRANSACTION_ID="$2"
         echo -e "${YELLOW}Getting transaction: $TRANSACTION_ID${NC}"
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
+            -H "$(auth_header)")
+        check_jq "$RESPONSE"
+        ;;
+
+    list-tx)
+        ACCOUNT_ID="$2"
+        FROM_DATE="$3"
+        TO_DATE="$4"
+        QS=""
+        SEP="?"
+        if [ -n "$ACCOUNT_ID" ]; then
+            QS="${QS}${SEP}accountId=${ACCOUNT_ID}"
+            SEP="&"
+        fi
+        if [ -n "$FROM_DATE" ]; then
+            QS="${QS}${SEP}from=${FROM_DATE}"
+            SEP="&"
+        fi
+        if [ -n "$TO_DATE" ]; then
+            QS="${QS}${SEP}to=${TO_DATE}"
+            SEP="&"
+        fi
+        echo -e "${YELLOW}Listing transactions${QS:+ (}${QS}${QS:+)}...${NC}"
+        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions${QS}" \
             -H "$(auth_header)")
         check_jq "$RESPONSE"
         ;;

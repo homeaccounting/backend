@@ -19,9 +19,6 @@ module Telegram.Types
     -- * Callback Data
     CallbackData (..),
     AccountSelectionCallback (..),
-
-    -- * Message Types
-    BotMessage (..),
   )
 where
 
@@ -68,6 +65,7 @@ botCommands =
     ("/income", "Record income"),
     ("/expense", "Record expense"),
     ("/transfer", "Transfer between accounts"),
+    ("/transactions", "List transactions (last 30 days)"),
     ("/cancel", "Cancel current operation"),
     ("/help", "Show available commands")
   ]
@@ -156,55 +154,3 @@ data AccountSelectionCallback = AccountSelectionCallback
 instance ToJSON AccountSelectionCallback
 
 instance FromJSON AccountSelectionCallback
-
--- -----------------------------------------------------------------------------
--- Message Types
--- -----------------------------------------------------------------------------
-
--- | Bot response messages.
---
--- These are the messages the bot can send to users.
-data BotMessage
-  = -- | Welcome message for new users
-    WelcomeMessage
-      { userName :: Text
-      }
-  | -- | List of accounts
-    AccountListMessage
-      { items :: [(Text, Money)] -- (name, balance)
-      }
-  | -- | Account balance
-    BalanceMessage
-      { accountName :: Text,
-        amount :: Money
-      }
-  | -- | Transfer confirmation
-    TransferConfirmMessage
-      { from :: Text,
-        to :: Text,
-        amount :: Money,
-        reason :: Text
-      }
-  | -- | Transfer success
-    TransferSuccessMessage
-      { transactionId :: Text
-      }
-  | -- | Error message
-    ErrorMessage
-      { text :: Text
-      }
-  | -- | Help message
-    HelpMessage
-  | -- | Prompt for account selection
-    SelectAccountPrompt
-      { title :: Text
-      }
-  | -- | Prompt for amount entry
-    EnterAmountPrompt
-  | -- | Prompt for reason entry
-    EnterReasonPrompt
-  deriving (Show, Eq, Generic)
-
-instance ToJSON BotMessage
-
-instance FromJSON BotMessage

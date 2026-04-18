@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- |
 -- Module      : Application.ReadModels.Transaction
@@ -31,6 +32,14 @@ module Application.ReadModels.Transaction
     TransactionData (..),
     TransactionReadModel,
 
+    -- * Query Types
+    TransactionQuery,
+    mkTransactionQuery,
+    emptyTransactionQuery,
+    queryAccountId,
+    queryFrom,
+    queryTo,
+
     -- * Read Model Creation
     createTransactionReadModel,
 
@@ -41,6 +50,7 @@ module Application.ReadModels.Transaction
     getTransaction,
     getAllTransactions,
     transactionExists,
+    listTransactions,
 
     -- * Helper Functions
     transactionToMap,
@@ -50,9 +60,12 @@ where
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson (FromJSON, ToJSON)
+import Data.List (sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..))
 import Data.Time.Calendar (fromGregorian)
@@ -105,6 +118,64 @@ data TransactionReadModel
     summaryData :: Map TransactionId TransactionData
   }
   deriving (Show, Eq)
+
+-- -----------------------------------------------------------------------------
+-- Query Types
+-- -----------------------------------------------------------------------------
+
+-- | Filter spec for 'listTransactions'.
+--
+-- The data constructor is deliberately hidden; build values via
+-- 'mkTransactionQuery' (which enforces the 'from' <= 'to' invariant) or
+-- 'emptyTransactionQuery' (no filters). Read fields via 'queryAccountId',
+-- 'queryFrom', 'queryTo'.
+data TransactionQuery = TransactionQuery
+  { qAccountId :: Maybe AccountId,
+    qFrom :: Maybe UTCTime,
+    qTo :: Maybe UTCTime
+  }
+  deriving (Show, Eq)
+
+-- | Build a 'TransactionQuery'. Fails with a human-readable message when
+-- both bounds are present and 'from' > 'to'.
+mkTransactionQuery ::
+  Maybe AccountId ->
+  Maybe UTCTime ->
+  Maybe UTCTime ->
+  Either Text TransactionQuery
+mkTransactionQuery acct mFrom mTo =
+  case (mFrom, mTo) of
+    (Just f, Just t)
+      | f > t ->
+          Left "from must be <= to"
+    _ ->
+      Right
+        TransactionQuery
+          { qAccountId = acct,
+            qFrom = mFrom,
+            qTo = mTo
+          }
+
+-- | Query that matches every transaction (all filters unset).
+emptyTransactionQuery :: TransactionQuery
+emptyTransactionQuery =
+  TransactionQuery
+    { qAccountId = Nothing,
+      qFrom = Nothing,
+      qTo = Nothing
+    }
+
+-- | Account filter, if any.
+queryAccountId :: TransactionQuery -> Maybe AccountId
+queryAccountId q = q.qAccountId
+
+-- | Lower bound on the transaction's business timestamp, inclusive.
+queryFrom :: TransactionQuery -> Maybe UTCTime
+queryFrom q = q.qFrom
+
+-- | Upper bound on the transaction's business timestamp, inclusive.
+queryTo :: TransactionQuery -> Maybe UTCTime
+queryTo q = q.qTo
 
 -- -----------------------------------------------------------------------------
 -- Read Model Creation
@@ -277,6 +348,53 @@ transactionExists ::
 transactionExists readModelTVar transactionId = do
   model <- liftIO $ readTVarIO readModelTVar
   return $ Map.member transactionId model.summaryData
+
+-- | List transactions visible to the caller, filtered by 'TransactionQuery'.
+--
+-- Semantics (see docs/specs/2026-04-18-list-transactions-endpoint-design.md):
+--
+--  1. Keep entries where at least one of sourceAccountId/targetAccountId is
+--     in the visible set (access-control precondition supplied by the
+--     service).
+--  2. If the query carries an accountId, require the same id to appear on
+--     source or target. An accountId outside the visible set therefore
+--     naturally produces zero matches.
+--  3. Apply inclusive from/to bounds to 'TransactionData.date', which is
+--     the transaction's business timestamp (TransferInitiated event's
+--     occurredAt, falling back to createdAt only when occurredAt is unset).
+--  4. Sort by date descending; ties are broken by TransactionId.
+listTransactions ::
+  (MonadIO m) =>
+  TVar TransactionReadModel ->
+  Set AccountId ->
+  TransactionQuery ->
+  m [(TransactionId, TransactionData)]
+listTransactions readModelTVar visible query = do
+  model <- liftIO $ readTVarIO readModelTVar
+  let matches =
+        [ (txId, td)
+        | (txId, td) <- Map.toList model.summaryData,
+          isVisible td,
+          matchesAccount td,
+          matchesFrom td,
+          matchesTo td
+        ]
+  pure $ sortBy descendingByDate matches
+  where
+    isVisible td =
+      Set.member td.sourceAccountId visible
+        || Set.member td.targetAccountId visible
+    matchesAccount td = case query.qAccountId of
+      Nothing -> True
+      Just a -> td.sourceAccountId == a || td.targetAccountId == a
+    matchesFrom td = case query.qFrom of
+      Nothing -> True
+      Just f -> td.date >= f
+    matchesTo td = case query.qTo of
+      Nothing -> True
+      Just t' -> td.date <= t'
+    descendingByDate (idA, a) (idB, b) =
+      compare b.date a.date <> compare idA idB
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions

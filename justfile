@@ -194,7 +194,14 @@ image-push tag="latest":
     set -euo pipefail
     source "infra/deploy.env"
     IMAGE="ghcr.io/${GHCR_OWNER}/backend:{{tag}}"
-    docker build --platform linux/amd64 -f infra/docker/Dockerfile -t "$IMAGE" .
+    SHA="$(git rev-parse --short HEAD)"
+    if ! git diff --quiet HEAD || [ -n "$(git status --porcelain)" ]; then
+        SHA="${SHA}-dirty"
+    fi
+    docker build \
+        --platform linux/amd64 \
+        --build-arg APP_COMMIT_HASH="$SHA" \
+        -f infra/docker/Dockerfile -t "$IMAGE" .
     docker push "$IMAGE"
 
 # Build SSH/SCP flags from infra/deploy.env (DEPLOY_SSH_KEY is optional — omit for agent-based auth)

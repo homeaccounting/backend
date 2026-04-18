@@ -49,6 +49,7 @@ import qualified RIO.ByteString.Lazy as LBS
 import Test.Hspec
 import Test.Hspec.Wai
 import Test.Hspec.Wai.JSON
+import Testkit.Auth (generateTestToken)
 import Testkit.InMemoryEventStore (createTestAppEnv)
 import Web.Server (buildApplication)
 
@@ -82,18 +83,6 @@ postJSONAuth path token =
 deleteAuth :: BS.ByteString -> Text -> WaiSession st0 SResponse
 deleteAuth path token =
   request "DELETE" path [(hAuthorization, "Bearer " <> encodeUtf8 token)] ""
-
--- | Generate a valid JWT token for testing
-generateTestToken :: IO Text
-generateTestToken = do
-  userUuid <- UUID.nextRandom
-  case mkUserId userUuid of
-    Left _ -> error "Failed to create test user ID"
-    Right userId -> do
-      result <- generateToken defaultJWTConfig userId "test@example.com"
-      case result of
-        Left err -> error $ "Failed to generate test token: " <> show err
-        Right token -> return token
 
 -- | Generate an expired JWT token for testing
 generateExpiredToken :: IO Text

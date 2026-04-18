@@ -37,11 +37,14 @@ module Web.API.TransactionAPI
     incomeHandler,
     expenseHandler,
     transferHandler,
+    listTransactionsHandler,
     getTransactionHandler,
   )
 where
 
+import Application.ReadModels.Transaction (mkTransactionQuery)
 import qualified Application.Services.TransactionService as TransactionService
+import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Core.Types (mkAccountId, parseCurrency)
 import Infrastructure.App (AppM)
@@ -53,6 +56,7 @@ import Web.Types
   ( ExpenseRequest (..),
     IncomeRequest (..),
     InternalTransferRequest (..),
+    TransactionListResponse (..),
     TransactionResponse,
     fromTransactionData,
     parseCategoryId,
@@ -93,6 +97,14 @@ type TransactionAPI =
       :> "transfer"
       :> ReqBody '[JSON] InternalTransferRequest
       :> Post '[JSON] TransactionResponse
+    -- GET /api/transactions?accountId=&from=&to= - List transactions visible to the caller.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> QueryParam "accountId" UUID
+      :> QueryParam "from" UTCTime
+      :> QueryParam "to" UTCTime
+      :> Get '[JSON] TransactionListResponse
     -- GET /api/transactions/:id - Get transaction status (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -114,6 +126,7 @@ transactionServer =
   incomeHandler
     :<|> expenseHandler
     :<|> transferHandler
+    :<|> listTransactionsHandler
     :<|> getTransactionHandler
 
 -- -----------------------------------------------------------------------------
@@ -162,6 +175,32 @@ transferHandler user request = do
   case result of
     Right (txId, summary) -> return $ fromTransactionData txId summary
     Left err -> throwDomainError err
+
+-- | Handler for GET /api/transactions - list transactions visible to the caller.
+--
+-- Optional query params:
+--   - accountId: restrict to transactions touching this account
+--   - from: inclusive lower bound on business timestamp (UTCTime, ISO-8601)
+--   - to:   inclusive upper bound on business timestamp (UTCTime, ISO-8601)
+--
+-- from > to is rejected as a 400 ValidationErr via mkTransactionQuery.
+-- An accountId the caller cannot see produces a 200 empty list (hide existence).
+--
+-- See docs/specs/2026-04-18-list-transactions-endpoint-design.md.
+listTransactionsHandler ::
+  AuthenticatedUser ->
+  Maybe UUID ->
+  Maybe UTCTime ->
+  Maybe UTCTime ->
+  AppM TransactionListResponse
+listTransactionsHandler user maybeAccountUuid maybeFrom maybeTo = do
+  let userId = user.userId
+  accountIdDomain <- traverse (validateField "accountId" . mkAccountId) maybeAccountUuid
+  query <- validateField "query" $ mkTransactionQuery accountIdDomain maybeFrom maybeTo
+  results <- TransactionService.listTransactions userId query
+  let responses = map (uncurry fromTransactionData) results
+      totalCount = length responses
+  pure $ TransactionListResponse responses totalCount
 
 -- | Handler for GET /api/transactions/:id - Get transaction status.
 getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse

@@ -153,6 +153,7 @@ Available operations:
 - Test transfer without auth (expected 401)
 - Get transaction status
 - Verify balances
+- List transactions (no filters, by accountId, by date range, validation 400, unauthorized 401)
 - Test insufficient funds
 
 #### Test Telegram Authentication
@@ -185,7 +186,7 @@ personal token.
 - Monobank enforces a **60-second rate limit** between `/personal/statement` calls. Running `resync` or `all` repeatedly will start failing until the cooldown elapses.
 - The local `BankAccount.accountNumber` must match the Monobank-reported IBAN **verbatim** — the backend matches on string equality (see `src/Web/API/BankingAPI.hs:327`).
 - The resync date range must not exceed **31 days** (enforced at `src/Web/API/BankingAPI.hs:216-220`).
-- A future endpoint for listing transactions by account is tracked in homeaccounting/backend#47. Until that ships, `verify` relies on balance diffs + response counts.
+- `verify` relies on balance diffs + response counts. For per-account transaction enumeration, use `GET /api/transactions?accountId=...` (exercised by `./scripts/api-test/test-transactions.sh list`).
 
 **Usage**
 
@@ -242,6 +243,9 @@ export MONOBANK_IBAN='UA000000000000000000000000000'
 ./scripts/api-test/quick-test.sh expense <account-id> 100 <category-uuid>
 ./scripts/api-test/quick-test.sh transfer <from-id> <to-id> 300
 ./scripts/api-test/quick-test.sh tx <transaction-id>
+./scripts/api-test/quick-test.sh list-tx                             # all visible transactions
+./scripts/api-test/quick-test.sh list-tx <account-id>                # filter by account
+./scripts/api-test/quick-test.sh list-tx <account-id> <from> <to>    # + ISO-8601 UTC range
 
 # User Profile (requires auth)
 ./scripts/api-test/quick-test.sh profile
@@ -302,6 +306,7 @@ export MONOBANK_IBAN='UA000000000000000000000000000'
 | POST | `/api/transactions/income` | JWT | Record income to an account |
 | POST | `/api/transactions/expense` | JWT | Record an expense from an account |
 | POST | `/api/transactions/transfer` | JWT | Transfer money between accounts |
+| GET | `/api/transactions` | JWT | List transactions (optional `accountId`, `from`, `to` filters) |
 | GET | `/api/transactions/:id` | JWT | Get transaction status |
 
 ### Telegram Webhook

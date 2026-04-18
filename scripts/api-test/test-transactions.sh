@@ -320,6 +320,94 @@ test_verify_balances() {
     print_success "Balance verification complete"
 }
 
+# Test: List Transactions
+test_list_transactions() {
+    print_header "TEST: List Transactions"
+
+    ensure_authenticated
+
+    # 1) No filters — all visible transactions
+    print_info "Listing all transactions (no filters)..."
+    RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
+    echo "$RESPONSE" | jq '.'
+
+    TOTAL_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
+    ACTUAL_COUNT=$(echo "$RESPONSE" | jq -r '.transactions | length')
+
+    if [ -n "$TOTAL_COUNT" ] && [ "$TOTAL_COUNT" != "null" ]; then
+        print_success "Listed $TOTAL_COUNT transaction(s)"
+        if [ "$TOTAL_COUNT" = "$ACTUAL_COUNT" ]; then
+            print_success "totalCount matches transactions length ($ACTUAL_COUNT)"
+        else
+            print_error "totalCount ($TOTAL_COUNT) != transactions length ($ACTUAL_COUNT)"
+        fi
+    else
+        print_error "List transactions failed or returned no totalCount"
+        return 1
+    fi
+
+    # 2) Filter by accountId
+    if [ -f /tmp/test_source_account_id.txt ]; then
+        SOURCE_ACCOUNT_ID=$(cat /tmp/test_source_account_id.txt)
+        print_info "Listing transactions for source account $SOURCE_ACCOUNT_ID..."
+        RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions?accountId=${SOURCE_ACCOUNT_ID}" \
+            -H "Authorization: Bearer $AUTH_TOKEN")
+        echo "$RESPONSE" | jq '.'
+        FILTERED_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
+        if [ -n "$FILTERED_COUNT" ] && [ "$FILTERED_COUNT" != "null" ]; then
+            print_success "Listed $FILTERED_COUNT transaction(s) touching source account"
+        else
+            print_error "accountId filter returned no totalCount"
+        fi
+    else
+        print_info "No source account on disk — skipping accountId filter case"
+    fi
+
+    # 3) Filter by from/to date range (inclusive) — a wide window around today
+    FROM_DATE="2020-01-01T00:00:00Z"
+    TO_DATE="2100-01-01T00:00:00Z"
+    print_info "Listing transactions with from=${FROM_DATE} to=${TO_DATE}..."
+    RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions?from=${FROM_DATE}&to=${TO_DATE}" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
+    echo "$RESPONSE" | jq '.'
+    RANGE_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
+    if [ -n "$RANGE_COUNT" ] && [ "$RANGE_COUNT" != "null" ]; then
+        print_success "Listed $RANGE_COUNT transaction(s) in wide date range"
+    else
+        print_error "date range filter returned no totalCount"
+    fi
+
+    # 4) Validation error: from > to (expected 400)
+    print_info "Attempting invalid range (from > to, expected 400)..."
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
+        "${API_BASE_URL}/api/transactions?from=2100-01-01T00:00:00Z&to=2020-01-01T00:00:00Z" \
+        -H "Authorization: Bearer $AUTH_TOKEN")
+
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+
+    if [ "$HTTP_CODE" = "400" ]; then
+        print_success "Correctly returned 400 for from > to"
+    else
+        print_error "Expected 400 for from > to, got HTTP $HTTP_CODE"
+    fi
+
+    # 5) Unauthorized (no token) — expected 401
+    print_info "Listing without auth token (expected 401)..."
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_BASE_URL}/api/transactions")
+    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+    BODY=$(echo "$RESPONSE" | sed '$d')
+    echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+
+    if [ "$HTTP_CODE" = "401" ]; then
+        print_success "Correctly returned 401 Unauthorized"
+    else
+        print_info "Got HTTP $HTTP_CODE (expected 401)"
+    fi
+}
+
 # Test: Transfer with Insufficient Funds
 test_insufficient_funds_transfer() {
     print_header "TEST: Transfer with Insufficient Funds (Expected Failure)"
@@ -399,6 +487,7 @@ main() {
         echo "  unauthorized     - Test transfer without auth (expected 401)"
         echo "  status           - Get transaction status"
         echo "  verify           - Verify account balances"
+        echo "  list             - List transactions (no filter, accountId, date range, validation)"
         echo "  insufficient     - Test insufficient funds scenario"
         echo ""
         echo "Endpoint flags:"
@@ -419,6 +508,7 @@ main() {
             test_transfer_unauthorized
             test_get_transaction
             test_verify_balances
+            test_list_transactions
             test_insufficient_funds_transfer
             print_header "ALL TESTS COMPLETED"
             ;;
@@ -442,6 +532,9 @@ main() {
             ;;
         verify)
             test_verify_balances
+            ;;
+        list)
+            test_list_transactions
             ;;
         insufficient)
             test_insufficient_funds_transfer

@@ -13,6 +13,7 @@
 --   - /transfer - Transfer between accounts
 --   - /income - Record income (External -> Account)
 --   - /expense - Record expense (Account -> External)
+--   - /transactions - List transactions (last 30 days)
 --   - /cancel - Cancel current operation
 --   - /help - Show help
 module Telegram.Commands
@@ -29,6 +30,7 @@ module Telegram.Commands
     handleTransfer,
     handleIncome,
     handleExpense,
+    handleTransactions,
     handleCancel,
     handleHelp,
 
@@ -49,7 +51,7 @@ import Application.ReadModels.Account
   )
 import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
-import Application.ReadModels.Transaction (TransactionData (..))
+import Application.ReadModels.Transaction (TransactionData (..), mkTransactionQuery)
 import Application.ReadModels.User
   ( UserData (..),
     getUserByTelegramId,
@@ -58,6 +60,8 @@ import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser)
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
+import qualified Application.Services.TransactionService as TransactionService
+import Data.Time (addUTCTime, getCurrentTime)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
@@ -86,16 +90,20 @@ import qualified RIO.Text as T
 import Servant.Client (ClientEnv)
 import Telegram.Api (answerCallback, sendMessageWithKeyboard, sendTextMessage)
 import qualified Telegram.Bot.API as TG
+import Telegram.Formatting
+  ( formatCommandList,
+    formatMoney,
+    formatTransactionLine,
+    showCurrency,
+  )
 import Telegram.Keyboards
   ( InlineButton (..),
     InlineKeyboard (..),
     accountSelectionKeyboard,
     categoryKeyboard,
     currencyKeyboard,
-    formatMoney,
-    showCurrency,
   )
-import Telegram.Types hiding (text)
+import Telegram.Types
 
 -- -----------------------------------------------------------------------------
 -- Main Command Router
@@ -114,6 +122,7 @@ handleCommand botState tgIdentity chatId text = do
     "/transfer" -> handleTransfer botState telegramId chatId
     "/income" -> handleIncome botState telegramId chatId
     "/expense" -> handleExpense botState telegramId chatId
+    "/transactions" -> handleTransactions botState telegramId chatId
     "/cancel" -> handleCancel botState telegramId chatId
     "/help" -> handleHelp telegramId chatId
     _ -> sendMsg chatId $ "Unknown command: " <> cmd <> ". Use /help to see available commands."
@@ -308,6 +317,46 @@ handleExpense botState telegramId chatId = do
             s {conversations = Map.insert telegramId ExpenseSelectCategory s.conversations}
           sendMsgWithKeyboard chatId "Select expense category:" (categoryKeyboard cats)
 
+-- | Handle /transactions command.
+--
+-- Lists transactions from the last 30 days. If an account is currently
+-- selected (via /accounts) the list is filtered to transactions that
+-- touch that account; otherwise every transaction the user can see is
+-- shown. The window is always [now - 30 days, now].
+handleTransactions :: TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleTransactions botState telegramId chatId = do
+  maybeUserId <- getUserIdForTelegram telegramId
+  case maybeUserId of
+    Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
+    Just userId -> do
+      now <- liftIO getCurrentTime
+      let thirtyDays = 30 * 86400 :: Int
+          fromDate = addUTCTime (fromIntegral (negate thirtyDays)) now
+      selected <-
+        atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
+      let maybeAcctId = fst <$> selected
+      case mkTransactionQuery maybeAcctId (Just fromDate) (Just now) of
+        Left err -> do
+          logError $ "Failed to build transactions query: " <> display err
+          sendMsg chatId "Failed to list transactions. Please try again."
+        Right query -> do
+          results <- TransactionService.listTransactions userId query
+          let header = case selected of
+                Just (_, name) -> "Transactions for " <> name <> " (last 30 days):"
+                Nothing -> "Your transactions (last 30 days):"
+          if null results
+            then sendMsg chatId $ header <> "\n\nNo transactions found."
+            else do
+              let maxItems = 20
+                  shown = take maxItems results
+                  overflow = length results - length shown
+                  body = T.unlines $ map formatTransactionLine shown
+                  suffix =
+                    if overflow > 0
+                      then "\n... and " <> tshow overflow <> " more."
+                      else ""
+              sendMsg chatId $ header <> "\n\n" <> body <> suffix
+
 -- | Handle /cancel command.
 handleCancel :: TVar BotState -> TelegramId -> Int64 -> AppM ()
 handleCancel botState telegramId chatId = do
@@ -327,10 +376,6 @@ handleHelp _telegramId chatId = do
     $ T.unlines
     $ ["HomeAccounting Bot Commands:", ""]
     ++ formatCommandList
-
--- | Format the canonical command list for display in messages.
-formatCommandList :: [Text]
-formatCommandList = map (\(cmd, desc) -> cmd <> " - " <> desc) botCommands
 
 -- -----------------------------------------------------------------------------
 -- Callback Handlers
