@@ -35,6 +35,7 @@ where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
+import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData, TransactionQuery)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.ReadModels.User (UserData (..))
@@ -65,12 +66,13 @@ import Domain.Transaction.Commands (InitiateTransfer (..))
 import Eventium (EventMetadata (..), MetadataEnricher)
 import Infrastructure.App
   ( AppM,
+    HasAppConfig (..),
     HasEventStore (..),
-    HasExchangeRateStore (..),
+    HasExchangeRateReadModel (..),
     HasReadModel (..),
   )
+import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import Infrastructure.Eventium (applyTransactionCommand)
-import Infrastructure.ExchangeRate.Store (lookupHistoricalRate)
 import RIO
 
 -- -----------------------------------------------------------------------------
@@ -408,7 +410,7 @@ queryTransactionResult transactionId = do
 --   maybeUserRate: optional user-provided exchange rate override (src -> tgt)
 --   rateDate: the date to look up exchange rates for
 resolveAmounts ::
-  (MonadReader env m, HasExchangeRateStore env, MonadIO m) =>
+  (MonadReader env m, HasExchangeRateReadModel env, HasAppConfig env, MonadIO m) =>
   Money ->
   Currency ->
   Currency ->
@@ -425,8 +427,11 @@ resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRa
         Just r ->
           pure $ first ExchangeRateUnavailable $ mkExchangeRate srcCurrency tgtCurrency r
         Nothing -> do
-          store <- view exchangeRateStoreL
-          maybeRate <- liftIO $ lookupHistoricalRate store rateDate srcCurrency tgtCurrency
+          rm <- view exchangeRateReadModelL
+          cfg <- view appConfigL
+          let providerName = cfg.exchangeRate.provider
+          maybeRate <-
+            lookupHistoricalRate rm providerName rateDate srcCurrency tgtCurrency
           pure $ case maybeRate of
             Just er -> Right er
             Nothing ->

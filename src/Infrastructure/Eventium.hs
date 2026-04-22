@@ -89,6 +89,11 @@ import Application.ReadModels.Configuration
     createConfigurationReadModel,
     handleConfigurationEvents,
   )
+import Application.ReadModels.ExchangeRate
+  ( ExchangeRateReadModel,
+    createExchangeRateReadModel,
+    handleExchangeRateEvents,
+  )
 import Application.ReadModels.Transaction
   ( TransactionReadModel,
     createTransactionReadModel,
@@ -330,7 +335,8 @@ data ReadModels = ReadModels
     transaction :: TVar TransactionReadModel,
     user :: TVar UserReadModel,
     configuration :: TVar ConfigurationReadModel,
-    bankImport :: TVar BankImportReadModel
+    bankImport :: TVar BankImportReadModel,
+    exchangeRate :: TVar ExchangeRateReadModel
   }
 
 -- | Create all read models and their event bus handlers.
@@ -343,6 +349,7 @@ createReadModelHandlers = do
   userRM <- createUserReadModel
   configRM <- createConfigurationReadModel
   bankImportRM <- createBankImportReadModel
+  exchangeRateRM <- createExchangeRateReadModel
   let mkHandler handle rm = EventHandler $ \versionedEvent -> do
         let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
         handle rm [globalEvent]
@@ -351,9 +358,10 @@ createReadModelHandlers = do
           mkHandler handleTransactionEvents transactionRM,
           mkHandler handleUserEvents userRM,
           mkHandler handleConfigurationEvents configRM,
-          mkHandler handleBankImportEvents bankImportRM
+          mkHandler handleBankImportEvents bankImportRM,
+          mkHandler handleExchangeRateEvents exchangeRateRM
         ]
-      readModels = ReadModels accountRM transactionRM userRM configRM bankImportRM
+      readModels = ReadModels accountRM transactionRM userRM configRM bankImportRM exchangeRateRM
   return (readModels, handlers)
 
 -- -----------------------------------------------------------------------------
@@ -496,6 +504,7 @@ replayReadModels globalReader' readModels = do
   handleUserEvents readModels.user events
   handleConfigurationEvents readModels.configuration events
   handleBankImportEvents readModels.bankImport events
+  handleExchangeRateEvents readModels.exchangeRate events
   pure (length events)
 
 -- | Print an event as pretty-printed JSON.

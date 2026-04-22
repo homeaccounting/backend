@@ -29,7 +29,7 @@ import Text.XML.Cursor (attribute, element, fromDocument, ($//))
 ecbProvider :: RateProvider
 ecbProvider =
   RateProvider
-    { providerName = "ECB",
+    { providerName = "ecb",
       fetchRates = fetchEcbRates
     }
 

@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.2.3
+version:        0.2.4
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -31,6 +31,7 @@ library
       Application.ReadModels.Account
       Application.ReadModels.BankImportReadModel
       Application.ReadModels.Configuration
+      Application.ReadModels.ExchangeRate
       Application.ReadModels.Transaction
       Application.ReadModels.User
       Application.Services
@@ -39,6 +40,7 @@ library
       Application.Services.AuthService
       Application.Services.BankImportService
       Application.Services.ConfigurationService
+      Application.Services.ExchangeRatePublisher
       Application.Services.TransactionService
       Application.Services.UserService
       Data.Text.Display
@@ -59,6 +61,7 @@ library
       Domain.Core.Errors
       Domain.Core.Types
       Domain.Events
+      Domain.ExchangeRate.Events
       Domain.Models
       Domain.Transaction
       Domain.Transaction.CommandHandler
@@ -88,7 +91,6 @@ library
       Infrastructure.ExchangeRate.ECB
       Infrastructure.ExchangeRate.NBU
       Infrastructure.ExchangeRate.Provider
-      Infrastructure.ExchangeRate.Store
       Infrastructure.Version
       Telegram
       Telegram.Api
@@ -248,6 +250,8 @@ test-suite backend-test
   other-modules:
       Application.ProcessManagers.TransferManagerPropertySpec
       Application.ProcessManagers.TransferManagerSpec
+      Application.ReadModels.ExchangeRatePropertySpec
+      Application.ReadModels.ExchangeRateSpec
       Application.ReadModels.TransactionListPropertySpec
       Application.ReadModels.TransactionListSpec
       Application.ReadModels.TransactionQuerySpec
@@ -255,6 +259,7 @@ test-suite backend-test
       Application.Services.AuthorizationServiceSpec
       Application.Services.BankImportServiceSpec
       Application.Services.ConfigurationServiceIntegrationSpec
+      Application.Services.ExchangeRatePublisherSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec
       Domain.Account.CommandHandlerPropertySpec
@@ -276,11 +281,9 @@ test-suite backend-test
       Infrastructure.ExchangeRate.NBUIntegrationSpec
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
-      Infrastructure.ExchangeRate.StoreIntegrationSpec
-      Infrastructure.ExchangeRate.StorePropertySpec
-      Infrastructure.ExchangeRate.StoreSpec
       Infrastructure.ExchangeRateIntegrationSpec
       Integration.BankImportWorkflowSpec
+      Integration.ExchangeRatePersistenceSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Testkit.Auth

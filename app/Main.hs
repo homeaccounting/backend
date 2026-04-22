@@ -79,7 +79,9 @@ module Main (main) where
 -- Application
 
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
+import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
+import Domain.ExchangeRate.Events (unProvider)
 import Infrastructure.App
   ( AppEnv,
     AppM,
@@ -117,7 +119,6 @@ import Infrastructure.Eventium
   )
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
-import Infrastructure.ExchangeRate.Store (newExchangeRateStore, publishRates)
 import Infrastructure.Version (VersionInfo, displayVersion, mkVersionInfo)
 import Network.HTTP.Client.TLS (newTlsManager)
 import RIO
@@ -317,19 +318,20 @@ initializeEnvironment logFunc config versionInfo = do
   -- The transferProcessManager is already wired in accountingEventStoreWriter
   logInfo "Process managers registered via event bus"
 
-  -- 6b. Initialize exchange rate store (best-effort, app starts even if provider is unreachable)
-  logInfo "Initializing exchange rate store..."
-  rateProvider <- case config.exchangeRate.provider of
+  -- 6b. Spawn background rate publisher (best-effort, app starts even if provider is unreachable).
+  -- Historical rates survive restarts via the ExchangeRateReadModel replayed
+  -- from persisted 'ExchangeRatesPublishedEvent's in 'replayReadModels' above.
+  logInfo "Spawning exchange rate publisher..."
+  rateProvider <- case unProvider config.exchangeRate.provider of
     "nbu" -> pure nbuProvider
     "ecb" -> pure ecbProvider
     unknown -> throwString $ "Unknown exchange rate provider: " <> T.unpack unknown
-  exchangeRateStore <- liftIO $ newExchangeRateStore rateProvider
-  -- TODO: persist ExchangeRatesPublished events and replay them here on startup
-  -- (similar to replayReadModels) so historical rates survive restarts
-  publishResult <- liftIO $ publishRates exchangeRateStore
-  case publishResult of
-    Right _ -> logInfo $ "Today's rates published from " <> display (config.exchangeRate.provider)
-    Left msg -> logWarn $ "Rate publish skipped: " <> display msg
+  -- Fire-and-forget: the publisher loop catches and logs its own errors and
+  -- runs for the lifetime of the process, so we do not retain the Async handle.
+  void
+    $ liftIO
+    $ spawnRatePublisher rateProvider writer reader readModels.exchangeRate logFunc
+  logInfo $ "Exchange rate publisher running (" <> display config.exchangeRate.provider <> ")"
 
   -- 6c. Create HTTP manager for bank API calls
   logInfo "Creating HTTP manager..."
@@ -365,7 +367,7 @@ initializeEnvironment logFunc config versionInfo = do
           telegramConfig
           botState
           telegramClientEnv
-          exchangeRateStore
+          readModels.exchangeRate
           versionInfo
           bankingEnv'
 

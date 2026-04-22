@@ -27,7 +27,7 @@ import qualified RIO.Text as T
 nbuProvider :: RateProvider
 nbuProvider =
   RateProvider
-    { providerName = "NBU",
+    { providerName = "nbu",
       fetchRates = fetchNbuRates
     }
 

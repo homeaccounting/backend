@@ -46,6 +46,9 @@ module Domain.Models
     AccountingEvent (..),
     AccountingCommand (..),
 
+    -- * ExchangeRate Sum Type
+    ExchangeRateEvent (..),
+
     -- * Account Embeddings
     accountEventEmbedding,
     accountCommandEmbedding,
@@ -67,6 +70,9 @@ module Domain.Models
     configurationEventEmbedding,
     configurationCommandEmbedding,
 
+    -- * ExchangeRate Embeddings
+    exchangeRateEventEmbedding,
+
     -- * Embedded Command Handlers
     accountAccountingCommandHandler,
     transactionAccountingCommandHandler,
@@ -85,12 +91,13 @@ import Data.Aeson (Options (constructorTagModifier), defaultOptions)
 import Data.Aeson.TH (deriveJSON)
 import Domain.Account as X
 import Domain.Configuration as X
+import Domain.ExchangeRate.Events as X (ExchangeRateMap, ExchangeRatesPublished (..), exchangeRateEvents)
 import Domain.Transaction as X
 import Domain.User as X
 import Eventium (CommandHandler, Projection, TypeEmbedding (..), embeddedCommandHandler, embeddedProjection)
 import Eventium.Json (dropSuffix)
 import Eventium.TH (mkSumTypeEmbedding)
-import Eventium.TH.SumType (SumTypeTagOptions (ConstructTagName), constructSumType, defaultSumTypeOptions, withTagOptions)
+import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags, ConstructTagName), constructSumType, defaultSumTypeOptions, withTagOptions)
 
 -- -----------------------------------------------------------------------------
 -- Unified Event Type
@@ -118,7 +125,7 @@ import Eventium.TH.SumType (SumTypeTagOptions (ConstructTagName), constructSumTy
 constructSumType
   "AccountingEvent"
   (withTagOptions (ConstructTagName (++ "Event")) defaultSumTypeOptions)
-  (accountEvents ++ transactionEvents ++ userEvents ++ configurationEvents)
+  (accountEvents ++ transactionEvents ++ userEvents ++ configurationEvents ++ exchangeRateEvents)
 
 -- Derive Show and Eq for the unified event type
 deriving instance Show AccountingEvent
@@ -294,6 +301,43 @@ mkSumTypeEmbedding "configurationEventEmbedding" ''ConfigurationEvent ''Accounti
 --
 -- Embeds aggregate-specific ConfigurationCommand into unified AccountingCommand.
 mkSumTypeEmbedding "configurationCommandEmbedding" ''ConfigurationCommand ''AccountingCommand
+
+-- -----------------------------------------------------------------------------
+-- ExchangeRate Sum Type
+-- -----------------------------------------------------------------------------
+
+-- | Generate the ExchangeRateEvent sum type from the individual event types.
+--
+-- Mirrors the two-tier pattern used by Account/Transaction/User/Configuration:
+-- individual records live in "Domain.ExchangeRate.Events", the per-context
+-- sum type is generated here from 'exchangeRateEvents', and the embedding
+-- below wires it into the unified 'AccountingEvent'.
+--
+-- Expands (conceptually) to:
+--
+-- @
+-- data ExchangeRateEvent
+--   = ExchangeRatesPublishedExchangeRateEvent ExchangeRatesPublished
+-- @
+constructSumType
+  "ExchangeRateEvent"
+  (withTagOptions AppendTypeNameToTags defaultSumTypeOptions)
+  exchangeRateEvents
+
+deriving instance Show ExchangeRateEvent
+
+deriving instance Eq ExchangeRateEvent
+
+-- -----------------------------------------------------------------------------
+-- ExchangeRate Embeddings
+-- -----------------------------------------------------------------------------
+
+-- | TypeEmbedding for ExchangeRate events.
+--
+-- Embeds aggregate-specific ExchangeRateEvent into unified AccountingEvent.
+-- This enables the ExchangeRate publication stream to be persisted and
+-- projected through the unified event store pipeline.
+mkSumTypeEmbedding "exchangeRateEventEmbedding" ''ExchangeRateEvent ''AccountingEvent
 
 -- -----------------------------------------------------------------------------
 -- Embedded Configuration Projection

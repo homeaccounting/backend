@@ -87,7 +87,7 @@ module Infrastructure.App
     HasAuthConfig (..),
     HasBotState (..),
     HasTelegramClient (..),
-    HasExchangeRateStore (..),
+    HasExchangeRateReadModel (..),
     HasVersionInfo (..),
     HasBankingEnv (..),
     HasBankImportReadModel (..),
@@ -112,6 +112,7 @@ where
 import Application.ReadModels.Account (AccountReadModel)
 import Application.ReadModels.BankImportReadModel (BankImportReadModel)
 import Application.ReadModels.Configuration (ConfigurationReadModel)
+import Application.ReadModels.ExchangeRate (ExchangeRateReadModel)
 import Application.ReadModels.Transaction (TransactionReadModel)
 import Application.ReadModels.User (UserReadModel)
 import Control.Concurrent.STM (retry)
@@ -128,7 +129,6 @@ import Infrastructure.Eventium
     AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
   )
-import Infrastructure.ExchangeRate.Store (ExchangeRateStore)
 import Infrastructure.Version (VersionInfo)
 import Network.HTTP.Client (Manager)
 import RIO
@@ -196,8 +196,9 @@ data AppEnv = AppEnv
     botState :: !(TVar BotState),
     -- | Telegram API client environment (Nothing if bot token is empty)
     telegramClientEnv :: !(Maybe ClientEnv),
-    -- | Exchange rate store (event-sourced historical rates)
-    exchangeRateStore :: !ExchangeRateStore,
+    -- | Exchange rate read model (event-sourced historical rates,
+    -- projected from 'ExchangeRatesPublishedEvent' on the global stream).
+    exchangeRateReadModel :: !(TVar ExchangeRateReadModel),
     -- | Application version information
     versionInfo :: !VersionInfo,
     -- | Banking-subsystem runtime dependencies (dedup read model,
@@ -259,11 +260,11 @@ initializeAppEnv ::
   TelegramConfig ->
   TVar BotState ->
   Maybe ClientEnv ->
-  ExchangeRateStore ->
+  TVar ExchangeRateReadModel ->
   VersionInfo ->
   BankingEnv ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateStore versionInfo bankingEnv =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -281,7 +282,7 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       telegramConfig = telegramConfig,
       botState = botState,
       telegramClientEnv = telegramClientEnv,
-      exchangeRateStore = exchangeRateStore,
+      exchangeRateReadModel = exchangeRateReadModel,
       versionInfo = versionInfo,
       bankingEnv = bankingEnv
     }
@@ -403,12 +404,14 @@ class HasTelegramClient env where
 instance HasTelegramClient AppEnv where
   telegramClientEnvL = lens (.telegramClientEnv) (\x y -> x {telegramClientEnv = y})
 
--- | Type class for environments that have an exchange rate store.
-class HasExchangeRateStore env where
-  exchangeRateStoreL :: Lens' env ExchangeRateStore
+-- | Type class for environments that expose the exchange-rate read
+-- model (projection of 'ExchangeRatesPublishedEvent' onto a per-
+-- provider, per-day history).
+class HasExchangeRateReadModel env where
+  exchangeRateReadModelL :: Lens' env (TVar ExchangeRateReadModel)
 
-instance HasExchangeRateStore AppEnv where
-  exchangeRateStoreL = lens (.exchangeRateStore) (\x y -> x {exchangeRateStore = y})
+instance HasExchangeRateReadModel AppEnv where
+  exchangeRateReadModelL = lens (.exchangeRateReadModel) (\x y -> x {exchangeRateReadModel = y})
 
 -- | Type class for environments that have version information.
 class HasVersionInfo env where

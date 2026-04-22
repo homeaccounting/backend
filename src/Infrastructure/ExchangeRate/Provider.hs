@@ -5,8 +5,8 @@
 -- Description : Exchange rate provider abstraction
 --
 -- Defines the RateProvider record-of-functions and the provider-agnostic
--- rate map utilities. Providers (ECB, NBU) plug into the ExchangeRateStore
--- via RateProvider.
+-- rate map utilities. Providers (ECB, NBU) are consumed by
+-- 'Application.Services.ExchangeRatePublisher'.
 module Infrastructure.ExchangeRate.Provider
   ( -- * Provider Abstraction
     RateProvider (..),
@@ -21,6 +21,7 @@ module Infrastructure.ExchangeRate.Provider
 where
 
 import Domain.Core.Types (Currency, ExchangeRate, mkExchangeRate)
+import Domain.ExchangeRate.Events (ExchangeRateMap, Provider)
 import RIO
 import qualified RIO.Map as Map
 
@@ -29,15 +30,15 @@ import qualified RIO.Map as Map
 -- Each provider (ECB, NBU, etc.) exports a value of this type.
 -- The cache delegates rate fetching to whichever provider is configured.
 data RateProvider = RateProvider
-  { -- | Human-readable provider name (for error messages)
-    providerName :: !Text,
+  { -- | Provider identifier (e.g. @"ecb"@, @"nbu"@). Used both for
+    -- logging and as the persistence key: the same identifier must
+    -- appear in 'Infrastructure.Config.ExchangeRateConfig' so that the
+    -- same stream is written and read.
+    providerName :: !Provider,
     -- | Fetch current rates from the provider. Uses bare IO because
     -- providers perform real network I/O and the cache operates in IO.
     fetchRates :: IO (Either Text ExchangeRateMap)
   }
-
--- | Map of (source, target) -> ExchangeRate
-type ExchangeRateMap = Map (Currency, Currency) ExchangeRate
 
 -- | Look up a rate for a given currency pair.
 getRate :: ExchangeRateMap -> Currency -> Currency -> Maybe ExchangeRate

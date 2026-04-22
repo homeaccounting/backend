@@ -66,6 +66,7 @@ import qualified Data.ByteString as BS
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Yaml (decodeEither', prettyPrintParseException)
+import Domain.ExchangeRate.Events (Provider (..), unProvider)
 import GHC.Generics (Generic)
 import Infrastructure.Auth.JWT (JWTConfig (..))
 import Infrastructure.Auth.OAuth (OAuthConfig (..))
@@ -311,7 +312,7 @@ instance ToJSON ProcessManagerConfig
 
 -- | Exchange rate provider configuration.
 data ExchangeRateConfig = ExchangeRateConfig
-  { provider :: !Text
+  { provider :: !Provider
   }
   deriving (Show, Eq, Generic)
 
@@ -602,9 +603,9 @@ validateConfig config = do
 
   -- Validate exchange rate config
   let providerValue = config.exchangeRate.provider
-  when (providerValue `notElem` ["ecb", "nbu"]) $
+  when (providerValue `notElem` [Provider "ecb", Provider "nbu"]) $
     Left $
-      "Invalid exchange rate provider: " <> providerValue <> " (must be \"ecb\" or \"nbu\")"
+      "Invalid exchange rate provider: " <> unProvider providerValue <> " (must be \"ecb\" or \"nbu\")"
 
 -- Helper function for when
 when :: Bool -> Either Text () -> Either Text ()

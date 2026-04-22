@@ -37,6 +37,7 @@ where
 import Application.ProcessManagers (transferProcessManager)
 import Application.ReadModels.Account (createAccountReadModel)
 import Application.ReadModels.BankImportReadModel (createBankImportReadModel)
+import Application.ReadModels.ExchangeRate (createExchangeRateReadModel)
 import Application.ReadModels.Transaction (createTransactionReadModel)
 import Application.ReadModels.User ()
 import Control.Concurrent.STM (TVar, atomically)
@@ -76,8 +77,7 @@ import Infrastructure.Config
   )
 import qualified Infrastructure.Database as DB
 import Infrastructure.Eventium
-  ( AccountingEventHandler,
-    AccountingGlobalEventStoreReader,
+  ( AccountingGlobalEventStoreReader,
     AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
     AccountingVersionedEventStoreWriter,
@@ -85,14 +85,11 @@ import Infrastructure.Eventium
     commandDispatcher,
     createReadModelHandlers,
   )
-import Infrastructure.ExchangeRate.ECB (ecbProvider)
-import Infrastructure.ExchangeRate.Store (newExchangeRateStore)
 import Infrastructure.Version (VersionInfo (..))
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import RIO hiding (atomically, newTVarIO)
 import qualified RIO
 import qualified RIO.Text as T
-import System.Environment (lookupEnv)
 import Telegram.Types (emptyBotState)
 
 -- -----------------------------------------------------------------------------
@@ -293,7 +290,7 @@ createTestAppEnv = do
   -- because they work through the event store abstraction
   -- Using undefined instead of error so it's only evaluated if actually used
   botState <- RIO.newTVarIO emptyBotState
-  exchangeRateStore' <- newExchangeRateStore ecbProvider
+  exchangeRateRM <- createExchangeRateReadModel
   testHttpManager <- newManager defaultManagerSettings
   bankImportLocksVar <- RIO.newTVarIO Set.empty
 
@@ -315,7 +312,7 @@ createTestAppEnv = do
         telegramConfig = testTelegramConfig,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateStore = exchangeRateStore',
+        exchangeRateReadModel = exchangeRateRM,
         versionInfo = testVersionInfo,
         bankingEnv =
           BankingEnv
@@ -433,7 +430,7 @@ createTestAppEnvWithProcessManager = do
       testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
 
   botState <- RIO.newTVarIO emptyBotState
-  exchangeRateStore <- newExchangeRateStore ecbProvider
+  exchangeRateRM <- createExchangeRateReadModel
   testHttpManager <- newManager defaultManagerSettings
   bankImportLocksVar <- RIO.newTVarIO Set.empty
 
@@ -455,7 +452,7 @@ createTestAppEnvWithProcessManager = do
         telegramConfig = testTelegramConfig,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateStore = exchangeRateStore,
+        exchangeRateReadModel = exchangeRateRM,
         versionInfo = testVersionInfo,
         bankingEnv =
           BankingEnv

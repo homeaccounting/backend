@@ -12,6 +12,7 @@
 --   - Returns appropriate DomainErrors for invalid operations
 module Application.Services.TransactionServiceSpec (spec) where
 
+import Application.ReadModels.ExchangeRate (handleExchangeRateEvents)
 import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.TransactionService
@@ -22,10 +23,12 @@ import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
+import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
+import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Commands (InitiateTransfer (..))
-import Infrastructure.App (AppEnv (..), AppM, runAppM)
-import Infrastructure.ExchangeRate.Provider (ExchangeRateMap, RateProvider (..))
-import Infrastructure.ExchangeRate.Store (ExchangeRateStore, newExchangeRateStore, publishRates)
+import Eventium (EventMetadata (..), StreamEvent (..), emptyMetadata)
+import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
@@ -62,29 +65,28 @@ mkCreateAccountWith currency balance acctName userId accountType =
       overdraftLimit = Nothing
     }
 
--- | Create a mock provider that returns fixed rates.
-mockRateProvider :: ExchangeRateMap -> RateProvider
-mockRateProvider rates =
-  RateProvider
-    { providerName = "Mock",
-      fetchRates = pure (Right rates)
-    }
-
--- | Create a test exchange rate store pre-populated with known rates.
-mkTestExchangeRateStore :: [(Currency, Currency, Rational)] -> IO ExchangeRateStore
-mkTestExchangeRateStore rates = do
-  let rateMap = Map.fromList [((src, tgt), mockExchangeRate src tgt r) | (src, tgt, r) <- rates]
-  store <- newExchangeRateStore (mockRateProvider rateMap)
-  -- Publish today's rates to populate the store
-  void $ publishRates store
-  return store
-
--- | Create a test env with a pre-populated exchange rate store.
+-- | Create a test env whose exchange-rate read model is pre-populated
+-- with the supplied rates for today under the default ECB provider
+-- name used by 'createTestAppEnv'. Feeds a synthetic
+-- 'ExchangeRatesPublishedEvent' through 'handleExchangeRateEvents' so
+-- the projection sees the rates exactly as it would in production.
 createTestAppEnvWithRates :: [(Currency, Currency, Rational)] -> IO AppEnv
 createTestAppEnvWithRates rates = do
   env <- createTestAppEnv
-  store <- mkTestExchangeRateStore rates
-  return env {exchangeRateStore = store}
+  now <- getCurrentTime
+  let rateMap = Map.fromList [((src, tgt), mockExchangeRate src tgt r) | (src, tgt, r) <- rates]
+      providerName = env.config.exchangeRate.provider
+      payload =
+        ExchangeRatesPublishedEvent
+          ExchangeRatesPublished
+            { provider = providerName,
+              rates = rateMap
+            }
+      meta = (emptyMetadata mempty) {occurredAt = Just now}
+      versionedEvent = StreamEvent UUID.nil 0 meta payload
+      globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
+  handleExchangeRateEvents env.exchangeRateReadModel [globalEvent]
+  pure env
 
 -- | Helper to create two accounts in different currencies.
 setupCrossCurrencyAccounts :: [(Currency, Currency, Rational)] -> Currency -> Currency -> IO (AppEnv, AccountId, AccountId)

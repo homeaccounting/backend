@@ -388,6 +388,11 @@ All API handlers follow a uniform pattern:
 - `AccountSummary` - Current balances, access lists
 - `TransactionSummary` - Transfer history
 - `UserSummary` - User profiles, linked accounts
+- `ExchangeRateReadModel` - Per-provider, per-day published rates;
+  projected from `AccountingExchangeRatesPublishedEvent`, with the
+  business date carried on `EventMetadata.occurredAt` (not on the
+  outer global-stream metadata). Powers historical-rate lookups for
+  backdated transactions and bank imports.
 - Rebuilt from event stream on startup
 
 ### Authentication
