@@ -17,6 +17,7 @@ import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.TransactionService
 import Data.Ratio ((%))
+import qualified Data.Set as Set
 import Data.Time (getCurrentTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -131,7 +132,8 @@ spec = describe "TransactionService" $ do
                 description = "Test transfer",
                 initiatedBy = testUserId1,
                 transferType = Transfer,
-                externalTransactionId = Nothing
+                externalTransactionId = Nothing,
+                labels = Set.empty
               }
       result <- runAppM env $ initiateTransfer id transferCmd
       shouldBeRight result
@@ -154,7 +156,8 @@ spec = describe "TransactionService" $ do
                 description = "Retrieve test",
                 initiatedBy = testUserId1,
                 transferType = Transfer,
-                externalTransactionId = Nothing
+                externalTransactionId = Nothing,
+                labels = Set.empty
               }
       createResult <- runAppM env $ initiateTransfer id transferCmd
       let (txId, _) = fromRight' createResult
@@ -187,7 +190,8 @@ spec = describe "TransactionService" $ do
                 description = rsn,
                 initiatedBy = testUserId1,
                 transferType = Transfer,
-                externalTransactionId = Nothing
+                externalTransactionId = Nothing,
+                labels = Set.empty
               }
       result1 <- runAppM env $ initiateTransfer id (mkTransferCmd 100 "First")
       result2 <- runAppM env $ initiateTransfer id (mkTransferCmd 200 "Second")
@@ -212,7 +216,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "Cross-currency transfer" Nothing (Just now)
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "Cross-currency transfer" Nothing (Just now)
       shouldBeRight result
       let (_, summary) = fromRight' result
       -- Source: 100 USD, Target: 90 EUR (100 * 9/10)
@@ -223,7 +227,7 @@ spec = describe "TransactionService" $ do
     it "skips conversion for same-currency transfer" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts -- both USD
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) "Same currency" Nothing (Just now)
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) Set.empty "Same currency" Nothing (Just now)
       shouldBeRight result
       let (_, summary) = fromRight' result
       summary.sourceAmount `shouldBe` mockMoney 100
@@ -236,7 +240,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "User rate" (Just (17 % 20)) (Just now)
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "User rate" (Just (17 % 20)) (Just now)
       shouldBeRight result
       let (_, summary) = fromRight' result
       summary.sourceAmount `shouldBe` mockMoneyWith USD 100
@@ -249,7 +253,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) "No rate for pair" Nothing (Just now)
+      result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "No rate for pair" Nothing (Just now)
       shouldBeLeft result
       case result of
         Left (ExchangeRateUnavailable _) -> pure ()

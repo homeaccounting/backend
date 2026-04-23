@@ -79,7 +79,8 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
                   description = "seed",
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   transferType = Transfer,
-                  externalTransactionId = Nothing
+                  externalTransactionId = Nothing,
+                  labels = Set.empty
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransferInitiated") inner

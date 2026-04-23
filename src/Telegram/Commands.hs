@@ -61,6 +61,7 @@ import Application.Services.AuthService (findOrCreateTelegramBotUser)
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
 import qualified Application.Services.TransactionService as TransactionService
+import qualified Data.Set as Set
 import Data.Time (addUTCTime, getCurrentTime)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
@@ -148,16 +149,16 @@ handleMessage botState telegramId chatId text = do
       handleCreateAccountName botState telegramId chatId text
     Just (IncomeEnterAmount cat) ->
       handleIncomeAmount botState telegramId chatId cat text
-    Just (IncomeEnterReason cat money) ->
-      handleIncomeReason botState telegramId chatId cat money text
+    Just (IncomeEnterDescription cat money) ->
+      handleIncomeDescription botState telegramId chatId cat money text
     Just (ExpenseEnterAmount cat) ->
       handleExpenseAmount botState telegramId chatId cat text
-    Just (ExpenseEnterReason cat money) ->
-      handleExpenseReason botState telegramId chatId cat money text
+    Just (ExpenseEnterDescription cat money) ->
+      handleExpenseDescription botState telegramId chatId cat money text
     Just (TransferEnterAmount srcId tgtId) ->
       handleTransferAmount botState telegramId chatId srcId tgtId text
-    Just (TransferEnterReason srcId tgtId money) ->
-      handleTransferReason botState telegramId chatId srcId tgtId money text
+    Just (TransferEnterDescription srcId tgtId money) ->
+      handleTransferDescription botState telegramId chatId srcId tgtId money text
     _ ->
       sendMsg chatId "I don't understand. Use /help to see available commands."
 
@@ -467,12 +468,12 @@ handleIncomeAmount botState telegramId chatId cat text =
                 Left _ -> sendMsg chatId "Failed to create money amount. Please try again."
                 Right money -> do
                   atomically $ modifyTVar' botState $ \s ->
-                    s {conversations = Map.insert telegramId (IncomeEnterReason cat money) s.conversations}
-                  sendMsg chatId "Enter reason (description):"
+                    s {conversations = Map.insert telegramId (IncomeEnterDescription cat money) s.conversations}
+                  sendMsg chatId "Enter description:"
 
--- | Handle income reason input and execute the transaction.
-handleIncomeReason :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
-handleIncomeReason botState telegramId chatId cat money reason = do
+-- | Handle income description input and execute the transaction.
+handleIncomeDescription :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
+handleIncomeDescription botState telegramId chatId cat money description = do
   clearConversation botState telegramId
   case parseCategoryUUID cat of
     Nothing -> sendMsg chatId "Invalid category. Operation cancelled."
@@ -485,15 +486,15 @@ handleIncomeReason botState telegramId chatId cat money reason = do
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
             Just (accountId, _name) -> do
-              result <- initiateIncome userId accountId money categoryEntryId reason Nothing
+              result <- initiateIncome userId accountId money categoryEntryId Set.empty description Nothing
               case result of
                 Left err -> do
                   logError $ "Income failed: " <> displayShow err
                   sendMsg chatId $ "Income recording failed: " <> tshow err
                 Right (_txId, txData) -> case txData.status of
-                  Failed reason' -> do
-                    logError $ "Income transfer failed: " <> display reason'
-                    sendMsg chatId $ "Income recording failed: " <> reason'
+                  Failed failureReason -> do
+                    logError $ "Income transfer failed: " <> display failureReason
+                    sendMsg chatId $ "Income recording failed: " <> failureReason
                   _ ->
                     sendMsg chatId $ "Income recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
 
@@ -535,12 +536,12 @@ handleExpenseAmount botState telegramId chatId cat text =
                 Left _ -> sendMsg chatId "Failed to create money amount. Please try again."
                 Right money -> do
                   atomically $ modifyTVar' botState $ \s ->
-                    s {conversations = Map.insert telegramId (ExpenseEnterReason cat money) s.conversations}
-                  sendMsg chatId "Enter reason (description):"
+                    s {conversations = Map.insert telegramId (ExpenseEnterDescription cat money) s.conversations}
+                  sendMsg chatId "Enter description:"
 
--- | Handle expense reason input and execute the transaction.
-handleExpenseReason :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
-handleExpenseReason botState telegramId chatId cat money reason = do
+-- | Handle expense description input and execute the transaction.
+handleExpenseDescription :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
+handleExpenseDescription botState telegramId chatId cat money description = do
   clearConversation botState telegramId
   case parseCategoryUUID cat of
     Nothing -> sendMsg chatId "Invalid category. Operation cancelled."
@@ -553,15 +554,15 @@ handleExpenseReason botState telegramId chatId cat money reason = do
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
             Just (accountId, _name) -> do
-              result <- initiateExpense userId accountId money categoryEntryId reason Nothing
+              result <- initiateExpense userId accountId money categoryEntryId Set.empty description Nothing
               case result of
                 Left err -> do
                   logError $ "Expense failed: " <> displayShow err
                   sendMsg chatId $ "Expense recording failed: " <> tshow err
                 Right (_txId, txData) -> case txData.status of
-                  Failed reason' -> do
-                    logError $ "Expense transfer failed: " <> display reason'
-                    sendMsg chatId $ "Expense recording failed: " <> reason'
+                  Failed failureReason -> do
+                    logError $ "Expense transfer failed: " <> display failureReason
+                    sendMsg chatId $ "Expense recording failed: " <> failureReason
                   _ ->
                     sendMsg chatId $ "Expense recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
 
@@ -616,26 +617,26 @@ handleTransferAmount botState telegramId chatId srcId tgtId text =
             Left _ -> sendMsg chatId "Failed to create money amount. Please try again."
             Right money -> do
               atomically $ modifyTVar' botState $ \s ->
-                s {conversations = Map.insert telegramId (TransferEnterReason srcId tgtId money) s.conversations}
-              sendMsg chatId "Enter reason (description):"
+                s {conversations = Map.insert telegramId (TransferEnterDescription srcId tgtId money) s.conversations}
+              sendMsg chatId "Enter description:"
 
--- | Handle transfer reason input and execute the transaction.
-handleTransferReason :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Money -> Text -> AppM ()
-handleTransferReason botState telegramId chatId srcId tgtId money reason = do
+-- | Handle transfer description input and execute the transaction.
+handleTransferDescription :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Money -> Text -> AppM ()
+handleTransferDescription botState telegramId chatId srcId tgtId money description = do
   clearConversation botState telegramId
   maybeUserId <- getUserIdForTelegram telegramId
   case maybeUserId of
     Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
     Just userId -> do
-      result <- initiateInternalTransfer userId srcId tgtId money reason Nothing Nothing
+      result <- initiateInternalTransfer userId srcId tgtId money Set.empty description Nothing Nothing
       case result of
         Left err -> do
           logError $ "Transfer failed: " <> displayShow err
           sendMsg chatId $ "Transfer failed: " <> tshow err
         Right (_txId, txData) -> case txData.status of
-          Failed reason' -> do
-            logError $ "Transfer failed: " <> display reason'
-            sendMsg chatId $ "Transfer failed: " <> reason'
+          Failed failureReason -> do
+            logError $ "Transfer failed: " <> display failureReason
+            sendMsg chatId $ "Transfer failed: " <> failureReason
           _ ->
             sendMsg chatId $ "Transfer completed: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
 

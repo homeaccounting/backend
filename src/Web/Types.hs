@@ -56,6 +56,8 @@ module Web.Types
     IncomeRequest (..),
     ExpenseRequest (..),
     InternalTransferRequest (..),
+    SetTransactionLabelsRequest (..),
+    ChangeTransactionCategoryRequest (..),
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
@@ -80,8 +82,9 @@ module Web.Types
     fromTransactionData,
     fromTransactionStatus,
 
-    -- * Category Parsing
+    -- * Category / Label Parsing
     parseCategoryId,
+    parseLabelIds,
 
     -- * Serialization Helpers
     transferTypeToText,
@@ -92,8 +95,12 @@ where
 import Application.ReadModels.Account (AccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.=))
+import Data.Bifunctor (first)
+import Data.List (sort)
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes, fromMaybe)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
@@ -102,7 +109,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), Currency (..), DictionaryEntryId, EWalletProperties (..), LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), LabelId, LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -339,7 +346,8 @@ data IncomeRequest
     currency :: Text,
     category :: Text,
     description :: Text,
-    date :: Maybe UTCTime
+    date :: Maybe UTCTime,
+    labels :: Maybe [UUID]
   }
   deriving (Show, Eq, Generic)
 
@@ -355,7 +363,8 @@ data ExpenseRequest
     currency :: Text,
     category :: Text,
     description :: Text,
-    date :: Maybe UTCTime
+    date :: Maybe UTCTime,
+    labels :: Maybe [UUID]
   }
   deriving (Show, Eq, Generic)
 
@@ -372,13 +381,36 @@ data InternalTransferRequest
     currency :: Text,
     description :: Text,
     exchangeRate :: Maybe Double,
-    date :: Maybe UTCTime
+    date :: Maybe UTCTime,
+    labels :: Maybe [UUID]
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON InternalTransferRequest
 
 instance FromJSON InternalTransferRequest
+
+-- | Body for @PUT \/api\/transactions\/:id\/labels@ — replaces the
+-- label set on a Completed transaction.
+data SetTransactionLabelsRequest = SetTransactionLabelsRequest
+  { labels :: [UUID]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SetTransactionLabelsRequest
+
+instance FromJSON SetTransactionLabelsRequest
+
+-- | Body for @PUT \/api\/transactions\/:id\/category@ — replaces the
+-- category on a Completed Income\/Expense transaction.
+data ChangeTransactionCategoryRequest = ChangeTransactionCategoryRequest
+  { categoryId :: UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ChangeTransactionCategoryRequest
+
+instance FromJSON ChangeTransactionCategoryRequest
 
 -- -----------------------------------------------------------------------------
 -- Transaction Response DTOs
@@ -435,7 +467,8 @@ data TransactionResponse
     failureReason :: Maybe Text,
     transferType :: Text,
     category :: Maybe Text,
-    date :: Text
+    date :: Text,
+    labels :: [UUID]
   }
   deriving (Show, Eq, Generic)
 
@@ -667,7 +700,9 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
         exchangeRate = Nothing,
         description = description,
         initiatedBy = initiatedBy,
-        transferType = Transfer
+        transferType = Transfer,
+        externalTransactionId = Nothing,
+        labels = Set.empty
       }
   where
     when :: Bool -> Either Text () -> Either Text ()
@@ -851,7 +886,8 @@ fromTransactionData txId TransactionData {..} =
         _ -> Nothing,
       transferType = transferTypeToText transferType,
       category = transferTypeCategoryText transferType,
-      date = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" date
+      date = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" date,
+      labels = sort [unDictionaryEntryId eid | eid <- Set.toList labels]
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -881,7 +917,8 @@ fromTransaction txId tx =
         _ -> Nothing,
       transferType = transferTypeToText tx.transferType,
       category = transferTypeCategoryText tx.transferType,
-      date = ""
+      date = "",
+      labels = sort [unDictionaryEntryId eid | eid <- Set.toList tx.labels]
     }
 
 -- | Converts TransactionStatus to Text representation.
@@ -920,8 +957,18 @@ transferTypeCategoryText Transfer = Nothing
 -- Category Parsing
 -- -----------------------------------------------------------------------------
 
--- | Parse a category UUID text into a DictionaryEntryId.
-parseCategoryId :: Text -> Either Text DictionaryEntryId
+-- | Parse a category UUID text into a CategoryId.
+parseCategoryId :: Text -> Either Text CategoryId
 parseCategoryId t = case UUID.fromString (T.unpack t) of
   Nothing -> Left $ "Invalid category ID (expected UUID): " <> t
   Just uuid -> mkDictionaryEntryId uuid
+
+-- | Convert an optional list of label UUIDs into a 'Set LabelId'.
+-- 'Nothing' and 'Just []' both yield an empty set; duplicates collapse
+-- automatically via 'Set.fromList'. Any UUID that fails validation is
+-- surfaced as a boundary 'Text' error.
+parseLabelIds :: Maybe [UUID] -> Either Text (Set LabelId)
+parseLabelIds Nothing = Right Set.empty
+parseLabelIds (Just us) =
+  Set.fromList
+    <$> traverse (first ("Invalid label id: " <>) . mkDictionaryEntryId) us

@@ -30,16 +30,22 @@ module Application.Services.TransactionService
     initiateInternalTransfer,
     getTransaction,
     listTransactions,
+    setTransactionLabels,
+    changeTransactionCategory,
   )
 where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
+import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
-import Application.ReadModels.Transaction (TransactionData, TransactionQuery)
+import Application.ReadModels.Transaction (TransactionData (..), TransactionQuery)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.ReadModels.User (UserData (..))
 import qualified Application.ReadModels.User as UserRM
+import qualified Application.Services.ConfigurationService as ConfigurationService
+import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
@@ -47,10 +53,14 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
+    AccountRole (..),
     AccountType (..),
+    CategoryId,
     Currency,
     DictionaryEntryId,
+    DictionaryId,
     ExchangeRate,
+    LabelId,
     Money,
     TransactionId,
     TransferType (..),
@@ -60,10 +70,24 @@ import Domain.Core.Types
     mkExchangeRate,
     mkTransactionId,
     moneyCurrency,
+    unDictionaryEntryId,
+    unTransactionId,
   )
-import Domain.Transaction.CommandHandler (TransactionCommand (InitiateTransferTransactionCommand))
-import Domain.Transaction.Commands (InitiateTransfer (..))
-import Eventium (EventMetadata (..), MetadataEnricher)
+import Domain.Transaction.CommandHandler
+  ( TransactionCommand
+      ( ChangeTransactionCategoryTransactionCommand,
+        InitiateTransferTransactionCommand,
+        SetTransactionLabelsTransactionCommand
+      ),
+    TransactionError,
+  )
+import qualified Domain.Transaction.CommandHandler as TxCh
+import Domain.Transaction.Commands
+  ( ChangeTransactionCategory (..),
+    InitiateTransfer (..),
+    SetTransactionLabels (..),
+  )
+import Eventium (CommandHandlerError (..), EventMetadata (..), MetadataEnricher)
 import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
@@ -74,6 +98,7 @@ import Infrastructure.App
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
+import qualified RIO.Text as T
 
 -- -----------------------------------------------------------------------------
 -- Service Functions
@@ -179,59 +204,65 @@ initiateIncome ::
   UserId ->
   AccountId ->
   Money ->
-  DictionaryEntryId ->
+  CategoryId ->
+  Set LabelId ->
   Text ->
   Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount categoryEntryId description maybeTransferDate = do
+initiateIncome userId targetAccountId amount categoryEntryId labels description maybeTransferDate = do
   logInfo "Initiating income transfer..."
   now <- liftIO getCurrentTime
 
-  -- 1. Look up user's External account
-  userRM <- view userReadModelL
-  maybeUser <- UserRM.getUser userRM userId
-  case maybeUser of
-    Nothing -> do
-      logWarn $ "User not found: " <> displayShow userId
-      return $ Left $ NotFound "User" (tshow userId)
-    Just userData -> do
-      let externalAccId = userData.externalAccountId
-
-      -- 2. Validate target account exists and is Regular
-      accountRM <- view accountReadModelL
-      maybeTarget <- AccountRM.getAccount accountRM targetAccountId
-      case maybeTarget of
+  labelValidation <- validateLabels userId labels
+  case labelValidation of
+    Left err -> pure (Left err)
+    Right () -> do
+      -- 1. Look up user's External account
+      userRM <- view userReadModelL
+      maybeUser <- UserRM.getUser userRM userId
+      case maybeUser of
         Nothing -> do
-          logWarn $ "Target account not found: " <> displayShow targetAccountId
-          return $ Left $ NotFound "Account" (tshow targetAccountId)
-        Just targetData ->
-          if targetData.accountType == External
-            then do
-              logWarn "Target account is not a regular account"
-              return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
-            else do
-              -- 3. Look up External (source) account to get its currency
-              maybeSource <- AccountRM.getAccount accountRM externalAccId
-              case maybeSource of
-                Nothing -> do
-                  logWarn $ "Source account not found: " <> displayShow externalAccId
-                  return $ Left $ NotFound "Account" (tshow externalAccId)
-                Just sourceData -> do
-                  let srcCurrency = moneyCurrency sourceData.balance
-                      tgtCurrency = moneyCurrency targetData.balance
-                  -- Income: user provides amount in target (Regular) currency
-                  resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency False Nothing $ \srcAmt tgtAmt rate ->
-                    InitiateTransfer
-                      { sourceAccountId = externalAccId,
-                        targetAccountId = targetAccountId,
-                        sourceAmount = srcAmt,
-                        targetAmount = tgtAmt,
-                        exchangeRate = rate,
-                        description = description,
-                        initiatedBy = userId,
-                        transferType = Income categoryEntryId,
-                        externalTransactionId = Nothing
-                      }
+          logWarn $ "User not found: " <> displayShow userId
+          return $ Left $ NotFound "User" (tshow userId)
+        Just userData -> do
+          let externalAccId = userData.externalAccountId
+
+          -- 2. Validate target account exists and is Regular
+          accountRM <- view accountReadModelL
+          maybeTarget <- AccountRM.getAccount accountRM targetAccountId
+          case maybeTarget of
+            Nothing -> do
+              logWarn $ "Target account not found: " <> displayShow targetAccountId
+              return $ Left $ NotFound "Account" (tshow targetAccountId)
+            Just targetData ->
+              if targetData.accountType == External
+                then do
+                  logWarn "Target account is not a regular account"
+                  return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
+                else do
+                  -- 3. Look up External (source) account to get its currency
+                  maybeSource <- AccountRM.getAccount accountRM externalAccId
+                  case maybeSource of
+                    Nothing -> do
+                      logWarn $ "Source account not found: " <> displayShow externalAccId
+                      return $ Left $ NotFound "Account" (tshow externalAccId)
+                    Just sourceData -> do
+                      let srcCurrency = moneyCurrency sourceData.balance
+                          tgtCurrency = moneyCurrency targetData.balance
+                      -- Income: user provides amount in target (Regular) currency
+                      resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency False Nothing $ \srcAmt tgtAmt rate ->
+                        InitiateTransfer
+                          { sourceAccountId = externalAccId,
+                            targetAccountId = targetAccountId,
+                            sourceAmount = srcAmt,
+                            targetAmount = tgtAmt,
+                            exchangeRate = rate,
+                            description = description,
+                            initiatedBy = userId,
+                            transferType = Income categoryEntryId,
+                            externalTransactionId = Nothing,
+                            labels = labels
+                          }
 
 -- | Initiate an expense transfer (Regular -> External account).
 --
@@ -242,25 +273,89 @@ initiateExpense ::
   UserId ->
   AccountId ->
   Money ->
-  DictionaryEntryId ->
+  CategoryId ->
+  Set LabelId ->
   Text ->
   Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount categoryEntryId description maybeTransferDate = do
+initiateExpense userId sourceAccountId amount categoryEntryId labels description maybeTransferDate = do
   logInfo "Initiating expense transfer..."
   now <- liftIO getCurrentTime
 
-  -- 1. Look up user's External account
-  userRM <- view userReadModelL
-  maybeUser <- UserRM.getUser userRM userId
-  case maybeUser of
-    Nothing -> do
-      logWarn $ "User not found: " <> displayShow userId
-      return $ Left $ NotFound "User" (tshow userId)
-    Just userData -> do
-      let externalAccId = userData.externalAccountId
+  labelValidation <- validateLabels userId labels
+  case labelValidation of
+    Left err -> pure (Left err)
+    Right () -> do
+      -- 1. Look up user's External account
+      userRM <- view userReadModelL
+      maybeUser <- UserRM.getUser userRM userId
+      case maybeUser of
+        Nothing -> do
+          logWarn $ "User not found: " <> displayShow userId
+          return $ Left $ NotFound "User" (tshow userId)
+        Just userData -> do
+          let externalAccId = userData.externalAccountId
 
-      -- 2. Validate source account exists and is Regular
+          -- 2. Validate source account exists and is Regular
+          accountRM <- view accountReadModelL
+          maybeSource <- AccountRM.getAccount accountRM sourceAccountId
+          case maybeSource of
+            Nothing -> do
+              logWarn $ "Source account not found: " <> displayShow sourceAccountId
+              return $ Left $ NotFound "Account" (tshow sourceAccountId)
+            Just sourceData ->
+              if sourceData.accountType == External
+                then do
+                  logWarn "Source account is not a regular account"
+                  return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
+                else do
+                  -- 3. Look up External (target) account to get its currency
+                  maybeTarget <- AccountRM.getAccount accountRM externalAccId
+                  case maybeTarget of
+                    Nothing -> do
+                      logWarn $ "Target account not found: " <> displayShow externalAccId
+                      return $ Left $ NotFound "Account" (tshow externalAccId)
+                    Just targetData -> do
+                      let srcCurrency = moneyCurrency sourceData.balance
+                          tgtCurrency = moneyCurrency targetData.balance
+                      -- Expense: user provides amount in source (Regular) currency
+                      resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True Nothing $ \srcAmt tgtAmt rate ->
+                        InitiateTransfer
+                          { sourceAccountId = sourceAccountId,
+                            targetAccountId = externalAccId,
+                            sourceAmount = srcAmt,
+                            targetAmount = tgtAmt,
+                            exchangeRate = rate,
+                            description = description,
+                            initiatedBy = userId,
+                            transferType = Expense categoryEntryId,
+                            externalTransactionId = Nothing,
+                            labels = labels
+                          }
+
+-- | Initiate an internal transfer (Regular -> Regular account).
+--
+-- Validates both accounts exist and are Regular, resolves cross-currency
+-- amounts, then delegates to 'initiateTransfer'.
+initiateInternalTransfer ::
+  UserId ->
+  AccountId ->
+  AccountId ->
+  Money ->
+  Set LabelId ->
+  Text ->
+  Maybe Rational ->
+  Maybe UTCTime ->
+  AppM (Either DomainError (TransactionId, TransactionData))
+initiateInternalTransfer userId sourceAccountId targetAccountId amount labels description maybeUserRate maybeTransferDate = do
+  logInfo "Initiating internal transfer..."
+  now <- liftIO getCurrentTime
+
+  labelValidation <- validateLabels userId labels
+  case labelValidation of
+    Left err -> pure (Left err)
+    Right () -> do
+      -- 1. Validate both accounts exist and are Regular
       accountRM <- view accountReadModelL
       maybeSource <- AccountRM.getAccount accountRM sourceAccountId
       case maybeSource of
@@ -273,89 +368,215 @@ initiateExpense userId sourceAccountId amount categoryEntryId description maybeT
               logWarn "Source account is not a regular account"
               return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
             else do
-              -- 3. Look up External (target) account to get its currency
-              maybeTarget <- AccountRM.getAccount accountRM externalAccId
+              maybeTarget <- AccountRM.getAccount accountRM targetAccountId
               case maybeTarget of
                 Nothing -> do
-                  logWarn $ "Target account not found: " <> displayShow externalAccId
-                  return $ Left $ NotFound "Account" (tshow externalAccId)
-                Just targetData -> do
-                  let srcCurrency = moneyCurrency sourceData.balance
-                      tgtCurrency = moneyCurrency targetData.balance
-                  -- Expense: user provides amount in source (Regular) currency
-                  resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True Nothing $ \srcAmt tgtAmt rate ->
-                    InitiateTransfer
-                      { sourceAccountId = sourceAccountId,
-                        targetAccountId = externalAccId,
-                        sourceAmount = srcAmt,
-                        targetAmount = tgtAmt,
-                        exchangeRate = rate,
-                        description = description,
-                        initiatedBy = userId,
-                        transferType = Expense categoryEntryId,
-                        externalTransactionId = Nothing
-                      }
+                  logWarn $ "Target account not found: " <> displayShow targetAccountId
+                  return $ Left $ NotFound "Account" (tshow targetAccountId)
+                Just targetData ->
+                  if targetData.accountType == External
+                    then do
+                      logWarn "Target account is not a regular account"
+                      return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
+                    else do
+                      let srcCurrency = moneyCurrency sourceData.balance
+                          tgtCurrency = moneyCurrency targetData.balance
+                      -- Internal: user provides amount in source currency
+                      resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate $ \srcAmt tgtAmt rate ->
+                        InitiateTransfer
+                          { sourceAccountId = sourceAccountId,
+                            targetAccountId = targetAccountId,
+                            sourceAmount = srcAmt,
+                            targetAmount = tgtAmt,
+                            exchangeRate = rate,
+                            description = description,
+                            initiatedBy = userId,
+                            transferType = Transfer,
+                            externalTransactionId = Nothing,
+                            labels = labels
+                          }
 
--- | Initiate an internal transfer (Regular -> Regular account).
+-- | Replace the label set on an existing completed transaction.
 --
--- Validates both accounts exist and are Regular, resolves cross-currency
--- amounts, then delegates to 'initiateTransfer'.
-initiateInternalTransfer ::
+-- Requires Editor+ access to at least one of the transaction's accounts.
+-- Validates every label id against the user's labels dictionary before
+-- dispatching the command. Aggregate-level rejections
+-- (non-Completed state, unknown transaction) are translated into
+-- 'DomainError' for the HTTP layer.
+setTransactionLabels ::
   UserId ->
-  AccountId ->
-  AccountId ->
-  Money ->
-  Text ->
-  Maybe Rational ->
-  Maybe UTCTime ->
-  AppM (Either DomainError (TransactionId, TransactionData))
-initiateInternalTransfer userId sourceAccountId targetAccountId amount description maybeUserRate maybeTransferDate = do
-  logInfo "Initiating internal transfer..."
-  now <- liftIO getCurrentTime
+  TransactionId ->
+  Set LabelId ->
+  AppM (Either DomainError TransactionData)
+setTransactionLabels userId transactionId labels = do
+  logInfo
+    $ "Setting labels on "
+    <> displayShow transactionId
+    <> " for user "
+    <> displayShow userId
+  accessResult <- ensureEditorAccess userId transactionId
+  case accessResult of
+    Left err -> pure (Left err)
+    Right _summary -> do
+      validation <- validateLabels userId labels
+      case validation of
+        Left err -> pure (Left err)
+        Right () -> do
+          let cmd =
+                SetTransactionLabelsTransactionCommand
+                  SetTransactionLabels
+                    { transactionId = transactionId,
+                      labels = labels
+                    }
+          dispatchEdit transactionId cmd
 
-  -- 1. Validate both accounts exist and are Regular
-  accountRM <- view accountReadModelL
-  maybeSource <- AccountRM.getAccount accountRM sourceAccountId
-  case maybeSource of
-    Nothing -> do
-      logWarn $ "Source account not found: " <> displayShow sourceAccountId
-      return $ Left $ NotFound "Account" (tshow sourceAccountId)
-    Just sourceData ->
-      if sourceData.accountType == External
-        then do
-          logWarn "Source account is not a regular account"
-          return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow sourceAccountId)
-        else do
-          maybeTarget <- AccountRM.getAccount accountRM targetAccountId
-          case maybeTarget of
-            Nothing -> do
-              logWarn $ "Target account not found: " <> displayShow targetAccountId
-              return $ Left $ NotFound "Account" (tshow targetAccountId)
-            Just targetData ->
-              if targetData.accountType == External
-                then do
-                  logWarn "Target account is not a regular account"
-                  return $ Left $ ValidationErr $ mkValidationError "accountId" "Account must be a regular account" (tshow targetAccountId)
-                else do
-                  let srcCurrency = moneyCurrency sourceData.balance
-                      tgtCurrency = moneyCurrency targetData.balance
-                  -- Internal: user provides amount in source currency
-                  resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate $ \srcAmt tgtAmt rate ->
-                    InitiateTransfer
-                      { sourceAccountId = sourceAccountId,
-                        targetAccountId = targetAccountId,
-                        sourceAmount = srcAmt,
-                        targetAmount = tgtAmt,
-                        exchangeRate = rate,
-                        description = description,
-                        initiatedBy = userId,
-                        transferType = Transfer,
-                        externalTransactionId = Nothing
-                      }
+-- | Change the category on an existing completed Income/Expense transaction.
+--
+-- Requires Editor+ access. Looks at the current 'TransferType' on the
+-- read model to pick the dictionary (income / expense) against which the
+-- new category id is validated. Internal transfers have no category and
+-- are rejected.
+changeTransactionCategory ::
+  UserId ->
+  TransactionId ->
+  CategoryId ->
+  AppM (Either DomainError TransactionData)
+changeTransactionCategory userId transactionId newCategory = do
+  logInfo
+    $ "Changing category on "
+    <> displayShow transactionId
+    <> " for user "
+    <> displayShow userId
+  accessResult <- ensureEditorAccess userId transactionId
+  case accessResult of
+    Left err -> pure (Left err)
+    Right summary ->
+      case pickCategoryDict summary.transferType of
+        Nothing -> pure (Left CannotChangeCategoryOnInternalTransfer)
+        Just dictId -> do
+          known <- categoryExists userId dictId newCategory
+          case known of
+            Left err -> pure (Left err)
+            Right False ->
+              pure . Left . CategoryNotFound . tshow $ unDictionaryEntryId newCategory
+            Right True -> do
+              let cmd =
+                    ChangeTransactionCategoryTransactionCommand
+                      ChangeTransactionCategory
+                        { transactionId = transactionId,
+                          newCategory = newCategory
+                        }
+              dispatchEdit transactionId cmd
 
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
 -- -----------------------------------------------------------------------------
+
+-- | Verify every id in the set exists in the user's labels dictionary.
+validateLabels ::
+  UserId ->
+  Set LabelId ->
+  AppM (Either DomainError ())
+validateLabels _ labels | Set.null labels = pure (Right ())
+validateLabels userId labels = do
+  result <- ConfigurationService.getConfigurationForUser userId
+  case result of
+    Left err -> pure (Left err)
+    Right cfg ->
+      let known = dictionaryEntryIds ConfigurationService.labelsDictId cfg
+          missing = Set.difference labels known
+       in case Set.toList missing of
+            [] -> pure (Right ())
+            (eid : _) -> pure . Left . LabelNotFound . tshow $ unDictionaryEntryId eid
+
+-- | Check whether a category id is present in the given dictionary.
+categoryExists ::
+  UserId ->
+  DictionaryId ->
+  CategoryId ->
+  AppM (Either DomainError Bool)
+categoryExists userId dictId entryId = do
+  result <- ConfigurationService.getConfigurationForUser userId
+  case result of
+    Left err -> pure (Left err)
+    Right cfg -> pure $ Right $ Set.member entryId (dictionaryEntryIds dictId cfg)
+
+-- | Enforce Editor+ access on one of the transaction's accounts and
+-- return the matching 'TransactionData' summary on success. Missing
+-- transactions surface as 'NotFound'.
+ensureEditorAccess ::
+  UserId ->
+  TransactionId ->
+  AppM (Either DomainError TransactionData)
+ensureEditorAccess userId transactionId = do
+  txnRM <- view transactionReadModelL
+  maybeSummary <- liftIO $ ReadModel.getTransaction txnRM transactionId
+  case maybeSummary of
+    Nothing -> pure $ Left $ NotFound "Transaction" (tshow transactionId)
+    Just summary -> do
+      accountRM <- view accountReadModelL
+      accessible <- AccountRM.getAccessibleAccounts accountRM userId
+      let editorAccounts =
+            Set.fromList
+              [ aid
+              | (aid, _, role) <- accessible,
+                role == Owner || role == Editor
+              ]
+          allowed =
+            Set.member summary.sourceAccountId editorAccounts
+              || Set.member summary.targetAccountId editorAccounts
+      if allowed
+        then pure (Right summary)
+        else pure $ Left $ AccountError "User does not have edit access to this transaction"
+
+-- | Dispatch an edit command (SetTransactionLabels or
+-- ChangeTransactionCategory) and return the resulting 'TransactionData'
+-- read-model entry. Aggregate-level errors are translated to
+-- 'DomainError' via 'translateTransactionError'.
+dispatchEdit ::
+  TransactionId ->
+  TransactionCommand ->
+  AppM (Either DomainError TransactionData)
+dispatchEdit transactionId cmd = do
+  writer <- view eventStoreWriterL
+  reader <- view eventStoreReaderL
+  result <-
+    liftIO
+      $ applyTransactionCommand writer reader id (unTransactionId transactionId) cmd
+  case result of
+    Left aggregateErr -> pure $ Left (translateTransactionError aggregateErr)
+    Right _ -> do
+      queried <- queryTransactionResult transactionId
+      case queried of
+        Left err -> pure (Left err)
+        Right (_, td) -> pure (Right td)
+
+-- | Translate an aggregate-local 'TransactionError' (wrapped in
+-- 'CommandHandlerError') into the public 'DomainError' surface.
+translateTransactionError ::
+  CommandHandlerError TransactionError ->
+  DomainError
+translateTransactionError (CommandRejected TxCh.CannotEditLabelsInCurrentState) =
+  CannotEditTransactionLabelsInCurrentState
+translateTransactionError (CommandRejected TxCh.CannotChangeCategoryOnInternalTransfer) =
+  CannotChangeCategoryOnInternalTransfer
+translateTransactionError other =
+  TransactionError (T.pack (show other))
+
+-- | Look up the entry ids for the given dictionary in a configuration
+-- snapshot, returning an empty set when the dictionary is missing.
+dictionaryEntryIds :: DictionaryId -> ConfigurationData -> Set DictionaryEntryId
+dictionaryEntryIds dictId cfg =
+  case Map.lookup dictId cfg.dictionaries of
+    Just dict -> Map.keysSet dict.entries
+    Nothing -> Set.empty
+
+-- | Pick the dictionary id matching the current transfer type. Internal
+-- transfers have no category and return 'Nothing'.
+pickCategoryDict :: TransferType -> Maybe DictionaryId
+pickCategoryDict (Income _) = Just ConfigurationService.incomeCategoryDictId
+pickCategoryDict (Expense _) = Just ConfigurationService.expenseCategoryDictId
+pickCategoryDict Transfer = Nothing
 
 -- | Resolve cross-currency amounts and initiate a transfer.
 --

@@ -17,6 +17,7 @@
 module Domain.Transaction.CommandHandlerSpec (spec) where
 
 import Data.Either (isLeft)
+import qualified Data.Set as Set
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types
 import Domain.Transaction
@@ -65,7 +66,8 @@ pendingTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             transferType = Transfer,
-            externalTransactionId = Nothing
+            externalTransactionId = Nothing,
+            labels = Set.empty
           }
     ]
 
@@ -83,7 +85,8 @@ completedTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             transferType = Transfer,
-            externalTransactionId = Nothing
+            externalTransactionId = Nothing,
+            labels = Set.empty
           },
       TransferCompletedTransactionEvent TransferCompleted
     ]
@@ -102,7 +105,8 @@ failedTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             transferType = Transfer,
-            externalTransactionId = Nothing
+            externalTransactionId = Nothing,
+            labels = Set.empty
           },
       TransferFailedTransactionEvent $ TransferFailed "Insufficient funds"
     ]
@@ -128,8 +132,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 500,
                     exchangeRate = Nothing,
                     description = "Payment",
+                    initiatedBy = testUserId,
                     transferType = Transfer,
-                    externalTransactionId = Nothing
+                    externalTransactionId = Nothing,
+                    labels = Set.empty
                   }
         let result = handleTransactionCommand transaction command
 
@@ -145,6 +151,36 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
               _ -> expectationFailure "Expected TransferInitiated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
+      it "Then emits TransferInitiated carrying labels and externalTransactionId when both are set" $ do
+        fromId <- mockAccountId <$> UUID.nextRandom
+        toId <- mockAccountId <$> UUID.nextRandom
+        lbl1 <- mockDictionaryEntryId <$> UUID.nextRandom
+        lbl2 <- mockDictionaryEntryId <$> UUID.nextRandom
+        let transaction = emptyTransaction
+            extTxId = unsafeExternalTransactionId "mono:stmt-42"
+            labels = Set.fromList [lbl1, lbl2]
+        let command =
+              InitiateTransferTransactionCommand
+                $ InitiateTransfer
+                  { sourceAccountId = fromId,
+                    targetAccountId = toId,
+                    sourceAmount = mockMoney 500,
+                    targetAmount = mockMoney 500,
+                    exchangeRate = Nothing,
+                    description = "Bank import",
+                    initiatedBy = testUserId,
+                    transferType = Transfer,
+                    externalTransactionId = Just extTxId,
+                    labels = labels
+                  }
+        case handleTransactionCommand transaction command of
+          Right events -> case head events of
+            TransferInitiatedTransactionEvent initiated -> do
+              initiated.externalTransactionId `shouldBe` Just extTxId
+              initiated.labels `shouldBe` labels
+            _ -> expectationFailure "Expected TransferInitiated event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
       it "Then transaction status becomes Pending" $ do
         fromId <- mockAccountId <$> UUID.nextRandom
         toId <- mockAccountId <$> UUID.nextRandom
@@ -158,8 +194,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 500,
                     exchangeRate = Nothing,
                     description = "Test",
+                    initiatedBy = testUserId,
                     transferType = Transfer,
-                    externalTransactionId = Nothing
+                    externalTransactionId = Nothing,
+                    labels = Set.empty
                   }
         let result = handleTransactionCommand transaction command
 
@@ -182,8 +220,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 500,
                     exchangeRate = Nothing,
                     description = "Self-transfer",
+                    initiatedBy = testUserId,
                     transferType = Transfer,
-                    externalTransactionId = Nothing
+                    externalTransactionId = Nothing,
+                    labels = Set.empty
                   }
         let result = handleTransactionCommand transaction command
 
@@ -203,8 +243,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 0,
                     exchangeRate = Nothing,
                     description = "Zero transfer",
+                    initiatedBy = testUserId,
                     transferType = Transfer,
-                    externalTransactionId = Nothing
+                    externalTransactionId = Nothing,
+                    labels = Set.empty
                   }
         let result = handleTransactionCommand transaction command
 
@@ -227,8 +269,10 @@ initiateTransferSpec = describe "InitiateTransfer Command" $ do
                     targetAmount = mockMoney 200,
                     exchangeRate = Nothing,
                     description = "Second attempt",
+                    initiatedBy = testUserId,
                     transferType = Transfer,
-                    externalTransactionId = Nothing
+                    externalTransactionId = Nothing,
+                    labels = Set.empty
                   }
         let result = handleTransactionCommand transaction command
 
@@ -266,7 +310,7 @@ completeTransferSpec = describe "CompleteTransfer Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer Nothing] <> events
+            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer Nothing Set.empty] <> events
             newTransaction ^. #status `shouldBe` Completed
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -325,7 +369,7 @@ failTransferSpec = describe "FailTransfer Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer Nothing] <> events
+            let newTransaction = applyEvents $ [TransferInitiatedTransactionEvent $ TransferInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId Transfer Nothing Set.empty] <> events
             newTransaction ^. #status `shouldBe` Failed "Error"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 

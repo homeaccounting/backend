@@ -22,6 +22,7 @@ module Application.ProcessManagers.TransferManagerSpec (spec) where
 
 import Application.ProcessManagers.TransferManager
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreditAccount (..), DebitAccount (..))
@@ -33,6 +34,8 @@ import Domain.Core.Types
   ( Currency (..),
     TransferType (..),
     unsafeAccountId,
+    unsafeDictionaryEntryId,
+    unsafeExternalTransactionId,
     unsafeMoney,
     unsafeTransactionId,
     unsafeUserId,
@@ -87,7 +90,32 @@ mkTransferInitiatedEvent =
             description = "Test transfer",
             by = unsafeUserId userUuid,
             transferType = Transfer,
-            externalTransactionId = Nothing
+            externalTransactionId = Nothing,
+            labels = Set.empty
+          }
+    )
+
+-- | Variant of 'mkTransferInitiatedEvent' carrying a non-empty label set
+-- and an externalTransactionId. Exercised to verify the saga is indifferent
+-- to those optional payload fields.
+mkTransferInitiatedEventWithLabelsAndExternalId :: VersionedStreamEvent AccountingEvent
+mkTransferInitiatedEventWithLabelsAndExternalId =
+  StreamEvent
+    txUuid
+    0
+    (emptyMetadata "")
+    ( TransferInitiatedEvent
+        TransferInitiated
+          { sourceAccountId = unsafeAccountId sourceAcctUuid,
+            targetAccountId = unsafeAccountId targetAcctUuid,
+            sourceAmount = unsafeMoney USD 200,
+            targetAmount = unsafeMoney USD 200,
+            exchangeRate = Nothing,
+            description = "Test transfer",
+            by = unsafeUserId userUuid,
+            transferType = Transfer,
+            externalTransactionId = Just (unsafeExternalTransactionId "mono:stmt-42"),
+            labels = Set.fromList [unsafeDictionaryEntryId (UUID.fromWords 10 0 0 1), unsafeDictionaryEntryId (UUID.fromWords 10 0 0 2)]
           }
     )
 
@@ -187,6 +215,21 @@ spec = describe "TransferManager (Saga)" $ do
             _ -> expectationFailure "Expected exactly 1 compensation effect"
         _ -> expectationFailure "Expected exactly 1 IssueCommandWithCompensation effect"
 
+    it "tracks transfers and issues DebitAccount when labels and externalTransactionId are set" $ do
+      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEventWithLabelsAndExternalId
+          effects = reactToTransferEvent stateAfterInit mkTransferInitiatedEventWithLabelsAndExternalId
+      transferCount stateAfterInit `shouldBe` 1
+      length effects `shouldBe` 1
+      case effects of
+        [IssueCommandWithCompensation targetId cmd _ _] -> do
+          targetId `shouldBe` sourceAcctUuid
+          case cmd of
+            DebitAccountCommand (DebitAccount amt txId _) -> do
+              amt `shouldBe` unsafeMoney USD 200
+              txId `shouldBe` unsafeTransactionId txUuid
+            other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
+        _ -> expectationFailure "Expected exactly 1 IssueCommandWithCompensation effect"
+
     it "is idempotent for duplicate TransferInitiated events" $ do
       let state1 = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
           state2 = handleTransferEvent state1 mkTransferInitiatedEvent
@@ -210,7 +253,8 @@ spec = describe "TransferManager (Saga)" $ do
                       description = "Bad",
                       by = unsafeUserId userUuid,
                       transferType = Transfer,
-                      externalTransactionId = Nothing
+                      externalTransactionId = Nothing,
+                      labels = Set.empty
                     }
               )
           state = handleTransferEvent emptyTransferManager badEvent
@@ -294,7 +338,8 @@ spec = describe "TransferManager (Saga)" $ do
                       description = "Backdated transfer",
                       by = unsafeUserId userUuid,
                       transferType = Transfer,
-                      externalTransactionId = Nothing
+                      externalTransactionId = Nothing,
+                      labels = Set.empty
                     }
               )
           stateAfterInit = handleTransferEvent emptyTransferManager event
@@ -328,7 +373,8 @@ spec = describe "TransferManager (Saga)" $ do
                       description = "Backdated transfer",
                       by = unsafeUserId userUuid,
                       transferType = Transfer,
-                      externalTransactionId = Nothing
+                      externalTransactionId = Nothing,
+                      labels = Set.empty
                     }
               )
           stateAfterInit = handleTransferEvent emptyTransferManager initEvent

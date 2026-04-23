@@ -34,11 +34,12 @@ import Application.ReadModels.BankImportReadModel (isImported)
 import qualified Application.ReadModels.User as UserRM
 import qualified Application.Services.TransactionService as TransactionService
 import Data.Aeson (ToJSON)
+import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
-    DictionaryEntryId,
+    CategoryId,
     TransactionId,
     TransferType (..),
     UserId,
@@ -110,7 +111,7 @@ resync ::
   BankProvider ->
   UserId ->
   [(BankAccountId, AccountId)] ->
-  DictionaryEntryId ->
+  CategoryId ->
   UTCTime ->
   UTCTime ->
   AppM ResyncResult
@@ -175,7 +176,7 @@ importTransaction ::
   BankProvider ->
   UserId ->
   [(BankAccountId, AccountId)] ->
-  DictionaryEntryId ->
+  CategoryId ->
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
 importTransaction provider userId link defaultCategory tx = do
@@ -282,5 +283,6 @@ importTransaction provider userId link defaultCategory tx = do
           description = tx.description,
           initiatedBy = userId,
           transferType = transferType,
-          externalTransactionId = Just tx.externalId
+          externalTransactionId = Just tx.externalId,
+          labels = Set.empty
         }

@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.2.4
+version:        0.2.5
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -259,12 +259,15 @@ test-suite backend-test
       Application.Services.AuthorizationServiceSpec
       Application.Services.BankImportServiceSpec
       Application.Services.ConfigurationServiceIntegrationSpec
+      Application.Services.ConfigurationServiceInUseSpec
       Application.Services.ExchangeRatePublisherSpec
+      Application.Services.TransactionServiceLabelsSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
       Domain.Configuration.CommandHandlerSpec
+      Domain.Configuration.LabelsDictionarySpec
       Domain.Configuration.ProjectionSpec
       Domain.Core.CurrencyNumericSpec
       Domain.Core.TypesPropertySpec
@@ -272,6 +275,8 @@ test-suite backend-test
       Domain.Transaction.CommandHandlerPropertySpec
       Domain.Transaction.CommandHandlerSpec
       Domain.Transaction.EventsSpec
+      Domain.Transaction.LabelsAndCategorySpec
+      Domain.Transaction.LabelsProjectionSpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Auth.TelegramSpec
@@ -284,6 +289,8 @@ test-suite backend-test
       Infrastructure.ExchangeRateIntegrationSpec
       Integration.BankImportWorkflowSpec
       Integration.ExchangeRatePersistenceSpec
+      Integration.TransactionCategoryIntegrationSpec
+      Integration.TransactionLabelsIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Testkit.Auth
@@ -291,8 +298,11 @@ test-suite backend-test
       Testkit.Generators
       Testkit.Helpers
       Testkit.InMemoryEventStore
+      Testkit.TransactionEditFixture
       Web.API.BankingAPISpec
       Web.API.TransactionAPISpec
+      Web.API.TransactionCategoryAPISpec
+      Web.API.TransactionLabelsAPISpec
       Paths_backend
   hs-source-dirs:
       test

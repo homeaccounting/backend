@@ -40,6 +40,7 @@ import Application.Services.AuthorizationService
     TransferDenialReason (..),
     canTransfer,
   )
+import qualified Data.Set as Set
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
@@ -55,6 +56,7 @@ import Domain.Core.Types
     defaultCash,
     unsafeAccountId,
     unsafeDictionaryEntryId,
+    unsafeExternalTransactionId,
     unsafeMoney,
     unsafeTransactionId,
     unsafeUserId,
@@ -192,7 +194,8 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = Transfer,
-            externalTransactionId = Nothing
+            externalTransactionId = Nothing,
+            labels = Set.empty
           }
 
   -- Step 2: Complete the transfer (simulates TransferManager behavior)
@@ -230,7 +233,8 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
             transferType = Transfer,
-            externalTransactionId = Nothing
+            externalTransactionId = Nothing,
+            labels = Set.empty
           }
 
   return txUuid
@@ -681,7 +685,8 @@ categorizedTransferSpec =
                 description = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Income testSalaryCatId,
-                externalTransactionId = Nothing
+                externalTransactionId = Nothing,
+                labels = Set.empty
               }
 
       -- Verify transaction read model has correct type
@@ -754,7 +759,8 @@ categorizedTransferSpec =
                 description = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Expense testFoodCatId,
-                externalTransactionId = Nothing
+                externalTransactionId = Nothing,
+                labels = Set.empty
               }
 
       -- Verify transaction read model has correct type
@@ -799,7 +805,8 @@ categorizedTransferSpec =
                 description = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
                 transferType = Transfer,
-                externalTransactionId = Nothing
+                externalTransactionId = Nothing,
+                labels = Set.empty
               }
 
       -- Verify transaction read model has correct type
@@ -810,3 +817,37 @@ categorizedTransferSpec =
         Just txData -> do
           txData.transferType `shouldBe` Transfer
           txData.status `shouldBe` Completed
+
+    it "completes transfer carrying labels and externalTransactionId end-to-end" $ do
+      (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
+
+      txUuid <- UUID.nextRandom
+      let writer = env.eventStoreWriter
+          reader = env.eventStoreReader
+          extTxId = unsafeExternalTransactionId "mono:stmt-abc"
+          lbl1 = unsafeDictionaryEntryId (UUID.fromWords 900 0 0 1)
+          lbl2 = unsafeDictionaryEntryId (UUID.fromWords 900 0 0 2)
+          expectedLabels = Set.fromList [lbl1, lbl2]
+      _ <-
+        applyTransactionCommand writer reader id txUuid
+          $ InitiateTransferTransactionCommand
+            InitiateTransfer
+              { sourceAccountId = unsafeAccountId acct1Uuid,
+                targetAccountId = unsafeAccountId acct2Uuid,
+                sourceAmount = unsafeMoney USD 150,
+                targetAmount = unsafeMoney USD 150,
+                exchangeRate = Nothing,
+                description = "Bank-sourced transfer",
+                initiatedBy = unsafeUserId userUuid,
+                transferType = Transfer,
+                externalTransactionId = Just extTxId,
+                labels = expectedLabels
+              }
+
+      let txReadModel = env.transactionReadModel
+      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      case maybeTx of
+        Nothing -> expectationFailure "Transfer not found in read model"
+        Just txData -> do
+          txData.status `shouldBe` Completed
+          txData.labels `shouldBe` expectedLabels

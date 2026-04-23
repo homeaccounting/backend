@@ -51,6 +51,7 @@ module Application.ReadModels.Transaction
     getAllTransactions,
     transactionExists,
     listTransactions,
+    findReferencingTransactions,
 
     -- * Helper Functions
     transactionToMap,
@@ -69,12 +70,20 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..))
 import Data.Time.Calendar (fromGregorian)
-import Domain.Core.Types (AccountId, ExchangeRate, Money, TransactionId, TransferType, mkTransactionIdSafe)
+import Domain.Core.Types (AccountId, DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransferType (..), mkTransactionIdSafe)
 import Domain.Models
-  ( AccountingEvent (TransferCompletedEvent, TransferFailedEvent, TransferInitiatedEvent),
+  ( AccountingEvent
+      ( TransactionCategoryChangedEvent,
+        TransactionLabelsSetEvent,
+        TransferCompletedEvent,
+        TransferFailedEvent,
+        TransferInitiatedEvent
+      ),
   )
 import Domain.Transaction.Events
-  ( TransferFailed (..),
+  ( TransactionCategoryChanged (..),
+    TransactionLabelsSet (..),
+    TransferFailed (..),
     TransferInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Completed, Failed, Pending))
@@ -100,7 +109,8 @@ data TransactionData
     description :: Text,
     status :: TransactionStatus,
     transferType :: TransferType,
-    date :: UTCTime
+    date :: UTCTime,
+    labels :: Set LabelId
   }
   deriving (Show, Eq, Generic)
 
@@ -273,7 +283,8 @@ processEvent summaries globalEvent =
                         description = evt.description,
                         status = Pending,
                         transferType = evt.transferType,
-                        date = eventDate
+                        date = eventDate,
+                        labels = evt.labels
                       }
                in Map.insertWith (\_ existing -> existing) transactionId newEntry summaries
         TransferCompletedEvent _evt ->
@@ -291,6 +302,29 @@ processEvent summaries globalEvent =
               Map.adjust
                 ( \summary ->
                     summary {status = Failed evt.reason}
+                )
+                transactionId
+                summaries
+        TransactionLabelsSetEvent evt ->
+          case mkTransactionIdSafe streamUuid of
+            Nothing -> summaries
+            Just transactionId ->
+              Map.adjust
+                (\summary -> (summary :: TransactionData) {labels = evt.labels})
+                transactionId
+                summaries
+        TransactionCategoryChangedEvent evt ->
+          case mkTransactionIdSafe streamUuid of
+            Nothing -> summaries
+            Just transactionId ->
+              Map.adjust
+                ( \summary ->
+                    (summary :: TransactionData)
+                      { transferType = case summary.transferType of
+                          Income _ -> Income evt.newCategory
+                          Expense _ -> Expense evt.newCategory
+                          Transfer -> Transfer
+                      }
                 )
                 transactionId
                 summaries
@@ -412,3 +446,27 @@ transactionToMap ::
   TVar TransactionReadModel ->
   m (Map TransactionId TransactionData)
 transactionToMap = getAllTransactions
+
+-- | Count transactions that reference the given dictionary entry id, either
+-- as a label (via 'TransactionData.labels') or as the categorised
+-- 'TransferType' (Income / Expense).
+--
+-- Powers the service-layer in-use check that blocks deletion of a
+-- dictionary entry while any transaction still references it. Performs a
+-- linear scan of the read model — acceptable at current personal-accounting
+-- volumes; a reverse index is a localised follow-up if measurements warrant it.
+findReferencingTransactions ::
+  (MonadIO m) =>
+  TVar TransactionReadModel ->
+  DictionaryEntryId ->
+  m Int
+findReferencingTransactions readModelTVar entryId = do
+  model <- liftIO $ readTVarIO readModelTVar
+  pure . length $ filter referencesEntry (Map.elems model.summaryData)
+  where
+    referencesEntry td =
+      Set.member entryId td.labels
+        || case td.transferType of
+          Income cid -> cid == entryId
+          Expense cid -> cid == entryId
+          Transfer -> False

@@ -27,12 +27,15 @@ module Domain.Transaction.Commands
     InitiateTransfer (..),
     CompleteTransfer (..),
     FailTransfer (..),
+    SetTransactionLabels (..),
+    ChangeTransactionCategory (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.Set (Set)
 import Data.Text (Text)
-import Domain.Core.Types (AccountId, ExchangeRate, ExternalTransactionId, Money, TransferType, UserId)
+import Domain.Core.Types (AccountId, CategoryId, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -47,7 +50,9 @@ transactionCommands :: [Name]
 transactionCommands =
   [ ''InitiateTransfer,
     ''CompleteTransfer,
-    ''FailTransfer
+    ''FailTransfer,
+    ''SetTransactionLabels,
+    ''ChangeTransactionCategory
   ]
 
 -- -----------------------------------------------------------------------------
@@ -94,7 +99,9 @@ data InitiateTransfer = InitiateTransfer
     -- | Type of transfer (Income, Expense, Transfer)
     transferType :: TransferType,
     -- | Identifier for this transaction in an external system (e.g., Monobank)
-    externalTransactionId :: Maybe ExternalTransactionId
+    externalTransactionId :: Maybe ExternalTransactionId,
+    -- | Labels to attach to the transfer (may be empty).
+    labels :: Set LabelId
   }
   deriving (Show, Eq)
 
@@ -135,6 +142,42 @@ newtype FailTransfer = FailTransfer
   }
   deriving (Show, Eq)
 
+-- | Command to replace the label set on a completed transaction.
+--
+-- Business Rules:
+--  - Transaction must be in the Completed state.
+--  - The label ids must exist in the owning user's labels dictionary
+--    (validated at the service layer, not in the pure handler).
+--
+-- Example:
+-- >>> SetTransactionLabels txId (Set.fromList [lbl1, lbl2])
+data SetTransactionLabels = SetTransactionLabels
+  { -- | The transaction whose labels are being replaced.
+    transactionId :: TransactionId,
+    -- | The new complete label set (may be empty).
+    labels :: Set LabelId
+  }
+  deriving (Show, Eq)
+
+-- | Command to change the category on a completed Income/Expense transaction.
+--
+-- Business Rules:
+--  - Transaction must be in the Completed state.
+--  - Transaction's transferType must be Income or Expense; internal
+--    transfers have no category and the command is rejected.
+--  - The new category id must exist in the income or expense dictionary
+--    (validated at the service layer, not in the pure handler).
+--
+-- Example:
+-- >>> ChangeTransactionCategory txId newCategoryId
+data ChangeTransactionCategory = ChangeTransactionCategory
+  { -- | The transaction whose category is being changed.
+    transactionId :: TransactionId,
+    -- | The new category id.
+    newCategory :: CategoryId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -143,3 +186,5 @@ newtype FailTransfer = FailTransfer
 deriveJSON defaultOptions ''InitiateTransfer
 deriveJSON defaultOptions ''CompleteTransfer
 deriveJSON defaultOptions ''FailTransfer
+deriveJSON defaultOptions ''SetTransactionLabels
+deriveJSON defaultOptions ''ChangeTransactionCategory

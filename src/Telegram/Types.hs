@@ -83,7 +83,7 @@ data ConversationState
       { sourceAccountId :: AccountId,
         targetAccountId :: AccountId
       }
-  | TransferEnterReason
+  | TransferEnterDescription
       { sourceAccountId :: AccountId,
         targetAccountId :: AccountId,
         amount :: Money
@@ -93,7 +93,7 @@ data ConversationState
   | IncomeEnterAmount
       { category :: Text
       }
-  | IncomeEnterReason
+  | IncomeEnterDescription
       { category :: Text,
         amount :: Money
       }
@@ -102,7 +102,7 @@ data ConversationState
   | ExpenseEnterAmount
       { category :: Text
       }
-  | ExpenseEnterReason
+  | ExpenseEnterDescription
       { category :: Text,
         amount :: Money
       }

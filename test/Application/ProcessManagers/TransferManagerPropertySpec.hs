@@ -15,6 +15,7 @@ module Application.ProcessManagers.TransferManagerPropertySpec (spec) where
 
 import Application.ProcessManagers.TransferManager
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.UUID as UUID
 import Domain.Account.Events
   ( AccountCredited (..),
@@ -81,7 +82,8 @@ genTransferInitiatedEvent = do
                 description = "Property test transfer",
                 by = unsafeUserId userId,
                 transferType = Transfer,
-                externalTransactionId = Nothing
+                externalTransactionId = Nothing,
+                labels = Set.empty
               }
         )
     )

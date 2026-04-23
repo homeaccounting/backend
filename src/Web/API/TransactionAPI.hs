@@ -39,6 +39,8 @@ module Web.API.TransactionAPI
     transferHandler,
     listTransactionsHandler,
     getTransactionHandler,
+    setLabelsHandler,
+    changeCategoryHandler,
   )
 where
 
@@ -46,20 +48,23 @@ import Application.ReadModels.Transaction (mkTransactionQuery)
 import qualified Application.Services.TransactionService as TransactionService
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
-import Domain.Core.Types (mkAccountId, parseCurrency)
+import Domain.Core.Types (mkAccountId, mkDictionaryEntryId, mkTransactionId, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
-  ( ExpenseRequest (..),
+  ( ChangeTransactionCategoryRequest (..),
+    ExpenseRequest (..),
     IncomeRequest (..),
     InternalTransferRequest (..),
+    SetTransactionLabelsRequest (..),
     TransactionListResponse (..),
     TransactionResponse,
     fromTransactionData,
     parseCategoryId,
+    parseLabelIds,
     toDomainMoney,
   )
 import Web.Validation (validateDateNotInFuture, validateField)
@@ -105,6 +110,22 @@ type TransactionAPI =
       :> QueryParam "from" UTCTime
       :> QueryParam "to" UTCTime
       :> Get '[JSON] TransactionListResponse
+    -- PUT /api/transactions/:id/labels - Replace the label set on a Completed transaction.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "labels"
+      :> ReqBody '[JSON] SetTransactionLabelsRequest
+      :> Put '[JSON] TransactionResponse
+    -- PUT /api/transactions/:id/category - Replace the category on a Completed Income/Expense.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "category"
+      :> ReqBody '[JSON] ChangeTransactionCategoryRequest
+      :> Put '[JSON] TransactionResponse
     -- GET /api/transactions/:id - Get transaction status (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -127,6 +148,8 @@ transactionServer =
     :<|> expenseHandler
     :<|> transferHandler
     :<|> listTransactionsHandler
+    :<|> setLabelsHandler
+    :<|> changeCategoryHandler
     :<|> getTransactionHandler
 
 -- -----------------------------------------------------------------------------
@@ -142,7 +165,8 @@ incomeHandler user request = do
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
   money <- validateField "amount" $ toDomainMoney cur request.amount
-  result <- TransactionService.initiateIncome userId accountId money categoryEntryId request.description request.date
+  labelSet <- validateField "labels" $ parseLabelIds request.labels
+  result <- TransactionService.initiateIncome userId accountId money categoryEntryId labelSet request.description request.date
   case result of
     Right (txId, summary) -> return $ fromTransactionData txId summary
     Left err -> throwDomainError err
@@ -156,7 +180,8 @@ expenseHandler user request = do
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
   money <- validateField "amount" $ toDomainMoney cur request.amount
-  result <- TransactionService.initiateExpense userId accountId money categoryEntryId request.description request.date
+  labelSet <- validateField "labels" $ parseLabelIds request.labels
+  result <- TransactionService.initiateExpense userId accountId money categoryEntryId labelSet request.description request.date
   case result of
     Right (txId, summary) -> return $ fromTransactionData txId summary
     Left err -> throwDomainError err
@@ -170,10 +195,41 @@ transferHandler user request = do
   toAccId <- validateField "targetAccountId" $ mkAccountId request.targetAccountId
   cur <- validateField "currency" $ parseCurrency request.currency
   money <- validateField "amount" $ toDomainMoney cur request.amount
+  labelSet <- validateField "labels" $ parseLabelIds request.labels
   let maybeRate = fmap toRational request.exchangeRate
-  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money request.description maybeRate request.date
+  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money labelSet request.description maybeRate request.date
   case result of
     Right (txId, summary) -> return $ fromTransactionData txId summary
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/transactions/:id/labels — replace the label
+-- set on an existing Completed transaction.
+setLabelsHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  SetTransactionLabelsRequest ->
+  AppM TransactionResponse
+setLabelsHandler user rawId req = do
+  transactionId <- validateField "id" $ mkTransactionId rawId
+  labelSet <- validateField "labels" $ parseLabelIds (Just req.labels)
+  result <- TransactionService.setTransactionLabels user.userId transactionId labelSet
+  case result of
+    Right td -> pure $ fromTransactionData transactionId td
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/transactions/:id/category — replace the
+-- category on an existing Completed Income\/Expense transaction.
+changeCategoryHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  ChangeTransactionCategoryRequest ->
+  AppM TransactionResponse
+changeCategoryHandler user rawId req = do
+  transactionId <- validateField "id" $ mkTransactionId rawId
+  categoryId <- validateField "categoryId" $ mkDictionaryEntryId req.categoryId
+  result <- TransactionService.changeTransactionCategory user.userId transactionId categoryId
+  case result of
+    Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions - list transactions visible to the caller.

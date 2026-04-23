@@ -38,7 +38,7 @@ import Domain.Core.Errors
     ValidationError (..),
   )
 import RIO
-import Servant.Server (ServerError, err400, err404, err422, errBody)
+import Servant.Server (ServerError, err400, err404, err409, err422, errBody)
 import Web.Types (ErrorResponse (..), ValidationErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
@@ -160,6 +160,76 @@ mapDomainError (FeatureDisabled feature) =
             { message = "Feature not available",
               code = "FEATURE_DISABLED",
               details = Just $ Map.singleton "feature" feature
+            }
+    }
+mapDomainError (LabelNotFound eid) =
+  err404
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Label not found",
+              code = "LABEL_NOT_FOUND",
+              details = Just $ Map.singleton "entryId" eid
+            }
+    }
+mapDomainError (CategoryNotFound eid) =
+  err404
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Category not found",
+              code = "CATEGORY_NOT_FOUND",
+              details = Just $ Map.singleton "entryId" eid
+            }
+    }
+mapDomainError (LabelInUse eid n) =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Label is referenced by existing transactions",
+              code = "LABEL_IN_USE",
+              details =
+                Just $
+                  Map.fromList
+                    [ ("entryId", eid),
+                      ("usageCount", tshow n)
+                    ]
+            }
+    }
+mapDomainError (CategoryInUse eid n) =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Category is referenced by existing transactions",
+              code = "CATEGORY_IN_USE",
+              details =
+                Just $
+                  Map.fromList
+                    [ ("entryId", eid),
+                      ("usageCount", tshow n)
+                    ]
+            }
+    }
+mapDomainError CannotEditTransactionLabelsInCurrentState =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transaction labels can only be changed after the transfer has completed",
+              code = "TRANSACTION_NOT_COMPLETED",
+              details = Nothing
+            }
+    }
+mapDomainError CannotChangeCategoryOnInternalTransfer =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Category cannot be set on an internal transfer",
+              code = "CATEGORY_NOT_APPLICABLE",
+              details = Nothing
             }
     }
 

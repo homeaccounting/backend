@@ -47,9 +47,11 @@ where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ExchangeRate, Money, TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
+import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -137,7 +139,9 @@ data Transaction = Transaction
     -- | User who initiated the transfer
     initiatedBy :: UserId,
     -- | Type of transfer (Income, Expense, Transfer)
-    transferType :: TransferType
+    transferType :: TransferType,
+    -- | Labels attached to this transaction (may be empty).
+    labels :: Set LabelId
   }
   deriving (Show, Eq)
 
@@ -179,7 +183,8 @@ transactionDefault =
       description = "",
       status = Pending,
       initiatedBy = unsafeUserId nil,
-      transferType = Income (unsafeDictionaryEntryId nil)
+      transferType = Income (unsafeDictionaryEntryId nil),
+      labels = Set.empty
     }
 
 -- -----------------------------------------------------------------------------
@@ -258,6 +263,8 @@ handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
     .~ evt.by
     & #transferType
     .~ evt.transferType
+    & #labels
+    .~ evt.labels
 handleTransactionEvent transaction (TransferCompletedTransactionEvent TransferCompleted) =
   -- Mark transaction as completed
   -- Only update if currently Pending (idempotent for other states)
@@ -270,6 +277,21 @@ handleTransactionEvent transaction (TransferFailedTransactionEvent evt) =
   case transaction ^. #status of
     Pending -> transaction & #status .~ Failed evt.reason
     _ -> transaction -- Already in terminal state, no change
+handleTransactionEvent transaction (TransactionLabelsSetTransactionEvent evt) =
+  -- Replace the label set. Valid only against Completed; treated as a
+  -- no-op in other states for defensive robustness — the command handler
+  -- is authoritative on well-formed streams.
+  case transaction ^. #status of
+    Completed -> transaction & #labels .~ evt.labels
+    _ -> transaction
+handleTransactionEvent transaction (TransactionCategoryChangedTransactionEvent evt) =
+  -- Replace the category embedded in transferType. Unreachable against
+  -- Transfer because the command handler rejects such edits.
+  let newTransferType = case transaction ^. #transferType of
+        Income _ -> Income evt.newCategory
+        Expense _ -> Expense evt.newCategory
+        Transfer -> Transfer
+   in transaction & #transferType .~ newTransferType
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

@@ -30,6 +30,7 @@ module Testkit.Generators
     genEntryName,
     genDictionaryEntry,
     genDictionary,
+    genLabelSet,
     genCreatedBy,
     genTelegramId,
     genTelegramIdentity,
@@ -52,6 +53,8 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Int (Int64)
 import Data.Ratio ((%))
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.UUID (UUID)
@@ -221,8 +224,13 @@ instance Arbitrary DictionaryEntryId where
   arbitrary = genDictionaryEntryId
 
 -- | Generate a valid DictionaryId.
+--
+-- Restricted to the three well-known ids actually used by the domain
+-- ('income-category', 'expense-category', and 'labels') so property
+-- tests don't accidentally exercise dictionary ids that no command
+-- handler knows about.
 genDictionaryId :: Gen DictionaryId
-genDictionaryId = DictionaryId <$> elements ["income-category", "expense-category", "label", "tag"]
+genDictionaryId = DictionaryId <$> elements ["income-category", "expense-category", "labels"]
 
 -- | Generate a valid EntryName.
 genEntryName :: Gen EntryName
@@ -238,6 +246,13 @@ genDictionaryEntry = DictionaryEntry <$> genDictionaryEntryId <*> genEntryName
 -- | Generate a valid Dictionary with at least one entry.
 genDictionary :: Gen Dictionary
 genDictionary = Dictionary <$> listOf1 genDictionaryEntry
+
+-- | Arbitrary label set for transaction generators, biased toward
+-- small sizes so the \"optional\" path of the labels feature stays
+-- well-covered.
+genLabelSet :: Gen (Set DictionaryEntryId)
+genLabelSet = sized $ \n ->
+  Set.fromList <$> vectorOf (min n 4) genDictionaryEntryId
 
 -- | Generate a valid CreatedBy value.
 genCreatedBy :: Gen CreatedBy

@@ -15,7 +15,7 @@ where
 import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (DictionaryEntryId, ExternalTransactionId)
+import Domain.Core.Types (CategoryId, ExternalTransactionId)
 import RIO (Bool, Either, Eq, IO, Int, Maybe, Rational, Show)
 
 -- | Identifier for an external bank account (provider-specific).
@@ -36,8 +36,8 @@ data BankProvider = BankProvider
 -- | Provider-contributed classification hint.
 -- BankImportService owns the final decision but uses this as a starting point.
 data TransactionClassification
-  = ClassifiedExpense !(Maybe DictionaryEntryId)
-  | ClassifiedIncome !(Maybe DictionaryEntryId)
+  = ClassifiedExpense !(Maybe CategoryId)
+  | ClassifiedIncome !(Maybe CategoryId)
   deriving (Show, Eq)
 
 -- | A bank account as reported by the provider.

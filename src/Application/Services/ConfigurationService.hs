@@ -33,10 +33,12 @@ module Application.Services.ConfigurationService
     -- * Well-known Dictionary IDs
     incomeCategoryDictId,
     expenseCategoryDictId,
+    labelsDictId,
   )
 where
 
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
+import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..), getUser)
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
@@ -67,6 +69,7 @@ import Domain.Core.Types
     mkConfigurationId,
     unAccountId,
     unConfigurationId,
+    unDictionaryEntryId,
     unUserId,
     unsafeDictionaryEntryId,
     unsafeEntryName,
@@ -93,6 +96,10 @@ incomeCategoryDictId = DictionaryId "income-category"
 -- | Dictionary ID for expense categories.
 expenseCategoryDictId :: DictionaryId
 expenseCategoryDictId = DictionaryId "expense-category"
+
+-- | Dictionary ID for transaction labels (optional, multi-valued per txn).
+labelsDictId :: DictionaryId
+labelsDictId = DictionaryId "labels"
 
 -- -----------------------------------------------------------------------------
 -- Deterministic UUID Generation
@@ -251,31 +258,53 @@ renameDictionaryEntry userId dictId entryId newName = do
           return $ Right ()
 
 -- | Remove an entry from a dictionary in the user's configuration.
+--
+-- Refuses with 'LabelInUse' or 'CategoryInUse' when any transaction still
+-- references the entry (either via its labels set or via the categorised
+-- 'TransferType'). The check is performed at the service layer because it
+-- depends on the transaction read model; the pure configuration command
+-- handler enforces only the aggregate-local "last-entry" rule.
 removeDictionaryEntry :: UserId -> DictionaryId -> DictionaryEntryId -> AppM (Either DomainError ())
 removeDictionaryEntry userId dictId entryId = do
   logInfo $ "Removing dictionary entry from " <> displayShow dictId <> " for user " <> displayShow userId
 
-  cloneResult <- ensureClonedConfiguration userId
-  case cloneResult of
-    Left err -> return $ Left err
-    Right configId -> do
-      let configUuid = unConfigurationId configId
-      let cmd =
-            RemoveDictionaryEntryConfigurationCommand
-              RemoveDictionaryEntry
-                { dictionaryId = dictId,
-                  entryId = entryId
-                }
-      writer <- view eventStoreWriterL
-      reader <- view eventStoreReaderL
-      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
-      case result of
-        Left err -> do
-          logError $ "RemoveDictionaryEntry rejected: " <> displayShow err
-          return $ Left $ ConfigurationError (T.pack (show err))
-        Right _ -> do
-          logInfo "Dictionary entry removed successfully"
-          return $ Right ()
+  txnRM <- view transactionReadModelL
+  usageCount <- findReferencingTransactions txnRM entryId
+  if usageCount > 0
+    then do
+      let eidText = T.pack (show (unDictionaryEntryId entryId))
+          err
+            | dictId == labelsDictId =
+                LabelInUse {entryId = eidText, usageCount = usageCount}
+            | otherwise =
+                CategoryInUse {entryId = eidText, usageCount = usageCount}
+      logWarn
+        $ "Refusing to remove dictionary entry: "
+        <> display usageCount
+        <> " transaction(s) still reference it"
+      return $ Left err
+    else do
+      cloneResult <- ensureClonedConfiguration userId
+      case cloneResult of
+        Left err -> return $ Left err
+        Right configId -> do
+          let configUuid = unConfigurationId configId
+          let cmd =
+                RemoveDictionaryEntryConfigurationCommand
+                  RemoveDictionaryEntry
+                    { dictionaryId = dictId,
+                      entryId = entryId
+                    }
+          writer <- view eventStoreWriterL
+          reader <- view eventStoreReaderL
+          result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
+          case result of
+            Left err -> do
+              logError $ "RemoveDictionaryEntry rejected: " <> displayShow err
+              return $ Left $ ConfigurationError (T.pack (show err))
+            Right _ -> do
+              logInfo "Dictionary entry removed successfully"
+              return $ Right ()
 
 -- | Seed the default system configuration if it does not already exist.
 --

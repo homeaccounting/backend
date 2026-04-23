@@ -15,6 +15,7 @@ module Domain.Transaction.EventsSpec (spec) where
 import Data.Aeson (Value (Object), decode, eitherDecode, encode)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Set as Set
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
@@ -44,6 +45,12 @@ spec = describe "TransferInitiated JSON" $ do
     (eitherDecode (encode evt) :: Either String TransferInitiated)
       `shouldBe` Right evt
 
+  it "decodes legacy payloads without labels as empty set" $ do
+    let legacy = stripKey "labels" (encode sampleEvent)
+    case eitherDecode legacy :: Either String TransferInitiated of
+      Left err -> expectationFailure $ "legacy decode failed: " <> err
+      Right decoded -> decoded.labels `shouldBe` Set.empty
+
 -- | A minimal valid 'TransferInitiated' for serialisation tests.
 sampleEvent :: TransferInitiated
 sampleEvent =
@@ -56,7 +63,8 @@ sampleEvent =
       description = "legacy test transfer",
       by = mockUserId (uuidFromInt 3),
       transferType = Income (unsafeDictionaryEntryId (uuidFromInt 4)),
-      externalTransactionId = Nothing
+      externalTransactionId = Nothing,
+      labels = Set.empty
     }
   where
     uuidFromInt :: Word64 -> UUID

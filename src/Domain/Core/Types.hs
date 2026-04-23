@@ -60,6 +60,8 @@ module Domain.Core.Types
     mkDictionaryEntryId,
     unsafeDictionaryEntryId,
     unDictionaryEntryId,
+    LabelId,
+    CategoryId,
     DictionaryId (..),
     unDictionaryId,
     EntryName,
@@ -586,6 +588,16 @@ mkDictionaryEntryId uuid
 unsafeDictionaryEntryId :: UUID -> DictionaryEntryId
 unsafeDictionaryEntryId = DictionaryEntryId
 
+-- | Alias for a label identifier. Labels reuse the same storage as
+-- dictionary entries; treating them as aliases avoids a parallel type
+-- hierarchy while keeping spec language ("labels") intact at call sites.
+type LabelId = DictionaryEntryId
+
+-- | Alias for a category identifier. Categories reuse the same storage as
+-- dictionary entries; treating them as aliases avoids a parallel type
+-- hierarchy while keeping spec language ("categories") intact at call sites.
+type CategoryId = DictionaryEntryId
+
 -- -----------------------------------------------------------------------------
 -- Dictionary Id
 -- -----------------------------------------------------------------------------
@@ -883,11 +895,11 @@ instance FromJSON AccountAccess
 
 -- | Type of transfer operation.
 --
--- Income and Expense carry a DictionaryEntryId referencing the user's
+-- Income and Expense carry a CategoryId referencing the user's
 -- configured category. Transfer (internal) has no category.
 data TransferType
-  = Income DictionaryEntryId
-  | Expense DictionaryEntryId
+  = Income CategoryId
+  | Expense CategoryId
   | Transfer
   deriving (Show, Eq, Generic)
 

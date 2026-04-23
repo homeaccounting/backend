@@ -35,7 +35,7 @@ import qualified Data.Map.Strict as Map
 import Domain.Configuration.Commands
 import Domain.Configuration.Events
 import Domain.Configuration.Projection
-import Domain.Core.Types (Dictionary (..), DictionaryEntry (..), DictionaryEntryId, DictionaryId, EntryName)
+import Domain.Core.Types (Dictionary (..), DictionaryEntry (..), DictionaryEntryId, DictionaryId (..), EntryName)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 
@@ -85,12 +85,23 @@ hasDuplicateName ename dictId config =
     Nothing -> False
     Just dict -> any (\e -> e.name == ename) dict.entries
 
--- | Check if an entry is the last entry in a dictionary.
-isLastEntry :: DictionaryId -> Configuration -> Bool
-isLastEntry dictId config =
-  case Map.lookup dictId config.dictionaries of
-    Nothing -> False
-    Just dict -> length dict.entries == 1
+-- | Dictionaries that must never become empty.
+-- income-category and expense-category are required because every Income
+-- and Expense transaction references exactly one entry.
+-- The `labels` dictionary is optional — may be emptied freely.
+requiresNonEmpty :: DictionaryId -> Bool
+requiresNonEmpty (DictionaryId "income-category") = True
+requiresNonEmpty (DictionaryId "expense-category") = True
+requiresNonEmpty _ = False
+
+-- | Check whether removing the targeted entry would empty a required dictionary.
+wouldEmptyRequiredDictionary :: DictionaryId -> Configuration -> Bool
+wouldEmptyRequiredDictionary dictId config
+  | not (requiresNonEmpty dictId) = False
+  | otherwise =
+      case Map.lookup dictId config.dictionaries of
+        Nothing -> False
+        Just dict -> length dict.entries == 1
 
 -- -----------------------------------------------------------------------------
 -- Command Handler Function
@@ -166,7 +177,7 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
   | not config.isCreated = Left ConfigurationNotCreated
   | not (dictionaryExists dictionaryId config) = Left DictionaryNotFound
   | not (entryExists entryId dictionaryId config) = Left EntryNotFound
-  | isLastEntry dictionaryId config = Left CannotRemoveLastEntry
+  | wouldEmptyRequiredDictionary dictionaryId config = Left CannotRemoveLastEntry
   | otherwise =
       Right
         [ DictionaryEntryRemovedConfigurationEvent

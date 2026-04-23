@@ -40,7 +40,7 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import Domain.Core.Types (unAccountId, unMoney)
+import Domain.Core.Types (TransferType (..), unAccountId, unMoney)
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
@@ -53,11 +53,21 @@ import Optics ((^.))
 -- -----------------------------------------------------------------------------
 
 -- | Errors that can occur when handling transaction commands.
+--
+-- These are aggregate-local errors. The service layer translates them into
+-- their 'Domain.Core.Errors.DomainError' counterparts before surfacing to
+-- the HTTP layer.
 data TransactionError
   = TransactionAlreadyInitiated
   | TransactionNotPending
   | TransferToSameAccount
   | TransferAmountNotPositive
+  | -- | SetTransactionLabels or ChangeTransactionCategory was issued against
+    -- a transaction whose status is not Completed.
+    CannotEditLabelsInCurrentState
+  | -- | ChangeTransactionCategory was issued against an internal transfer,
+    -- which has no category to change.
+    CannotChangeCategoryOnInternalTransfer
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -136,7 +146,8 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
                             description = description,
                             by = initiatedBy,
                             transferType = transferType,
-                            externalTransactionId = externalTransactionId
+                            externalTransactionId = externalTransactionId,
+                            labels = labels
                           }
                     ]
       | otherwise -> Left TransactionAlreadyInitiated
@@ -157,6 +168,33 @@ handleTransactionCommand transaction (FailTransferTransactionCommand FailTransfe
               }
         ]
     _ -> Left TransactionNotPending
+-- Handle SetTransactionLabels command
+handleTransactionCommand transaction (SetTransactionLabelsTransactionCommand SetTransactionLabels {..}) =
+  case transaction ^. #status of
+    Completed ->
+      Right
+        [ TransactionLabelsSetTransactionEvent
+            TransactionLabelsSet
+              { transactionId = transactionId,
+                labels = labels
+              }
+        ]
+    _ -> Left CannotEditLabelsInCurrentState
+-- Handle ChangeTransactionCategory command
+handleTransactionCommand transaction (ChangeTransactionCategoryTransactionCommand ChangeTransactionCategory {..}) =
+  case transaction ^. #status of
+    Completed ->
+      case transaction ^. #transferType of
+        Transfer -> Left CannotChangeCategoryOnInternalTransfer
+        _ ->
+          Right
+            [ TransactionCategoryChangedTransactionEvent
+                TransactionCategoryChanged
+                  { transactionId = transactionId,
+                    newCategory = newCategory
+                  }
+            ]
+    _ -> Left CannotEditLabelsInCurrentState
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

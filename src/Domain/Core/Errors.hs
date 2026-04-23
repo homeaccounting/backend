@@ -61,6 +61,24 @@ data DomainError
     -- translates this to a 404 so the endpoint is hidden entirely when
     -- the feature flag is off.
     FeatureDisabled Text
+  | -- | The referenced label does not exist in the user's labels dictionary.
+    LabelNotFound Text
+  | -- | The referenced category does not exist in the applicable dictionary.
+    CategoryNotFound Text
+  | -- | Cannot delete a label — still referenced by existing transactions.
+    LabelInUse
+      { entryId :: Text,
+        usageCount :: Int
+      }
+  | -- | Cannot delete a category — still referenced by existing transactions.
+    CategoryInUse
+      { entryId :: Text,
+        usageCount :: Int
+      }
+  | -- | Cannot edit labels on a transaction that is not in the Completed state.
+    CannotEditTransactionLabelsInCurrentState
+  | -- | Cannot change the category on an internal (no-category) transfer.
+    CannotChangeCategoryOnInternalTransfer
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -128,3 +146,13 @@ renderDomainError err = case err of
   NotFound ty eid -> ty <> " not found: " <> eid
   BankingError msg -> "Banking error: " <> msg
   FeatureDisabled feature -> "Feature disabled: " <> feature
+  LabelNotFound eid -> "Label not found: " <> eid
+  CategoryNotFound eid -> "Category not found: " <> eid
+  LabelInUse eid n ->
+    "Cannot delete label " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
+  CategoryInUse eid n ->
+    "Cannot delete category " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
+  CannotEditTransactionLabelsInCurrentState ->
+    "Transaction labels can only be changed after the transfer has completed"
+  CannotChangeCategoryOnInternalTransfer ->
+    "Category cannot be set on an internal transfer"
