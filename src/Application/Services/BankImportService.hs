@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -21,6 +22,7 @@
 --   - Account mapping via a caller-supplied [(BankAccountId, AccountId)] list
 --   - Currency conversion from numeric codes
 --   - Transaction classification (income/expense)
+--   - MCC→CategoryId resolution from per-user banking configuration
 --   - Transfer command creation and delegation to TransactionService
 module Application.Services.BankImportService
   ( resync,
@@ -31,20 +33,27 @@ module Application.Services.BankImportService
 where
 
 import Application.ReadModels.BankImportReadModel (isImported)
+import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import qualified Application.ReadModels.User as UserRM
+import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
 import Data.Aeson (ToJSON)
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime)
+import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
+import Domain.Configuration.Projection (BankingConfiguration (..))
 import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
     CategoryId,
+    MCC,
     TransactionId,
     TransferType (..),
     UserId,
     currencyFromNumericCode,
     mkMoney,
+    unEntryName,
   )
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Eventium (EventMetadata (..))
@@ -111,14 +120,13 @@ resync ::
   BankProvider ->
   UserId ->
   [(BankAccountId, AccountId)] ->
-  CategoryId ->
   UTCTime ->
   UTCTime ->
   AppM ResyncResult
-resync provider userId link defaultCategory fromTime toTime =
+resync provider userId accountLink fromTime toTime =
   withUserLock userId $ do
     logInfo $ "Resyncing bank transactions for user " <> displayShow userId
-    accountResults <- forM link processAccount
+    accountResults <- forM accountLink processAccount
     pure (ResyncResult {accounts = accountResults})
   where
     processAccount (extAccId, localAccId) = do
@@ -148,7 +156,7 @@ resync provider userId link defaultCategory fromTime toTime =
         <> displayShow (length txns)
         <> " transactions for account "
         <> display extAccId
-      perTx <- forM txns (importTransaction provider userId link defaultCategory)
+      perTx <- forM txns (importTransaction provider userId accountLink)
       let (errs, oks) = partitionEithers perTx
           importedIds = catMaybes oks
           skippedCount = length oks - length importedIds
@@ -161,6 +169,102 @@ resync provider userId link defaultCategory fromTime toTime =
             failures = map renderDomainError errs
           }
 
+-- | How the resolver arrived at its 'CategoryId'.
+--
+-- Exposed alongside the resolved id so the caller can log the provenance
+-- (MCC hit vs fallback) without re-deriving it.
+data CategoryResolution
+  = -- | An MCC present on the transaction matched the user's MCC map.
+    MccHit !MCC
+  | -- | Fell back to the direction-appropriate default category. Carries
+    --   the transaction's MCC (if any) so the caller can spot unmapped
+    --   MCCs worth adding to the map.
+    DefaultFallback !(Maybe MCC)
+  deriving (Show, Eq)
+
+-- | Resolve the category for a transaction from the user's banking configuration.
+--
+-- Resolution order:
+--   1. For expenses: look up tx.mcc in mccExpenseCategoryMap; verify the hit
+--      exists in the expense dictionary. Income always skips the MCC map.
+--   2. Fall back to the direction-appropriate banking default category.
+--   3. If no default is configured, return a 'BankingError'.
+resolveCategory ::
+  BankingConfiguration ->
+  ConfigurationData ->
+  TransactionClassification ->
+  Maybe MCC ->
+  Either DomainError (CategoryId, CategoryResolution)
+resolveCategory banking cfg direction maybeMcc =
+  let (dictId, deflt) = case direction of
+        ClassifiedIncome -> (incomeCategoryDictId, banking.defaultIncomeCategory)
+        ClassifiedExpense -> (expenseCategoryDictId, banking.defaultExpenseCategory)
+      dictEntries =
+        maybe Map.empty (.entries) (Map.lookup dictId cfg.dictionaries)
+      mccHit = case direction of
+        ClassifiedExpense -> maybeMcc >>= \m -> (m,) <$> Map.lookup m banking.mccExpenseCategoryMap
+        ClassifiedIncome -> Nothing
+      existsInDict eid = Map.member eid dictEntries
+   in case mccHit of
+        Just (mcc, eid) | existsInDict eid -> Right (eid, MccHit mcc)
+        _ -> case deflt of
+          Just eid -> Right (eid, DefaultFallback maybeMcc)
+          Nothing ->
+            Left
+              $ BankingError
+              $ "No banking "
+              <> directionName direction
+              <> " category configured"
+  where
+    directionName ClassifiedIncome = "income"
+    directionName ClassifiedExpense = "expense"
+
+-- | Emit a grep-friendly structured log line recording how a bank transaction
+--   was categorised: its MCC, the resolution path (MCC hit vs default
+--   fallback), the resolved category id and its dictionary name.
+--
+-- Lets an operator grep for @resolution=DefaultFallback:unmapped-mcc@ to
+-- surface MCCs worth adding to the user's map, or for a specific @mcc=…@
+-- to audit individual decisions.
+logCategoryResolution ::
+  BankTransaction ->
+  TransactionClassification ->
+  ConfigurationData ->
+  CategoryId ->
+  CategoryResolution ->
+  AppM ()
+logCategoryResolution tx direction cfg categoryId resolution =
+  logInfo
+    $ "Category resolved tx="
+    <> display tx.externalId
+    <> " mcc="
+    <> display mccField
+    <> " resolution="
+    <> display resolutionTag
+    <> " category="
+    <> display categoryName
+    <> " merchant="
+    <> display tx.description
+  where
+    dictId = case direction of
+      ClassifiedIncome -> incomeCategoryDictId
+      ClassifiedExpense -> expenseCategoryDictId
+    categoryName =
+      maybe "<unknown>" unEntryName
+        $ Map.lookup dictId cfg.dictionaries
+        >>= Map.lookup categoryId
+        . (.entries)
+    resolutionTag :: Text
+    resolutionTag = case resolution of
+      MccHit _ -> "MccHit"
+      DefaultFallback (Just _) -> "DefaultFallback:unmapped-mcc"
+      DefaultFallback Nothing -> "DefaultFallback:no-mcc"
+    mccField :: Text
+    mccField = case resolution of
+      MccHit m -> m
+      DefaultFallback (Just m) -> m
+      DefaultFallback Nothing -> "none"
+
 -- | Core import logic for a single bank transaction.
 --
 -- Flow:
@@ -171,15 +275,15 @@ resync provider userId link defaultCategory fromTime toTime =
 --   5. Convert currency from numeric code
 --   6. Take absolute value of major-unit amount
 --   7. Classify transaction (income/expense)
---   8. Create and execute InitiateTransfer command
+--   8. Resolve category from user's banking configuration
+--   9. Create and execute InitiateTransfer command
 importTransaction ::
   BankProvider ->
   UserId ->
   [(BankAccountId, AccountId)] ->
-  CategoryId ->
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
-importTransaction provider userId link defaultCategory tx = do
+importTransaction provider userId accountLink tx = do
   -- 1. Skip hold transactions
   if tx.hold
     then do
@@ -193,7 +297,7 @@ importTransaction provider userId link defaultCategory tx = do
         then do
           logDebug $ "Skipping already-imported transaction: " <> display tx.externalId
           pure (Right Nothing)
-        else case lookup tx.accountId link of
+        else case lookup tx.accountId accountLink of
           -- 3. Match external account to local account
           Nothing -> do
             logWarn $ "No account mapping for external account: " <> display tx.accountId
@@ -228,31 +332,47 @@ importTransaction provider userId link defaultCategory tx = do
                         -- 2026-04-16) for the rationale.
                         logCrossCurrencyRate
 
-                        -- 8. Classify transaction
-                        let (sourceAccId, targetAccId, transferType) =
-                              classifyEndpoints localAccId externalAccId
+                        -- 8. Classify transaction direction
+                        let direction = provider.classifyTransaction tx
 
-                            -- 9. Create InitiateTransfer command. Phase 1 always sets
-                            -- exchangeRate = Nothing and sourceAmount == targetAmount — see
-                            -- docs/specs/2026-04-10-bank-integration-design.md
-                            -- (amendment 2026-04-16).
-                            cmd = buildTransferCmd sourceAccId targetAccId money transferType
-
-                            -- 10. Metadata enricher (business timestamp).
-                            -- Note: correlationId not set — external IDs are opaque strings,
-                            -- not UUIDs. Tracing uses externalTransactionId on the event
-                            -- instead.
-                            enricher m = m {occurredAt = Just tx.time}
-
-                        -- 11. Execute transfer
-                        result <- TransactionService.initiateTransfer enricher cmd
-                        case result of
+                        -- 9. Resolve category from user's banking configuration
+                        cfgResult <- ConfigurationService.getConfigurationForUser userId
+                        case cfgResult of
                           Left err -> do
-                            logError $ "Failed to import transaction " <> display tx.externalId <> ": " <> displayShow err
+                            logWarn $ "Failed to load configuration for user " <> displayShow userId <> ": " <> displayShow err
                             pure (Left err)
-                          Right (txId, _) -> do
-                            logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
-                            pure (Right (Just txId))
+                          Right cfg -> do
+                            let categoryResult = resolveCategory cfg.banking cfg direction tx.mcc
+                            case categoryResult of
+                              Left err -> do
+                                logWarn $ "Category resolution failed for tx " <> display tx.externalId <> ": " <> displayShow err
+                                pure (Left err)
+                              Right (categoryId, resolution) -> do
+                                logCategoryResolution tx direction cfg categoryId resolution
+                                let (sourceAccId, targetAccId, transferType) =
+                                      classifyEndpoints localAccId externalAccId direction categoryId
+
+                                    -- 10. Create InitiateTransfer command. Phase 1 always sets
+                                    -- exchangeRate = Nothing and sourceAmount == targetAmount — see
+                                    -- docs/specs/2026-04-10-bank-integration-design.md
+                                    -- (amendment 2026-04-16).
+                                    cmd = buildTransferCmd sourceAccId targetAccId money transferType
+
+                                    -- 11. Metadata enricher (business timestamp).
+                                    -- Note: correlationId not set — external IDs are opaque strings,
+                                    -- not UUIDs. Tracing uses externalTransactionId on the event
+                                    -- instead.
+                                    enricher m = m {occurredAt = Just tx.time}
+
+                                -- 12. Execute transfer
+                                result <- TransactionService.initiateTransfer enricher cmd
+                                case result of
+                                  Left err -> do
+                                    logError $ "Failed to import transaction " <> display tx.externalId <> ": " <> displayShow err
+                                    pure (Left err)
+                                  Right (txId, _) -> do
+                                    logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
+                                    pure (Right (Just txId))
   where
     logCrossCurrencyRate = case tx.originalAmount of
       Nothing -> pure () -- same currency
@@ -266,12 +386,12 @@ importTransaction provider userId link defaultCategory tx = do
               <> displayShow rate
               <> " (not persisted in Phase 1)"
 
-    classifyEndpoints localAccId externalAccId =
-      case provider.classifyTransaction tx of
-        ClassifiedExpense maybeCat ->
-          (localAccId, externalAccId, Expense (fromMaybe defaultCategory maybeCat))
-        ClassifiedIncome maybeCat ->
-          (externalAccId, localAccId, Income (fromMaybe defaultCategory maybeCat))
+    classifyEndpoints localAccId externalAccId direction categoryId =
+      case direction of
+        ClassifiedExpense ->
+          (localAccId, externalAccId, Expense categoryId)
+        ClassifiedIncome ->
+          (externalAccId, localAccId, Income categoryId)
 
     buildTransferCmd sourceAccId targetAccId money transferType =
       InitiateTransfer

@@ -253,6 +253,17 @@ deploy-rollback sha:
     ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
       "cd /opt/backend && sed -i 's/BACKEND_TAG=.*/BACKEND_TAG={{sha}}/' .env && docker compose pull && docker compose up -d"
 
+# Recreate the database on the deploy server (DESTRUCTIVE — wipes postgres_data volume)
+deploy-db-recreate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "infra/deploy.env"
+    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
+    read -r -p "⚠️  About to DROP the database on $DEPLOY_HOST. Continue? [y/N] " ans
+    [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
+    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+      "cd /opt/backend && docker compose down && docker volume rm backend_postgres_data && docker compose up -d"
+
 # Run setup script on a fresh server
 infra-setup:
     #!/usr/bin/env bash

@@ -54,6 +54,7 @@ library
       Domain.Configuration
       Domain.Configuration.CommandHandler
       Domain.Configuration.Commands
+      Domain.Configuration.Defaults
       Domain.Configuration.Errors
       Domain.Configuration.Events
       Domain.Configuration.Projection
@@ -84,6 +85,7 @@ library
       Infrastructure.Banking.Monobank
       Infrastructure.Banking.Monobank.Internal
       Infrastructure.Banking.Provider
+      Infrastructure.Bootstrap
       Infrastructure.Config
       Infrastructure.Database
       Infrastructure.Eventium
@@ -260,6 +262,7 @@ test-suite backend-test
       Application.Services.BankImportServiceSpec
       Application.Services.ConfigurationServiceIntegrationSpec
       Application.Services.ConfigurationServiceInUseSpec
+      Application.Services.ConfigurationServiceSpec
       Application.Services.ExchangeRatePublisherSpec
       Application.Services.TransactionServiceLabelsSpec
       Application.Services.TransactionServiceSpec
@@ -267,6 +270,7 @@ test-suite backend-test
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
       Domain.Configuration.CommandHandlerSpec
+      Domain.Configuration.DefaultsSpec
       Domain.Configuration.LabelsDictionarySpec
       Domain.Configuration.ProjectionSpec
       Domain.Core.CurrencyNumericSpec
@@ -293,6 +297,7 @@ test-suite backend-test
       Integration.TransactionLabelsIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
+      Telegram.FormattingSpec
       Testkit.Auth
       Testkit.BankingHelpers
       Testkit.Generators
@@ -300,6 +305,7 @@ test-suite backend-test
       Testkit.InMemoryEventStore
       Testkit.TransactionEditFixture
       Web.API.BankingAPISpec
+      Web.API.ConfigurationBankingAPISpec
       Web.API.TransactionAPISpec
       Web.API.TransactionCategoryAPISpec
       Web.API.TransactionLabelsAPISpec

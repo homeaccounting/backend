@@ -60,7 +60,7 @@ exchangeRateNamespace :: UUID
 exchangeRateNamespace =
   UUID5.generateNamed
     UUID5.namespaceURL
-    (BS.unpack $ encodeUtf8 "https://homeaccounting.app/exchange-rate")
+    (BS.unpack $ encodeUtf8 "homeaccounting/exchange-rate")
 
 -- | Deterministic stream UUID for a given provider name.
 --

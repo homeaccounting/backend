@@ -63,7 +63,6 @@ import Domain.Account.Events
 import Domain.Core.Types
   ( AccountAccess (..),
     AccountRole (..),
-    AccountSubtype,
     AccountType (..),
     Money,
     UserId,

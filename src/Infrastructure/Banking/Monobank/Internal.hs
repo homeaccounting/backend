@@ -16,8 +16,8 @@ module Infrastructure.Banking.Monobank.Internal
 where
 
 import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
-import Data.Int (Int32, Int64)
 import Data.Ratio ((%))
+import qualified Data.Text as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Domain.Core.Types (mkExternalTransactionId)
 import Infrastructure.Banking.Provider
@@ -115,7 +115,7 @@ toProviderTransaction accId ms =
                 currencyCode = ms.stmtCurrencyCode,
                 description = ms.stmtDescription,
                 hold = ms.stmtHold,
-                mcc = if ms.stmtMcc == 0 then Nothing else Just ms.stmtMcc,
+                mcc = if ms.stmtMcc == 0 then Nothing else Just (T.pack (show ms.stmtMcc)),
                 originalAmount = maybeOriginal,
                 notes = ms.stmtComment,
                 categoryHint = Nothing

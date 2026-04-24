@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -44,10 +45,9 @@ import Domain.Models
   ( AccountingCommand (..),
     AccountingEvent (..),
   )
-import Domain.Transaction.Commands (CompleteTransfer (..), FailTransfer (..))
+import Domain.Transaction.Commands (FailTransfer (..))
 import Domain.Transaction.Events (TransferCompleted (..), TransferInitiated (..))
 import Eventium (EventMetadata (..), ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
-import qualified Eventium (EventMetadata (occurredAt))
 import Optics ((^.))
 import RIO hiding (view, (^.))
 import Test.Hspec
@@ -59,6 +59,10 @@ import Test.Hspec
 -- | Empty transfer manager for testing.
 emptyTransferManager :: TransferManager
 emptyTransferManager = TransferManager Map.empty
+
+-- | Set @occurredAt@ on an 'EventMetadata' without field-selector ambiguity.
+withOccurredAt :: UTCTime -> EventMetadata -> EventMetadata
+withOccurredAt t EventMetadata {..} = EventMetadata {occurredAt = Just t, ..}
 
 -- | Fixed UUIDs for deterministic testing.
 txUuid :: UUID.UUID
@@ -322,7 +326,7 @@ spec = describe "TransferManager (Saga)" $ do
   describe "occurredAt Propagation" $ do
     it "propagates occurredAt from TransferInitiated to saga effects" $ do
       let pastTime = UTCTime (fromGregorian 2025 3 15) 0
-          metadata = (emptyMetadata "") {Eventium.occurredAt = Just pastTime}
+          metadata = withOccurredAt pastTime (emptyMetadata "")
           event =
             StreamEvent
               txUuid
@@ -357,7 +361,7 @@ spec = describe "TransferManager (Saga)" $ do
 
     it "propagates occurredAt from TransferData to AccountDebited reactions" $ do
       let pastTime = UTCTime (fromGregorian 2025 3 15) 0
-          metadata = (emptyMetadata "") {Eventium.occurredAt = Just pastTime}
+          metadata = withOccurredAt pastTime (emptyMetadata "")
           initEvent =
             StreamEvent
               txUuid

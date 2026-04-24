@@ -24,17 +24,24 @@ import Application.Services.BankImportService
     ResyncResult (..),
     resync,
   )
+import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Control.Concurrent.STM as STM
 import Data.List (nubBy)
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Configuration.Defaults
+  ( DefaultEntry (..),
+    ExpenseDefaults (..),
+    IncomeDefaults (..),
+    expense,
+    income,
+  )
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     Currency (..),
-    DictionaryEntryId,
     ExternalTransactionId,
     TransferType (..),
     UserId,
@@ -59,7 +66,6 @@ import Test.QuickCheck (NonEmptyList (..), Positive (..), ioProperty, (===))
 import Testkit.BankingHelpers (mkSameCurrencyBankTx)
 import Testkit.Helpers
   ( fromRight',
-    mockDictionaryEntryId,
     mockMoneyWith,
     mockUserId,
   )
@@ -85,12 +91,6 @@ testUserUuid = UUID.fromWords 10 0 0 0
 testUserId :: UserId
 testUserId = mockUserId testUserUuid
 
-testDefaultCategoryUuid :: UUID
-testDefaultCategoryUuid = UUID.fromWords 40 0 0 0
-
-testDefaultCategory :: DictionaryEntryId
-testDefaultCategory = mockDictionaryEntryId testDefaultCategoryUuid
-
 testTime :: UTCTime
 testTime = UTCTime (fromGregorian 2026 4 10) (secondsToDiffTime 43200)
 
@@ -115,8 +115,8 @@ mockProvider statements =
       registerWebhook = \_ -> return $ Right (),
       classifyTransaction = \tx ->
         if tx.amount >= 0
-          then ClassifiedIncome Nothing
-          else ClassifiedExpense Nothing
+          then ClassifiedIncome
+          else ClassifiedExpense
     }
 
 -- | Create a bank transaction for testing. Amount is in major units.
@@ -162,6 +162,9 @@ mkHoldTransaction amount extId =
 setupTestEnv :: IO (AppEnv, AccountId, AccountId, [(BankAccountId, AccountId)])
 setupTestEnv = do
   env <- createTestAppEnvWithProcessManager
+
+  -- Seed default configuration (provides MCC map and banking defaults)
+  runAppM env ConfigurationService.seedDefaultConfiguration
 
   -- Create accounts via AccountService
   (externalAccId, bankAccId) <- runAppM env $ do
@@ -236,7 +239,7 @@ spec = describe "Bank Import Workflow" $ do
         provider = mockProvider statements
 
     -- First resync: should import 2 transactions (hold skipped)
-    result1 <- runAppM env $ resync provider testUserId accountLink testDefaultCategory testFromTime testToTime
+    result1 <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
     let importedIds = concatMap (.imported) result1.accounts
     length importedIds `shouldBe` 2
 
@@ -249,7 +252,8 @@ spec = describe "Bank Import Workflow" $ do
         expenseData.sourceAccountId `shouldBe` bankAccId
         expenseData.targetAccountId `shouldBe` externalAccId
         expenseData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 50)
-        expenseData.transferType `shouldBe` Expense testDefaultCategory
+        -- No MCC on tx → falls back to defaultExpenseCategory (expense.other)
+        expenseData.transferType `shouldBe` Expense expense.other.entryId
         expenseData.description `shouldBe` "Test transaction"
         expenseData.date `shouldBe` testTime
 
@@ -258,12 +262,13 @@ spec = describe "Bank Import Workflow" $ do
         incomeData.sourceAccountId `shouldBe` externalAccId
         incomeData.targetAccountId `shouldBe` bankAccId
         incomeData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 100)
-        incomeData.transferType `shouldBe` Income testDefaultCategory
+        -- Income always uses defaultIncomeCategory (income.other)
+        incomeData.transferType `shouldBe` Income income.other.entryId
         incomeData.description `shouldBe` "Test transaction"
         incomeData.date `shouldBe` testTime
 
         -- Second resync (dedup): same statements should produce no new imports
-        result2 <- runAppM env $ resync provider testUserId accountLink testDefaultCategory testFromTime testToTime
+        result2 <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
         concatMap (.imported) result2.accounts `shouldBe` []
         concatMap (.failures) result2.accounts `shouldBe` []
       _ -> expectationFailure $ "Expected exactly 2 imported IDs, got " <> show (length importedIds)
@@ -279,7 +284,7 @@ spec = describe "Bank Import Workflow" $ do
           ]
         provider = mockProvider statements
 
-    result <- runAppM env $ resync provider testUserId accountLink testDefaultCategory testFromTime testToTime
+    result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
     concatMap (.imported) result.accounts `shouldBe` []
     concatMap (.failures) result.accounts `shouldBe` []
 
@@ -299,7 +304,7 @@ spec = describe "Bank Import Workflow" $ do
           provider = mockProvider txs
           runOnce =
             runAppM env
-              $ resync provider testUserId accountLink testDefaultCategory testFromTime testToTime
+              $ resync provider testUserId accountLink testFromTime testToTime
           extIdOf :: BankTransaction -> ExternalTransactionId
           extIdOf t = t.externalId
           expected = length (nubBy ((==) `on` extIdOf) txs)

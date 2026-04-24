@@ -76,31 +76,31 @@ spec = describe "Monobank Provider" $ do
         classify = provider.classifyTransaction
 
     it "classifies MCC 4829 with negative amount as Expense"
-      $ classify (mkTx (Just 4829) (-10))
-      `shouldBe` ClassifiedExpense Nothing
+      $ classify (mkTx (Just "4829") (-10))
+      `shouldBe` ClassifiedExpense
 
     it "classifies MCC 4829 with positive amount as Income"
-      $ classify (mkTx (Just 4829) 10)
-      `shouldBe` ClassifiedIncome Nothing
+      $ classify (mkTx (Just "4829") 10)
+      `shouldBe` ClassifiedIncome
 
     it "classifies positive amount as Income"
-      $ classify (mkTx (Just 5411) 50)
-      `shouldBe` ClassifiedIncome Nothing
+      $ classify (mkTx (Just "5411") 50)
+      `shouldBe` ClassifiedIncome
 
     it "classifies negative amount as Expense"
-      $ classify (mkTx (Just 5411) (-30))
-      `shouldBe` ClassifiedExpense Nothing
+      $ classify (mkTx (Just "5411") (-30))
+      `shouldBe` ClassifiedExpense
 
     it "classifies zero MCC negative as Expense"
-      $ classify (mkTx (Just 0) (-1))
-      `shouldBe` ClassifiedExpense Nothing
+      $ classify (mkTx Nothing (-1))
+      `shouldBe` ClassifiedExpense
 
     it "classifies no MCC positive as Income"
       $ classify (mkTx Nothing 1)
-      `shouldBe` ClassifiedIncome Nothing
+      `shouldBe` ClassifiedIncome
 
 -- | Helper to build a minimal BankTransaction for classification testing.
-mkTx :: Maybe Int32 -> Rational -> BankTransaction
+mkTx :: Maybe Text -> Rational -> BankTransaction
 mkTx mccVal amt =
   BankTransaction
     { externalId = unsafeExternalTransactionId "test-tx",

@@ -93,6 +93,7 @@ import Infrastructure.App
     runAppM,
   )
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
+import Infrastructure.Bootstrap (configureProcess)
 import Infrastructure.Config
   ( AppConfig (..),
     ServerConfig (..),
@@ -151,6 +152,10 @@ import Web.Server (runServer)
 -- >>> -- Starts the application with default configuration
 main :: IO ()
 main = do
+  -- Process-level IO setup (stdout/stderr encoding today; see module).
+  -- Must run before any logger or handle write.
+  configureProcess
+
   -- Parse command-line arguments
   args <- getArgs
   configPath <- getConfigPath args

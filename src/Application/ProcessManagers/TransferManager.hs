@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- |
@@ -69,7 +70,6 @@ import Eventium
     TypeEmbedding (..),
     VersionedStreamEvent,
   )
-import qualified Eventium (EventMetadata (occurredAt))
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
 
 -- | Extract the embedding function from a 'TypeEmbedding'.
@@ -188,8 +188,12 @@ handleTransferEvent manager _ = manager
 -- | Build a 'MetadataEnricher' that sets @occurredAt@ when a backdated
 -- timestamp is present. Returns 'id' when no backdating is needed.
 mkEnricher :: Maybe UTCTime -> MetadataEnricher
-mkEnricher (Just t) = \m -> m {Eventium.occurredAt = Just t}
+mkEnricher (Just t) = setOccurredAt (Just t)
 mkEnricher Nothing = id
+
+-- | Set the @occurredAt@ field on 'EventMetadata' without ambiguity.
+setOccurredAt :: Maybe UTCTime -> EventMetadata -> EventMetadata
+setOccurredAt ts EventMetadata {..} = EventMetadata {occurredAt = ts, ..}
 
 -- -----------------------------------------------------------------------------
 -- React Function (pure command generation)

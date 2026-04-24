@@ -15,7 +15,11 @@
 --   - ChangeDefaultCurrency: Configuration must exist
 --   - AddDictionaryEntry: Configuration must exist, no duplicate entry names in same dictionary
 --   - RenameDictionaryEntry: Configuration must exist, dictionary and entry must exist, no duplicate names
---   - RemoveDictionaryEntry: Configuration must exist, dictionary and entry must exist, cannot remove last entry
+--   - RemoveDictionaryEntry: Configuration must exist, dictionary and entry must exist, cannot remove last entry,
+--       cannot remove entry set as banking default or referenced by MCC map
+--   - SetBankingDefaultIncomeCategory: Category must exist in income-category dictionary
+--   - SetBankingDefaultExpenseCategory: Category must exist in expense-category dictionary
+--   - SetBankingMccExpenseCategoryMap: All map values must exist in expense-category dictionary
 module Domain.Configuration.CommandHandler
   ( -- * Command Sum Type
     ConfigurationCommand (..),
@@ -33,9 +37,10 @@ where
 
 import qualified Data.Map.Strict as Map
 import Domain.Configuration.Commands
+import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Events
 import Domain.Configuration.Projection
-import Domain.Core.Types (Dictionary (..), DictionaryEntry (..), DictionaryEntryId, DictionaryId (..), EntryName)
+import Domain.Core.Types (CategoryId, Dictionary (..), DictionaryEntry (..), DictionaryEntryId, DictionaryId (..), EntryName)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 
@@ -51,6 +56,9 @@ data ConfigurationError
   | EntryNotFound
   | DuplicateEntryName
   | CannotRemoveLastEntry
+  | EntryNotInDictionary
+  | EntryIsBankingDefault
+  | EntryIsInMccMap
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -102,6 +110,25 @@ wouldEmptyRequiredDictionary dictId config
       case Map.lookup dictId config.dictionaries of
         Nothing -> False
         Just dict -> length dict.entries == 1
+
+-- | Reject the command if the given entry is not a member of the given dictionary.
+requireEntryIn :: DictionaryId -> CategoryId -> Configuration -> Either ConfigurationError ()
+requireEntryIn dictId entryId config =
+  case Map.lookup dictId config.dictionaries of
+    Nothing -> Left EntryNotInDictionary
+    Just dict
+      | any (\e -> e.entryId == entryId) dict.entries -> Right ()
+      | otherwise -> Left EntryNotInDictionary
+
+-- | Check if an entry is currently set as a banking default category.
+isBankingDefault :: CategoryId -> Configuration -> Bool
+isBankingDefault eid config =
+  config.banking.defaultIncomeCategory == Just eid
+    || config.banking.defaultExpenseCategory == Just eid
+
+-- | Check if an entry is referenced as a value in the banking MCC expense category map.
+isInMccMap :: CategoryId -> Configuration -> Bool
+isInMccMap eid config = eid `elem` Map.elems config.banking.mccExpenseCategoryMap
 
 -- -----------------------------------------------------------------------------
 -- Command Handler Function
@@ -178,6 +205,8 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
   | not (dictionaryExists dictionaryId config) = Left DictionaryNotFound
   | not (entryExists entryId dictionaryId config) = Left EntryNotFound
   | wouldEmptyRequiredDictionary dictionaryId config = Left CannotRemoveLastEntry
+  | isBankingDefault entryId config = Left EntryIsBankingDefault
+  | isInMccMap entryId config = Left EntryIsInMccMap
   | otherwise =
       Right
         [ DictionaryEntryRemovedConfigurationEvent
@@ -186,6 +215,33 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
                 entryId = entryId
               }
         ]
+-- Handle SetBankingDefaultIncomeCategory command
+handleConfigurationCommand config (SetBankingDefaultIncomeCategoryConfigurationCommand SetBankingDefaultIncomeCategory {..}) = do
+  requireEntryIn incomeCategoryDictId categoryId config
+  Right
+    [ BankingDefaultIncomeCategorySetConfigurationEvent
+        BankingDefaultIncomeCategorySet
+          { categoryId = categoryId
+          }
+    ]
+-- Handle SetBankingDefaultExpenseCategory command
+handleConfigurationCommand config (SetBankingDefaultExpenseCategoryConfigurationCommand SetBankingDefaultExpenseCategory {..}) = do
+  requireEntryIn expenseCategoryDictId categoryId config
+  Right
+    [ BankingDefaultExpenseCategorySetConfigurationEvent
+        BankingDefaultExpenseCategorySet
+          { categoryId = categoryId
+          }
+    ]
+-- Handle SetBankingMccExpenseCategoryMap command
+handleConfigurationCommand config (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {..}) = do
+  mapM_ (\cid -> requireEntryIn expenseCategoryDictId cid config) (Map.elems mapping)
+  Right
+    [ BankingMccExpenseCategoryMapSetConfigurationEvent
+        BankingMccExpenseCategoryMapSet
+          { mapping = mapping
+          }
+    ]
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

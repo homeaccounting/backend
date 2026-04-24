@@ -18,6 +18,7 @@
 --   GET    /api/users/me/configuration                                       - Get my configuration
 --   PUT    /api/users/me/configuration/base-currency                         - Update base currency
 --   PUT    /api/users/me/configuration/default-currency                      - Update default currency
+--   PUT    /api/users/me/configuration/banking                               - Update banking defaults
 --   GET    /api/users/me/configuration/dictionaries/:dictId                  - List dictionary entries
 --   POST   /api/users/me/configuration/dictionaries/:dictId/entries          - Add entry
 --   PUT    /api/users/me/configuration/dictionaries/:dictId/entries/:entryId - Rename entry
@@ -29,9 +30,11 @@ module Web.API.ConfigurationAPI
 
     -- * Request/Response Types
     ConfigurationResponse (..),
+    BankingConfigurationDTO (..),
     DictionaryResponse (..),
     DictionaryEntryResponse (..),
     ChangeCurrencyRequest (..),
+    UpdateBankingRequest (..),
     AddEntryRequest (..),
     AddEntryResponse (..),
     RenameEntryRequest (..),
@@ -46,6 +49,7 @@ import qualified Application.Services.ConfigurationService as ConfigService
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import Data.UUID (UUID)
+import Domain.Configuration.Projection (BankingConfiguration (..))
 import Domain.Core.Types
   ( DictionaryId (..),
     mkDictionaryEntryId,
@@ -93,6 +97,15 @@ type ConfigurationAPI =
       :> "default-currency"
       :> ReqBody '[JSON] ChangeCurrencyRequest
       :> Put '[JSON] NoContent
+    -- PUT /api/users/me/configuration/banking - Update banking defaults (partial)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "banking"
+      :> ReqBody '[JSON] UpdateBankingRequest
+      :> Put '[JSON] BankingConfigurationDTO
     -- GET /api/users/me/configuration/dictionaries/:dictId - List dictionary entries
     :<|> AuthProtect "jwt"
       :> "api"
@@ -141,11 +154,33 @@ type ConfigurationAPI =
 -- Request/Response Types
 -- -----------------------------------------------------------------------------
 
+-- | Projection of BankingConfiguration for wire transport.
+data BankingConfigurationDTO = BankingConfigurationDTO
+  { defaultIncomeCategory :: Maybe UUID,
+    defaultExpenseCategory :: Maybe UUID,
+    mccExpenseCategoryMap :: Map Text UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON BankingConfigurationDTO
+
+instance FromJSON BankingConfigurationDTO
+
+-- | Convert domain BankingConfiguration to its wire DTO.
+toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
+toBankingDTO b =
+  BankingConfigurationDTO
+    { defaultIncomeCategory = unDictionaryEntryId <$> b.defaultIncomeCategory,
+      defaultExpenseCategory = unDictionaryEntryId <$> b.defaultExpenseCategory,
+      mccExpenseCategoryMap = Map.map unDictionaryEntryId b.mccExpenseCategoryMap
+    }
+
 -- | Configuration response DTO.
 data ConfigurationResponse = ConfigurationResponse
   { baseCurrency :: Text,
     defaultCurrency :: Text,
-    dictionaries :: Map Text DictionaryResponse
+    dictionaries :: Map Text DictionaryResponse,
+    banking :: BankingConfigurationDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -215,6 +250,20 @@ instance ToJSON RenameEntryRequest
 
 instance FromJSON RenameEntryRequest
 
+-- | Partial-update request body for PUT /api/users/me/configuration/banking.
+--
+-- Absent or null fields mean no change; present value sets the field.
+data UpdateBankingRequest = UpdateBankingRequest
+  { defaultIncomeCategory :: Maybe UUID,
+    defaultExpenseCategory :: Maybe UUID,
+    mccExpenseCategoryMap :: Maybe (Map Text UUID)
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON UpdateBankingRequest
+
+instance FromJSON UpdateBankingRequest
+
 -- | Proxy for the ConfigurationAPI.
 configurationAPI :: Proxy ConfigurationAPI
 configurationAPI = Proxy
@@ -229,6 +278,7 @@ configurationServer =
   getConfigurationHandler
     :<|> changeBaseCurrencyHandler
     :<|> changeDefaultCurrencyHandler
+    :<|> updateBankingHandler
     :<|> listDictionaryHandler
     :<|> addEntryHandler
     :<|> renameEntryHandler
@@ -263,6 +313,43 @@ changeDefaultCurrencyHandler user req = do
   case result of
     Left err -> throwDomainError err
     Right () -> return NoContent
+
+-- | Handler for PUT /api/users/me/configuration/banking
+--
+-- Partial update: absent (or null) fields are left unchanged; present values
+-- are validated and applied via the Configuration service.
+updateBankingHandler :: AuthenticatedUser -> UpdateBankingRequest -> AppM BankingConfigurationDTO
+updateBankingHandler user req = do
+  let uid = user.userId
+
+  forM_ req.defaultIncomeCategory $ \uuid -> do
+    cid <- validateFieldCtx "defaultIncomeCategory" (tshow uuid) (mkDictionaryEntryId uuid)
+    result <- ConfigService.setBankingDefaultIncomeCategory uid cid
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  forM_ req.defaultExpenseCategory $ \uuid -> do
+    cid <- validateFieldCtx "defaultExpenseCategory" (tshow uuid) (mkDictionaryEntryId uuid)
+    result <- ConfigService.setBankingDefaultExpenseCategory uid cid
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  forM_ req.mccExpenseCategoryMap $ \rawMap -> do
+    newMap <-
+      Map.traverseWithKey
+        (\_ uuid -> validateFieldCtx "mccExpenseCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid))
+        rawMap
+    result <- ConfigService.setBankingMccExpenseCategoryMap uid newMap
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  result <- ConfigService.getConfigurationForUser uid
+  case result of
+    Left err -> throwDomainError err
+    Right configData -> pure (toBankingDTO configData.banking)
 
 -- | Handler for GET /api/users/me/configuration/dictionaries/:dictId
 listDictionaryHandler :: AuthenticatedUser -> Text -> AppM DictionaryResponse
@@ -333,7 +420,8 @@ toConfigurationResponse configData =
       defaultCurrency = tshow configData.defaultCurrency,
       dictionaries =
         Map.mapKeys unDictionaryId
-          $ Map.map toDictionaryResponse configData.dictionaries
+          $ Map.map toDictionaryResponse configData.dictionaries,
+      banking = toBankingDTO configData.banking
     }
 
 -- | Convert domain DictionaryData to API response DTO.

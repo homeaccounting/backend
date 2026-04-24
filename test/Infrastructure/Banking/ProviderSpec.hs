@@ -9,10 +9,10 @@ import Test.Hspec
 spec :: Spec
 spec = describe "Infrastructure.Banking.Provider" $ do
   describe "TransactionClassification" $ do
-    it "shows ClassifiedIncome Nothing"
-      $ show (ClassifiedIncome Nothing)
-      `shouldBe` "ClassifiedIncome Nothing"
+    it "shows ClassifiedIncome"
+      $ show ClassifiedIncome
+      `shouldBe` "ClassifiedIncome"
 
-    it "shows ClassifiedExpense Nothing"
-      $ show (ClassifiedExpense Nothing)
-      `shouldBe` "ClassifiedExpense Nothing"
+    it "shows ClassifiedExpense"
+      $ show ClassifiedExpense
+      `shouldBe` "ClassifiedExpense"

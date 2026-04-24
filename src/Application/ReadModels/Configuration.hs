@@ -49,13 +49,17 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Domain.Configuration.Events
-  ( BaseCurrencyChanged (..),
+  ( BankingDefaultExpenseCategorySet (..),
+    BankingDefaultIncomeCategorySet (..),
+    BankingMccExpenseCategoryMapSet (..),
+    BaseCurrencyChanged (..),
     ConfigurationCreated (..),
     DefaultCurrencyChanged (..),
     DictionaryEntryAdded (..),
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
   )
+import Domain.Configuration.Projection (BankingConfiguration (defaultExpenseCategory, defaultIncomeCategory, mccExpenseCategoryMap), emptyBankingConfiguration)
 import Domain.Core.Types
   ( ConfigurationId,
     CreatedBy,
@@ -86,6 +90,8 @@ data ConfigurationData = ConfigurationData
     defaultCurrency :: Currency,
     -- | Dictionaries with their entries
     dictionaries :: Map DictionaryId DictionaryData,
+    -- | Banking-specific configuration
+    banking :: BankingConfiguration,
     -- | Who created this configuration
     createdBy :: CreatedBy,
     -- | Version number from event stream for optimistic concurrency
@@ -195,6 +201,7 @@ processConfigurationEvent summaries globalEvent =
                   { baseCurrency = evt.baseCurrency,
                     defaultCurrency = evt.defaultCurrency,
                     dictionaries = Map.empty,
+                    banking = emptyBankingConfiguration,
                     createdBy = evt.createdBy,
                     version = 1
                   }
@@ -277,6 +284,45 @@ processConfigurationEvent summaries globalEvent =
                                   { dictionaries = Map.insert evt.dictionaryId updatedDict dictMap,
                                     version = config.version + 1
                                   }
+                )
+                configId
+                summaries
+        BankingDefaultIncomeCategorySetEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> summaries
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking = config.banking {defaultIncomeCategory = Just evt.categoryId},
+                        version = config.version + 1
+                      }
+                )
+                configId
+                summaries
+        BankingDefaultExpenseCategorySetEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> summaries
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking = config.banking {defaultExpenseCategory = Just evt.categoryId},
+                        version = config.version + 1
+                      }
+                )
+                configId
+                summaries
+        BankingMccExpenseCategoryMapSetEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> summaries
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking = config.banking {mccExpenseCategoryMap = evt.mapping},
+                        version = config.version + 1
+                      }
                 )
                 configId
                 summaries

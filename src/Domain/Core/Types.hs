@@ -62,6 +62,7 @@ module Domain.Core.Types
     unDictionaryEntryId,
     LabelId,
     CategoryId,
+    MCC,
     DictionaryId (..),
     unDictionaryId,
     EntryName,
@@ -118,7 +119,7 @@ module Domain.Core.Types
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, withText, (.!=), (.:), (.:?), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, withText, (.:), (.=))
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
@@ -597,6 +598,15 @@ type LabelId = DictionaryEntryId
 -- dictionary entries; treating them as aliases avoids a parallel type
 -- hierarchy while keeping spec language ("categories") intact at call sites.
 type CategoryId = DictionaryEntryId
+
+-- | ISO 18245 Merchant Category Code, rendered as text.
+--
+-- Monobank-produced MCCs are 4-digit numeric codes but they are
+-- consistently transported and stored as strings (API payloads, JSON
+-- map keys, log lines). Modeling as 'Text' also keeps the door open
+-- for future providers that emit non-numeric category keys through
+-- the same field.
+type MCC = Text
 
 -- -----------------------------------------------------------------------------
 -- Dictionary Id

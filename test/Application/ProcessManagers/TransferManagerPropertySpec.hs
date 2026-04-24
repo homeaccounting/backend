@@ -185,8 +185,10 @@ spec = describe "TransferManager Properties" $ do
             effects = reactToTransferEvent state initEvent
          in case effects of
               [IssueCommandWithCompensation targetId _ _ _] ->
-                let StreamEvent _ _ _ (TransferInitiatedEvent ti) = initEvent
-                 in targetId === Domain.Core.Types.unAccountId ti.sourceAccountId
+                case initEvent of
+                  StreamEvent _ _ _ (TransferInitiatedEvent ti) ->
+                    targetId === Domain.Core.Types.unAccountId ti.sourceAccountId
+                  _ -> discard
               _ -> discard
 
     prop "compensation always produces exactly one effect"

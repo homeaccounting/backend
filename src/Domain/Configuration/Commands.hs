@@ -21,11 +21,15 @@ module Domain.Configuration.Commands
     AddDictionaryEntry (..),
     RenameDictionaryEntry (..),
     RemoveDictionaryEntry (..),
+    SetBankingDefaultIncomeCategory (..),
+    SetBankingDefaultExpenseCategory (..),
+    SetBankingMccExpenseCategoryMap (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
-import Domain.Core.Types (CreatedBy, Currency, DictionaryEntryId, DictionaryId, EntryName)
+import Data.Map.Strict (Map)
+import Domain.Core.Types (CategoryId, CreatedBy, Currency, DictionaryEntryId, DictionaryId, EntryName, MCC)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -43,7 +47,10 @@ configurationCommands =
     ''ChangeDefaultCurrency,
     ''AddDictionaryEntry,
     ''RenameDictionaryEntry,
-    ''RemoveDictionaryEntry
+    ''RemoveDictionaryEntry,
+    ''SetBankingDefaultIncomeCategory,
+    ''SetBankingDefaultExpenseCategory,
+    ''SetBankingMccExpenseCategoryMap
   ]
 
 -- -----------------------------------------------------------------------------
@@ -122,6 +129,24 @@ data RemoveDictionaryEntry = RemoveDictionaryEntry
   }
   deriving (Show, Eq)
 
+-- | Command to set the banking default category for imported income transactions.
+data SetBankingDefaultIncomeCategory = SetBankingDefaultIncomeCategory
+  { categoryId :: CategoryId
+  }
+  deriving (Show, Eq)
+
+-- | Command to set the banking default category for imported expense transactions.
+data SetBankingDefaultExpenseCategory = SetBankingDefaultExpenseCategory
+  { categoryId :: CategoryId
+  }
+  deriving (Show, Eq)
+
+-- | Command to replace the banking MCC -> expense category map wholesale.
+data SetBankingMccExpenseCategoryMap = SetBankingMccExpenseCategoryMap
+  { mapping :: Map MCC CategoryId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -133,3 +158,6 @@ deriveJSON defaultOptions ''ChangeDefaultCurrency
 deriveJSON defaultOptions ''AddDictionaryEntry
 deriveJSON defaultOptions ''RenameDictionaryEntry
 deriveJSON defaultOptions ''RemoveDictionaryEntry
+deriveJSON defaultOptions ''SetBankingDefaultIncomeCategory
+deriveJSON defaultOptions ''SetBankingDefaultExpenseCategory
+deriveJSON defaultOptions ''SetBankingMccExpenseCategoryMap

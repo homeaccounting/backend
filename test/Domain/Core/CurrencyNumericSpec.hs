@@ -2,11 +2,11 @@
 
 module Domain.Core.CurrencyNumericSpec (spec) where
 
-import Data.Either (isLeft)
 import Domain.Core.Types
 import RIO
 import Test.Hspec
 import Test.QuickCheck
+import Testkit.Generators ()
 
 spec :: Spec
 spec = describe "Currency Numeric Codes" $ do
@@ -40,6 +40,3 @@ spec = describe "Currency Numeric Codes" $ do
     $ property
     $ \c ->
       currencyFromNumericCode (currencyNumericCode c) === Right c
-
-instance Arbitrary Currency where
-  arbitrary = elements [UAH, USD, EUR, GBP]

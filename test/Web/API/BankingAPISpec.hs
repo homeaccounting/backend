@@ -260,6 +260,5 @@ featureFlagSpec = do
       encode
         $ object
           [ "from" .= fromDay,
-            "to" .= toDay,
-            "defaultCategory" .= UUID.fromWords 0 0 0 1
+            "to" .= toDay
           ]

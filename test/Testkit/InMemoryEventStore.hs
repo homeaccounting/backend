@@ -35,15 +35,12 @@ module Testkit.InMemoryEventStore
 where
 
 import Application.ProcessManagers (transferProcessManager)
-import Application.ReadModels.Account (createAccountReadModel)
-import Application.ReadModels.BankImportReadModel (createBankImportReadModel)
 import Application.ReadModels.ExchangeRate (createExchangeRateReadModel)
-import Application.ReadModels.Transaction (createTransactionReadModel)
 import Application.ReadModels.User ()
-import Control.Concurrent.STM (TVar, atomically)
+import Control.Concurrent.STM (atomically)
 import qualified Data.Set as Set
 import Domain.Models (AccountingEvent)
-import Eventium (Codec (..), EventHandler (..), EventStoreReader (..), EventStoreWriter (..), TaggedEvent (..), VersionedStreamEvent, processManagerEventHandler, publishingTaggedCodecEventStoreWriter, synchronousPublisher)
+import Eventium (Codec (..), EventStoreReader (..), EventStoreWriter (..), TaggedEvent (..), processManagerEventHandler, publishingTaggedCodecEventStoreWriter, synchronousPublisher)
 import Eventium.Store.Memory
   ( EventMap,
     emptyEventMap,
@@ -65,17 +62,13 @@ import Infrastructure.Config
     Environment (..),
     EventStoreConfig (..),
     ExchangeRateConfig (..),
-    JWTConfig (..),
     LogFormat (..),
     LogLevel (..),
     LoggingConfig (..),
     MonobankProviderConfig (..),
-    OAuthConfig (..),
     ProcessManagerConfig (..),
     ServerConfig (..),
-    TelegramConfig (..),
   )
-import qualified Infrastructure.Database as DB
 import Infrastructure.Eventium
   ( AccountingGlobalEventStoreReader,
     AccountingTaggedEventStoreWriter,

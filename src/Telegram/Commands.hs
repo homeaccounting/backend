@@ -58,7 +58,7 @@ import Application.ReadModels.User
   )
 import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser)
-import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId)
+import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Set as Set
@@ -81,6 +81,7 @@ import Domain.Core.Types
     moneyCurrency,
     parseCurrency,
     unAccountId,
+    unEntryName,
     unsafeMoney,
   )
 import Domain.Transaction.Projection (TransactionStatus (..))
@@ -342,6 +343,7 @@ handleTransactions botState telegramId chatId = do
           sendMsg chatId "Failed to list transactions. Please try again."
         Right query -> do
           results <- TransactionService.listTransactions userId query
+          entryNames <- getDictionaryEntryNames telegramId
           let header = case selected of
                 Just (_, name) -> "Transactions for " <> name <> " (last 30 days):"
                 Nothing -> "Your transactions (last 30 days):"
@@ -351,7 +353,7 @@ handleTransactions botState telegramId chatId = do
               let maxItems = 20
                   shown = take maxItems results
                   overflow = length results - length shown
-                  body = T.unlines $ map formatTransactionLine shown
+                  body = T.unlines $ map (formatTransactionLine entryNames) shown
                   suffix =
                     if overflow > 0
                       then "\n... and " <> tshow overflow <> " more."
@@ -688,6 +690,31 @@ getCategoryEntries telegramId dictId = do
           case Map.lookup dictId configData.dictionaries of
             Nothing -> return $ Just []
             Just dictData -> return $ Just $ Map.toList dictData.entries
+
+-- | Build a flat DictionaryEntryId -> name lookup from the user's
+--   configuration, merging the income, expense, and labels dictionaries
+--   so a single map resolves both categories (on Income/Expense
+--   transfer types) and labels (the per-transaction label set).
+--   Returns an empty map when the user or configuration can't be
+--   resolved so callers can proceed with the plain type label.
+getDictionaryEntryNames :: TelegramId -> AppM (Map DictionaryEntryId Text)
+getDictionaryEntryNames telegramId = do
+  userRM <- view userReadModelL
+  maybeUser <- getUserByTelegramId userRM telegramId
+  case maybeUser of
+    Nothing -> return Map.empty
+    Just (_, userData) -> do
+      configRM <- view configurationReadModelL
+      maybeConfig <- liftIO $ getConfiguration configRM userData.configurationId
+      return $ case maybeConfig of
+        Nothing -> Map.empty
+        Just configData ->
+          let entriesFor dictId =
+                maybe Map.empty (.entries) (Map.lookup dictId configData.dictionaries)
+           in fmap unEntryName
+                $ entriesFor incomeCategoryDictId
+                <> entriesFor expenseCategoryDictId
+                <> entriesFor labelsDictId
 
 -- -----------------------------------------------------------------------------
 -- User/Account Lookup Helpers

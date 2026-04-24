@@ -43,8 +43,8 @@ mkMockProvider accs txs =
       registerWebhook = \_ -> pure (Right ()),
       classifyTransaction = \tx ->
         if tx.amount >= 0
-          then ClassifiedIncome Nothing
-          else ClassifiedExpense Nothing
+          then ClassifiedIncome
+          else ClassifiedExpense
     }
 
 -- | Construct a test 'BankAccount'.

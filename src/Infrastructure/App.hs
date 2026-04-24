@@ -580,7 +580,7 @@ runDb action = do
 -- deadlock the thread.
 --
 -- Example:
--- >>> resync provider userId link defaultCategory from to =
+-- >>> resync provider userId link from to =
 -- >>>   withUserLock userId $ do
 -- >>>     ... -- existing body
 withUserLock ::

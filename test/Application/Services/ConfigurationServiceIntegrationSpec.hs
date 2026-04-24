@@ -31,6 +31,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreditAccount (..))
+import Domain.Configuration.Projection (BankingConfiguration (defaultIncomeCategory))
+import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( CreatedBy (..),
     Currency (..),
@@ -354,19 +356,28 @@ dictionaryCRUDSpec =
                   case incomeDict of
                     Nothing -> expectationFailure "Income dictionary not found"
                     Just dict -> do
-                      let allEntries = Map.keys dict.entries
-                      -- Remove all entries except the last one
-                      case reverse allEntries of
-                        [] -> expectationFailure "No entries in dictionary"
-                        (lastEntryId : rest) -> do
-                          let entriesToRemove = reverse rest
-                          forM_ entriesToRemove $ \eid -> do
-                            res <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId eid
-                            res `shouldSatisfy` isRight
+                      -- The cloned config has banking.defaultIncomeCategory set (from seed).
+                      -- Removal is rejected for any entry that is a banking default OR when
+                      -- it is the last entry. We remove all non-default entries, then verify
+                      -- the banking-default entry also cannot be removed.
+                      let bankingDefaultId = config.banking.defaultIncomeCategory
+                          allEntries = Map.keys dict.entries
+                          nonDefaultEntries = filter (\eid -> Just eid /= bankingDefaultId) allEntries
+                      -- Remove all non-default entries (all should succeed)
+                      forM_ nonDefaultEntries $ \eid -> do
+                        res <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId eid
+                        res `shouldSatisfy` isRight
 
-                          -- Now try to remove the last entry - should fail
-                          lastResult <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId lastEntryId
-                          lastResult `shouldSatisfy` isLeft
+                      -- Now try to remove the banking-default (or the last remaining) entry - should fail
+                      let lastResult = case bankingDefaultId of
+                            Just bid -> runRIO env $ removeDictionaryEntry userId incomeCategoryDictId bid
+                            Nothing ->
+                              -- Fallback: try whichever entry remains
+                              case filter (`notElem` nonDefaultEntries) allEntries of
+                                (eid : _) -> runRIO env $ removeDictionaryEntry userId incomeCategoryDictId eid
+                                [] -> return $ Left $ ConfigurationError "No entries left"
+                      finalResult <- lastResult
+                      finalResult `shouldSatisfy` isLeft
 
 -- -----------------------------------------------------------------------------
 -- Registration assigns default config

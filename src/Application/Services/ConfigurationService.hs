@@ -28,6 +28,9 @@ module Application.Services.ConfigurationService
     addDictionaryEntry,
     renameDictionaryEntry,
     removeDictionaryEntry,
+    setBankingDefaultIncomeCategory,
+    setBankingDefaultExpenseCategory,
+    setBankingMccExpenseCategoryMap,
     seedDefaultConfiguration,
 
     -- * Well-known Dictionary IDs
@@ -40,11 +43,8 @@ where
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
 import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..), getUser)
-import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
-import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
-import qualified Data.UUID.V5 as UUID5
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (ChangeAccountCurrency (..))
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
@@ -55,15 +55,33 @@ import Domain.Configuration.Commands
     CreateConfiguration (..),
     RemoveDictionaryEntry (..),
     RenameDictionaryEntry (..),
+    SetBankingDefaultExpenseCategory (..),
+    SetBankingDefaultIncomeCategory (..),
+    SetBankingMccExpenseCategoryMap (..),
   )
+import Domain.Configuration.Defaults
+  ( DefaultEntry (..),
+    ExpenseDefaults (other),
+    IncomeDefaults (other),
+    defaultExpenseCategories,
+    defaultIncomeCategories,
+    defaultMccExpenseCategoryMap,
+    expense,
+    expenseCategoryDictId,
+    income,
+    incomeCategoryDictId,
+  )
+import Domain.Configuration.Projection (BankingConfiguration (defaultExpenseCategory, defaultIncomeCategory, mccExpenseCategoryMap))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
-  ( ConfigurationId,
+  ( CategoryId,
+    ConfigurationId,
     CreatedBy (..),
     Currency (..),
     DictionaryEntryId,
     DictionaryId (..),
     EntryName,
+    MCC,
     UserId,
     defaultConfigurationId,
     mkConfigurationId,
@@ -89,32 +107,9 @@ import qualified RIO.Text as T
 -- Well-known Dictionary IDs
 -- -----------------------------------------------------------------------------
 
--- | Dictionary ID for income categories.
-incomeCategoryDictId :: DictionaryId
-incomeCategoryDictId = DictionaryId "income-category"
-
--- | Dictionary ID for expense categories.
-expenseCategoryDictId :: DictionaryId
-expenseCategoryDictId = DictionaryId "expense-category"
-
 -- | Dictionary ID for transaction labels (optional, multi-valued per txn).
 labelsDictId :: DictionaryId
 labelsDictId = DictionaryId "labels"
-
--- -----------------------------------------------------------------------------
--- Deterministic UUID Generation
--- -----------------------------------------------------------------------------
-
--- | Namespace UUID for deterministic dictionary entry ID generation.
--- Uses UUID v5 (SHA-1 based) to produce repeatable UUIDs from dictionary ID + entry name.
-configNamespace :: UUID
-configNamespace = UUID5.generateNamed UUID5.namespaceURL (BS.unpack $ encodeUtf8 "https://homeaccounting.app/config")
-
--- | Generate a deterministic DictionaryEntryId from a dictionary ID and entry name text.
-mkDeterministicEntryId :: DictionaryId -> Text -> DictionaryEntryId
-mkDeterministicEntryId (DictionaryId dictIdText) entryNameText =
-  unsafeDictionaryEntryId
-    $ UUID5.generateNamed configNamespace (BS.unpack $ encodeUtf8 (dictIdText <> ":" <> entryNameText))
 
 -- -----------------------------------------------------------------------------
 -- Service Functions
@@ -306,6 +301,72 @@ removeDictionaryEntry userId dictId entryId = do
               logInfo "Dictionary entry removed successfully"
               return $ Right ()
 
+-- | Set the default income category for banking imports in the user's configuration.
+setBankingDefaultIncomeCategory :: UserId -> CategoryId -> AppM (Either DomainError ())
+setBankingDefaultIncomeCategory userId categoryId = do
+  logInfo $ "Setting banking default income category for user " <> displayShow userId
+
+  cloneResult <- ensureClonedConfiguration userId
+  case cloneResult of
+    Left err -> return $ Left err
+    Right configId -> do
+      let configUuid = unConfigurationId configId
+      let cmd = SetBankingDefaultIncomeCategoryConfigurationCommand SetBankingDefaultIncomeCategory {categoryId = categoryId}
+      writer <- view eventStoreWriterL
+      reader <- view eventStoreReaderL
+      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
+      case result of
+        Left err -> do
+          logError $ "SetBankingDefaultIncomeCategory rejected: " <> displayShow err
+          return $ Left $ ConfigurationError (T.pack (show err))
+        Right _ -> do
+          logInfo "Banking default income category set successfully"
+          return $ Right ()
+
+-- | Set the default expense category for banking imports in the user's configuration.
+setBankingDefaultExpenseCategory :: UserId -> CategoryId -> AppM (Either DomainError ())
+setBankingDefaultExpenseCategory userId categoryId = do
+  logInfo $ "Setting banking default expense category for user " <> displayShow userId
+
+  cloneResult <- ensureClonedConfiguration userId
+  case cloneResult of
+    Left err -> return $ Left err
+    Right configId -> do
+      let configUuid = unConfigurationId configId
+      let cmd = SetBankingDefaultExpenseCategoryConfigurationCommand SetBankingDefaultExpenseCategory {categoryId = categoryId}
+      writer <- view eventStoreWriterL
+      reader <- view eventStoreReaderL
+      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
+      case result of
+        Left err -> do
+          logError $ "SetBankingDefaultExpenseCategory rejected: " <> displayShow err
+          return $ Left $ ConfigurationError (T.pack (show err))
+        Right _ -> do
+          logInfo "Banking default expense category set successfully"
+          return $ Right ()
+
+-- | Replace the MCC-to-expense-category map wholesale in the user's configuration.
+setBankingMccExpenseCategoryMap :: UserId -> Map MCC CategoryId -> AppM (Either DomainError ())
+setBankingMccExpenseCategoryMap userId mapping = do
+  logInfo $ "Setting banking MCC expense category map for user " <> displayShow userId
+
+  cloneResult <- ensureClonedConfiguration userId
+  case cloneResult of
+    Left err -> return $ Left err
+    Right configId -> do
+      let configUuid = unConfigurationId configId
+      let cmd = SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {mapping = mapping}
+      writer <- view eventStoreWriterL
+      reader <- view eventStoreReaderL
+      result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
+      case result of
+        Left err -> do
+          logError $ "SetBankingMccExpenseCategoryMap rejected: " <> displayShow err
+          return $ Left $ ConfigurationError (T.pack (show err))
+        Right _ -> do
+          logInfo "Banking MCC expense category map set successfully"
+          return $ Right ()
+
 -- | Seed the default system configuration if it does not already exist.
 --
 -- Creates the default configuration with USD base/default currency,
@@ -342,34 +403,57 @@ seedDefaultConfiguration = do
           logInfo "Default configuration created, adding dictionary entries..."
 
           -- Add income category entries
-          forM_ defaultIncomeCategories $ \catName -> do
-            let entryId = mkDeterministicEntryId incomeCategoryDictId catName
+          forM_ defaultIncomeCategories $ \entry -> do
             let cmd =
                   AddDictionaryEntryConfigurationCommand
                     AddDictionaryEntry
                       { dictionaryId = incomeCategoryDictId,
-                        entryId = entryId,
-                        name = unsafeEntryName catName
+                        entryId = entry.entryId,
+                        name = unsafeEntryName entry.entryName
                       }
             result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
             case result of
-              Left err -> logWarn $ "Failed to add income category '" <> display catName <> "': " <> displayShow err
+              Left err -> logWarn $ "Failed to add income category '" <> display entry.entryName <> "': " <> displayShow err
               Right _ -> return ()
 
           -- Add expense category entries
-          forM_ defaultExpenseCategories $ \catName -> do
-            let entryId = mkDeterministicEntryId expenseCategoryDictId catName
+          forM_ defaultExpenseCategories $ \entry -> do
             let cmd =
                   AddDictionaryEntryConfigurationCommand
                     AddDictionaryEntry
                       { dictionaryId = expenseCategoryDictId,
-                        entryId = entryId,
-                        name = unsafeEntryName catName
+                        entryId = entry.entryId,
+                        name = unsafeEntryName entry.entryName
                       }
             result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
             case result of
-              Left err -> logWarn $ "Failed to add expense category '" <> display catName <> "': " <> displayShow err
+              Left err -> logWarn $ "Failed to add expense category '" <> display entry.entryName <> "': " <> displayShow err
               Right _ -> return ()
+
+          -- Set banking defaults
+          let incomeCategoryCmd =
+                SetBankingDefaultIncomeCategoryConfigurationCommand
+                  SetBankingDefaultIncomeCategory {categoryId = income.other.entryId}
+          incomeResult <- liftIO $ applyConfigurationCommand writer reader id configUuid incomeCategoryCmd
+          case incomeResult of
+            Left err -> logWarn $ "Failed to set banking default income category: " <> displayShow err
+            Right _ -> return ()
+
+          let expenseCategoryCmd =
+                SetBankingDefaultExpenseCategoryConfigurationCommand
+                  SetBankingDefaultExpenseCategory {categoryId = expense.other.entryId}
+          expenseResult <- liftIO $ applyConfigurationCommand writer reader id configUuid expenseCategoryCmd
+          case expenseResult of
+            Left err -> logWarn $ "Failed to set banking default expense category: " <> displayShow err
+            Right _ -> return ()
+
+          let mccMapCmd =
+                SetBankingMccExpenseCategoryMapConfigurationCommand
+                  SetBankingMccExpenseCategoryMap {mapping = defaultMccExpenseCategoryMap}
+          mccResult <- liftIO $ applyConfigurationCommand writer reader id configUuid mccMapCmd
+          case mccResult of
+            Left err -> logWarn $ "Failed to set banking MCC expense category map: " <> displayShow err
+            Right _ -> return ()
 
           logInfo "Default configuration seeded successfully"
 
@@ -467,6 +551,35 @@ cloneConfiguration userId sourceConfigId configData = do
                 Left err -> logWarn $ "Failed to clone dictionary entry: " <> displayShow err
                 Right _ -> return ()
 
+          -- 3b. Copy banking configuration
+          let srcBanking = configData.banking
+          forM_ srcBanking.defaultIncomeCategory $ \eid -> do
+            let cmd =
+                  SetBankingDefaultIncomeCategoryConfigurationCommand
+                    SetBankingDefaultIncomeCategory {categoryId = eid}
+            copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+            case copyResult of
+              Left err -> logWarn $ "Failed to clone banking.defaultIncomeCategory: " <> displayShow err
+              Right _ -> return ()
+
+          forM_ srcBanking.defaultExpenseCategory $ \eid -> do
+            let cmd =
+                  SetBankingDefaultExpenseCategoryConfigurationCommand
+                    SetBankingDefaultExpenseCategory {categoryId = eid}
+            copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+            case copyResult of
+              Left err -> logWarn $ "Failed to clone banking.defaultExpenseCategory: " <> displayShow err
+              Right _ -> return ()
+
+          unless (Map.null srcBanking.mccExpenseCategoryMap) $ do
+            let cmd =
+                  SetBankingMccExpenseCategoryMapConfigurationCommand
+                    SetBankingMccExpenseCategoryMap {mapping = srcBanking.mccExpenseCategoryMap}
+            copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+            case copyResult of
+              Left err -> logWarn $ "Failed to clone banking.mccExpenseCategoryMap: " <> displayShow err
+              Right _ -> return ()
+
           -- 4. Assign the new configuration to the user via User aggregate
           let userUuid = unUserId userId
           let assignCmd =
@@ -482,41 +595,3 @@ cloneConfiguration userId sourceConfigId configData = do
             Right _ -> do
               logInfo $ "Configuration cloned successfully: " <> displayShow newConfigId
               return $ Right newConfigId
-
--- -----------------------------------------------------------------------------
--- Default Categories
--- -----------------------------------------------------------------------------
-
--- | Default income category names.
-defaultIncomeCategories :: [Text]
-defaultIncomeCategories =
-  [ "Salary",
-    "Freelance",
-    "Investment",
-    "Business",
-    "Rental",
-    "Gift",
-    "Refund",
-    "Other"
-  ]
-
--- | Default expense category names.
-defaultExpenseCategories :: [Text]
-defaultExpenseCategories =
-  [ "Food",
-    "Transport",
-    "Utilities",
-    "Rent",
-    "Entertainment",
-    "Health & Wellness",
-    "Education",
-    "Clothing",
-    "Insurance",
-    "Subscriptions",
-    "Household",
-    "Travel",
-    "Gifts",
-    "Charity",
-    "Taxes & Fees",
-    "Other"
-  ]

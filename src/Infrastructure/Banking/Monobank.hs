@@ -12,7 +12,6 @@ where
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8)
 import qualified Data.Text.IO as TIO
 import Data.Time (UTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
@@ -51,17 +50,15 @@ mkMonobankProvider apiBaseUrl token manager =
       classifyTransaction = monoClassifyTransaction
     }
 
--- | Monobank classify: amount-sign based.
+-- | Monobank classify: amount-sign based (direction only).
 --
 -- Mono outgoing transactions have negative amounts and incoming have positive,
--- so the sign fully determines Expense vs Income at Phase 1.
---
--- Phase 2: MCC → category mapping via UserConfiguration
+-- so the sign fully determines Expense vs Income. Category resolution via
+-- MCC happens in BankImportService using UserConfiguration.
 monoClassifyTransaction :: BankTransaction -> TransactionClassification
-monoClassifyTransaction tx =
-  if tx.amount >= 0
-    then ClassifiedIncome Nothing
-    else ClassifiedExpense Nothing
+monoClassifyTransaction tx
+  | tx.amount >= 0 = ClassifiedIncome
+  | otherwise = ClassifiedExpense
 
 -- API call functions
 

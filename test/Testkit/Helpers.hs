@@ -38,7 +38,6 @@ module Testkit.Helpers
 where
 
 import qualified Data.ByteString as BS
-import Data.Int (Int64)
 import Data.UUID (UUID)
 import Domain.Core.Types
 import RIO

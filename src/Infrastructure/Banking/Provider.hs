@@ -12,10 +12,10 @@ module Infrastructure.Banking.Provider
   )
 where
 
-import Data.Int (Int32, Int64)
+import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (CategoryId, ExternalTransactionId)
+import Domain.Core.Types (ExternalTransactionId, MCC)
 import RIO (Bool, Either, Eq, IO, Int, Maybe, Rational, Show)
 
 -- | Identifier for an external bank account (provider-specific).
@@ -33,11 +33,11 @@ data BankProvider = BankProvider
     classifyTransaction :: BankTransaction -> TransactionClassification
   }
 
--- | Provider-contributed classification hint.
--- BankImportService owns the final decision but uses this as a starting point.
+-- | Provider-contributed classification hint — direction only.
+-- BankImportService owns the final category decision.
 data TransactionClassification
-  = ClassifiedExpense !(Maybe CategoryId)
-  | ClassifiedIncome !(Maybe CategoryId)
+  = ClassifiedExpense
+  | ClassifiedIncome
   deriving (Show, Eq)
 
 -- | A bank account as reported by the provider.
@@ -61,7 +61,7 @@ data BankTransaction = BankTransaction
     currencyCode :: !Int,
     description :: !Text,
     hold :: !Bool,
-    mcc :: !(Maybe Int32),
+    mcc :: !(Maybe MCC),
     -- | Major-unit amount in the transaction's original currency, iff the
     -- transaction was in a currency different from the account. Monobank
     -- does not report the original currency code; Phase 1 uses the ratio

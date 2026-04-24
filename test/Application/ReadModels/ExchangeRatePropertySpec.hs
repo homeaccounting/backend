@@ -23,12 +23,7 @@ import qualified RIO.Map as Map
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
-
--- | Locally defined Arbitrary instance for Day — no
--- 'quickcheck-instances' dep in the project.
-instance Arbitrary Day where
-  arbitrary = fromGregorian <$> choose (2000, 2030) <*> choose (1, 12) <*> choose (1, 28)
-  shrink day = [addDays (-1) day, addDays 1 day]
+import Testkit.Generators ()
 
 spec :: Spec
 spec = describe "Application.ReadModels.ExchangeRate.lookupNearestDate" $ do

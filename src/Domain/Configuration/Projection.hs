@@ -15,6 +15,10 @@ module Domain.Configuration.Projection
   ( -- * Configuration Aggregate
     Configuration (..),
 
+    -- * Banking Sub-record
+    BankingConfiguration (defaultIncomeCategory, defaultExpenseCategory, mccExpenseCategoryMap),
+    emptyBankingConfiguration,
+
     -- * Event Sum Type
     ConfigurationEvent (..),
 
@@ -29,7 +33,10 @@ where
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Domain.Configuration.Events
-  ( BaseCurrencyChanged (..),
+  ( BankingDefaultExpenseCategorySet (..),
+    BankingDefaultIncomeCategorySet (..),
+    BankingMccExpenseCategoryMapSet (..),
+    BaseCurrencyChanged (..),
     ConfigurationCreated (..),
     DefaultCurrencyChanged (..),
     DictionaryEntryAdded (..),
@@ -38,12 +45,14 @@ import Domain.Configuration.Events
     configurationEvents,
   )
 import Domain.Core.Types
-  ( CreatedBy (..),
+  ( CategoryId,
+    CreatedBy (..),
     Currency (..),
     Dictionary (..),
     DictionaryEntry (..),
     DictionaryId,
     EntryName,
+    MCC,
   )
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -51,6 +60,30 @@ import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSum
 -- -----------------------------------------------------------------------------
 -- Configuration Aggregate State
 -- -----------------------------------------------------------------------------
+
+-- | Banking-specific configuration derived from banking-related events.
+--
+-- This sub-record collects all bank-import settings in one place so the
+-- main 'Configuration' record stays readable. The field is empty on every
+-- projection that has not yet received any banking events.
+data BankingConfiguration = BankingConfiguration
+  { -- | Default category for income transactions when none is inferred from MCC
+    defaultIncomeCategory :: !(Maybe CategoryId),
+    -- | Default category for expense transactions when none is inferred from MCC
+    defaultExpenseCategory :: !(Maybe CategoryId),
+    -- | Mapping from MCC codes to expense category IDs for automatic categorisation
+    mccExpenseCategoryMap :: !(Map MCC CategoryId)
+  }
+  deriving (Show, Eq)
+
+-- | The empty banking configuration used as the initial state.
+emptyBankingConfiguration :: BankingConfiguration
+emptyBankingConfiguration =
+  BankingConfiguration
+    { defaultIncomeCategory = Nothing,
+      defaultExpenseCategory = Nothing,
+      mccExpenseCategoryMap = Map.empty
+    }
 
 -- | The Configuration aggregate state.
 --
@@ -62,6 +95,7 @@ import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSum
 --   - baseCurrency: The base currency for reporting
 --   - defaultCurrency: The default currency for new accounts
 --   - dictionaries: Map of dictionary IDs to dictionaries
+--   - banking: Banking-specific configuration (empty until banking events arrive)
 --   - createdBy: Who created this configuration
 --   - isCreated: Whether the configuration has been created
 data Configuration = Configuration
@@ -71,6 +105,8 @@ data Configuration = Configuration
     defaultCurrency :: Currency,
     -- | Map of dictionaries keyed by DictionaryId
     dictionaries :: Map DictionaryId Dictionary,
+    -- | Banking-specific configuration
+    banking :: BankingConfiguration,
     -- | Who created this configuration
     createdBy :: CreatedBy,
     -- | Whether the configuration has been created (initial event received)
@@ -88,6 +124,7 @@ configurationDefault =
     { baseCurrency = USD,
       defaultCurrency = USD,
       dictionaries = Map.empty,
+      banking = emptyBankingConfiguration,
       createdBy = System,
       isCreated = False
     }
@@ -134,6 +171,7 @@ handleConfigurationEvent Configuration {..} (BaseCurrencyChangedConfigurationEve
     { baseCurrency = evt.baseCurrency,
       defaultCurrency = defaultCurrency,
       dictionaries = dictionaries,
+      banking = banking,
       createdBy = createdBy,
       isCreated = isCreated
     }
@@ -142,6 +180,7 @@ handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfiguration
     { baseCurrency = baseCurrency,
       defaultCurrency = evt.defaultCurrency,
       dictionaries = dictionaries,
+      banking = banking,
       createdBy = createdBy,
       isCreated = isCreated
     }
@@ -174,6 +213,12 @@ handleConfigurationEvent config (DictionaryEntryRemovedConfigurationEvent Dictio
           dictionaryId
           config.dictionaries
    in config {dictionaries = updatedDicts}
+handleConfigurationEvent config (BankingDefaultIncomeCategorySetConfigurationEvent evt) =
+  config {banking = config.banking {defaultIncomeCategory = Just evt.categoryId}}
+handleConfigurationEvent config (BankingDefaultExpenseCategorySetConfigurationEvent evt) =
+  config {banking = config.banking {defaultExpenseCategory = Just evt.categoryId}}
+handleConfigurationEvent config (BankingMccExpenseCategoryMapSetConfigurationEvent evt) =
+  config {banking = config.banking {mccExpenseCategoryMap = evt.mapping}}
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

@@ -28,11 +28,15 @@ module Domain.Configuration.Events
     DictionaryEntryAdded (..),
     DictionaryEntryRenamed (..),
     DictionaryEntryRemoved (..),
+    BankingDefaultIncomeCategorySet (..),
+    BankingDefaultExpenseCategorySet (..),
+    BankingMccExpenseCategoryMapSet (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
-import Domain.Core.Types (CreatedBy, Currency, DictionaryEntryId, DictionaryId, EntryName)
+import Data.Map.Strict (Map)
+import Domain.Core.Types (CategoryId, CreatedBy, Currency, DictionaryEntryId, DictionaryId, EntryName, MCC)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -50,7 +54,10 @@ configurationEvents =
     ''DefaultCurrencyChanged,
     ''DictionaryEntryAdded,
     ''DictionaryEntryRenamed,
-    ''DictionaryEntryRemoved
+    ''DictionaryEntryRemoved,
+    ''BankingDefaultIncomeCategorySet,
+    ''BankingDefaultExpenseCategorySet,
+    ''BankingMccExpenseCategoryMapSet
   ]
 
 -- -----------------------------------------------------------------------------
@@ -113,6 +120,24 @@ data DictionaryEntryRemoved = DictionaryEntryRemoved
   }
   deriving (Show, Eq)
 
+-- | Event emitted when the banking default income category is set.
+data BankingDefaultIncomeCategorySet = BankingDefaultIncomeCategorySet
+  { categoryId :: CategoryId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the banking default expense category is set.
+data BankingDefaultExpenseCategorySet = BankingDefaultExpenseCategorySet
+  { categoryId :: CategoryId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the banking MCC -> expense category map is set (bulk replace).
+data BankingMccExpenseCategoryMapSet = BankingMccExpenseCategoryMapSet
+  { mapping :: Map MCC CategoryId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -124,3 +149,6 @@ deriveJSON defaultOptions ''DefaultCurrencyChanged
 deriveJSON defaultOptions ''DictionaryEntryAdded
 deriveJSON defaultOptions ''DictionaryEntryRenamed
 deriveJSON defaultOptions ''DictionaryEntryRemoved
+deriveJSON defaultOptions ''BankingDefaultIncomeCategorySet
+deriveJSON defaultOptions ''BankingDefaultExpenseCategorySet
+deriveJSON defaultOptions ''BankingMccExpenseCategoryMapSet

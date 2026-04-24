@@ -48,7 +48,6 @@ import qualified Application.Services.BankImportService as BankImportService
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Text as T
 import Data.Time (UTCTime, diffUTCTime)
-import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
@@ -57,7 +56,6 @@ import Domain.Core.Types
     AccountSubtype (..),
     AccountType (..),
     BankAccountProperties (..),
-    mkDictionaryEntryId,
     unAccountId,
   )
 import Infrastructure.App
@@ -79,7 +77,6 @@ import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
-import Web.Validation (validateField)
 
 -- -----------------------------------------------------------------------------
 -- API Type Definition
@@ -115,18 +112,15 @@ bankingAPI = Proxy
 
 -- | Request body for manual bank statement resync.
 --
--- The defaultCategory field is temporary until user configuration
--- integration is complete. Eventually this will be read from
--- UserConfiguration. The Monobank token is supplied in the
--- @X-Banking-Token@ header rather than the JSON body so it does not
--- appear in request-body logs or traces.
+-- The Monobank token is supplied in the @X-Banking-Token@ header rather
+-- than the JSON body so it does not appear in request-body logs or traces.
+-- Category resolution is performed server-side from the user's banking
+-- configuration (mccExpenseCategoryMap + default income/expense categories).
 data ResyncRequest = ResyncRequest
   { -- | Start of the date range to import
     from :: UTCTime,
     -- | End of the date range to import
-    to :: UTCTime,
-    -- | Default category for uncategorized transactions
-    defaultCategory :: UUID
+    to :: UTCTime
   }
   deriving (Show, Eq, Generic)
 
@@ -229,9 +223,6 @@ resyncHandler user bankingToken request = do
     $ throwDomainError
     $ BankingError "X-Banking-Token header must not be empty"
 
-  -- 2. Parse defaultCategory UUID into DictionaryEntryId
-  categoryId <- validateField "defaultCategory" $ mkDictionaryEntryId request.defaultCategory
-
   let userId = user.userId
 
   -- 3. Create provider from token + httpManager
@@ -253,7 +244,7 @@ resyncHandler user bankingToken request = do
   bankLink <- buildBankLink bankAccounts localAccounts
 
   -- 6. Call BankImportService.resync
-  result <- BankImportService.resync provider userId bankLink categoryId request.from request.to
+  result <- BankImportService.resync provider userId bankLink request.from request.to
   return $ toResyncResponse result
 
 -- -----------------------------------------------------------------------------
@@ -310,12 +301,12 @@ buildBankLink bankAccounts localAccounts = do
     case candidates of
       [] -> return Nothing
       [single] -> return (Just single)
-      many@(firstCandidate : _) -> do
+      candidates'@(firstCandidate : _) -> do
         logWarn
           $ "IBAN "
           <> display bankIBAN
           <> " matches multiple local accounts; picking first. Candidates: "
-          <> displayShow (map snd many)
+          <> displayShow (map snd candidates')
         return (Just firstCandidate)
   let collected = catMaybes resolved
   when (null collected)

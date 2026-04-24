@@ -51,15 +51,13 @@ where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
-import Data.Int (Int64)
 import Data.Ratio ((%))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Calendar (Day, addDays, fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types
 import RIO
 import Test.QuickCheck
@@ -391,3 +389,12 @@ genExchangeRate = do
 
 instance Arbitrary ExchangeRate where
   arbitrary = genExchangeRate
+
+-- -----------------------------------------------------------------------------
+-- Time Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a 'Day' in the range 2000–2030 with all valid months/days.
+instance Arbitrary Day where
+  arbitrary = fromGregorian <$> choose (2000, 2030) <*> choose (1, 12) <*> choose (1, 28)
+  shrink day = [addDays (-1) day, addDays 1 day]

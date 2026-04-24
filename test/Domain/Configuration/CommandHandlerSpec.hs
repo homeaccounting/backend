@@ -20,8 +20,13 @@ module Domain.Configuration.CommandHandlerSpec (spec) where
 import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import Domain.Configuration
+import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Events
-  ( ConfigurationCreated (..),
+  ( BankingDefaultExpenseCategorySet (..),
+    BankingDefaultIncomeCategorySet (..),
+    BankingMccExpenseCategoryMapSet (..),
+    ConfigurationCreated (..),
+    DictionaryEntryAdded (..),
   )
 import Domain.Core.Types
 import Eventium (latestProjection)
@@ -39,6 +44,10 @@ spec = do
   addDictionaryEntrySpec
   renameDictionaryEntrySpec
   removeDictionaryEntrySpec
+  setBankingDefaultIncomeCategorySpec
+  setBankingDefaultExpenseCategorySpec
+  setBankingMccExpenseCategoryMapSpec
+  removeDictionaryEntryBankingGuardSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -63,6 +72,16 @@ testEntryId2 = mockDictionaryEntryId (read "44444444-4444-4444-4444-444444444444
 
 testDictId :: DictionaryId
 testDictId = DictionaryId "expense-category"
+
+-- | Entry IDs used as CategoryIds in banking tests
+testCategoryId1 :: CategoryId
+testCategoryId1 = mockDictionaryEntryId (read "66666666-6666-6666-6666-666666666666")
+
+testCategoryId2 :: CategoryId
+testCategoryId2 = mockDictionaryEntryId (read "77777777-7777-7777-7777-777777777777")
+
+testUnknownCategoryId :: CategoryId
+testUnknownCategoryId = mockDictionaryEntryId (read "99999999-9999-9999-9999-999999999999")
 
 testEntryName1 :: EntryName
 testEntryName1 = mockEntryName "Food"
@@ -124,6 +143,153 @@ configWithTwoEntries =
           { dictionaryId = testDictId,
             entryId = testEntryId2,
             name = testEntryName2
+          }
+    ]
+
+-- | A created configuration with one income-category entry (testCategoryId1)
+configWithIncomeEntry :: Configuration
+configWithIncomeEntry =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = incomeCategoryDictId,
+            entryId = testCategoryId1,
+            name = mockEntryName "Salary"
+          }
+    ]
+
+-- | A created configuration with one expense-category entry (testCategoryId1)
+configWithExpenseEntry :: Configuration
+configWithExpenseEntry =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = expenseCategoryDictId,
+            entryId = testCategoryId1,
+            name = mockEntryName "Food"
+          }
+    ]
+
+-- | A created configuration with two expense-category entries (testCategoryId1, testCategoryId2)
+configWithTwoExpenseEntries :: Configuration
+configWithTwoExpenseEntries =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = expenseCategoryDictId,
+            entryId = testCategoryId1,
+            name = mockEntryName "Food"
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = expenseCategoryDictId,
+            entryId = testCategoryId2,
+            name = mockEntryName "Transport"
+          }
+    ]
+
+-- | Config with two income entries, defaultIncomeCategory set to testCategoryId1.
+-- Two entries ensure CannotRemoveLastEntry does not fire before the banking guard.
+configWithDefaultIncomeCategory :: Configuration
+configWithDefaultIncomeCategory =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = incomeCategoryDictId,
+            entryId = testCategoryId1,
+            name = mockEntryName "Salary"
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = incomeCategoryDictId,
+            entryId = testCategoryId2,
+            name = mockEntryName "Freelance"
+          },
+      BankingDefaultIncomeCategorySetConfigurationEvent
+        BankingDefaultIncomeCategorySet
+          { categoryId = testCategoryId1
+          }
+    ]
+
+-- | Config with two expense entries, defaultExpenseCategory set to testCategoryId1.
+-- Two entries ensure CannotRemoveLastEntry does not fire before the banking guard.
+configWithDefaultExpenseCategory :: Configuration
+configWithDefaultExpenseCategory =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = expenseCategoryDictId,
+            entryId = testCategoryId1,
+            name = mockEntryName "Food"
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = expenseCategoryDictId,
+            entryId = testCategoryId2,
+            name = mockEntryName "Transport"
+          },
+      BankingDefaultExpenseCategorySetConfigurationEvent
+        BankingDefaultExpenseCategorySet
+          { categoryId = testCategoryId1
+          }
+    ]
+
+-- | Config with two expense entries, MCC map referencing testCategoryId1.
+-- Two entries ensure CannotRemoveLastEntry does not fire before the banking guard.
+configWithMccMapEntry :: Configuration
+configWithMccMapEntry =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = expenseCategoryDictId,
+            entryId = testCategoryId1,
+            name = mockEntryName "Food"
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryId = expenseCategoryDictId,
+            entryId = testCategoryId2,
+            name = mockEntryName "Transport"
+          },
+      BankingMccExpenseCategoryMapSetConfigurationEvent
+        BankingMccExpenseCategoryMapSet
+          { mapping = Map.fromList [("5411", testCategoryId1)]
           }
     ]
 
@@ -526,3 +692,235 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
         let result = handleConfigurationCommand config command
 
         result `shouldBe` Left ConfigurationNotCreated
+
+-- -----------------------------------------------------------------------------
+-- SetBankingDefaultIncomeCategory Tests
+-- -----------------------------------------------------------------------------
+
+setBankingDefaultIncomeCategorySpec :: Spec
+setBankingDefaultIncomeCategorySpec = describe "SetBankingDefaultIncomeCategory Command" $ do
+  context "Given config whose income-category dictionary does NOT contain the categoryId" $ do
+    describe "When issuing SetBankingDefaultIncomeCategory" $ do
+      it "Then returns an error" $ do
+        let config = configWithExpenseEntry -- has expense entry, NOT income entry for testCategoryId1
+        let command =
+              SetBankingDefaultIncomeCategoryConfigurationCommand
+                SetBankingDefaultIncomeCategory
+                  { categoryId = testUnknownCategoryId
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given config whose income-category dictionary contains the categoryId" $ do
+    describe "When issuing SetBankingDefaultIncomeCategory" $ do
+      it "Then emits BankingDefaultIncomeCategorySet event" $ do
+        let config = configWithIncomeEntry
+        let command =
+              SetBankingDefaultIncomeCategoryConfigurationCommand
+                SetBankingDefaultIncomeCategory
+                  { categoryId = testCategoryId1
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankingDefaultIncomeCategorySetConfigurationEvent evt ->
+                evt.categoryId `shouldBe` testCategoryId1
+              _ -> expectationFailure "Expected BankingDefaultIncomeCategorySet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- SetBankingDefaultExpenseCategory Tests
+-- -----------------------------------------------------------------------------
+
+setBankingDefaultExpenseCategorySpec :: Spec
+setBankingDefaultExpenseCategorySpec = describe "SetBankingDefaultExpenseCategory Command" $ do
+  context "Given config whose expense-category dictionary does NOT contain the categoryId" $ do
+    describe "When issuing SetBankingDefaultExpenseCategory" $ do
+      it "Then returns an error" $ do
+        let config = configWithIncomeEntry -- has income entry, NOT expense entry for unknown id
+        let command =
+              SetBankingDefaultExpenseCategoryConfigurationCommand
+                SetBankingDefaultExpenseCategory
+                  { categoryId = testUnknownCategoryId
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given config whose expense-category dictionary contains the categoryId" $ do
+    describe "When issuing SetBankingDefaultExpenseCategory" $ do
+      it "Then emits BankingDefaultExpenseCategorySet event" $ do
+        let config = configWithExpenseEntry
+        let command =
+              SetBankingDefaultExpenseCategoryConfigurationCommand
+                SetBankingDefaultExpenseCategory
+                  { categoryId = testCategoryId1
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankingDefaultExpenseCategorySetConfigurationEvent evt ->
+                evt.categoryId `shouldBe` testCategoryId1
+              _ -> expectationFailure "Expected BankingDefaultExpenseCategorySet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- SetBankingMccExpenseCategoryMap Tests
+-- -----------------------------------------------------------------------------
+
+setBankingMccExpenseCategoryMapSpec :: Spec
+setBankingMccExpenseCategoryMapSpec = describe "SetBankingMccExpenseCategoryMap Command" $ do
+  context "Given map referencing a CategoryId NOT in expense-category dictionary" $ do
+    describe "When issuing SetBankingMccExpenseCategoryMap" $ do
+      it "Then returns an error" $ do
+        let config = configWithExpenseEntry -- testCategoryId1 in expense dict
+        let command =
+              SetBankingMccExpenseCategoryMapConfigurationCommand
+                SetBankingMccExpenseCategoryMap
+                  { mapping = Map.fromList [("5411", testUnknownCategoryId)]
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given map whose values are all in expense-category dictionary" $ do
+    describe "When issuing SetBankingMccExpenseCategoryMap" $ do
+      it "Then emits BankingMccExpenseCategoryMapSet event" $ do
+        let config = configWithTwoExpenseEntries
+        let testMapping = Map.fromList [("5411", testCategoryId1), ("4111", testCategoryId2)]
+        let command =
+              SetBankingMccExpenseCategoryMapConfigurationCommand
+                SetBankingMccExpenseCategoryMap
+                  { mapping = testMapping
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankingMccExpenseCategoryMapSetConfigurationEvent evt ->
+                evt.mapping `shouldBe` testMapping
+              _ -> expectationFailure "Expected BankingMccExpenseCategoryMapSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+  context "Given an empty map" $ do
+    describe "When issuing SetBankingMccExpenseCategoryMap" $ do
+      it "Then accepts empty map (signals cleared)" $ do
+        let config = configWithExpenseEntry
+        let command =
+              SetBankingMccExpenseCategoryMapConfigurationCommand
+                SetBankingMccExpenseCategoryMap
+                  { mapping = Map.empty
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankingMccExpenseCategoryMapSetConfigurationEvent evt ->
+                evt.mapping `shouldBe` Map.empty
+              _ -> expectationFailure "Expected BankingMccExpenseCategoryMapSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- RemoveDictionaryEntry Banking Guard Tests
+-- -----------------------------------------------------------------------------
+
+removeDictionaryEntryBankingGuardSpec :: Spec
+removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking guard" $ do
+  context "Given entry set as banking.defaultIncomeCategory" $ do
+    describe "When removing that entry" $ do
+      it "Then returns an error" $ do
+        let config = configWithDefaultIncomeCategory
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryId = incomeCategoryDictId,
+                    entryId = testCategoryId1
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given entry set as banking.defaultExpenseCategory" $ do
+    describe "When removing that entry" $ do
+      it "Then returns an error" $ do
+        let config = configWithDefaultExpenseCategory
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryId = expenseCategoryDictId,
+                    entryId = testCategoryId1
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given entry referenced in banking.mccExpenseCategoryMap" $ do
+    describe "When removing that entry" $ do
+      it "Then returns an error" $ do
+        let config = configWithMccMapEntry
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryId = expenseCategoryDictId,
+                    entryId = testCategoryId1
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given entry that is NOT a banking default nor in MCC map" $ do
+    describe "When removing that entry (two entries exist)" $ do
+      it "Then emits DictionaryEntryRemoved event" $ do
+        -- testCategoryId1 is the default expense; testCategoryId2 is free
+        let config =
+              applyEvents
+                [ ConfigurationCreatedConfigurationEvent
+                    ConfigurationCreated
+                      { baseCurrency = UAH,
+                        defaultCurrency = UAH,
+                        createdBy = System
+                      },
+                  DictionaryEntryAddedConfigurationEvent
+                    DictionaryEntryAdded
+                      { dictionaryId = expenseCategoryDictId,
+                        entryId = testCategoryId1,
+                        name = mockEntryName "Food"
+                      },
+                  DictionaryEntryAddedConfigurationEvent
+                    DictionaryEntryAdded
+                      { dictionaryId = expenseCategoryDictId,
+                        entryId = testCategoryId2,
+                        name = mockEntryName "Transport"
+                      },
+                  BankingDefaultExpenseCategorySetConfigurationEvent
+                    BankingDefaultExpenseCategorySet
+                      { categoryId = testCategoryId1
+                      }
+                ]
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryId = expenseCategoryDictId,
+                    entryId = testCategoryId2 -- the free entry
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              DictionaryEntryRemovedConfigurationEvent removed ->
+                removed.entryId `shouldBe` testCategoryId2
+              _ -> expectationFailure "Expected DictionaryEntryRemoved event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err

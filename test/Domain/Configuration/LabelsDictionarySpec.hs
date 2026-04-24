@@ -14,7 +14,7 @@ import Domain.Configuration.CommandHandler
     handleConfigurationCommand,
   )
 import Domain.Configuration.Commands (RemoveDictionaryEntry (..))
-import Domain.Configuration.Projection (Configuration (..))
+import Domain.Configuration.Projection (Configuration (..), emptyBankingConfiguration)
 import Domain.Core.Types
   ( CreatedBy (System),
     Currency (USD),
@@ -43,6 +43,7 @@ seedConfig dictId =
                     }
                 ]
             },
+      banking = emptyBankingConfiguration,
       createdBy = System,
       isCreated = True
     }
