@@ -354,13 +354,13 @@ runMigrations = do
   void $ runMigration migrateSqlEvent
 
 -- NOTE: Read models are currently implemented as in-memory TVars
--- (AccountSummaryReadModel, TransactionSummaryReadModel).
+-- (AccountReadModel, TransactionReadModel).
 -- This provides fast queries but requires rebuilding on restart.
 --
 -- If you need durable read models, add persistent-based migrations here:
 -- Example:
---   void $ runMigration migrateAccountSummary
---   void $ runMigration migrateTransactionSummary
+--   void $ runMigration migrateAccount
+--   void $ runMigration migrateTransaction
 --
 -- See Application.ReadModels.* for current in-memory implementations.
 

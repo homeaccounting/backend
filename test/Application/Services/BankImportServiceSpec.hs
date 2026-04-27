@@ -204,7 +204,7 @@ setupTestEnv = do
     $ STM.writeTVar env.userReadModel
     $ UserReadModel
       { latestSequence = 0,
-        summaryData = Map.singleton testUserId userData,
+        users = Map.singleton testUserId userData,
         emailIndex = Map.singleton "test@example.com" testUserId,
         telegramIndex = Map.empty,
         oauthIndex = Map.empty
@@ -486,7 +486,7 @@ spec = describe "BankImportService" $ do
         $ STM.writeTVar env.userReadModel
         $ UserReadModel
           { latestSequence = 0,
-            summaryData = Map.singleton testUserId userData,
+            users = Map.singleton testUserId userData,
             emailIndex = Map.singleton "test@example.com" testUserId,
             telegramIndex = Map.empty,
             oauthIndex = Map.empty

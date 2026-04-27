@@ -120,7 +120,7 @@ setupTwoAccounts = do
 spec :: Spec
 spec = describe "TransactionService" $ do
   describe "initiateTransfer" $ do
-    it "creates a transfer and returns TransactionId and summary" $ do
+    it "creates a transfer and returns TransactionId and TransactionData" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let transferCmd =
             InitiateTransfer
@@ -137,11 +137,11 @@ spec = describe "TransactionService" $ do
               }
       result <- runAppM env $ initiateTransfer id transferCmd
       shouldBeRight result
-      let (_, summary) = fromRight' result
-      summary.sourceAccountId `shouldBe` fromAccId
-      summary.targetAccountId `shouldBe` toAccId
-      summary.sourceAmount `shouldBe` mockMoney 100
-      summary.description `shouldBe` "Test transfer"
+      let (_, transaction) = fromRight' result
+      transaction.sourceAccountId `shouldBe` fromAccId
+      transaction.targetAccountId `shouldBe` toAccId
+      transaction.sourceAmount `shouldBe` mockMoney 100
+      transaction.description `shouldBe` "Test transfer"
 
   describe "getTransaction" $ do
     it "retrieves a previously created transaction" $ do
@@ -163,10 +163,10 @@ spec = describe "TransactionService" $ do
       let (txId, _) = fromRight' createResult
       result <- runAppM env $ getTransaction (unTransactionId txId)
       shouldBeRight result
-      let (retId, summary) = fromRight' result
+      let (retId, transaction) = fromRight' result
       retId `shouldBe` txId
-      summary.sourceAmount `shouldBe` mockMoney 250
-      summary.description `shouldBe` "Retrieve test"
+      transaction.sourceAmount `shouldBe` mockMoney 250
+      transaction.description `shouldBe` "Retrieve test"
 
     it "returns NotFound for non-existent transaction" $ do
       env <- createTestAppEnv
@@ -218,21 +218,21 @@ spec = describe "TransactionService" $ do
       now <- getCurrentTime
       result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "Cross-currency transfer" Nothing (Just now)
       shouldBeRight result
-      let (_, summary) = fromRight' result
+      let (_, transaction) = fromRight' result
       -- Source: 100 USD, Target: 90 EUR (100 * 9/10)
-      summary.sourceAmount `shouldBe` mockMoneyWith USD 100
-      summary.targetAmount `shouldBe` mockMoneyWith EUR 90
-      summary.exchangeRate `shouldSatisfy` isJust
+      transaction.sourceAmount `shouldBe` mockMoneyWith USD 100
+      transaction.targetAmount `shouldBe` mockMoneyWith EUR 90
+      transaction.exchangeRate `shouldSatisfy` isJust
 
     it "skips conversion for same-currency transfer" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts -- both USD
       now <- getCurrentTime
       result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoney 100) Set.empty "Same currency" Nothing (Just now)
       shouldBeRight result
-      let (_, summary) = fromRight' result
-      summary.sourceAmount `shouldBe` mockMoney 100
-      summary.targetAmount `shouldBe` mockMoney 100
-      summary.exchangeRate `shouldSatisfy` isNothing
+      let (_, transaction) = fromRight' result
+      transaction.sourceAmount `shouldBe` mockMoney 100
+      transaction.targetAmount `shouldBe` mockMoney 100
+      transaction.exchangeRate `shouldSatisfy` isNothing
 
     it "uses user-provided exchange rate instead of cache" $ do
       -- Cache has USD->EUR at 9/10, but user provides 17/20 (0.85 exact)
@@ -242,10 +242,10 @@ spec = describe "TransactionService" $ do
       now <- getCurrentTime
       result <- runAppM env $ initiateInternalTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "User rate" (Just (17 % 20)) (Just now)
       shouldBeRight result
-      let (_, summary) = fromRight' result
-      summary.sourceAmount `shouldBe` mockMoneyWith USD 100
-      summary.targetAmount `shouldBe` mockMoneyWith EUR 85
-      summary.exchangeRate `shouldSatisfy` isJust
+      let (_, transaction) = fromRight' result
+      transaction.sourceAmount `shouldBe` mockMoneyWith USD 100
+      transaction.targetAmount `shouldBe` mockMoneyWith EUR 85
+      transaction.exchangeRate `shouldSatisfy` isJust
 
     it "returns ExchangeRateUnavailable when rate not found" $ do
       -- Cache has rates but NOT for USD->EUR (only GBP->EUR)

@@ -377,7 +377,7 @@ setTransactionLabels userId transactionId labels = runExceptT $ do
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  _summary <- ExceptT (ensureEditorAccess userId transactionId)
+  _transaction <- ExceptT (ensureEditorAccess userId transactionId)
   ExceptT (validateLabels userId labels)
   let cmd =
         SetTransactionLabelsTransactionCommand
@@ -405,9 +405,9 @@ changeTransactionCategory userId transactionId newCategory = runExceptT $ do
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  summary <- ExceptT (ensureEditorAccess userId transactionId)
+  transaction <- ExceptT (ensureEditorAccess userId transactionId)
   dictId <-
-    liftMaybe CannotChangeCategoryOnInternalTransfer (pickCategoryDict summary.transferType)
+    liftMaybe CannotChangeCategoryOnInternalTransfer (pickCategoryDict transaction.transferType)
   known <- ExceptT (categoryExists userId dictId newCategory)
   guardE known (CategoryNotFound (tshow (unDictionaryEntryId newCategory)))
   let cmd =
@@ -448,7 +448,7 @@ categoryExists userId dictId entryId = runExceptT $ do
   pure (Set.member entryId (dictionaryEntryIds dictId cfg))
 
 -- | Enforce Editor+ access on one of the transaction's accounts and
--- return the matching 'TransactionData' summary on success. Missing
+-- return the matching 'TransactionData' on success. Missing
 -- transactions surface as 'NotFound'.
 ensureEditorAccess ::
   UserId ->
@@ -456,7 +456,7 @@ ensureEditorAccess ::
   AppM (Either DomainError TransactionData)
 ensureEditorAccess userId transactionId = runExceptT $ do
   txnRM <- lift (view transactionReadModelL)
-  summary <-
+  transaction <-
     liftMaybeM
       (NotFound "Transaction" (tshow transactionId))
       (liftIO (ReadModel.getTransaction txnRM transactionId))
@@ -469,10 +469,10 @@ ensureEditorAccess userId transactionId = runExceptT $ do
             role == Owner || role == Editor
           ]
       allowed =
-        Set.member summary.sourceAccountId editorAccounts
-          || Set.member summary.targetAccountId editorAccounts
+        Set.member transaction.sourceAccountId editorAccounts
+          || Set.member transaction.targetAccountId editorAccounts
   guardE allowed (AccountError "User does not have edit access to this transaction")
-  pure summary
+  pure transaction
 
 -- | Dispatch an edit command (SetTransactionLabels or
 -- ChangeTransactionCategory) and return the resulting 'TransactionData'
@@ -544,11 +544,11 @@ queryTransactionResult ::
   AppM (Either DomainError (TransactionId, TransactionData))
 queryTransactionResult transactionId = runExceptT $ do
   readModel <- lift (view transactionReadModelL)
-  summary <-
+  transaction <-
     liftMaybeM
       (NotFound "Transaction" (tshow transactionId))
       (liftIO (ReadModel.getTransaction readModel transactionId))
-  pure (transactionId, summary)
+  pure (transactionId, transaction)
 
 -- | Resolve amounts for a cross-currency transfer.
 -- For same-currency: returns identical amounts with Nothing rate.

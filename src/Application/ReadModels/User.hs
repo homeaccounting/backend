@@ -12,7 +12,7 @@
 --
 -- Key Components:
 --   - UserData: Denormalized user information
---   - UserReadModel: Map of user IDs to summary data, plus lookup indices
+--   - UserReadModel: Map of user IDs to user data, plus lookup indices
 --   - Event handlers: Update the read model when events occur
 --   - Query functions: Efficient lookups by user ID, email, or Telegram ID
 --
@@ -123,8 +123,8 @@ instance FromJSON UserData
 data UserReadModel = UserReadModel
   { -- | Latest processed sequence number
     latestSequence :: SequenceNumber,
-    -- | Primary data map: User ID -> Summary
-    summaryData :: Map UserId UserData,
+    -- | Primary data map: User ID -> UserData
+    users :: Map UserId UserData,
     -- | Email index: Email -> User ID
     emailIndex :: Map Text UserId, -- TODO: type Email = Text
 
@@ -139,7 +139,7 @@ data UserReadModel = UserReadModel
 -- Read Model Creation
 -- -----------------------------------------------------------------------------
 
--- | Creates a new empty user summary read model.
+-- | Creates a new empty user read model.
 --
 -- This initializes the read model with:
 --   - Sequence number -1 (before any events)
@@ -147,17 +147,17 @@ data UserReadModel = UserReadModel
 --
 -- Example:
 -- >>> readModel <- createUserReadModel
--- >>> summary <- getUser readModel someUserId
+-- >>> user <- getUser readModel someUserId
 createUserReadModel :: (MonadIO m) => m (TVar UserReadModel)
 createUserReadModel =
   liftIO $ newTVarIO emptyUserReadModel
 
--- | Empty user summary read model for initialization.
+-- | Empty user read model for initialization.
 emptyUserReadModel :: UserReadModel
 emptyUserReadModel =
   UserReadModel
     { latestSequence = -1,
-      summaryData = Map.empty,
+      users = Map.empty,
       emailIndex = Map.empty,
       telegramIndex = Map.empty,
       oauthIndex = Map.empty
@@ -170,7 +170,7 @@ emptyUserReadModel =
 -- | Updates the read model with new events from the global event stream.
 --
 -- This function:
---   1. Processes each event and updates the user summary accordingly
+--   1. Processes each event and updates user data accordingly
 --   2. Maintains all lookup indices
 --   3. Tracks the highest sequence number seen
 --   4. Updates the TVar atomically
@@ -199,7 +199,7 @@ handleUserEvents readModelTVar events = do
   liftIO . atomically . writeTVar readModelTVar $
     updatedModel {latestSequence = newSeq}
 
--- | Processes a single event and updates the user summary read model.
+-- | Processes a single event and updates the user read model.
 processUserEvent ::
   UserReadModel ->
   GlobalStreamEvent AccountingEvent ->
@@ -211,7 +211,7 @@ processUserEvent model globalEvent =
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
-              let summary =
+              let user =
                     UserData
                       { email = Just evt.email,
                         hasPassword = True,
@@ -222,7 +222,7 @@ processUserEvent model globalEvent =
                         version = 1
                       }
                in model
-                    { summaryData = Map.insert userId summary model.summaryData,
+                    { users = Map.insert userId user model.users,
                       emailIndex = Map.insert evt.email userId model.emailIndex
                     }
         UserRegisteredViaTelegramEvent evt ->
@@ -230,7 +230,7 @@ processUserEvent model globalEvent =
             Nothing -> model
             Just userId ->
               let ident = evt.identity
-                  summary =
+                  user =
                     UserData
                       { email = Nothing,
                         hasPassword = False,
@@ -241,7 +241,7 @@ processUserEvent model globalEvent =
                         version = 1
                       }
                in model
-                    { summaryData = Map.insert userId summary model.summaryData,
+                    { users = Map.insert userId user model.users,
                       telegramIndex = Map.insert ident.id userId model.telegramIndex
                     }
         OAuthAccountLinkedEvent evt ->
@@ -251,7 +251,7 @@ processUserEvent model globalEvent =
               let ident = evt.identity
                   oauthKey = (ident.provider, ident.subject)
                in model
-                    { summaryData =
+                    { users =
                         Map.adjust
                           ( \s ->
                               s
@@ -260,7 +260,7 @@ processUserEvent model globalEvent =
                                 }
                           )
                           userId
-                          model.summaryData,
+                          model.users,
                       oauthIndex = Map.insert oauthKey userId model.oauthIndex
                     }
         TelegramAccountLinkedEvent evt ->
@@ -269,7 +269,7 @@ processUserEvent model globalEvent =
             Just userId ->
               let ident = evt.identity
                in model
-                    { summaryData =
+                    { users =
                         Map.adjust
                           ( \s ->
                               s
@@ -278,7 +278,7 @@ processUserEvent model globalEvent =
                                 }
                           )
                           userId
-                          model.summaryData,
+                          model.users,
                       telegramIndex = Map.insert ident.id userId model.telegramIndex
                     }
         OAuthAccountUnlinkedEvent evt ->
@@ -288,7 +288,7 @@ processUserEvent model globalEvent =
               let ident = evt.identity
                   oauthKey = (ident.provider, ident.subject)
                in model
-                    { summaryData =
+                    { users =
                         Map.adjust
                           ( \s ->
                               s
@@ -303,21 +303,21 @@ processUserEvent model globalEvent =
                                 }
                           )
                           userId
-                          model.summaryData,
+                          model.users,
                       oauthIndex = Map.delete oauthKey model.oauthIndex
                     }
         TelegramAccountUnlinkedEvent _ ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
-              case Map.lookup userId model.summaryData of
+              case Map.lookup userId model.users of
                 Nothing -> model
                 Just existing ->
                   case existing.telegramIdentity of
                     Nothing -> model
                     Just ident ->
                       model
-                        { summaryData =
+                        { users =
                             Map.adjust
                               ( \s ->
                                   s
@@ -326,7 +326,7 @@ processUserEvent model globalEvent =
                                     }
                               )
                               userId
-                              model.summaryData,
+                              model.users,
                           telegramIndex = Map.delete ident.id model.telegramIndex
                         }
         PasswordChangedEvent _ ->
@@ -334,7 +334,7 @@ processUserEvent model globalEvent =
             Nothing -> model
             Just userId ->
               model
-                { summaryData =
+                { users =
                     Map.adjust
                       ( \s ->
                           s
@@ -343,14 +343,14 @@ processUserEvent model globalEvent =
                             }
                       )
                       userId
-                      model.summaryData
+                      model.users
                 }
         UserConfigurationAssignedEvent evt ->
           case mkUserIdSafe streamUuid of
             Nothing -> model
             Just userId ->
               model
-                { summaryData =
+                { users =
                     Map.adjust
                       ( \s ->
                           s
@@ -359,7 +359,7 @@ processUserEvent model globalEvent =
                             }
                       )
                       userId
-                      model.summaryData
+                      model.users
                 }
         _ -> model -- Ignore non-user events
 
@@ -367,14 +367,14 @@ processUserEvent model globalEvent =
 -- Query Functions
 -- -----------------------------------------------------------------------------
 
--- | Retrieves the user summary for a specific user ID.
+-- | Retrieves the user data for a specific user ID.
 --
 -- Returns 'Nothing' if the user doesn't exist in the read model.
 --
 -- Example:
--- >>> maybeSummary <- getUser readModel userId
--- >>> case maybeSummary of
--- >>>   Just summary -> print (summary.email)
+-- >>> maybeUser <- getUser readModel userId
+-- >>> case maybeUser of
+-- >>>   Just user -> print (user.email)
 -- >>>   Nothing -> putStrLn "User not found"
 getUser ::
   (MonadIO m) =>
@@ -383,7 +383,7 @@ getUser ::
   m (Maybe UserData)
 getUser readModelTVar userId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup userId model.summaryData
+  return $ Map.lookup userId model.users
 
 -- | Retrieves a user by email address.
 --
@@ -392,7 +392,7 @@ getUser readModelTVar userId = do
 -- Example:
 -- >>> maybeUser <- getUserByEmail readModel "user@example.com"
 -- >>> case maybeUser of
--- >>>   Just (userId, summary) -> authenticateUser userId summary
+-- >>>   Just (userId, user) -> authenticateUser userId user
 -- >>>   Nothing -> rejectLogin
 getUserByEmail ::
   (MonadIO m) =>
@@ -403,9 +403,9 @@ getUserByEmail readModelTVar emailAddr = do
   model <- liftIO $ readTVarIO readModelTVar
   case Map.lookup emailAddr model.emailIndex of
     Nothing -> return Nothing
-    Just userId -> case Map.lookup userId model.summaryData of
+    Just userId -> case Map.lookup userId model.users of
       Nothing -> return Nothing
-      Just summary -> return $ Just (userId, summary)
+      Just user -> return $ Just (userId, user)
 
 -- | Retrieves a user by Telegram ID.
 --
@@ -414,7 +414,7 @@ getUserByEmail readModelTVar emailAddr = do
 -- Example:
 -- >>> maybeUser <- getUserByTelegramId readModel telegramId
 -- >>> case maybeUser of
--- >>>   Just (userId, summary) -> loginUser userId
+-- >>>   Just (userId, user) -> loginUser userId
 -- >>>   Nothing -> createNewUser
 getUserByTelegramId ::
   (MonadIO m) =>
@@ -425,9 +425,9 @@ getUserByTelegramId readModelTVar tgId = do
   model <- liftIO $ readTVarIO readModelTVar
   case Map.lookup tgId model.telegramIndex of
     Nothing -> return Nothing
-    Just userId -> case Map.lookup userId model.summaryData of
+    Just userId -> case Map.lookup userId model.users of
       Nothing -> return Nothing
-      Just summary -> return $ Just (userId, summary)
+      Just user -> return $ Just (userId, user)
 
 -- | Retrieves a user by OAuth identity.
 --
@@ -436,7 +436,7 @@ getUserByTelegramId readModelTVar tgId = do
 -- Example:
 -- >>> maybeUser <- getUserByOAuthIdentity readModel Google "123456789"
 -- >>> case maybeUser of
--- >>>   Just (userId, summary) -> loginUser userId
+-- >>>   Just (userId, user) -> loginUser userId
 -- >>>   Nothing -> promptToLinkOrCreate
 getUserByOAuthIdentity ::
   (MonadIO m) =>
@@ -448,9 +448,9 @@ getUserByOAuthIdentity readModelTVar provider subjectVal = do
   model <- liftIO $ readTVarIO readModelTVar
   case Map.lookup (provider, subjectVal) model.oauthIndex of
     Nothing -> return Nothing
-    Just userId -> case Map.lookup userId model.summaryData of
+    Just userId -> case Map.lookup userId model.users of
       Nothing -> return Nothing
-      Just summary -> return $ Just (userId, summary)
+      Just user -> return $ Just (userId, user)
 
 -- | Checks if a user exists in the read model.
 userExists ::
@@ -460,7 +460,7 @@ userExists ::
   m Bool
 userExists readModelTVar userId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member userId model.summaryData
+  return $ Map.member userId model.users
 
 -- | Checks if an email is already registered.
 emailExists ::
@@ -486,7 +486,7 @@ telegramIdLinked readModelTVar tgId = do
 -- Helper Functions
 -- -----------------------------------------------------------------------------
 
--- | Extracts the map of user summaries from the read model.
+-- | Extracts the map of users from the read model.
 --
 -- This is useful for testing and debugging.
 userToMap ::
@@ -495,4 +495,4 @@ userToMap ::
   m (Map UserId UserData)
 userToMap readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
-  return model.summaryData
+  return model.users

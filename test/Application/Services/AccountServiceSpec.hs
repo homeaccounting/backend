@@ -71,36 +71,36 @@ spec = describe "AccountService" $ do
       env <- createTestAppEnv
       result <- runAppM env $ createAccount validCreateAccount
       shouldBeRight result
-      let (_, summary) = fromRight' result
-      summary.name `shouldBe` "Savings"
-      summary.balance `shouldBe` mockMoney 1000
-      summary.createdBy `shouldBe` testUserId1
-      summary.accountType `shouldBe` Regular defaultCash
+      let (_, account) = fromRight' result
+      account.name `shouldBe` "Savings"
+      account.balance `shouldBe` mockMoney 1000
+      account.createdBy `shouldBe` testUserId1
+      account.accountType `shouldBe` Regular defaultCash
 
     it "creates an account with zero initial balance" $ do
       env <- createTestAppEnv
       let cmd = validCreateAccount {initialBalance = mockMoney 0}
       result <- runAppM env $ createAccount cmd
       shouldBeRight result
-      let (_, summary) = fromRight' result
-      summary.balance `shouldBe` mockMoney 0
+      let (_, account) = fromRight' result
+      account.balance `shouldBe` mockMoney 0
 
     it "creates an External account" $ do
       env <- createTestAppEnv
       let cmd = (validCreateAccount :: CreateAccount) {accountType = External}
       result <- runAppM env $ createAccount cmd
       shouldBeRight result
-      let (_, summary) = fromRight' result
-      summary.accountType `shouldBe` External
+      let (_, account) = fromRight' result
+      account.accountType `shouldBe` External
 
   describe "getAccount" $ do
     it "retrieves a previously created account" $ do
       (env, accountId) <- createTestAccount validCreateAccount
       result <- runAppM env $ getAccount (unAccountId accountId)
       shouldBeRight result
-      let (retId, summary) = fromRight' result
+      let (retId, account) = fromRight' result
       retId `shouldBe` accountId
-      summary.name `shouldBe` "Savings"
+      account.name `shouldBe` "Savings"
 
     it "returns NotFound for non-existent account" $ do
       env <- createTestAppEnv

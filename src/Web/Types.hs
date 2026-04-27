@@ -716,8 +716,8 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
 -- | Converts AccountData (read model) to AccountResponse.
 --
 -- Example:
--- >>> let summary = AccountData "Savings" (Money 1500.0) 5
--- >>> fromAccountData accountId summary
+-- >>> let account = AccountData "Savings" (Money 1500.0) 5
+-- >>> fromAccountData accountId account
 -- AccountResponse accountId "Savings" 1500.0 5
 fromAccountData :: AccountId -> AccountData -> AccountResponse
 fromAccountData accountId AccountData {..} =
@@ -865,8 +865,8 @@ currencyToText GBP = "GBP"
 -- instead of requiring event replay.
 --
 -- Example:
--- >>> let summary = TransactionData fromId toId (Money 300.0) "Rent" Completed
--- >>> fromTransactionData txId summary
+-- >>> let transaction = TransactionData fromId toId (Money 300.0) "Rent" Completed
+-- >>> fromTransactionData txId transaction
 -- TransactionResponse txId fromId toId 300.0 "Rent" "Completed" Nothing
 fromTransactionData :: TransactionId -> TransactionData -> TransactionResponse
 fromTransactionData txId TransactionData {..} =

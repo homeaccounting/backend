@@ -13,7 +13,7 @@
 --
 -- Key Components:
 --   - TransactionData: Denormalized transaction information
---   - TransactionReadModel: Map of transaction IDs to summary data
+--   - TransactionReadModel: Map of transaction IDs to transaction data
 --   - Event handlers: Update the read model when events occur
 --   - Query functions: Efficient lookups by transaction ID
 --
@@ -118,14 +118,14 @@ instance ToJSON TransactionData
 
 instance FromJSON TransactionData
 
--- | The read model state: a map from transaction IDs to their summary data.
+-- | The read model state: a map from transaction IDs to their transaction data.
 --
 -- This is wrapped in a TVar for concurrent access and includes the latest
 -- sequence number for reliable event processing.
 data TransactionReadModel
   = TransactionReadModel
   { latestSequence :: SequenceNumber,
-    summaryData :: Map TransactionId TransactionData
+    transactions :: Map TransactionId TransactionData
   }
   deriving (Show, Eq)
 
@@ -191,22 +191,22 @@ queryTo q = q.qTo
 -- Read Model Creation
 -- -----------------------------------------------------------------------------
 
--- | Creates a new empty transaction summary read model.
+-- | Creates a new empty transaction read model.
 --
 -- This initializes the read model with:
 --  - Sequence number -1 (before any events)
---  - Empty map of transaction summaries
+--  - Empty map of transactions
 --
 -- Example:
 -- >>> readModel <- createTransactionReadModel
--- >>> summary <- getTransaction readModel someTransactionId
+-- >>> transaction <- getTransaction readModel someTransactionId
 createTransactionReadModel :: (MonadIO m) => m (TVar TransactionReadModel)
 createTransactionReadModel =
   liftIO $
     newTVarIO $
       TransactionReadModel
         { latestSequence = -1,
-          summaryData = Map.empty
+          transactions = Map.empty
         }
 
 -- -----------------------------------------------------------------------------
@@ -216,7 +216,7 @@ createTransactionReadModel =
 -- | Updates the read model with new events from the global event stream.
 --
 -- This function:
---  1. Processes each event and updates the transaction summary accordingly
+--  1. Processes each event and updates the transaction data accordingly
 --  2. Tracks the highest sequence number seen
 --  3. Updates the TVar atomically
 --
@@ -229,7 +229,7 @@ createTransactionReadModel =
 --
 -- Example:
 -- >>> handleTransactionEvents readModelTVar events
--- >>> summary <- getTransaction readModelTVar transactionId
+-- >>> transaction <- getTransaction readModelTVar transactionId
 handleTransactionEvents ::
   (MonadIO m) =>
   TVar TransactionReadModel ->
@@ -239,15 +239,15 @@ handleTransactionEvents readModelTVar events = do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
-      updatedData = foldl processEvent currentModel.summaryData events
+      updatedData = foldl processEvent currentModel.transactions events
 
   liftIO . atomically . writeTVar readModelTVar $
     currentModel
       { latestSequence = newSeq,
-        summaryData = updatedData
+        transactions = updatedData
       }
 
--- | Processes a single event and updates the transaction summary map.
+-- | Processes a single event and updates the transactions map.
 --
 -- GlobalStreamEvent is nested: StreamEvent () SequenceNumber (VersionedStreamEvent event)
 -- where VersionedStreamEvent event = StreamEvent UUID EventVersion event
@@ -256,14 +256,14 @@ processEvent ::
   Map TransactionId TransactionData ->
   GlobalStreamEvent AccountingEvent ->
   Map TransactionId TransactionData
-processEvent summaries globalEvent =
+processEvent transactions globalEvent =
   let versionedEvent = globalEvent.payload
       streamUuid = versionedEvent.key
       payload = versionedEvent.payload
    in case payload of
         TransferInitiatedEvent evt ->
           case mkTransactionIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> transactions
             Just transactionId ->
               -- Use insertWith to avoid overwriting terminal states (Completed/Failed).
               -- In depth-first event bus dispatch, TransferCompleted/TransferFailed
@@ -286,62 +286,62 @@ processEvent summaries globalEvent =
                         date = eventDate,
                         labels = evt.labels
                       }
-               in Map.insertWith (\_ existing -> existing) transactionId newEntry summaries
+               in Map.insertWith (\_ existing -> existing) transactionId newEntry transactions
         TransferCompletedEvent _evt ->
           case mkTransactionIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> transactions
             Just transactionId ->
               Map.adjust
-                (\summary -> summary {status = Completed})
+                (\transaction -> transaction {status = Completed})
                 transactionId
-                summaries
+                transactions
         TransferFailedEvent evt ->
           case mkTransactionIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> transactions
             Just transactionId ->
               Map.adjust
-                ( \summary ->
-                    summary {status = Failed evt.reason}
+                ( \transaction ->
+                    transaction {status = Failed evt.reason}
                 )
                 transactionId
-                summaries
+                transactions
         TransactionLabelsSetEvent evt ->
           case mkTransactionIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> transactions
             Just transactionId ->
               Map.adjust
-                (\summary -> (summary :: TransactionData) {labels = evt.labels})
+                (\transaction -> (transaction :: TransactionData) {labels = evt.labels})
                 transactionId
-                summaries
+                transactions
         TransactionCategoryChangedEvent evt ->
           case mkTransactionIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> transactions
             Just transactionId ->
               Map.adjust
-                ( \summary ->
-                    (summary :: TransactionData)
-                      { transferType = case summary.transferType of
+                ( \transaction ->
+                    (transaction :: TransactionData)
+                      { transferType = case transaction.transferType of
                           Income _ -> Income evt.newCategory
                           Expense _ -> Expense evt.newCategory
                           Transfer -> Transfer
                       }
                 )
                 transactionId
-                summaries
-        _ -> summaries -- Ignore account events
+                transactions
+        _ -> transactions -- Ignore account events
 
 -- -----------------------------------------------------------------------------
 -- Query Functions
 -- -----------------------------------------------------------------------------
 
--- | Retrieves the transaction summary for a specific transaction ID.
+-- | Retrieves the transaction data for a specific transaction ID.
 --
 -- Returns 'Nothing' if the transaction doesn't exist in the read model.
 --
 -- Example:
--- >>> maybeSummary <- getTransaction readModel transactionId
--- >>> case maybeSummary of
--- >>>   Just summary -> print (summary.status)
+-- >>> maybeTransaction <- getTransaction readModel transactionId
+-- >>> case maybeTransaction of
+-- >>>   Just transaction -> print (transaction.status)
 -- >>>   Nothing -> putStrLn "Transaction not found"
 getTransaction ::
   (MonadIO m) =>
@@ -350,22 +350,22 @@ getTransaction ::
   m (Maybe TransactionData)
 getTransaction readModelTVar transactionId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup transactionId model.summaryData
+  return $ Map.lookup transactionId model.transactions
 
--- | Retrieves all transaction summaries in the read model.
+-- | Retrieves all transactions in the read model.
 --
 -- Returns a map from TransactionId to TransactionData for all known transactions.
 --
 -- Example:
--- >>> allSummaries <- getAllTransactions readModel
--- >>> mapM_ print (Map.toList allSummaries)
+-- >>> allTransactions <- getAllTransactions readModel
+-- >>> mapM_ print (Map.toList allTransactions)
 getAllTransactions ::
   (MonadIO m) =>
   TVar TransactionReadModel ->
   m (Map TransactionId TransactionData)
 getAllTransactions readModelTVar = do
   model <- liftIO $ readTVarIO readModelTVar
-  return model.summaryData
+  return model.transactions
 
 -- | Checks if a transaction exists in the read model.
 --
@@ -381,7 +381,7 @@ transactionExists ::
   m Bool
 transactionExists readModelTVar transactionId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member transactionId model.summaryData
+  return $ Map.member transactionId model.transactions
 
 -- | List transactions visible to the caller, filtered by 'TransactionQuery'.
 --
@@ -407,7 +407,7 @@ listTransactions readModelTVar visible query = do
   model <- liftIO $ readTVarIO readModelTVar
   let matches =
         [ (txId, td)
-        | (txId, td) <- Map.toList model.summaryData,
+        | (txId, td) <- Map.toList model.transactions,
           isVisible td,
           matchesAccount td,
           matchesFrom td,
@@ -434,13 +434,13 @@ listTransactions readModelTVar visible query = do
 -- Helper Functions
 -- -----------------------------------------------------------------------------
 
--- | Extracts the map of transaction summaries from the read model.
+-- | Extracts the map of transactions from the read model.
 --
 -- This is useful for testing and debugging.
 --
 -- Example:
--- >>> summaryMap <- transactionToMap readModel
--- >>> print $ Map.size summaryMap
+-- >>> transactionsMap <- transactionToMap readModel
+-- >>> print $ Map.size transactionsMap
 transactionToMap ::
   (MonadIO m) =>
   TVar TransactionReadModel ->
@@ -462,7 +462,7 @@ findReferencingTransactions ::
   m Int
 findReferencingTransactions readModelTVar entryId = do
   model <- liftIO $ readTVarIO readModelTVar
-  pure . length $ filter referencesEntry (Map.elems model.summaryData)
+  pure . length $ filter referencesEntry (Map.elems model.transactions)
   where
     referencesEntry td =
       Set.member entryId td.labels

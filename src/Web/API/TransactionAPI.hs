@@ -168,7 +168,7 @@ incomeHandler user request = do
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   result <- TransactionService.initiateIncome userId accountId money categoryEntryId labelSet request.description request.date
   case result of
-    Right (txId, summary) -> return $ fromTransactionData txId summary
+    Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
 
 -- | Handler for POST /api/transactions/expense - Record an expense transaction.
@@ -183,7 +183,7 @@ expenseHandler user request = do
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   result <- TransactionService.initiateExpense userId accountId money categoryEntryId labelSet request.description request.date
   case result of
-    Right (txId, summary) -> return $ fromTransactionData txId summary
+    Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
 
 -- | Handler for POST /api/transactions/transfer - Initiate an internal transfer.
@@ -199,7 +199,7 @@ transferHandler user request = do
   let maybeRate = fmap toRational request.exchangeRate
   result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money labelSet request.description maybeRate request.date
   case result of
-    Right (txId, summary) -> return $ fromTransactionData txId summary
+    Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
 
 -- | Handler for PUT /api/transactions/:id/labels — replace the label
@@ -263,5 +263,5 @@ getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse
 getTransactionHandler _user transactionUuid = do
   result <- TransactionService.getTransaction transactionUuid
   case result of
-    Right (txId, summary) -> return $ fromTransactionData txId summary
+    Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err

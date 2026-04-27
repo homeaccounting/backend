@@ -218,7 +218,7 @@ handleUnlinkTelegram user = do
 -- DTO Conversion (Web layer responsibility)
 -- -----------------------------------------------------------------------------
 
--- | Convert user summary data to profile response DTO.
+-- | Convert user data to profile response DTO.
 userDataToProfileResponse :: UserId -> UserData -> UserProfileResponse
 userDataToProfileResponse uid UserData {..} =
   UserProfileResponse

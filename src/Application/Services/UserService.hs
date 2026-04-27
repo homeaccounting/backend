@@ -71,7 +71,7 @@ import qualified RIO.Text as T
 
 -- | Get a user's profile data.
 --
--- Queries the read model for the user summary.
+-- Queries the read model for the user data.
 -- Returns the UserId and UserData on success.
 getProfile ::
   UserId ->

@@ -197,9 +197,9 @@ login ::
 login email password = runExceptT $ do
   lift $ logInfo "Processing login request"
   userReadModel <- lift (view userReadModelL)
-  (userId, userSummary) <-
+  (userId, user) <-
     liftMaybeM (NotFound "User" email) (getUserByEmail userReadModel email)
-  guardE userSummary.hasPassword (AccountError "Invalid email or password")
+  guardE user.hasPassword (AccountError "Invalid email or password")
   reader <- lift (view eventStoreReaderL)
   userAggregate <- liftIO (loadUserAggregate reader (unUserId userId))
   storedHash <- case userAggregate.passwordHash of
@@ -208,7 +208,7 @@ login email password = runExceptT $ do
       lift $ logError "User has password flag but no hash in aggregate"
       throwE (AccountError "Invalid email or password")
   guardE (verifyPassword password storedHash) (AccountError "Invalid email or password")
-  let userEmail = fromMaybe email userSummary.email
+  let userEmail = fromMaybe email user.email
   ExceptT (generateAuthResult userId (Just userEmail))
 
 -- | Initiate OAuth flow for a provider.
@@ -259,9 +259,9 @@ handleOAuthCallback provider code state = runExceptT $ do
   userReadModel <- lift (view userReadModelL)
   maybeUser <- lift (getUserByOAuthIdentity userReadModel provider userInfo.subject)
   case maybeUser of
-    Just (uid, summary) -> do
+    Just (uid, user) -> do
       lift $ logInfo "Existing user found via OAuth"
-      ExceptT (generateAuthResult uid summary.email)
+      ExceptT (generateAuthResult uid user.email)
     Nothing -> do
       lift $ logInfo "Creating new user via OAuth"
       case userInfo.email of
@@ -307,9 +307,9 @@ authenticateTelegram authData = runExceptT $ do
   userReadModel <- lift (view userReadModelL)
   maybeUser <- lift (getUserByTelegramId userReadModel identity.id)
   case maybeUser of
-    Just (uid, summary) -> do
+    Just (uid, user) -> do
       lift $ logInfo "Existing user found via Telegram"
-      ExceptT (generateAuthResult uid summary.email)
+      ExceptT (generateAuthResult uid user.email)
     Nothing -> do
       lift $ logInfo "Creating new user via Telegram"
       ExceptT (createUserViaTelegram identity)

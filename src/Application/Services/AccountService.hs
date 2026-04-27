@@ -100,12 +100,12 @@ createAccount createCmd = runExceptT $ do
   lift $ logInfo $ "Generated account ID: " <> displayShow accountUuid
   runAccountCmd id accountUuid (CreateAccountAccountCommand createCmd)
   readModel <- lift (view accountReadModelL)
-  summary <-
+  account <-
     liftMaybeM
       (AccountError "Account created but not found in read model")
       (liftIO $ ReadModel.getAccount readModel accountId)
   lift $ logInfo "Account successfully created"
-  pure (accountId, summary)
+  pure (accountId, account)
 
 -- | Get an account by UUID.
 --
@@ -122,12 +122,12 @@ getAccount accountUuid = runExceptT $ do
   accountId <-
     liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
   readModel <- lift (view accountReadModelL)
-  summary <-
+  account <-
     liftMaybeM
       (NotFound "Account" (tshow accountUuid))
       (liftIO $ ReadModel.getAccount readModel accountId)
   lift $ logInfo "Account found"
-  pure (accountId, summary)
+  pure (accountId, account)
 
 -- | List accounts accessible to a given user.
 --
@@ -140,7 +140,7 @@ listAccountsForUser userId = do
   readModel <- view accountReadModelL
   accountsList <- liftIO $ ReadModel.getAccessibleAccounts readModel userId
 
-  let result = map (\(aid, summary, _role) -> (aid, summary)) accountsList
+  let result = map (\(aid, account, _role) -> (aid, account)) accountsList
 
   logInfo $ "Found " <> displayShow (length result) <> " account(s)"
   return result
@@ -163,15 +163,15 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = runExceptT $
   accountId <-
     liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
   readModel <- lift (view accountReadModelL)
-  summary <-
+  account <-
     liftMaybeM
       (NotFound "Account" (tshow accountUuid))
       (liftIO $ ReadModel.getAccount readModel accountId)
   guardE
-    (summary.createdBy == requestingUserId)
+    (account.createdBy == requestingUserId)
     (AccountError "Only account owner can share access")
   guardE
-    (summary.accountType /= External)
+    (account.accountType /= External)
     (AccountError "External accounts cannot be shared")
   targetUserId <-
     liftEitherWith
@@ -210,18 +210,18 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = runExceptT $ d
   accountId <-
     liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
   readModel <- lift (view accountReadModelL)
-  summary <-
+  account <-
     liftMaybeM
       (NotFound "Account" (tshow accountUuid))
       (liftIO $ ReadModel.getAccount readModel accountId)
   guardE
-    (summary.createdBy == requestingUserId)
+    (account.createdBy == requestingUserId)
     (AccountError "Only account owner can revoke access")
   targetUserId <-
     liftEitherWith
       (\_ -> ValidationErr (mkValidationError "userId" "Invalid user ID" (tshow targetUserUuid)))
       (mkUserId targetUserUuid)
-  guardE (targetUserId /= summary.createdBy) (AccountError "Cannot revoke owner's access")
+  guardE (targetUserId /= account.createdBy) (AccountError "Cannot revoke owner's access")
   let revokeCmd =
         RevokeAccountAccessAccountCommand
           RevokeAccountAccess

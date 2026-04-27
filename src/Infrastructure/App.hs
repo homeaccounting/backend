@@ -153,8 +153,8 @@ import Telegram.Types (BotState)
 --  - eventStoreWriter: Event store writer with event bus
 --  - eventStoreReader: Event store reader for loading aggregates
 --  - globalEventStoreReader: Global event reader for read models
---  - accountReadModel: In-memory account summary read model
---  - transactionReadModel: In-memory transaction summary read model
+--  - accountReadModel: In-memory account read model
+--  - transactionReadModel: In-memory transaction read model
 --
 -- Design Notes:
 --  - All fields are strict (!) for performance
@@ -178,11 +178,11 @@ data AppEnv = AppEnv
     eventStoreReader :: !(AccountingVersionedEventStoreReader IO),
     -- | Global event store reader for read models
     globalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
-    -- | In-memory account summary read model (STM)
+    -- | In-memory account read model (STM)
     accountReadModel :: !(TVar AccountReadModel),
-    -- | In-memory transaction summary read model (STM)
+    -- | In-memory transaction read model (STM)
     transactionReadModel :: !(TVar TransactionReadModel),
-    -- | In-memory user summary read model (STM)
+    -- | In-memory user read model (STM)
     userReadModel :: !(TVar UserReadModel),
     -- | In-memory configuration read model (STM)
     configurationReadModel :: !(TVar ConfigurationReadModel),

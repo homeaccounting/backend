@@ -202,7 +202,7 @@ createAccountHandler user request = do
   result <- AccountService.createAccount createCmd
   case result of
     -- 3. Convert domain result to response DTO
-    Right (accountId, summary) -> return $ fromAccountData accountId summary
+    Right (accountId, account) -> return $ fromAccountData accountId account
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts/:id - Get account by ID.
@@ -210,7 +210,7 @@ getAccountHandler :: AuthenticatedUser -> UUID -> AppM AccountResponse
 getAccountHandler _user accountUuid = do
   result <- AccountService.getAccount accountUuid
   case result of
-    Right (accountId, summary) -> return $ fromAccountData accountId summary
+    Right (accountId, account) -> return $ fromAccountData accountId account
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts - List accounts accessible to the authenticated user.

@@ -14,7 +14,7 @@
 -- Key Components:
 --   - ConfigurationData: Denormalized configuration information
 --   - DictionaryData: Denormalized dictionary with entries
---   - ConfigurationReadModel: Map of configuration IDs to summary data
+--   - ConfigurationReadModel: Map of configuration IDs to configuration data
 --   - Event handlers: Update the read model when events occur
 --   - Query functions: Efficient lookups by configuration ID
 --
@@ -106,13 +106,13 @@ data DictionaryData = DictionaryData
   }
   deriving (Show, Eq, Generic)
 
--- | The read model state: a map from configuration IDs to their summary data.
+-- | The read model state: a map from configuration IDs to their configuration data.
 --
 -- This is wrapped in a TVar for concurrent access and includes the latest
 -- sequence number for reliable event processing.
 data ConfigurationReadModel = ConfigurationReadModel
   { latestSequence :: SequenceNumber,
-    summaryData :: Map ConfigurationId ConfigurationData
+    configurations :: Map ConfigurationId ConfigurationData
   }
   deriving (Show, Eq)
 
@@ -124,7 +124,7 @@ data ConfigurationReadModel = ConfigurationReadModel
 --
 -- This initializes the read model with:
 --   - Sequence number -1 (before any events)
---   - Empty map of configuration summaries
+--   - Empty map of configurations
 --
 -- Example:
 -- >>> readModel <- createConfigurationReadModel
@@ -135,7 +135,7 @@ createConfigurationReadModel =
     newTVarIO $
       ConfigurationReadModel
         { latestSequence = -1,
-          summaryData = Map.empty
+          configurations = Map.empty
         }
 
 -- -----------------------------------------------------------------------------
@@ -145,7 +145,7 @@ createConfigurationReadModel =
 -- | Updates the read model with new events from the global event stream.
 --
 -- This function:
---   1. Processes each event and updates the configuration summary accordingly
+--   1. Processes each event and updates the configuration data accordingly
 --   2. Tracks the highest sequence number seen
 --   3. Updates the TVar atomically
 --
@@ -171,15 +171,15 @@ handleConfigurationEvents readModelTVar events = do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
-      updatedData = foldl processConfigurationEvent currentModel.summaryData events
+      updatedData = foldl processConfigurationEvent currentModel.configurations events
 
   liftIO . atomically . writeTVar readModelTVar $
     currentModel
       { latestSequence = newSeq,
-        summaryData = updatedData
+        configurations = updatedData
       }
 
--- | Processes a single event and updates the configuration summary map.
+-- | Processes a single event and updates the configurations map.
 --
 -- GlobalStreamEvent is nested: StreamEvent () SequenceNumber (VersionedStreamEvent event)
 -- where VersionedStreamEvent event = StreamEvent UUID EventVersion event
@@ -188,12 +188,12 @@ processConfigurationEvent ::
   Map ConfigurationId ConfigurationData ->
   GlobalStreamEvent AccountingEvent ->
   Map ConfigurationId ConfigurationData
-processConfigurationEvent summaries globalEvent =
+processConfigurationEvent configurations globalEvent =
   let (streamUuid, payload) = unpackGlobalEvent globalEvent
    in case payload of
         ConfigurationCreatedEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.insert
                 configId
@@ -205,10 +205,10 @@ processConfigurationEvent summaries globalEvent =
                     createdBy = evt.createdBy,
                     version = 1
                   }
-                summaries
+                configurations
         BaseCurrencyChangedEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -218,10 +218,10 @@ processConfigurationEvent summaries globalEvent =
                       }
                 )
                 configId
-                summaries
+                configurations
         DefaultCurrencyChangedEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -231,10 +231,10 @@ processConfigurationEvent summaries globalEvent =
                       }
                 )
                 configId
-                summaries
+                configurations
         DictionaryEntryAddedEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -248,10 +248,10 @@ processConfigurationEvent summaries globalEvent =
                           }
                 )
                 configId
-                summaries
+                configurations
         DictionaryEntryRenamedEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -267,10 +267,10 @@ processConfigurationEvent summaries globalEvent =
                                   }
                 )
                 configId
-                summaries
+                configurations
         DictionaryEntryRemovedEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -286,10 +286,10 @@ processConfigurationEvent summaries globalEvent =
                                   }
                 )
                 configId
-                summaries
+                configurations
         BankingDefaultIncomeCategorySetEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -299,10 +299,10 @@ processConfigurationEvent summaries globalEvent =
                       }
                 )
                 configId
-                summaries
+                configurations
         BankingDefaultExpenseCategorySetEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -312,10 +312,10 @@ processConfigurationEvent summaries globalEvent =
                       }
                 )
                 configId
-                summaries
+                configurations
         BankingMccExpenseCategoryMapSetEvent evt ->
           case mkConfigurationIdSafe streamUuid of
-            Nothing -> summaries
+            Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
@@ -325,8 +325,8 @@ processConfigurationEvent summaries globalEvent =
                       }
                 )
                 configId
-                summaries
-        _ -> summaries -- Ignore other events
+                configurations
+        _ -> configurations -- Ignore other events
 
 -- -----------------------------------------------------------------------------
 -- Query Functions
@@ -348,4 +348,4 @@ getConfiguration ::
   m (Maybe ConfigurationData)
 getConfiguration readModelTVar configId = do
   model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup configId model.summaryData
+  return $ Map.lookup configId model.configurations
