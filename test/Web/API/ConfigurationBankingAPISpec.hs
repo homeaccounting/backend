@@ -28,7 +28,6 @@
 --   7. GET /api/users/me/configuration after PUT → banking.defaultIncomeCategory set.
 module Web.API.ConfigurationBankingAPISpec (spec) where
 
-import qualified Application.Services.ConfigurationService as ConfigService
 import Data.Aeson (FromJSON (..), eitherDecode, encode, object, withObject, (.:), (.=))
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (Pair)
@@ -42,23 +41,19 @@ import Domain.Configuration.Defaults
     mkDeterministicEntryId,
   )
 import Domain.Core.Types (unDictionaryEntryId)
-import Infrastructure.App (runAppM)
 import Network.HTTP.Types
-  ( hAuthorization,
-    hContentType,
+  ( hContentType,
     status200,
     status400,
     status401,
   )
-import qualified Network.HTTP.Types.Header
-import Network.Wai (Application)
 import Network.Wai.Test (SResponse (..))
 import RIO
 import Test.Hspec
 import Test.Hspec.Wai
-import Testkit.InMemoryEventStore (createTestAppEnv)
+import Testkit.AppEnv (mkAppSeeded)
+import Testkit.HspecWai (bearerHeader, jsonAuthHeaders)
 import Web.API.ConfigurationAPI (BankingConfigurationDTO (..), ConfigurationResponse (..))
-import Web.Server (buildApplication)
 import Web.Types (ErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
@@ -78,30 +73,8 @@ unknownUUID :: UUID.UUID
 unknownUUID = UUID.fromWords 0xDEAD 0xBEEF 0 1
 
 -- -----------------------------------------------------------------------------
--- Application fixture
--- -----------------------------------------------------------------------------
-
--- | Build the Wai Application with the default configuration seeded.
---
--- Seeding populates both the income-category and expense-category
--- dictionaries with all default entries, so tests can reference the
--- deterministic UUIDs computed by 'mkDeterministicEntryId'.
-mkApp :: IO Application
-mkApp = do
-  env <- createTestAppEnv
-  runAppM env ConfigService.seedDefaultConfiguration
-  pure (buildApplication env)
-
--- -----------------------------------------------------------------------------
 -- Request helpers
 -- -----------------------------------------------------------------------------
-
--- | JSON + Authorization headers for authenticated requests.
-jsonAuthHeaders :: Text -> [Network.HTTP.Types.Header.Header]
-jsonAuthHeaders tok =
-  [ (hContentType, "application/json"),
-    (hAuthorization, "Bearer " <> encodeUtf8 tok)
-  ]
 
 -- | Register a fresh user and return the JWT token.
 --
@@ -151,7 +124,7 @@ spec = do
 updateBankingSpec :: Spec
 updateBankingSpec =
   describe "PUT /api/users/me/configuration/banking"
-    $ with mkApp
+    $ with mkAppSeeded
     $ do
       it "returns 200 with updated defaultIncomeCategory when valid UUID supplied" $ do
         tok <- registerAndGetToken
@@ -256,7 +229,7 @@ updateBankingSpec =
 updateBankingMccMapSpec :: Spec
 updateBankingMccMapSpec =
   describe "PUT /api/users/me/configuration/banking (mccExpenseCategoryMap)"
-    $ with mkApp
+    $ with mkAppSeeded
     $ do
       it "returns 200 and GET reflects a single-entry MCC map" $ do
         tok <- registerAndGetToken
@@ -279,7 +252,7 @@ updateBankingMccMapSpec =
           request
             "GET"
             "/api/users/me/configuration"
-            [(hAuthorization, "Bearer " <> encodeUtf8 tok)]
+            [bearerHeader tok]
             ""
         liftIO $ do
           simpleStatus getResp `shouldBe` status200
@@ -336,7 +309,7 @@ updateBankingMccMapSpec =
 getBankingInResponseSpec :: Spec
 getBankingInResponseSpec =
   describe "GET /api/users/me/configuration"
-    $ with mkApp
+    $ with mkAppSeeded
     $ do
       it "returns a banking section with defaultIncomeCategory after a PUT" $ do
         tok <- registerAndGetToken
@@ -353,7 +326,7 @@ getBankingInResponseSpec =
           request
             "GET"
             "/api/users/me/configuration"
-            [(hAuthorization, "Bearer " <> encodeUtf8 tok)]
+            [bearerHeader tok]
             ""
         liftIO $ do
           simpleStatus resp `shouldBe` status200

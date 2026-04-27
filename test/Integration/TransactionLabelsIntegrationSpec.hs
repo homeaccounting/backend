@@ -33,8 +33,6 @@ import qualified Application.ReadModels.Configuration as ConfigRM
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TxRM
 import Application.ReadModels.User (UserData (..), getUser)
-import Application.Services.AccountService (createAccount)
-import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
     expenseCategoryDictId,
@@ -46,15 +44,12 @@ import Application.Services.ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
-    AccountType (..),
     DictionaryEntryId,
     TransactionId,
     UserId,
-    defaultCash,
     unEntryName,
     unsafeEntryName,
     unsafeMoney,
@@ -64,6 +59,7 @@ import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import qualified RIO.List as List
 import Test.Hspec
+import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
@@ -83,7 +79,7 @@ setupHarness email = do
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
   accId <- createRegularAccount env uid "Wallet"
-  categoryId <- firstExpenseCategory env uid
+  categoryId <- firstDictionaryEntry env uid expenseCategoryDictId
   pure
     Harness
       { harnessEnv = env,
@@ -91,46 +87,6 @@ setupHarness email = do
         harnessAccount = accId,
         harnessExpenseCategory = categoryId
       }
-
-registerUser :: AppEnv -> Text -> IO UserId
-registerUser env email = do
-  res <- runAppM env $ register email "password123"
-  case res of
-    Left err -> fail $ "register failed: " <> show err
-    Right auth -> pure auth.userId
-
-firstExpenseCategory :: AppEnv -> UserId -> IO DictionaryEntryId
-firstExpenseCategory env uid = do
-  mUser <- getUser env.userReadModel uid
-  case mUser of
-    Nothing -> fail "user not found"
-    Just ud -> do
-      mCfg <- ConfigRM.getConfiguration env.configurationReadModel ud.configurationId
-      case mCfg of
-        Nothing -> fail "configuration not found"
-        Just cfg ->
-          case Map.lookup expenseCategoryDictId cfg.dictionaries of
-            Nothing -> fail "expense-category dictionary missing"
-            Just dict ->
-              case Map.keys dict.entries of
-                (eid : _) -> pure eid
-                [] -> fail "expense-category dictionary is empty"
-
-createRegularAccount :: AppEnv -> UserId -> Text -> IO AccountId
-createRegularAccount env uid accName = do
-  res <-
-    runAppM env
-      $ createAccount
-      $ CreateAccount
-        { name = accName,
-          initialBalance = unsafeMoney Core.USD 5000,
-          createdBy = uid,
-          accountType = Regular defaultCash,
-          overdraftLimit = Nothing
-        }
-  case res of
-    Left err -> fail $ "createAccount failed: " <> show err
-    Right (aid, _) -> pure aid
 
 addLabel :: Harness -> Text -> IO DictionaryEntryId
 addLabel h name = do

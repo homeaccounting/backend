@@ -139,199 +139,44 @@ createInMemoryEventStores = do
 -- Test Environment Creation
 -- -----------------------------------------------------------------------------
 
--- | Create a complete test AppEnv with in-memory components.
+-- | Create a complete test 'AppEnv' with in-memory components.
 --
--- This creates a fully functional application environment suitable for testing:
+-- The environment is fully functional and isolated:
 --  - In-memory event stores (no database)
---  - Test configuration
---  - Read models
---  - Process managers (working via event bus)
---  - Logging to stderr (for test output)
---
--- The environment is completely isolated and can be discarded after tests.
---
--- Example:
--- >>> testEnv <- createTestAppEnv
--- >>> runAppM testEnv $ do
--- >>>   -- Create an account
--- >>>   writer <- view eventStoreWriterL
--- >>>   applyAccountCommand writer reader accountId createCmd
+--  - Read models wired into the event bus
+--  - Logging to stderr (visible via @cabal test --test-show-details=direct@)
 --
 -- Note: This creates stores in STM but lifts them to IO for the AppEnv.
--- The lifting is done via atomically, so all operations remain transactional.
---
--- This creates a complete test environment with both:
---  - In-memory event stores (for fast, isolated testing)
---  - Real database pool (for full integration if needed)
---
--- The function will use environment variables or defaults for database connection:
---  - TEST_DB_HOST (default: localhost)
---  - TEST_DB_PORT (default: 5432)
---  - TEST_DB_NAME (default: accounting)
---  - TEST_DB_USER (default: postgres)
---  - TEST_DB_PASSWORD (default: postgres)
---
--- Note: Requires a PostgreSQL database to be running.
--- Use docker-compose to start it: `docker compose up -d`
+-- The lifting is done via 'atomically', so all operations remain transactional.
 createTestAppEnv :: IO AppEnv
-createTestAppEnv = do
-  -- Create a simple log function for tests that outputs to stderr
-  -- Using mkLogFunc instead of withLogFunc to avoid resource cleanup issues
-  -- (withLogFunc cleans up the LogFunc when callback returns, causing hangs)
-  let logFunc = mkLogFunc $ \_callStack _source _level msg ->
-        hPutBuilder stderr (getUtf8Builder (msg <> "\n"))
+createTestAppEnv = mkAppEnv False
 
-  -- Create in-memory event stores
-  stores <- createInMemoryEventStores
-
-  -- Create read models first (before lifting writers)
-  (readModels, readModelHandlers) <- createReadModelHandlers
-
-  -- Lift event stores from STM to IO
-  -- This wraps each operation with `atomically`
-  let baseWriter = liftSTMWriter stores.inMemoryWriter
-      reader = liftSTMReader stores.inMemoryReader
-      globalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
-
-      -- Wrap the in-memory versioned writer as a tagged writer with event bus.
-      -- The base store accepts AccountingEvent, so we decode TaggedEvent payloads
-      -- and publish decoded domain events to read model handlers.
-      writer =
-        publishingTaggedCodecEventStoreWriter
-          (jsonStringCodec :: Codec AccountingEvent JSONString)
-          (decodingTaggedWriter baseWriter)
-          (synchronousPublisher (mconcat readModelHandlers))
-
-  -- Create test auth configs
-  let testJWTConfig = defaultJWTConfig
-      testOAuthConfig =
-        OAuthConfig
-          { google = Nothing,
-            gitHub = Nothing,
-            microsoft = Nothing
-          }
-      testTelegramConfig =
-        TelegramConfig
-          { botToken = "test_token",
-            botUsername = "test_bot",
-            authMaxAge = 86400,
-            webhookUrl = Nothing,
-            usePolling = False,
-            pollingTimeout = 30
-          }
-
-  -- Create test configuration
-  let config =
-        AppConfig
-          { environment = EnvTest,
-            server =
-              ServerConfig
-                { port = 8080,
-                  host = T.pack "127.0.0.1",
-                  apiBaseUrl = T.pack "http://localhost:8080"
-                },
-            database =
-              DatabaseConfig
-                { host = T.pack "localhost",
-                  port = 5432,
-                  user = T.pack "test",
-                  password = T.pack "test",
-                  database = T.pack "test",
-                  poolSize = 1,
-                  connectionTimeout = 10
-                },
-            logging =
-              LoggingConfig
-                { level = LogInfo,
-                  format = LogText
-                },
-            cors =
-              CorsConfig
-                { enabled = True,
-                  allowedOrigins = T.pack <$> ["*"],
-                  allowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
-                  allowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
-                  maxAge = Just 3600
-                },
-            eventStore =
-              EventStoreConfig
-                { snapshotFrequency = 100
-                },
-            processManagers =
-              ProcessManagerConfig
-                { pollIntervalMs = 1000
-                },
-            auth = testJWTConfig,
-            oauth = testOAuthConfig,
-            telegram = testTelegramConfig,
-            exchangeRate =
-              ExchangeRateConfig
-                { provider = "ecb"
-                },
-            banking =
-              BankingConfig
-                { enabled = False,
-                  providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua")
-                }
-          }
-
-      dbConfig = config.database
-      testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
-
-  -- Build the AppEnv
-  -- Note: We don't have a real connection pool, but handlers don't need it
-  -- because they work through the event store abstraction
-  -- Using undefined instead of error so it's only evaluated if actually used
-  botState <- RIO.newTVarIO emptyBotState
-  exchangeRateRM <- createExchangeRateReadModel
-  testHttpManager <- newManager defaultManagerSettings
-  bankImportLocksVar <- RIO.newTVarIO Set.empty
-
-  return
-    AppEnv
-      { logFunc = logFunc,
-        config = config,
-        databaseConfig = dbConfig,
-        dbPool = error "Database pool should not be accessed in in-memory tests! Use event store abstractions instead.",
-        eventStoreWriter = writer,
-        eventStoreReader = reader,
-        globalEventStoreReader = globalReader,
-        accountReadModel = readModels.account,
-        transactionReadModel = readModels.transaction,
-        userReadModel = readModels.user,
-        configurationReadModel = readModels.configuration,
-        jwtConfig = testJWTConfig,
-        oauthConfig = testOAuthConfig,
-        telegramConfig = testTelegramConfig,
-        botState = botState,
-        telegramClientEnv = Nothing,
-        exchangeRateReadModel = exchangeRateRM,
-        versionInfo = testVersionInfo,
-        bankingEnv =
-          BankingEnv
-            { bankImportReadModel = readModels.bankImport,
-              bankImportLocks = bankImportLocksVar,
-              httpManager = testHttpManager
-            }
-      }
-
--- | Create a test AppEnv with the Transfer Process Manager enabled.
+-- | Create a test 'AppEnv' with the Transfer Process Manager enabled.
 --
 -- Like 'createTestAppEnv', but also wires the TransferManager event handler
--- into the synchronous event bus. This means that when a TransferInitiated
--- event is written, the process manager will automatically:
---  1. Issue DebitAccount to the source account
---  2. On AccountDebited, issue CreditAccount + CompleteTransfer
---  3. On debit failure, the command dispatcher issues FailTransfer
+-- into the synchronous event bus. When a 'TransferInitiated' event is written,
+-- the process manager will automatically:
+--
+--  1. Issue 'DebitAccount' to the source account
+--  2. On 'AccountDebited', issue 'CreditAccount' + 'CompleteTransfer'
+--  3. On debit failure, the command dispatcher issues 'FailTransfer'
 --
 -- Use this for integration tests that need end-to-end saga behavior.
 createTestAppEnvWithProcessManager :: IO AppEnv
-createTestAppEnvWithProcessManager = do
+createTestAppEnvWithProcessManager = mkAppEnv True
+
+-- | Shared implementation for the two test environment variants. The only
+-- difference between them is whether the transfer process manager is wired
+-- into the synchronous event bus.
+mkAppEnv :: Bool -> IO AppEnv
+mkAppEnv withProcessManager = do
+  -- mkLogFunc instead of withLogFunc avoids resource cleanup issues:
+  -- withLogFunc closes the LogFunc when its callback returns, which causes
+  -- hangs in tests that hold an AppEnv past the call site.
   let logFunc = mkLogFunc $ \_callStack _source _level msg ->
         hPutBuilder stderr (getUtf8Builder (msg <> "\n"))
 
   stores <- createInMemoryEventStores
-
   (readModels, readModelHandlers) <- createReadModelHandlers
 
   let baseWriter = liftSTMWriter stores.inMemoryWriter
@@ -340,86 +185,18 @@ createTestAppEnvWithProcessManager = do
 
       -- CRITICAL: Read model handlers FIRST, then process manager LAST.
       -- See accountingEventStoreWriter for the depth-first dispatch explanation.
+      pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher writer reader)
+      combinedHandler =
+        if withProcessManager
+          then mconcat readModelHandlers <> pmHandler
+          else mconcat readModelHandlers
       writer =
         publishingTaggedCodecEventStoreWriter
           (jsonStringCodec :: Codec AccountingEvent JSONString)
           (decodingTaggedWriter baseWriter)
           (synchronousPublisher combinedHandler)
-      pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher writer reader)
-      combinedHandler = mconcat readModelHandlers <> pmHandler
 
-  let testJWTConfig = defaultJWTConfig
-      testOAuthConfig =
-        OAuthConfig
-          { google = Nothing,
-            gitHub = Nothing,
-            microsoft = Nothing
-          }
-      testTelegramConfig =
-        TelegramConfig
-          { botToken = "test_token",
-            botUsername = "test_bot",
-            authMaxAge = 86400,
-            webhookUrl = Nothing,
-            usePolling = False,
-            pollingTimeout = 30
-          }
-
-  let config =
-        AppConfig
-          { environment = EnvTest,
-            server =
-              ServerConfig
-                { port = 8080,
-                  host = T.pack "127.0.0.1",
-                  apiBaseUrl = T.pack "http://localhost:8080"
-                },
-            database =
-              DatabaseConfig
-                { host = T.pack "localhost",
-                  port = 5432,
-                  user = T.pack "test",
-                  password = T.pack "test",
-                  database = T.pack "test",
-                  poolSize = 1,
-                  connectionTimeout = 10
-                },
-            logging =
-              LoggingConfig
-                { level = LogInfo,
-                  format = LogText
-                },
-            cors =
-              CorsConfig
-                { enabled = True,
-                  allowedOrigins = T.pack <$> ["*"],
-                  allowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
-                  allowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
-                  maxAge = Just 3600
-                },
-            eventStore =
-              EventStoreConfig
-                { snapshotFrequency = 100
-                },
-            processManagers =
-              ProcessManagerConfig
-                { pollIntervalMs = 1000
-                },
-            auth = testJWTConfig,
-            oauth = testOAuthConfig,
-            telegram = testTelegramConfig,
-            exchangeRate =
-              ExchangeRateConfig
-                { provider = "ecb"
-                },
-            banking =
-              BankingConfig
-                { enabled = False,
-                  providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua")
-                }
-          }
-
-      dbConfig = config.database
+      config = testAppConfig
       testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
 
   botState <- RIO.newTVarIO emptyBotState
@@ -431,8 +208,8 @@ createTestAppEnvWithProcessManager = do
     AppEnv
       { logFunc = logFunc,
         config = config,
-        databaseConfig = dbConfig,
-        dbPool = error "Database pool should not be accessed in in-memory tests!",
+        databaseConfig = config.database,
+        dbPool = error "Database pool should not be accessed in in-memory tests! Use event store abstractions instead.",
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
@@ -440,9 +217,9 @@ createTestAppEnvWithProcessManager = do
         transactionReadModel = readModels.transaction,
         userReadModel = readModels.user,
         configurationReadModel = readModels.configuration,
-        jwtConfig = testJWTConfig,
-        oauthConfig = testOAuthConfig,
-        telegramConfig = testTelegramConfig,
+        jwtConfig = config.auth,
+        oauthConfig = config.oauth,
+        telegramConfig = config.telegram,
         botState = botState,
         telegramClientEnv = Nothing,
         exchangeRateReadModel = exchangeRateRM,
@@ -454,6 +231,79 @@ createTestAppEnvWithProcessManager = do
               httpManager = testHttpManager
             }
       }
+
+-- | The default 'AppConfig' used by every in-memory test environment.
+--
+-- Banking is disabled by default; specs that need to flip the feature flag
+-- override @config.banking@ on the resulting 'AppEnv' (see
+-- 'Web.API.BankingAPISpec' for an example).
+testAppConfig :: AppConfig
+testAppConfig =
+  AppConfig
+    { environment = EnvTest,
+      server =
+        ServerConfig
+          { port = 8080,
+            host = T.pack "127.0.0.1",
+            apiBaseUrl = T.pack "http://localhost:8080"
+          },
+      database =
+        DatabaseConfig
+          { host = T.pack "localhost",
+            port = 5432,
+            user = T.pack "test",
+            password = T.pack "test",
+            database = T.pack "test",
+            poolSize = 1,
+            connectionTimeout = 10
+          },
+      logging =
+        LoggingConfig
+          { level = LogInfo,
+            format = LogText
+          },
+      cors =
+        CorsConfig
+          { enabled = True,
+            allowedOrigins = T.pack <$> ["*"],
+            allowedMethods = T.pack <$> ["GET", "POST", "PUT", "DELETE"],
+            allowedHeaders = T.pack <$> ["Content-Type", "Authorization"],
+            maxAge = Just 3600
+          },
+      eventStore =
+        EventStoreConfig
+          { snapshotFrequency = 100
+          },
+      processManagers =
+        ProcessManagerConfig
+          { pollIntervalMs = 1000
+          },
+      auth = defaultJWTConfig,
+      oauth =
+        OAuthConfig
+          { google = Nothing,
+            gitHub = Nothing,
+            microsoft = Nothing
+          },
+      telegram =
+        TelegramConfig
+          { botToken = "test_token",
+            botUsername = "test_bot",
+            authMaxAge = 86400,
+            webhookUrl = Nothing,
+            usePolling = False,
+            pollingTimeout = 30
+          },
+      exchangeRate =
+        ExchangeRateConfig
+          { provider = "ecb"
+          },
+      banking =
+        BankingConfig
+          { enabled = False,
+            providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua")
+          }
+    }
 
 -- -----------------------------------------------------------------------------
 -- STM to IO Lifting

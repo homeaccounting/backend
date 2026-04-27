@@ -1,0 +1,97 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+
+-- |
+-- Module      : Testkit.Fixtures
+-- Description : Shared service-layer fixtures (user, account, dictionary).
+--
+-- Builders that go through the @Application.Services.*@ entry points to
+-- seed test state in an in-memory 'AppEnv'. Previously each integration
+-- spec carried its own copy; consolidating them here means a single
+-- place to update when the service layer's signatures change.
+--
+-- All helpers fail the test (via 'fail') if the underlying service call
+-- returns 'Left'. They are intentionally not 'AppM'-flavoured: callers
+-- already hold an 'AppEnv' and want a plain 'IO' setup helper.
+module Testkit.Fixtures
+  ( registerUser,
+    createRegularAccount,
+    firstDictionaryEntry,
+  )
+where
+
+import qualified Application.ReadModels.Configuration as ConfigRM
+import Application.ReadModels.User (UserData (..), getUser)
+import Application.Services.AccountService (createAccount)
+import Application.Services.AuthService (AuthResult (..), register)
+import qualified Data.Map.Strict as Map
+import Domain.Account.Commands (CreateAccount (..))
+import Domain.Core.Types
+  ( AccountId,
+    AccountType (..),
+    DictionaryEntryId,
+    DictionaryId,
+    UserId,
+    defaultCash,
+    unsafeMoney,
+  )
+import qualified Domain.Core.Types as Core (Currency (..))
+import Infrastructure.App (AppEnv (..), runAppM)
+import RIO
+
+-- | Register a user via 'AuthService.register' and return the resulting 'UserId'.
+--
+-- Uses a fixed test password ("password123"); specs that need a specific
+-- password should call 'register' directly.
+registerUser :: AppEnv -> Text -> IO UserId
+registerUser env email = do
+  res <- runAppM env $ register email "password123"
+  case res of
+    Left err -> fail $ "registerUser " <> show email <> " failed: " <> show err
+    Right auth -> pure auth.userId
+
+-- | Create a 'Regular Cash' account with a 5000 USD starting balance and no
+-- overdraft.
+--
+-- This matches the shape used by the integration specs that just need
+-- "an account to attach a transaction to". Specs that need a different
+-- 'AccountType' or initial balance should call 'createAccount' directly.
+createRegularAccount :: AppEnv -> UserId -> Text -> IO AccountId
+createRegularAccount env uid accName = do
+  res <-
+    runAppM env
+      $ createAccount
+      $ CreateAccount
+        { name = accName,
+          initialBalance = unsafeMoney Core.USD 5000,
+          createdBy = uid,
+          accountType = Regular defaultCash,
+          overdraftLimit = Nothing
+        }
+  case res of
+    Left err -> fail $ "createRegularAccount " <> show accName <> " failed: " <> show err
+    Right (aid, _) -> pure aid
+
+-- | Return the first 'DictionaryEntryId' from the named dictionary on the
+-- given user's configuration.
+--
+-- "First" is whatever 'Map.keys' returns from the dictionary's entry map —
+-- callers should only rely on stability within a single test, not on a
+-- specific ordering across runs.
+firstDictionaryEntry :: AppEnv -> UserId -> DictionaryId -> IO DictionaryEntryId
+firstDictionaryEntry env uid dictId = do
+  mUser <- getUser env.userReadModel uid
+  case mUser of
+    Nothing -> fail $ "firstDictionaryEntry: user not found: " <> show uid
+    Just ud -> do
+      mCfg <- ConfigRM.getConfiguration env.configurationReadModel ud.configurationId
+      case mCfg of
+        Nothing -> fail $ "firstDictionaryEntry: configuration not found for user " <> show uid
+        Just cfg ->
+          case Map.lookup dictId cfg.dictionaries of
+            Nothing -> fail $ "firstDictionaryEntry: dictionary " <> show dictId <> " missing"
+            Just dict ->
+              case Map.keys dict.entries of
+                (eid : _) -> pure eid
+                [] -> fail $ "firstDictionaryEntry: dictionary " <> show dictId <> " is empty"

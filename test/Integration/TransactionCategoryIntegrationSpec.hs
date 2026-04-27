@@ -26,8 +26,6 @@ import qualified Application.ReadModels.Configuration as ConfigRM
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TxRM
 import Application.ReadModels.User (UserData (..), getUser)
-import Application.Services.AccountService (createAccount)
-import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
     incomeCategoryDictId,
@@ -37,16 +35,13 @@ import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.UUID.V4 as UUID4
-import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
-    AccountType (..),
     DictionaryEntryId,
     TransactionId,
     TransferType (..),
     UserId,
-    defaultCash,
     unEntryName,
     unsafeDictionaryEntryId,
     unsafeEntryName,
@@ -57,6 +52,7 @@ import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import qualified RIO.List as List
 import Test.Hspec
+import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
@@ -79,7 +75,7 @@ setupHarness email = do
   -- Use the first seeded income-category entry as the "starting"
   -- category instead of adding one. Adding a new entry here would
   -- race with any seed-default entry that happens to share the name.
-  startingCategory <- firstIncomeCategory env uid
+  startingCategory <- firstDictionaryEntry env uid incomeCategoryDictId
   pure
     Harness
       { harnessEnv = env,
@@ -87,46 +83,6 @@ setupHarness email = do
         harnessAccount = accId,
         harnessSalaryCategory = startingCategory
       }
-
-firstIncomeCategory :: AppEnv -> UserId -> IO DictionaryEntryId
-firstIncomeCategory env uid = do
-  mUser <- getUser env.userReadModel uid
-  case mUser of
-    Nothing -> fail "user not found"
-    Just ud -> do
-      mCfg <- ConfigRM.getConfiguration env.configurationReadModel ud.configurationId
-      case mCfg of
-        Nothing -> fail "configuration not found"
-        Just cfg ->
-          case Map.lookup incomeCategoryDictId cfg.dictionaries of
-            Nothing -> fail "income-category dictionary missing"
-            Just dict ->
-              case Map.keys dict.entries of
-                (eid : _) -> pure eid
-                [] -> fail "income-category dictionary is empty"
-
-registerUser :: AppEnv -> Text -> IO UserId
-registerUser env email = do
-  res <- runAppM env $ register email "password123"
-  case res of
-    Left err -> fail $ "register failed: " <> show err
-    Right auth -> pure auth.userId
-
-createRegularAccount :: AppEnv -> UserId -> Text -> IO AccountId
-createRegularAccount env uid accName = do
-  res <-
-    runAppM env
-      $ createAccount
-      $ CreateAccount
-        { name = accName,
-          initialBalance = unsafeMoney Core.USD 5000,
-          createdBy = uid,
-          accountType = Regular defaultCash,
-          overdraftLimit = Nothing
-        }
-  case res of
-    Left err -> fail $ "createAccount failed: " <> show err
-    Right (aid, _) -> pure aid
 
 seedIncome :: Harness -> DictionaryEntryId -> IO TransactionId
 seedIncome h categoryId = do

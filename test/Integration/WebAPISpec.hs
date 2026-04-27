@@ -34,84 +34,23 @@ module Integration.WebAPISpec (spec) where
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
-import Data.Maybe (isJust)
-import Data.Text.Encoding (encodeUtf8)
 import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
-import Domain.Core.Types (mkUserId)
-import Infrastructure.Auth.JWT (JWTConfig (..), defaultJWTConfig, generateToken)
-import Network.HTTP.Types (Method, hAuthorization, hContentType, status200, status201, status400, status401, status404, statusCode)
-import Network.Wai (Application)
+import Network.HTTP.Types (hAuthorization, hContentType, status200, statusCode)
 import Network.Wai.Test (SResponse (..))
 import RIO
-import qualified RIO.ByteString as BS
 import qualified RIO.ByteString.Lazy as LBS
 import Test.Hspec
 import Test.Hspec.Wai
-import Test.Hspec.Wai.JSON
-import Testkit.Auth (generateTestToken)
-import Testkit.InMemoryEventStore (createTestAppEnv)
-import Web.Server (buildApplication)
-
--- -----------------------------------------------------------------------------
--- Test Helpers
--- -----------------------------------------------------------------------------
-
--- | Helper to create a fresh application for testing
-mkApp :: IO Application
-mkApp = do buildApplication <$> createTestAppEnv
-
--- | Helper to make a POST request with JSON content type
-postJSON :: BS.ByteString -> LBS.ByteString -> WaiSession st0 SResponse
-postJSON path = request "POST" path [(hContentType, "application/json")]
-
--- | Helper to make a GET request
-getJSON :: BS.ByteString -> WaiSession st0 SResponse
-getJSON path = request "GET" path [(hContentType, "application/json")] ""
-
--- | Helper to make a GET request with auth header
-getJSONAuth :: BS.ByteString -> Text -> WaiSession st0 SResponse
-getJSONAuth path token =
-  request "GET" path [(hContentType, "application/json"), (hAuthorization, "Bearer " <> encodeUtf8 token)] ""
-
--- | Helper to make a POST request with JSON content type and auth header
-postJSONAuth :: BS.ByteString -> Text -> LBS.ByteString -> WaiSession st0 SResponse
-postJSONAuth path token =
-  request "POST" path [(hContentType, "application/json"), (hAuthorization, "Bearer " <> encodeUtf8 token)]
-
--- | Helper to make a DELETE request with auth header
-deleteAuth :: BS.ByteString -> Text -> WaiSession st0 SResponse
-deleteAuth path token =
-  request "DELETE" path [(hAuthorization, "Bearer " <> encodeUtf8 token)] ""
-
--- | Generate an expired JWT token for testing
-generateExpiredToken :: IO Text
-generateExpiredToken = do
-  userUuid <- UUID.nextRandom
-  case mkUserId userUuid of
-    Left _ -> error "Failed to create test user ID"
-    Right userId -> do
-      -- Use a config with 0 second expiry
-      let expiredConfig = defaultJWTConfig {expirySeconds = -3600} -- Already expired
-      result <- generateToken expiredConfig userId "test@example.com"
-      case result of
-        Left err -> error $ "Failed to generate expired token: " <> show err
-        Right token -> return token
-
--- | An invalid JWT token
-invalidToken :: Text
-invalidToken = "invalid.jwt.token"
-
--- | Extract account ID from JSON response
-extractAccountId :: LBS.ByteString -> Maybe Text
-extractAccountId body = do
-  obj <- decode body :: Maybe Aeson.Value
-  case obj of
-    Aeson.Object o -> do
-      case KeyMap.lookup "id" o of
-        Just (Aeson.String aid) -> Just aid
-        _ -> Nothing
-    _ -> Nothing
+import Testkit.AppEnv (mkApp)
+import Testkit.Auth (generateExpiredToken, generateTestToken)
+import Testkit.HspecWai
+  ( deleteAuth,
+    getJSON,
+    getJSONAuth,
+    invalidToken,
+    postJSON,
+    postJSONAuth,
+  )
 
 -- -----------------------------------------------------------------------------
 -- Test Spec

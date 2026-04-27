@@ -300,10 +300,13 @@ test-suite backend-test
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.FormattingSpec
+      Testkit.AppEnv
       Testkit.Auth
       Testkit.BankingHelpers
+      Testkit.Fixtures
       Testkit.Generators
       Testkit.Helpers
+      Testkit.HspecWai
       Testkit.InMemoryEventStore
       Testkit.TransactionEditFixture
       Web.API.BankingAPISpec

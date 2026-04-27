@@ -23,17 +23,12 @@ module Testkit.TransactionEditFixture
     seedToken,
     seedIncomeTransaction,
     seedInternalTransfer,
-    createRegularAccount,
     authHeaders,
     httpRequest,
     uuidText,
   )
 where
 
-import qualified Application.ReadModels.Configuration as ConfigRM
-import Application.ReadModels.User (UserData (..), getUser)
-import Application.Services.AccountService (createAccount)
-import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
     incomeCategoryDictId,
@@ -42,25 +37,21 @@ import Application.Services.ConfigurationService
   )
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
-    AccountType (..),
     DictionaryEntryId,
     TransactionId,
     UserId,
-    defaultCash,
     unsafeEntryName,
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.App (AppEnv, runAppM)
 import Infrastructure.Auth.JWT (defaultJWTConfig, generateToken)
 import Network.HTTP.Types (hAuthorization, hContentType)
 import Network.HTTP.Types.Header (Header)
@@ -68,6 +59,7 @@ import Network.Wai (Application)
 import qualified Network.Wai as Wai
 import Network.Wai.Test (SRequest (..), SResponse (..), defaultRequest, runSession, setPath, srequest)
 import RIO
+import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
 import Web.Server (buildApplication)
 
 -- | Handles to the pre-seeded state a test needs to build requests.
@@ -92,7 +84,7 @@ mkSeed mkEnv email = do
   uid <- registerUser env email
   labelA <- addLabel env uid "kids"
   labelB <- addLabel env uid "school"
-  categoryId <- firstIncomeCategory env uid
+  categoryId <- firstDictionaryEntry env uid incomeCategoryDictId
   accId <- createRegularAccount env uid "Wallet"
   pure
     Seed
@@ -106,50 +98,10 @@ mkSeed mkEnv email = do
         seedCategory = categoryId
       }
 
-registerUser :: AppEnv -> Text -> IO UserId
-registerUser env email = do
-  res <- runAppM env $ register email "password123"
-  case res of
-    Left err -> fail $ "register failed: " <> show err
-    Right auth -> pure auth.userId
-
 addLabel :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
 addLabel env uid name = do
   res <- runAppM env $ addDictionaryEntry uid labelsDictId (unsafeEntryName name)
   unwrap ("addDictionaryEntry " <> show name) res
-
-firstIncomeCategory :: AppEnv -> UserId -> IO DictionaryEntryId
-firstIncomeCategory env uid = do
-  mUser <- getUser env.userReadModel uid
-  case mUser of
-    Nothing -> fail "user not found"
-    Just ud -> do
-      mCfg <- ConfigRM.getConfiguration env.configurationReadModel ud.configurationId
-      case mCfg of
-        Nothing -> fail "configuration not found"
-        Just cfg ->
-          case Map.lookup incomeCategoryDictId cfg.dictionaries of
-            Nothing -> fail "income-category dictionary missing"
-            Just dict ->
-              case Map.keys dict.entries of
-                (eid : _) -> pure eid
-                [] -> fail "income-category dictionary is empty"
-
-createRegularAccount :: AppEnv -> UserId -> Text -> IO AccountId
-createRegularAccount env uid accName = do
-  res <-
-    runAppM env
-      $ createAccount
-      $ CreateAccount
-        { name = accName,
-          initialBalance = unsafeMoney Core.USD 5000,
-          createdBy = uid,
-          accountType = Regular defaultCash,
-          overdraftLimit = Nothing
-        }
-  case res of
-    Left err -> fail $ "createAccount failed: " <> show err
-    Right (aid, _) -> pure aid
 
 unwrap :: String -> Either DomainError a -> IO a
 unwrap ctx = \case

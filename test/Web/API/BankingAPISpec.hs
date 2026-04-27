@@ -37,30 +37,24 @@ import Domain.Core.Types
     defaultBankAccountProperties,
   )
 import qualified Domain.Core.Types as Core
-import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.App (runAppM)
 import qualified Infrastructure.Banking.Provider as Banking
-import Infrastructure.Config
-  ( AppConfig (..),
-    BankingConfig (..),
-    BankingProvidersConfig (..),
-    MonobankProviderConfig (..),
-  )
-import Network.HTTP.Types (hAuthorization, hContentType, status404)
-import Network.Wai (Application)
+import Network.HTTP.Types (status404)
 import Network.Wai.Test (SResponse (..))
 import RIO
 import Servant.Server (ServerError (..))
 import Test.Hspec
 import Test.Hspec.Wai
+import Testkit.AppEnv (mkApp, mkAppBankingEnabled)
 import Testkit.Auth (generateTestToken)
 import Testkit.Helpers
   ( mockAccountId,
     mockMoneyWith,
     mockUserId,
   )
+import Testkit.HspecWai (jsonAuthHeaders)
 import Testkit.InMemoryEventStore (createTestAppEnv)
 import Web.API.BankingAPI (buildBankLink)
-import Web.Server (buildApplication)
 import Web.Types (ErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
@@ -182,31 +176,6 @@ buildBankLinkSpec = describe "buildBankLink" $ do
 -- Feature-flag HTTP test
 -- -----------------------------------------------------------------------------
 
-mkApp :: IO Application
-mkApp = buildApplication <$> createTestAppEnv
-
--- | AppEnv with banking.enabled = True and monobank.enabled = True,
--- plus an unreachable apiBaseUrl so the Monobank HTTP call fails fast
--- rather than blocking the test on a real network request. The point of
--- the enabled-flag test is to confirm the feature-flag gate is crossed,
--- not to exercise the full import pipeline.
-mkAppBankingEnabled :: IO Application
-mkAppBankingEnabled = do
-  env <- createTestAppEnv
-  let cfg = env.config
-      bankingCfg =
-        BankingConfig
-          { enabled = True,
-            providers =
-              BankingProvidersConfig
-                ( MonobankProviderConfig
-                    True
-                    "http://127.0.0.1:1"
-                )
-          }
-      cfg' = cfg {banking = bankingCfg}
-  pure $ buildApplication env {config = cfg'}
-
 featureFlagSpec :: Spec
 featureFlagSpec = do
   describe "POST /api/banking/resync (feature flag disabled)"
@@ -214,11 +183,7 @@ featureFlagSpec = do
     $ it "returns a 404 JSON envelope when banking.enabled is false"
     $ do
       token <- liftIO generateTestToken
-      let headers =
-            [ (hContentType, "application/json"),
-              (hAuthorization, "Bearer " <> encodeUtf8 token),
-              ("X-Banking-Token", "dummy-monobank-token")
-            ]
+      let headers = ("X-Banking-Token", "dummy-monobank-token") : jsonAuthHeaders token
       resp <- request "POST" "/api/banking/resync" headers sampleBody
       liftIO $ do
         simpleStatus resp `shouldBe` status404
@@ -239,11 +204,7 @@ featureFlagSpec = do
     $ it "crosses the feature-flag gate when banking + monobank are enabled"
     $ do
       token <- liftIO generateTestToken
-      let headers =
-            [ (hContentType, "application/json"),
-              (hAuthorization, "Bearer " <> encodeUtf8 token),
-              ("X-Banking-Token", "dummy-monobank-token")
-            ]
+      let headers = ("X-Banking-Token", "dummy-monobank-token") : jsonAuthHeaders token
       resp <- request "POST" "/api/banking/resync" headers sampleBody
       -- The downstream Monobank call points at 127.0.0.1:1 and will
       -- fail with some 4xx/5xx. We don't care about the exact code,
