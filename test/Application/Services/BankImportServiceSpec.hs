@@ -57,7 +57,6 @@ import qualified RIO.Map as Map
 import Test.Hspec
 import Testkit.Helpers
   ( fromRight',
-    mockAccountId,
     mockMoneyWith,
     mockUserId,
     shouldBeRight,
@@ -73,9 +72,6 @@ testUserUuid = UUID.fromWords 1 0 0 0
 
 testUserId :: UserId
 testUserId = mockUserId testUserUuid
-
-testBankAccountUuid :: UUID
-testBankAccountUuid = UUID.fromWords 3 0 0 0
 
 testTime :: UTCTime
 testTime = UTCTime (fromGregorian 2026 4 14) (secondsToDiffTime 43200)
@@ -219,13 +215,16 @@ setupTestEnv = do
 spec :: Spec
 spec = describe "BankImportService" $ do
   describe "importTransaction" $ do
-    it "skips hold transactions" $ do
-      (env, _bankAccId) <- setupTestEnv
+    it "imports hold transactions like settled ones (Mono leaves some accounts stuck on hold)" $ do
+      (env, bankAccId) <- setupTestEnv
       let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", mockAccountId testBankAccountUuid)]
+          accountLink = [("mono-acc-1", bankAccId)]
       let holdTx = mkHoldTransaction (-50) "tx-hold"
       result <- runAppM env $ importTransaction mockProvider testUserId accountLink holdTx
-      result `shouldBe` Right Nothing
+      shouldBeRight result
+      case result of
+        Right (Just _) -> pure ()
+        _ -> expectationFailure "expected hold transaction to be imported"
 
     it "skips already-imported transactions (dedup)" $ do
       (env, bankAccId) <- setupTestEnv

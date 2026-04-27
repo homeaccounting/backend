@@ -17,13 +17,15 @@
 --   - importTransaction: Core import logic for a single bank transaction
 --
 -- The service handles:
---   - Hold transaction filtering (skipped)
 --   - Deduplication via BankImportReadModel
 --   - Account mapping via a caller-supplied [(BankAccountId, AccountId)] list
 --   - Currency conversion from numeric codes
 --   - Transaction classification (income/expense)
 --   - MCC→CategoryId resolution from per-user banking configuration
 --   - Transfer command creation and delegation to TransactionService
+--
+-- The 'hold' flag on incoming transactions is intentionally ignored — see
+-- 'importTransaction' for details.
 module Application.Services.BankImportService
   ( resync,
     importTransaction,
@@ -269,38 +271,39 @@ logCategoryResolution tx direction cfg categoryId resolution =
 
 -- | Core import logic for a single bank transaction.
 --
+-- The 'hold' flag is deliberately ignored: in April 2026 Monobank stopped
+-- transitioning many accounts out of hold, so filtering on it caused recent
+-- transactions to never reach the read model. The downside is that an
+-- amount adjusted at settlement (tip, FX correction) won't update the
+-- imported transfer — users can correct those manually.
+--
 -- Flow:
---   1. Skip hold transactions
---   2. Check deduplication via BankImportReadModel
---   3. Match external account to local account via the supplied mappings
---   4. Look up user's External account from UserReadModel
---   5. Convert currency from numeric code
---   6. Take absolute value of major-unit amount
---   7. Classify transaction (income/expense)
---   8. Resolve category from user's banking configuration
---   9. Create and execute InitiateTransfer command
+--   1. Check deduplication via BankImportReadModel
+--   2. Match external account to local account via the supplied mappings
+--   3. Look up user's External account from UserReadModel
+--   4. Convert currency from numeric code
+--   5. Take absolute value of major-unit amount
+--   6. Classify transaction (income/expense)
+--   7. Resolve category from user's banking configuration
+--   8. Create and execute InitiateTransfer command
 importTransaction ::
   BankProvider ->
   UserId ->
   [(BankAccountId, AccountId)] ->
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
-importTransaction provider userId accountLink tx
-  | tx.hold = do
-      logDebug $ "Skipping hold transaction: " <> display tx.externalId
+importTransaction provider userId accountLink tx = do
+  bankImportRM <- view bankImportReadModelL
+  alreadyImported <- isImported bankImportRM tx.externalId
+  if alreadyImported
+    then do
+      logDebug $ "Skipping already-imported transaction: " <> display tx.externalId
       pure (Right Nothing)
-  | otherwise = do
-      bankImportRM <- view bankImportReadModelL
-      alreadyImported <- isImported bankImportRM tx.externalId
-      if alreadyImported
-        then do
-          logDebug $ "Skipping already-imported transaction: " <> display tx.externalId
-          pure (Right Nothing)
-        else case lookup tx.accountId accountLink of
-          Nothing -> do
-            logWarn $ "No account mapping for external account: " <> display tx.accountId
-            pure (Right Nothing)
-          Just localAccId -> importMatchedTransaction provider userId localAccId tx
+    else case lookup tx.accountId accountLink of
+      Nothing -> do
+        logWarn $ "No account mapping for external account: " <> display tx.accountId
+        pure (Right Nothing)
+      Just localAccId -> importMatchedTransaction provider userId localAccId tx
 
 -- | Continue an import after the cheap dispatcher checks have matched the
 -- external account. Handles the two remaining @Right Nothing@ skip-paths

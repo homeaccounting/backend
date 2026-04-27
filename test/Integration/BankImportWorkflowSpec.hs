@@ -228,24 +228,25 @@ setupTestEnv = do
 
 spec :: Spec
 spec = describe "Bank Import Workflow" $ do
-  it "imports transactions and deduplicates on re-run" $ do
+  it "imports transactions (including holds) and deduplicates on re-run" $ do
     (env, externalAccId, bankAccId, accountLink) <- setupTestEnv
 
-    -- Mock statements: 1 expense, 1 income, 1 hold (should be skipped)
+    -- Mock statements: 1 expense, 1 income, 1 hold (all imported — Mono leaves
+    -- some accounts stuck on hold, so we no longer filter on the hold flag)
     let expenseTx = mkTestTransaction (-50) "tx-expense-1"
         incomeTx = mkTestTransaction 100 "tx-income-1"
         holdTx = mkHoldTransaction (-30) "tx-hold-1"
         statements = [expenseTx, incomeTx, holdTx]
         provider = mockProvider statements
 
-    -- First resync: should import 2 transactions (hold skipped)
+    -- First resync: should import all 3 transactions (hold no longer filtered)
     result1 <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
     let importedIds = concatMap (.imported) result1.accounts
-    length importedIds `shouldBe` 2
+    length importedIds `shouldBe` 3
 
-    -- Extract the two imported IDs
+    -- Extract the three imported IDs (expense, income, hold-as-expense)
     case importedIds of
-      [expenseId, incomeId] -> do
+      [expenseId, incomeId, holdId] -> do
         -- Verify expense transfer: source = bank account, target = external
         txRM <- runAppM env $ view transactionReadModelL
         expenseData <- fromJustIO "expense transaction" =<< TransactionRM.getTransaction txRM expenseId
@@ -267,16 +268,25 @@ spec = describe "Bank Import Workflow" $ do
         incomeData.description `shouldBe` "Test transaction"
         incomeData.date `shouldBe` testTime
 
+        -- Verify the hold was imported as a normal expense (negative amount)
+        holdData <- fromJustIO "hold transaction" =<< TransactionRM.getTransaction txRM holdId
+        holdData.sourceAccountId `shouldBe` bankAccId
+        holdData.targetAccountId `shouldBe` externalAccId
+        holdData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 30)
+        holdData.transferType `shouldBe` Expense expense.other.entryId
+
         -- Second resync (dedup): same statements should produce no new imports
         result2 <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
         concatMap (.imported) result2.accounts `shouldBe` []
         concatMap (.failures) result2.accounts `shouldBe` []
-      _ -> expectationFailure $ "Expected exactly 2 imported IDs, got " <> show (length importedIds)
+      _ -> expectationFailure $ "Expected exactly 3 imported IDs, got " <> show (length importedIds)
 
-  it "skips all hold transactions" $ do
+  it "imports hold transactions as if they were settled" $ do
     (env, _externalAccId, _bankAccId, accountLink) <- setupTestEnv
 
-    -- All statements are holds
+    -- All statements are holds; with the hold filter removed every one
+    -- should land in the read model. This guards against the filter
+    -- being reintroduced if Mono ever fixes their settlement worker.
     let statements =
           [ mkHoldTransaction (-10) "hold-1",
             mkHoldTransaction 20 "hold-2",
@@ -285,7 +295,7 @@ spec = describe "Bank Import Workflow" $ do
         provider = mockProvider statements
 
     result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
-    concatMap (.imported) result.accounts `shouldBe` []
+    length (concatMap (.imported) result.accounts) `shouldBe` 3
     concatMap (.failures) result.accounts `shouldBe` []
 
   prop "concurrent resyncs of the same statement produce one transfer per external id"
