@@ -53,6 +53,14 @@ import Application.ReadModels.User
     getUserByOAuthIdentity,
     getUserByTelegramId,
   )
+import Application.Services.Internal
+  ( guardE,
+    liftEitherWith,
+    liftMaybeM,
+    runAccountCmd,
+    runUserCmd,
+  )
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..))
@@ -93,7 +101,7 @@ import Infrastructure.Auth.OAuth
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.Password (hashPassword, verifyPassword)
 import qualified Infrastructure.Auth.Telegram as TelegramAuth
-import Infrastructure.Eventium (applyAccountCommand, applyUserCommand, loadUserAggregate)
+import Infrastructure.Eventium (loadUserAggregate)
 import RIO hiding (Handler)
 import qualified RIO.Text as T
 
@@ -132,80 +140,47 @@ register ::
   Text ->
   Text ->
   AppM (Either DomainError AuthResult)
-register email password = do
-  logInfo "Processing registration request"
-
-  -- 1. Check email doesn't exist
-  userReadModel <- view userReadModelL
-  exists <- emailExists userReadModel email
-  if exists
-    then do
-      logWarn "Email already registered"
-      return $ Left $ AccountError "Email already registered"
-    else do
-      -- 2. Hash password
-      passwordHash <- hashPassword password
-
-      -- 3. Generate IDs
-      userUuid <- liftIO UUID.nextRandom
-      externalAccountUuid <- liftIO UUID.nextRandom
-
-      case mkUserId userUuid of
-        Left err -> do
-          logError $ "Failed to create UserId: " <> display err
-          return $ Left $ AccountError "Internal error"
-        Right userId ->
-          case mkAccountId externalAccountUuid of
-            Left err -> do
-              logError $ "Failed to create ExternalAccountId: " <> display err
-              return $ Left $ AccountError "Internal error"
-            Right externalAccountId -> do
-              -- 4. Issue RegisterUser command
-              writer <- view eventStoreWriterL
-              reader <- view eventStoreReaderL
-
-              let registerCmd =
-                    RegisterUserUserCommand
-                      RegisterUser
-                        { email = email,
-                          passwordHash = passwordHash,
-                          externalAccountId = externalAccountId
-                        }
-
-              result1 <- liftIO $ applyUserCommand writer reader id userUuid registerCmd
-              case result1 of
-                Left err -> do
-                  logError $ "User registration rejected: " <> displayShow err
-                  return $ Left $ AccountError "User registration rejected by domain"
-                Right _ -> do
-                  -- Assign default configuration
-                  let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
-                  _ <- liftIO $ applyUserCommand writer reader id userUuid assignConfigCmd
-
-                  -- Read baseCurrency from default configuration
-                  configRM <- view configurationReadModelL
-                  maybeConfig <- getConfiguration configRM defaultConfigurationId
-                  let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
-
-                  -- 5. Issue CreateAccount command for External account
-                  let createAccountCmd =
-                        CreateAccountAccountCommand
-                          CreateAccount
-                            { name = "External",
-                              initialBalance = unsafeMoney baseCur 0,
-                              createdBy = userId,
-                              accountType = External,
-                              overdraftLimit = Nothing
-                            }
-
-                  result2 <- liftIO $ applyAccountCommand writer reader id externalAccountUuid createAccountCmd
-                  case result2 of
-                    Left err -> do
-                      logError $ "External account creation rejected: " <> displayShow err
-                      return $ Left $ AccountError "External account creation rejected by domain"
-                    Right _ ->
-                      -- 6. Generate JWT token
-                      generateAuthResult userId (Just email)
+register email password = runExceptT $ do
+  lift $ logInfo "Processing registration request"
+  userReadModel <- lift (view userReadModelL)
+  exists <- lift (emailExists userReadModel email)
+  guardE (not exists) (AccountError "Email already registered")
+  passwordHash <- lift (hashPassword password)
+  userUuid <- liftIO UUID.nextRandom
+  externalAccountUuid <- liftIO UUID.nextRandom
+  userId <- liftEitherWith (\_ -> AccountError "Internal error") (mkUserId userUuid)
+  externalAccountId <-
+    liftEitherWith (\_ -> AccountError "Internal error") (mkAccountId externalAccountUuid)
+  runUserCmd
+    id
+    userUuid
+    ( RegisterUserUserCommand
+        RegisterUser
+          { email = email,
+            passwordHash = passwordHash,
+            externalAccountId = externalAccountId
+          }
+    )
+  runUserCmd
+    id
+    userUuid
+    (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
+  configRM <- lift (view configurationReadModelL)
+  maybeConfig <- lift (getConfiguration configRM defaultConfigurationId)
+  let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
+  runAccountCmd
+    id
+    externalAccountUuid
+    ( CreateAccountAccountCommand
+        CreateAccount
+          { name = "External",
+            initialBalance = unsafeMoney baseCur 0,
+            createdBy = userId,
+            accountType = External,
+            overdraftLimit = Nothing
+          }
+    )
+  ExceptT (generateAuthResult userId (Just email))
 
 -- | Login with email and password.
 --
@@ -219,43 +194,22 @@ login ::
   Text ->
   Text ->
   AppM (Either DomainError AuthResult)
-login email password = do
-  logInfo "Processing login request"
-
-  -- 1. Find user by email
-  userReadModel <- view userReadModelL
-  maybeUser <- getUserByEmail userReadModel email
-
-  case maybeUser of
+login email password = runExceptT $ do
+  lift $ logInfo "Processing login request"
+  userReadModel <- lift (view userReadModelL)
+  (userId, userSummary) <-
+    liftMaybeM (NotFound "User" email) (getUserByEmail userReadModel email)
+  guardE userSummary.hasPassword (AccountError "Invalid email or password")
+  reader <- lift (view eventStoreReaderL)
+  userAggregate <- liftIO (loadUserAggregate reader (unUserId userId))
+  storedHash <- case userAggregate.passwordHash of
+    Just h -> pure h
     Nothing -> do
-      logWarn "User not found for email"
-      return $ Left $ NotFound "User" email
-    Just (userId, userSummary) ->
-      if not userSummary.hasPassword
-        then do
-          -- 2. Check user has password
-          logWarn "User has no password set"
-          return $ Left $ AccountError "Invalid email or password"
-        else do
-          -- 3. Load user aggregate to get password hash
-          reader <- view eventStoreReaderL
-          let userUuid = unUserId userId
-          userAggregate <- liftIO $ loadUserAggregate reader userUuid
-
-          case userAggregate.passwordHash of
-            Nothing -> do
-              logError "User has password flag but no hash in aggregate"
-              return $ Left $ AccountError "Invalid email or password"
-            Just storedHash ->
-              -- 4. Verify password
-              if verifyPassword password storedHash
-                then do
-                  -- 5. Generate JWT token
-                  let userEmail = fromMaybe email userSummary.email
-                  generateAuthResult userId (Just userEmail)
-                else do
-                  logWarn "Password verification failed"
-                  return $ Left $ AccountError "Invalid email or password"
+      lift $ logError "User has password flag but no hash in aggregate"
+      throwE (AccountError "Invalid email or password")
+  guardE (verifyPassword password storedHash) (AccountError "Invalid email or password")
+  let userEmail = fromMaybe email userSummary.email
+  ExceptT (generateAuthResult userId (Just userEmail))
 
 -- | Initiate OAuth flow for a provider.
 --
@@ -265,19 +219,17 @@ login email password = do
 initiateOAuth ::
   OAuthProvider ->
   AppM (Either DomainError OAuthRedirectResult)
-initiateOAuth provider = do
-  logInfo $ "Initiating OAuth flow for provider: " <> displayShow provider
-
-  oauthConfig <- view oauthConfigL
-  result <- OAuth.getAuthorizationUrl oauthConfig provider
-
-  case result of
+initiateOAuth provider = runExceptT $ do
+  lift $ logInfo $ "Initiating OAuth flow for provider: " <> displayShow provider
+  oauthConfig <- lift (view oauthConfigL)
+  result <- lift (OAuth.getAuthorizationUrl oauthConfig provider)
+  (url, state) <- case result of
+    Right ok -> pure ok
     Left err -> do
-      logError $ "OAuth error: " <> displayShow err
-      return $ Left $ AccountError "OAuth configuration error"
-    Right (url, state) -> do
-      logInfo "OAuth authorization URL generated"
-      return $ Right $ OAuthRedirectResult url state
+      lift $ logError $ "OAuth error: " <> displayShow err
+      throwE (AccountError "OAuth configuration error")
+  lift $ logInfo "OAuth authorization URL generated"
+  pure (OAuthRedirectResult url state)
 
 -- | Handle OAuth callback after provider redirect.
 --
@@ -290,41 +242,33 @@ handleOAuthCallback ::
   Text ->
   Text ->
   AppM (Either DomainError AuthResult)
-handleOAuthCallback provider code state = do
-  logInfo $ "Processing OAuth callback for provider: " <> displayShow provider
-
-  -- 1. Exchange code for user info
-  oauthConfig <- view oauthConfigL
-  result <- OAuth.handleOAuthCallback oauthConfig provider code state state
-
-  case result of
+handleOAuthCallback provider code state = runExceptT $ do
+  lift $ logInfo $ "Processing OAuth callback for provider: " <> displayShow provider
+  oauthConfig <- lift (view oauthConfigL)
+  result <- lift (OAuth.handleOAuthCallback oauthConfig provider code state state)
+  userInfo <- case result of
+    Right ok -> pure ok
     Left err -> do
-      logError $ "OAuth callback error: " <> displayShow err
-      return $ Left $ AccountError "OAuth authentication failed"
-    Right userInfo -> do
-      -- 2. Find or create user by OAuth identity
-      let oauthIdentity =
-            OAuthIdentity
-              { provider = provider,
-                subject = userInfo.subject
-              }
-
-      userReadModel <- view userReadModelL
-      maybeUser <- getUserByOAuthIdentity userReadModel provider userInfo.subject
-
-      case maybeUser of
-        Just (uid, summary) -> do
-          logInfo "Existing user found via OAuth"
-          generateAuthResult uid summary.email
+      lift $ logError $ "OAuth callback error: " <> displayShow err
+      throwE (AccountError "OAuth authentication failed")
+  let oauthIdentity =
+        OAuthIdentity
+          { provider = provider,
+            subject = userInfo.subject
+          }
+  userReadModel <- lift (view userReadModelL)
+  maybeUser <- lift (getUserByOAuthIdentity userReadModel provider userInfo.subject)
+  case maybeUser of
+    Just (uid, summary) -> do
+      lift $ logInfo "Existing user found via OAuth"
+      ExceptT (generateAuthResult uid summary.email)
+    Nothing -> do
+      lift $ logInfo "Creating new user via OAuth"
+      case userInfo.email of
+        Just email -> ExceptT (createUserViaOAuth email oauthIdentity)
         Nothing -> do
-          -- Create new user with OAuth identity
-          logInfo "Creating new user via OAuth"
-          case userInfo.email of
-            Just email -> do
-              createUserViaOAuth email oauthIdentity
-            Nothing -> do
-              logError "OAuth provider did not return email"
-              return $ Left $ ValidationErr $ mkValidationError "email" "OAuth provider did not return email address" ""
+          lift $ logError "OAuth provider did not return email"
+          throwE (ValidationErr (mkValidationError "email" "OAuth provider did not return email address" ""))
 
 -- | Link an OAuth identity to an existing user.
 linkOAuth ::
@@ -332,29 +276,15 @@ linkOAuth ::
   OAuthProvider ->
   Text ->
   AppM (Either DomainError ())
-linkOAuth userId provider oauthCode = do
-  logInfo "Processing link OAuth request"
-
-  -- Check OAuth not already linked to another user
-  userReadModel <- view userReadModelL
+linkOAuth userId provider oauthCode = runExceptT $ do
+  lift $ logInfo "Processing link OAuth request"
+  userReadModel <- lift (view userReadModelL)
   let oauthIdentity = OAuthIdentity provider oauthCode
-  maybeExisting <- getUserByOAuthIdentity userReadModel provider oauthIdentity.subject
-
-  case maybeExisting of
-    Just _ -> return $ Left $ AccountError "OAuth account already linked to another user"
-    Nothing -> do
-      let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
-      writer <- view eventStoreWriterL
-      reader <- view eventStoreReaderL
-      let userUuid = unUserId userId
-      result <- liftIO $ applyUserCommand writer reader id userUuid linkCmd
-      case result of
-        Left err -> do
-          logError $ "Link OAuth rejected: " <> displayShow err
-          return $ Left $ AccountError "Link OAuth rejected by domain"
-        Right _ -> do
-          logInfo "OAuth account linked successfully"
-          return $ Right ()
+  maybeExisting <- lift (getUserByOAuthIdentity userReadModel provider oauthIdentity.subject)
+  guardE (isNothing maybeExisting) (AccountError "OAuth account already linked to another user")
+  let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
+  runUserCmd id (unUserId userId) linkCmd
+  lift $ logInfo "OAuth account linked successfully"
 
 -- | Authenticate via Telegram login widget.
 --
@@ -365,98 +295,73 @@ linkOAuth userId provider oauthCode = do
 authenticateTelegram ::
   TelegramAuth.TelegramAuthData ->
   AppM (Either DomainError AuthResult)
-authenticateTelegram authData = do
-  logInfo "Processing Telegram authentication"
-
-  -- 1. Verify Telegram auth data
-  telegramConfig <- view telegramConfigL
-  result <- TelegramAuth.authenticateViaTelegram telegramConfig authData
-
-  case result of
+authenticateTelegram authData = runExceptT $ do
+  lift $ logInfo "Processing Telegram authentication"
+  telegramConfig <- lift (view telegramConfigL)
+  result <- lift (TelegramAuth.authenticateViaTelegram telegramConfig authData)
+  identity <- case result of
+    Right ok -> pure ok
     Left err -> do
-      logError $ "Telegram auth verification failed: " <> displayShow err
-      return $ Left $ AccountError "Telegram authentication failed"
-    Right identity -> do
-      -- 2. Find or create user by Telegram ID
-      userReadModel <- view userReadModelL
-      maybeUser <- getUserByTelegramId userReadModel identity.id
-
-      case maybeUser of
-        Just (uid, summary) -> do
-          logInfo "Existing user found via Telegram"
-          generateAuthResult uid summary.email
-        Nothing -> do
-          -- Create new user via Telegram
-          logInfo "Creating new user via Telegram"
-          createUserViaTelegram identity
+      lift $ logError $ "Telegram auth verification failed: " <> displayShow err
+      throwE (AccountError "Telegram authentication failed")
+  userReadModel <- lift (view userReadModelL)
+  maybeUser <- lift (getUserByTelegramId userReadModel identity.id)
+  case maybeUser of
+    Just (uid, summary) -> do
+      lift $ logInfo "Existing user found via Telegram"
+      ExceptT (generateAuthResult uid summary.email)
+    Nothing -> do
+      lift $ logInfo "Creating new user via Telegram"
+      ExceptT (createUserViaTelegram identity)
 
 -- | Link a Telegram identity to an existing user.
 linkTelegram ::
   UserId ->
   TelegramAuth.TelegramAuthData ->
   AppM (Either DomainError ())
-linkTelegram userId authData = do
-  logInfo "Processing link Telegram request"
-
-  -- Verify Telegram auth data
-  telegramConfig <- view telegramConfigL
-  result <- TelegramAuth.authenticateViaTelegram telegramConfig authData
-
-  case result of
+linkTelegram userId authData = runExceptT $ do
+  lift $ logInfo "Processing link Telegram request"
+  telegramConfig <- lift (view telegramConfigL)
+  result <- lift (TelegramAuth.authenticateViaTelegram telegramConfig authData)
+  identity <- case result of
+    Right ok -> pure ok
     Left err -> do
-      logError $ "Telegram auth verification failed: " <> displayShow err
-      return $ Left $ AccountError "Telegram authentication failed"
-    Right identity -> do
-      -- Check Telegram not already linked to another user
-      userReadModel <- view userReadModelL
-      maybeExisting <- getUserByTelegramId userReadModel identity.id
-
-      case maybeExisting of
-        Just _ -> return $ Left $ AccountError "Telegram account already linked to another user"
-        Nothing -> do
-          let linkCmd = LinkTelegramAccountUserCommand LinkTelegramAccount {identity = identity}
-          writer <- view eventStoreWriterL
-          reader <- view eventStoreReaderL
-          let userUuid = unUserId userId
-          result' <- liftIO $ applyUserCommand writer reader id userUuid linkCmd
-          case result' of
-            Left err -> do
-              logError $ "Link Telegram rejected: " <> displayShow err
-              return $ Left $ AccountError "Link Telegram rejected by domain"
-            Right _ -> do
-              logInfo "Telegram account linked successfully"
-              return $ Right ()
+      lift $ logError $ "Telegram auth verification failed: " <> displayShow err
+      throwE (AccountError "Telegram authentication failed")
+  userReadModel <- lift (view userReadModelL)
+  maybeExisting <- lift (getUserByTelegramId userReadModel identity.id)
+  guardE (isNothing maybeExisting) (AccountError "Telegram account already linked to another user")
+  let linkCmd = LinkTelegramAccountUserCommand LinkTelegramAccount {identity = identity}
+  runUserCmd id (unUserId userId) linkCmd
+  lift $ logInfo "Telegram account linked successfully"
 
 -- | Refresh a JWT token.
 refreshToken ::
   Text ->
   AppM (Either DomainError AuthResult)
-refreshToken token = do
-  logInfo "Processing token refresh request"
-
-  jwtConfig <- view jwtConfigL
-  result <- JWT.refreshToken jwtConfig token
-
-  case result of
+refreshToken token = runExceptT $ do
+  lift $ logInfo "Processing token refresh request"
+  jwtConfig <- lift (view jwtConfigL)
+  result <- lift (JWT.refreshToken jwtConfig token)
+  newToken <- case result of
+    Right ok -> pure ok
     Left err -> do
-      logError $ "Token refresh failed: " <> displayShow err
-      return $ Left $ AccountError "Invalid or expired token"
-    Right newToken -> do
-      maybeClaimsResult <- JWT.verifyToken jwtConfig newToken
-      case maybeClaimsResult of
-        Nothing -> do
-          logError "Failed to verify refreshed token"
-          return $ Left $ AccountError "Internal error during token refresh"
-        Just claims -> do
-          logInfo "Token refreshed successfully"
-          return
-            $ Right
-              AuthResult
-                { token = newToken,
-                  userId = claims.userId,
-                  email = Just claims.email,
-                  expiresIn = jwtConfig.expirySeconds
-                }
+      lift $ logError $ "Token refresh failed: " <> displayShow err
+      throwE (AccountError "Invalid or expired token")
+  maybeClaims <- lift (JWT.verifyToken jwtConfig newToken)
+  claims <- case maybeClaims of
+    Just c -> pure c
+    Nothing -> do
+      lift $ logError "Failed to verify refreshed token"
+      throwE (AccountError "Internal error during token refresh")
+  lift $ logInfo "Token refreshed successfully"
+  pure
+    AuthResult
+      { token = newToken,
+        userId = claims.userId,
+        email = Just claims.email,
+        expiresIn = jwtConfig.expirySeconds
+      }
 
 -- | Find or create a user from Telegram bot interaction.
 --
@@ -468,19 +373,19 @@ refreshToken token = do
 findOrCreateTelegramBotUser ::
   TelegramIdentity ->
   AppM (Either DomainError (UserId, Bool))
-findOrCreateTelegramBotUser tgIdent = do
-  userReadModel <- view userReadModelL
-  maybeUser <- getUserByTelegramId userReadModel tgIdent.id
+findOrCreateTelegramBotUser tgIdent = runExceptT $ do
+  userReadModel <- lift (view userReadModelL)
+  maybeUser <- lift (getUserByTelegramId userReadModel tgIdent.id)
   case maybeUser of
-    Just (uid, _) -> return $ Right (uid, False)
+    Just (uid, _) -> pure (uid, False)
     Nothing -> do
-      logInfo "Creating new user via Telegram bot"
-      result <- createUserViaTelegram tgIdent
+      lift $ logInfo "Creating new user via Telegram bot"
+      result <- lift (createUserViaTelegram tgIdent)
       case result of
         Left err -> do
-          logError $ "findOrCreateTelegramBotUser: failed for TelegramId " <> displayShow tgIdent.id
-          return $ Left err
-        Right authResult -> return $ Right (authResult.userId, True)
+          lift $ logError $ "findOrCreateTelegramBotUser: failed for TelegramId " <> displayShow tgIdent.id
+          throwE err
+        Right authResult -> pure (authResult.userId, True)
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -496,140 +401,99 @@ parseOAuthProvider t = case T.toLower t of
 
 -- | Generate an AuthResult with a JWT token.
 generateAuthResult :: UserId -> Maybe Text -> AppM (Either DomainError AuthResult)
-generateAuthResult userId email = do
-  jwtConfig <- view jwtConfigL
+generateAuthResult userId email = runExceptT $ do
+  jwtConfig <- lift (view jwtConfigL)
   let emailText = fromMaybe "unknown@example.com" email
-  tokenResult <- JWT.generateToken jwtConfig userId emailText
-  case tokenResult of
-    Left err -> do
-      logError $ "Failed to generate JWT: " <> displayShow err
-      return $ Left $ AccountError "Failed to generate authentication token"
-    Right token -> do
-      return
-        $ Right
-          AuthResult
-            { token = token,
-              userId = userId,
-              email = email,
-              expiresIn = jwtConfig.expirySeconds
-            }
+  token <-
+    ExceptT
+      $ first (\err -> AccountError ("Failed to generate authentication token: " <> tshow err))
+      <$> JWT.generateToken jwtConfig userId emailText
+  pure
+    AuthResult
+      { token = token,
+        userId = userId,
+        email = email,
+        expiresIn = jwtConfig.expirySeconds
+      }
 
 -- | Create a new user via OAuth (with email + external account + OAuth identity).
 createUserViaOAuth :: Text -> OAuthIdentity -> AppM (Either DomainError AuthResult)
-createUserViaOAuth email oauthIdentity = do
+createUserViaOAuth email oauthIdentity = runExceptT $ do
   userUuid <- liftIO UUID.nextRandom
   externalAccountUuid <- liftIO UUID.nextRandom
-
-  case mkUserId userUuid of
-    Left _ -> return $ Left $ AccountError "Internal error"
-    Right uid ->
-      case mkAccountId externalAccountUuid of
-        Left _ -> return $ Left $ AccountError "Internal error"
-        Right externalAccountId -> do
-          writer <- view eventStoreWriterL
-          reader <- view eventStoreReaderL
-
-          -- Register user with placeholder password (OAuth-only)
-          pwHash <- hashPassword "OAUTH_USER_NO_PASSWORD"
-          let registerCmd =
-                RegisterUserUserCommand
-                  RegisterUser
-                    { email = email,
-                      passwordHash = pwHash,
-                      externalAccountId = externalAccountId
-                    }
-          result1 <- liftIO $ applyUserCommand writer reader id userUuid registerCmd
-          case result1 of
-            Left err -> do
-              logError $ "OAuth user registration rejected: " <> displayShow err
-              return $ Left $ AccountError "User registration rejected by domain"
-            Right _ -> do
-              -- Assign default configuration
-              let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
-              _ <- liftIO $ applyUserCommand writer reader id userUuid assignConfigCmd
-
-              -- Read baseCurrency from default configuration
-              configRM <- view configurationReadModelL
-              maybeConfig <- getConfiguration configRM defaultConfigurationId
-              let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
-
-              -- Create External account
-              let createAccountCmd =
-                    CreateAccountAccountCommand
-                      CreateAccount
-                        { name = "External",
-                          initialBalance = unsafeMoney baseCur 0,
-                          createdBy = uid,
-                          accountType = External,
-                          overdraftLimit = Nothing
-                        }
-              result2 <- liftIO $ applyAccountCommand writer reader id externalAccountUuid createAccountCmd
-              case result2 of
-                Left err -> do
-                  logError $ "External account creation rejected: " <> displayShow err
-                  return $ Left $ AccountError "External account creation rejected by domain"
-                Right _ -> do
-                  -- Link OAuth identity
-                  let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
-                  result3 <- liftIO $ applyUserCommand writer reader id userUuid linkCmd
-                  case result3 of
-                    Left err -> do
-                      logError $ "Link OAuth identity rejected: " <> displayShow err
-                      return $ Left $ AccountError "Link OAuth identity rejected by domain"
-                    Right _ ->
-                      generateAuthResult uid (Just email)
+  uid <- liftEitherWith (\_ -> AccountError "Internal error") (mkUserId userUuid)
+  externalAccountId <-
+    liftEitherWith (\_ -> AccountError "Internal error") (mkAccountId externalAccountUuid)
+  pwHash <- lift (hashPassword "OAUTH_USER_NO_PASSWORD")
+  runUserCmd
+    id
+    userUuid
+    ( RegisterUserUserCommand
+        RegisterUser
+          { email = email,
+            passwordHash = pwHash,
+            externalAccountId = externalAccountId
+          }
+    )
+  runUserCmd
+    id
+    userUuid
+    (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
+  configRM <- lift (view configurationReadModelL)
+  maybeConfig <- lift (getConfiguration configRM defaultConfigurationId)
+  let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
+  runAccountCmd
+    id
+    externalAccountUuid
+    ( CreateAccountAccountCommand
+        CreateAccount
+          { name = "External",
+            initialBalance = unsafeMoney baseCur 0,
+            createdBy = uid,
+            accountType = External,
+            overdraftLimit = Nothing
+          }
+    )
+  runUserCmd
+    id
+    userUuid
+    (LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity})
+  ExceptT (generateAuthResult uid (Just email))
 
 -- | Create a new user via Telegram (with external account + Telegram identity).
 createUserViaTelegram :: TelegramIdentity -> AppM (Either DomainError AuthResult)
-createUserViaTelegram telegramIdentity = do
+createUserViaTelegram telegramIdentity = runExceptT $ do
   userUuid <- liftIO UUID.nextRandom
   externalAccountUuid <- liftIO UUID.nextRandom
-
-  case mkUserId userUuid of
-    Left _ -> return $ Left $ AccountError "Internal error"
-    Right uid ->
-      case mkAccountId externalAccountUuid of
-        Left _ -> return $ Left $ AccountError "Internal error"
-        Right externalAccountId -> do
-          writer <- view eventStoreWriterL
-          reader <- view eventStoreReaderL
-
-          -- Register user via Telegram
-          let registerCmd =
-                RegisterViaTelegramUserCommand
-                  RegisterViaTelegram
-                    { identity = telegramIdentity,
-                      externalAccountId = externalAccountId
-                    }
-          result1 <- liftIO $ applyUserCommand writer reader id userUuid registerCmd
-          case result1 of
-            Left err -> do
-              logError $ "Telegram user registration rejected: " <> displayShow err
-              return $ Left $ AccountError "User registration rejected by domain"
-            Right _ -> do
-              -- Assign default configuration
-              let assignConfigCmd = AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId})
-              _ <- liftIO $ applyUserCommand writer reader id userUuid assignConfigCmd
-
-              -- Read baseCurrency from default configuration
-              configRM <- view configurationReadModelL
-              maybeConfig <- getConfiguration configRM defaultConfigurationId
-              let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
-
-              -- Create External account
-              let createAccountCmd =
-                    CreateAccountAccountCommand
-                      CreateAccount
-                        { name = "External",
-                          initialBalance = unsafeMoney baseCur 0,
-                          createdBy = uid,
-                          accountType = External,
-                          overdraftLimit = Nothing
-                        }
-              result2 <- liftIO $ applyAccountCommand writer reader id externalAccountUuid createAccountCmd
-              case result2 of
-                Left err -> do
-                  logError $ "External account creation rejected: " <> displayShow err
-                  return $ Left $ AccountError "External account creation rejected by domain"
-                Right _ ->
-                  generateAuthResult uid Nothing
+  uid <- liftEitherWith (\_ -> AccountError "Internal error") (mkUserId userUuid)
+  externalAccountId <-
+    liftEitherWith (\_ -> AccountError "Internal error") (mkAccountId externalAccountUuid)
+  runUserCmd
+    id
+    userUuid
+    ( RegisterViaTelegramUserCommand
+        RegisterViaTelegram
+          { identity = telegramIdentity,
+            externalAccountId = externalAccountId
+          }
+    )
+  runUserCmd
+    id
+    userUuid
+    (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
+  configRM <- lift (view configurationReadModelL)
+  maybeConfig <- lift (getConfiguration configRM defaultConfigurationId)
+  let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
+  runAccountCmd
+    id
+    externalAccountUuid
+    ( CreateAccountAccountCommand
+        CreateAccount
+          { name = "External",
+            initialBalance = unsafeMoney baseCur 0,
+            createdBy = uid,
+            accountType = External,
+            overdraftLimit = Nothing
+          }
+    )
+  ExceptT (generateAuthResult uid Nothing)

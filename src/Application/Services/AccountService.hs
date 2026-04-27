@@ -36,6 +36,14 @@ where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as ReadModel
+import Application.Services.Internal
+  ( guardE,
+    liftEitherWith,
+    liftMaybe,
+    liftMaybeM,
+    runAccountCmd,
+  )
+import Control.Monad.Trans.Except (runExceptT)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
@@ -59,10 +67,8 @@ import Domain.Core.Types
   )
 import Infrastructure.App
   ( AppM,
-    HasEventStore (..),
     HasReadModel (..),
   )
-import Infrastructure.Eventium (applyAccountCommand)
 import RIO
 import qualified RIO.Text as T
 
@@ -84,40 +90,22 @@ import qualified RIO.Text as T
 createAccount ::
   CreateAccount ->
   AppM (Either DomainError (AccountId, AccountData))
-createAccount createCmd = do
-  logInfo "Creating new account..."
-
-  -- 1. Generate new account ID
+createAccount createCmd = runExceptT $ do
+  lift $ logInfo "Creating new account..."
   accountUuid <- liftIO UUID.nextRandom
-  case mkAccountId accountUuid of
-    Left err -> do
-      logError $ "Failed to create AccountId: " <> display err
-      return $ Left $ AccountError "Internal error: failed to generate account ID"
-    Right accountId -> do
-      logInfo $ "Generated account ID: " <> displayShow accountUuid
-
-      -- 2. Execute command in event store
-      writer <- view eventStoreWriterL
-      reader <- view eventStoreReaderL
-      result <- liftIO $ applyAccountCommand writer reader id accountUuid (CreateAccountAccountCommand createCmd)
-      case result of
-        Left err -> do
-          logError $ "Account creation rejected: " <> displayShow err
-          return $ Left $ AccountError "Account creation rejected by domain"
-        Right events -> do
-          logInfo $ "Account created, " <> displayShow (length events) <> " event(s) emitted"
-
-          -- 3. Query read model for current state
-          readModel <- view accountReadModelL
-          maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
-
-          case maybeSummary of
-            Just summary -> do
-              logInfo "Account successfully created"
-              return $ Right (accountId, summary)
-            Nothing -> do
-              logError "Account not found in read model after creation!"
-              return $ Left $ AccountError "Account created but not found in read model"
+  accountId <-
+    liftEitherWith
+      (\err -> AccountError ("Internal error: failed to generate account ID: " <> tshow err))
+      (mkAccountId accountUuid)
+  lift $ logInfo $ "Generated account ID: " <> displayShow accountUuid
+  runAccountCmd id accountUuid (CreateAccountAccountCommand createCmd)
+  readModel <- lift (view accountReadModelL)
+  summary <-
+    liftMaybeM
+      (AccountError "Account created but not found in read model")
+      (liftIO $ ReadModel.getAccount readModel accountId)
+  lift $ logInfo "Account successfully created"
+  pure (accountId, summary)
 
 -- | Get an account by UUID.
 --
@@ -129,26 +117,17 @@ createAccount createCmd = do
 getAccount ::
   UUID ->
   AppM (Either DomainError (AccountId, AccountData))
-getAccount accountUuid = do
-  logInfo $ "Getting account: " <> displayShow accountUuid
-
-  -- 1. Convert UUID to AccountId
-  case mkAccountId accountUuid of
-    Left _err -> do
-      logWarn $ "Account ID validation failed (treating as not found): " <> displayShow accountUuid
-      return $ Left $ NotFound "Account" (tshow accountUuid)
-    Right accountId -> do
-      -- 2. Query read model
-      readModel <- view accountReadModelL
-      maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
-
-      case maybeSummary of
-        Just summary -> do
-          logInfo "Account found"
-          return $ Right (accountId, summary)
-        Nothing -> do
-          logWarn "Account not found"
-          return $ Left $ NotFound "Account" (tshow accountUuid)
+getAccount accountUuid = runExceptT $ do
+  lift $ logInfo $ "Getting account: " <> displayShow accountUuid
+  accountId <-
+    liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  readModel <- lift (view accountReadModelL)
+  summary <-
+    liftMaybeM
+      (NotFound "Account" (tshow accountUuid))
+      (liftIO $ ReadModel.getAccount readModel accountId)
+  lift $ logInfo "Account found"
+  pure (accountId, summary)
 
 -- | List accounts accessible to a given user.
 --
@@ -179,56 +158,40 @@ shareAccount ::
   UUID ->
   Text ->
   AppM (Either DomainError ())
-shareAccount requestingUserId accountUuid targetUserUuid roleText = do
-  logInfo $ "Sharing account: " <> displayShow accountUuid
-
-  -- 1. Convert account UUID to AccountId
-  case mkAccountId accountUuid of
-    Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
-    Right accountId -> do
-      -- 2. Check account exists and user is Owner
-      readModel <- view accountReadModelL
-      maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
-
-      case maybeSummary of
-        Nothing -> return $ Left $ NotFound "Account" (tshow accountUuid)
-        Just summary
-          -- Check if user is the owner
-          | summary.createdBy /= requestingUserId -> do
-              logWarn "User is not account owner"
-              return $ Left $ AccountError "Only account owner can share access"
-          -- Check account is not External
-          | summary.accountType == External -> do
-              logWarn "Cannot share External account"
-              return $ Left $ AccountError "External accounts cannot be shared"
-          | otherwise -> do
-              -- 3. Parse target user ID
-              case mkUserId targetUserUuid of
-                Left _err -> return $ Left $ ValidationErr $ mkValidationError "userId" "Invalid user ID" (tshow targetUserUuid)
-                Right targetUserId -> do
-                  -- 4. Parse role
-                  case parseRole roleText of
-                    Nothing -> return $ Left $ ValidationErr $ mkValidationError "role" "Invalid role. Must be 'owner', 'editor', or 'viewer'" roleText
-                    Just role -> do
-                      -- 5. Issue ShareAccount command
-                      let shareCmd =
-                            ShareAccountAccountCommand
-                              ShareAccount
-                                { userId = targetUserId,
-                                  role = role,
-                                  grantedBy = requestingUserId
-                                }
-
-                      writer <- view eventStoreWriterL
-                      reader <- view eventStoreReaderL
-                      result <- liftIO $ applyAccountCommand writer reader id accountUuid shareCmd
-                      case result of
-                        Left err -> do
-                          logError $ "Share account rejected: " <> displayShow err
-                          return $ Left $ AccountError "Share account rejected by domain"
-                        Right _ -> do
-                          logInfo "Account shared successfully"
-                          return $ Right ()
+shareAccount requestingUserId accountUuid targetUserUuid roleText = runExceptT $ do
+  lift $ logInfo $ "Sharing account: " <> displayShow accountUuid
+  accountId <-
+    liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  readModel <- lift (view accountReadModelL)
+  summary <-
+    liftMaybeM
+      (NotFound "Account" (tshow accountUuid))
+      (liftIO $ ReadModel.getAccount readModel accountId)
+  guardE
+    (summary.createdBy == requestingUserId)
+    (AccountError "Only account owner can share access")
+  guardE
+    (summary.accountType /= External)
+    (AccountError "External accounts cannot be shared")
+  targetUserId <-
+    liftEitherWith
+      (\_ -> ValidationErr (mkValidationError "userId" "Invalid user ID" (tshow targetUserUuid)))
+      (mkUserId targetUserUuid)
+  role <-
+    liftMaybe
+      ( ValidationErr
+          (mkValidationError "role" "Invalid role. Must be 'owner', 'editor', or 'viewer'" roleText)
+      )
+      (parseRole roleText)
+  let shareCmd =
+        ShareAccountAccountCommand
+          ShareAccount
+            { userId = targetUserId,
+              role = role,
+              grantedBy = requestingUserId
+            }
+  runAccountCmd id accountUuid shareCmd
+  lift $ logInfo "Account shared successfully"
 
 -- | Revoke a user's access to an account.
 --
@@ -242,52 +205,31 @@ revokeAccountAccess ::
   UUID ->
   UUID ->
   AppM (Either DomainError ())
-revokeAccountAccess requestingUserId accountUuid targetUserUuid = do
-  logInfo $ "Revoking account access: " <> displayShow accountUuid
-
-  -- 1. Convert account UUID to AccountId
-  case mkAccountId accountUuid of
-    Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
-    Right accountId -> do
-      -- 2. Check account exists and user is Owner
-      readModel <- view accountReadModelL
-      maybeSummary <- liftIO $ ReadModel.getAccount readModel accountId
-
-      case maybeSummary of
-        Nothing -> return $ Left $ NotFound "Account" (tshow accountUuid)
-        Just summary
-          -- Check if user is the owner
-          | summary.createdBy /= requestingUserId -> do
-              logWarn "User is not account owner"
-              return $ Left $ AccountError "Only account owner can revoke access"
-          | otherwise -> do
-              -- 3. Parse target user ID
-              case mkUserId targetUserUuid of
-                Left _err -> return $ Left $ ValidationErr $ mkValidationError "userId" "Invalid user ID" (tshow targetUserUuid)
-                Right targetUserId
-                  -- Cannot revoke owner's own access
-                  | targetUserId == summary.createdBy -> do
-                      logWarn "Cannot revoke owner's access"
-                      return $ Left $ AccountError "Cannot revoke owner's access"
-                  | otherwise -> do
-                      -- 4. Issue RevokeAccountAccess command
-                      let revokeCmd =
-                            RevokeAccountAccessAccountCommand
-                              RevokeAccountAccess
-                                { userId = targetUserId,
-                                  revokedBy = requestingUserId
-                                }
-
-                      writer <- view eventStoreWriterL
-                      reader <- view eventStoreReaderL
-                      result <- liftIO $ applyAccountCommand writer reader id accountUuid revokeCmd
-                      case result of
-                        Left err -> do
-                          logError $ "Revoke access rejected: " <> displayShow err
-                          return $ Left $ AccountError "Revoke access rejected by domain"
-                        Right _ -> do
-                          logInfo "Account access revoked successfully"
-                          return $ Right ()
+revokeAccountAccess requestingUserId accountUuid targetUserUuid = runExceptT $ do
+  lift $ logInfo $ "Revoking account access: " <> displayShow accountUuid
+  accountId <-
+    liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  readModel <- lift (view accountReadModelL)
+  summary <-
+    liftMaybeM
+      (NotFound "Account" (tshow accountUuid))
+      (liftIO $ ReadModel.getAccount readModel accountId)
+  guardE
+    (summary.createdBy == requestingUserId)
+    (AccountError "Only account owner can revoke access")
+  targetUserId <-
+    liftEitherWith
+      (\_ -> ValidationErr (mkValidationError "userId" "Invalid user ID" (tshow targetUserUuid)))
+      (mkUserId targetUserUuid)
+  guardE (targetUserId /= summary.createdBy) (AccountError "Cannot revoke owner's access")
+  let revokeCmd =
+        RevokeAccountAccessAccountCommand
+          RevokeAccountAccess
+            { userId = targetUserId,
+              revokedBy = requestingUserId
+            }
+  runAccountCmd id accountUuid revokeCmd
+  lift $ logInfo "Account access revoked successfully"
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -307,29 +249,14 @@ setOverdraftLimit ::
   UUID ->
   Maybe Money ->
   AppM (Either DomainError ())
-setOverdraftLimit requestingUserId accountUuid newLimit = do
-  logInfo $ "Setting overdraft limit: " <> displayShow accountUuid
-
-  case mkAccountId accountUuid of
-    Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
-    Right _accountId -> do
-      let setLimitCmd =
-            SetOverdraftLimitAccountCommand
-              SetOverdraftLimit
-                { overdraftLimit = newLimit,
-                  setBy = requestingUserId
-                }
-
-      writer <- view eventStoreWriterL
-      reader <- view eventStoreReaderL
-      result <- liftIO $ applyAccountCommand writer reader id accountUuid setLimitCmd
-      case result of
-        Left err -> do
-          logError $ "Set overdraft limit rejected: " <> displayShow err
-          return $ Left $ AccountError "Set overdraft limit rejected by domain"
-        Right _ -> do
-          logInfo "Overdraft limit set successfully"
-          return $ Right ()
+setOverdraftLimit requestingUserId accountUuid newLimit = runExceptT $ do
+  lift $ logInfo $ "Setting overdraft limit: " <> displayShow accountUuid
+  _ <- liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  let cmd =
+        SetOverdraftLimitAccountCommand
+          SetOverdraftLimit {overdraftLimit = newLimit, setBy = requestingUserId}
+  runAccountCmd id accountUuid cmd
+  lift $ logInfo "Overdraft limit set successfully"
 
 -- | Set the account type on an account.
 setAccountSubtype ::
@@ -337,28 +264,13 @@ setAccountSubtype ::
   UUID ->
   AccountSubtype ->
   AppM (Either DomainError ())
-setAccountSubtype requestingUserId accountUuid newType = do
-  logInfo $ "Setting account type: " <> displayShow accountUuid
-
-  case mkAccountId accountUuid of
-    Left _err -> return $ Left $ NotFound "Account" (tshow accountUuid)
-    Right _accountId -> do
-      let setTypeCmd =
-            SetAccountSubtypeAccountCommand
-              SetAccountSubtype
-                { subtype = newType,
-                  setBy = requestingUserId
-                }
-
-      writer <- view eventStoreWriterL
-      reader <- view eventStoreReaderL
-      result <- liftIO $ applyAccountCommand writer reader id accountUuid setTypeCmd
-      case result of
-        Left err -> do
-          logError $ "Set account type rejected: " <> displayShow err
-          return $ Left $ AccountError "Set account type rejected by domain"
-        Right _ -> do
-          logInfo "Account type set successfully"
-          return $ Right ()
+setAccountSubtype requestingUserId accountUuid newType = runExceptT $ do
+  lift $ logInfo $ "Setting account type: " <> displayShow accountUuid
+  _ <- liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  let cmd =
+        SetAccountSubtypeAccountCommand
+          SetAccountSubtype {subtype = newType, setBy = requestingUserId}
+  runAccountCmd id accountUuid cmd
+  lift $ logInfo "Account type set successfully"
 
 -- Note: Uses 'tshow' from RIO for Text conversion of Show-able values.

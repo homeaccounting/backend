@@ -36,6 +36,13 @@ import Application.ReadModels.User
   ( UserData (..),
     getUser,
   )
+import Application.Services.Internal
+  ( guardE,
+    liftMaybe,
+    liftMaybeM,
+    runUserCmd,
+  )
+import Control.Monad.Trans.Except (runExceptT, throwE)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( OAuthIdentity (..),
@@ -51,11 +58,9 @@ import Domain.User.Commands
   )
 import Infrastructure.App
   ( AppM,
-    HasEventStore (..),
     HasReadModel (..),
   )
 import Infrastructure.Auth.Password (hashPassword)
-import Infrastructure.Eventium (applyUserCommand)
 import RIO
 import qualified RIO.List as L
 import qualified RIO.Text as T
@@ -71,19 +76,12 @@ import qualified RIO.Text as T
 getProfile ::
   UserId ->
   AppM (Either DomainError (UserId, UserData))
-getProfile userId = do
-  logInfo "Getting user profile"
-
-  userReadModel <- view userReadModelL
-  maybeUserData <- getUser userReadModel userId
-
-  case maybeUserData of
-    Nothing -> do
-      logError "User not found in read model"
-      return $ Left $ NotFound "User" (tshow userId)
-    Just userData -> do
-      logInfo "User profile retrieved successfully"
-      return $ Right (userId, userData)
+getProfile userId = runExceptT $ do
+  lift $ logInfo "Getting user profile"
+  userReadModel <- lift (view userReadModelL)
+  userData <- liftMaybeM (NotFound "User" (tshow userId)) (getUser userReadModel userId)
+  lift $ logInfo "User profile retrieved successfully"
+  pure (userId, userData)
 
 -- | Change a user's password.
 --
@@ -101,35 +99,17 @@ changePassword ::
   Text ->
   Text ->
   AppM (Either DomainError ())
-changePassword userId _currentPassword newPassword = do
-  logInfo "Processing password change"
-
-  -- 1. Validate new password
-  if T.length newPassword < 8
-    then do
-      logWarn "Password too short"
-      return $ Left $ ValidationErr $ mkValidationError "newPassword" "Password must be at least 8 characters" ""
-    else do
-      -- TODO: Verify current password (requires aggregate loading)
-      logWarn "Current password verification skipped - implement aggregate loading"
-
-      -- 2. Hash new password
-      newPasswordHash <- hashPassword newPassword
-
-      -- 3. Issue ChangePassword command
-      let changeCmd = ChangePasswordUserCommand ChangePassword {newHash = newPasswordHash}
-
-      writer <- view eventStoreWriterL
-      reader <- view eventStoreReaderL
-      let userUuid = unUserId userId
-      result <- liftIO $ applyUserCommand writer reader id userUuid changeCmd
-      case result of
-        Left err -> do
-          logError $ "Password change rejected: " <> displayShow err
-          return $ Left $ UserError "Password change rejected by domain"
-        Right _ -> do
-          logInfo "Password changed successfully"
-          return $ Right ()
+changePassword userId _currentPassword newPassword = runExceptT $ do
+  lift $ logInfo "Processing password change"
+  guardE (T.length newPassword >= 8)
+    $ ValidationErr
+    $ mkValidationError "newPassword" "Password must be at least 8 characters" ""
+  -- TODO: Verify current password (requires aggregate loading)
+  lift $ logWarn "Current password verification skipped - implement aggregate loading"
+  newPasswordHash <- lift (hashPassword newPassword)
+  let changeCmd = ChangePasswordUserCommand ChangePassword {newHash = newPasswordHash}
+  runUserCmd id (unUserId userId) changeCmd
+  lift $ logInfo "Password changed successfully"
 
 -- | Unlink an OAuth provider from a user's account.
 --
@@ -149,48 +129,23 @@ unlinkOAuth ::
   UserId ->
   Text ->
   AppM (Either DomainError ())
-unlinkOAuth userId providerText = do
-  logInfo $ "Unlinking OAuth provider: " <> display providerText
-
-  -- 1. Parse provider
-  case parseOAuthProvider providerText of
-    Nothing ->
-      return $ Left $ ValidationErr $ mkValidationError "provider" "Unknown OAuth provider" providerText
-    Just provider -> do
-      -- 2. Get user data
-      userReadModel <- view userReadModelL
-      maybeUserData <- getUser userReadModel userId
-
-      case maybeUserData of
-        Nothing -> return $ Left $ NotFound "User" (tshow userId)
-        Just userData -> do
-          -- 3. Check if OAuth provider is linked
-          case L.find (\i -> i.provider == provider) userData.oauthIdentities of
-            Nothing -> do
-              logWarn "OAuth provider not linked"
-              return $ Left $ NotFound "OAuthProvider" providerText
-            Just identity -> do
-              -- 4. Check login method count
-              let loginMethods = countLoginMethods userData
-              if loginMethods <= 1
-                then do
-                  logWarn "Cannot unlink last login method"
-                  return $ Left $ UserError "Cannot unlink last login method"
-                else do
-                  -- 5. Issue UnlinkOAuthAccount command
-                  let unlinkCmd = UnlinkOAuthAccountUserCommand UnlinkOAuthAccount {identity = identity}
-
-                  writer <- view eventStoreWriterL
-                  reader <- view eventStoreReaderL
-                  let userUuid = unUserId userId
-                  result <- liftIO $ applyUserCommand writer reader id userUuid unlinkCmd
-                  case result of
-                    Left err -> do
-                      logError $ "Unlink OAuth rejected: " <> displayShow err
-                      return $ Left $ UserError "Unlink OAuth rejected by domain"
-                    Right _ -> do
-                      logInfo "OAuth provider unlinked successfully"
-                      return $ Right ()
+unlinkOAuth userId providerText = runExceptT $ do
+  lift $ logInfo $ "Unlinking OAuth provider: " <> display providerText
+  provider <-
+    liftMaybe
+      (ValidationErr (mkValidationError "provider" "Unknown OAuth provider" providerText))
+      (parseOAuthProvider providerText)
+  userReadModel <- lift (view userReadModelL)
+  userData <- liftMaybeM (NotFound "User" (tshow userId)) (getUser userReadModel userId)
+  identity <-
+    liftMaybe (NotFound "OAuthProvider" providerText)
+      $ L.find (\i -> i.provider == provider) userData.oauthIdentities
+  when (countLoginMethods userData <= 1) $ do
+    lift $ logWarn "Cannot unlink last login method"
+    throwE (UserError "Cannot unlink last login method")
+  let unlinkCmd = UnlinkOAuthAccountUserCommand UnlinkOAuthAccount {identity = identity}
+  runUserCmd id (unUserId userId) unlinkCmd
+  lift $ logInfo "OAuth provider unlinked successfully"
 
 -- | Unlink Telegram from a user's account.
 --
@@ -207,43 +162,18 @@ unlinkOAuth userId providerText = do
 unlinkTelegram ::
   UserId ->
   AppM (Either DomainError ())
-unlinkTelegram userId = do
-  logInfo "Unlinking Telegram account"
-
-  -- 1. Get user data
-  userReadModel <- view userReadModelL
-  maybeUserData <- getUser userReadModel userId
-
-  case maybeUserData of
-    Nothing -> return $ Left $ NotFound "User" (tshow userId)
-    Just userData ->
-      -- 2. Check if Telegram is linked
-      case userData.telegramIdentity of
-        Nothing -> do
-          logWarn "Telegram not linked"
-          return $ Left $ NotFound "TelegramLink" (tshow userId)
-        Just _ -> do
-          -- 3. Check login method count
-          let loginMethods = countLoginMethods userData
-          if loginMethods <= 1
-            then do
-              logWarn "Cannot unlink last login method"
-              return $ Left $ UserError "Cannot unlink last login method"
-            else do
-              -- 4. Issue UnlinkTelegramAccount command
-              let unlinkCmd = UnlinkTelegramAccountUserCommand UnlinkTelegramAccount
-
-              writer <- view eventStoreWriterL
-              reader <- view eventStoreReaderL
-              let userUuid = unUserId userId
-              result <- liftIO $ applyUserCommand writer reader id userUuid unlinkCmd
-              case result of
-                Left err -> do
-                  logError $ "Unlink Telegram rejected: " <> displayShow err
-                  return $ Left $ UserError "Unlink Telegram rejected by domain"
-                Right _ -> do
-                  logInfo "Telegram account unlinked successfully"
-                  return $ Right ()
+unlinkTelegram userId = runExceptT $ do
+  lift $ logInfo "Unlinking Telegram account"
+  userReadModel <- lift (view userReadModelL)
+  userData <- liftMaybeM (NotFound "User" (tshow userId)) (getUser userReadModel userId)
+  _telegramIdentity <-
+    liftMaybe (NotFound "TelegramLink" (tshow userId)) userData.telegramIdentity
+  when (countLoginMethods userData <= 1) $ do
+    lift $ logWarn "Cannot unlink last login method"
+    throwE (UserError "Cannot unlink last login method")
+  let unlinkCmd = UnlinkTelegramAccountUserCommand UnlinkTelegramAccount
+  runUserCmd id (unUserId userId) unlinkCmd
+  lift $ logInfo "Telegram account unlinked successfully"
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions

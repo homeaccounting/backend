@@ -41,6 +41,7 @@ library
       Application.Services.BankImportService
       Application.Services.ConfigurationService
       Application.Services.ExchangeRatePublisher
+      Application.Services.Internal
       Application.Services.TransactionService
       Application.Services.UserService
       Data.Text.Display
@@ -264,6 +265,7 @@ test-suite backend-test
       Application.Services.ConfigurationServiceInUseSpec
       Application.Services.ConfigurationServiceSpec
       Application.Services.ExchangeRatePublisherSpec
+      Application.Services.InternalSpec
       Application.Services.TransactionServiceLabelsSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec

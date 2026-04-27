@@ -37,6 +37,7 @@ import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryD
 import qualified Application.ReadModels.User as UserRM
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Data.Aeson (ToJSON)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -48,6 +49,7 @@ import Domain.Core.Types
   ( AccountId,
     CategoryId,
     MCC,
+    Money,
     TransactionId,
     TransferType (..),
     UserId,
@@ -283,14 +285,11 @@ importTransaction ::
   [(BankAccountId, AccountId)] ->
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
-importTransaction provider userId accountLink tx = do
-  -- 1. Skip hold transactions
-  if tx.hold
-    then do
+importTransaction provider userId accountLink tx
+  | tx.hold = do
       logDebug $ "Skipping hold transaction: " <> display tx.externalId
       pure (Right Nothing)
-    else do
-      -- 2. Check deduplication
+  | otherwise = do
       bankImportRM <- view bankImportReadModelL
       alreadyImported <- isImported bankImportRM tx.externalId
       if alreadyImported
@@ -298,111 +297,92 @@ importTransaction provider userId accountLink tx = do
           logDebug $ "Skipping already-imported transaction: " <> display tx.externalId
           pure (Right Nothing)
         else case lookup tx.accountId accountLink of
-          -- 3. Match external account to local account
           Nothing -> do
             logWarn $ "No account mapping for external account: " <> display tx.accountId
             pure (Right Nothing)
-          Just localAccId -> do
-            -- 4. Look up user's External account
-            userRM <- view userReadModelL
-            maybeUser <- UserRM.getUser userRM userId
-            case maybeUser of
-              Nothing -> do
-                logWarn $ "User not found: " <> displayShow userId
-                pure (Left (NotFound "User" (tshow userId)))
-              Just userData -> do
-                let externalAccId = userData.externalAccountId
-                -- 5. Convert currency
-                case currencyFromNumericCode tx.currencyCode of
-                  Left err -> do
-                    logWarn $ "Unsupported currency code " <> displayShow tx.currencyCode <> ": " <> display err
-                    pure (Right Nothing)
-                  Right currency ->
-                    -- 6 + 7. Amount is already major-unit Rational; take absolute value, build Money
-                    case mkMoney currency (abs tx.amount) of
-                      Left err -> do
-                        logWarn $ "Failed to create money: " <> display err
-                        pure (Right Nothing)
-                      Right money -> do
-                        -- Phase 1: Monobank does not report the foreign currency code, so an
-                        -- ExchangeRate refinement (which requires distinct source/target
-                        -- currencies) cannot be constructed. Log the raw rate for diagnostic
-                        -- visibility; do not persist. See
-                        -- docs/specs/2026-04-10-bank-integration-design.md (amendment
-                        -- 2026-04-16) for the rationale.
-                        logCrossCurrencyRate
+          Just localAccId -> importMatchedTransaction provider userId localAccId tx
 
-                        -- 8. Classify transaction direction
-                        let direction = provider.classifyTransaction tx
+-- | Continue an import after the cheap dispatcher checks have matched the
+-- external account. Handles the two remaining @Right Nothing@ skip-paths
+-- (unsupported currency code, money construction failure) before delegating
+-- the genuinely-fallible work to 'commitImport'.
+importMatchedTransaction ::
+  BankProvider ->
+  UserId ->
+  AccountId ->
+  BankTransaction ->
+  AppM (Either DomainError (Maybe TransactionId))
+importMatchedTransaction provider userId localAccId tx = do
+  userRM <- view userReadModelL
+  maybeUser <- UserRM.getUser userRM userId
+  case maybeUser of
+    Nothing -> do
+      logWarn $ "User not found: " <> displayShow userId
+      pure (Left (NotFound "User" (tshow userId)))
+    Just userData ->
+      case currencyFromNumericCode tx.currencyCode of
+        Left err -> do
+          logWarn $ "Unsupported currency code " <> displayShow tx.currencyCode <> ": " <> display err
+          pure (Right Nothing)
+        Right currency ->
+          case mkMoney currency (abs tx.amount) of
+            Left err -> do
+              logWarn $ "Failed to create money: " <> display err
+              pure (Right Nothing)
+            Right money -> runExceptT (commitImport provider userId userData localAccId tx money)
 
-                        -- 9. Resolve category from user's banking configuration
-                        cfgResult <- ConfigurationService.getConfigurationForUser userId
-                        case cfgResult of
-                          Left err -> do
-                            logWarn $ "Failed to load configuration for user " <> displayShow userId <> ": " <> displayShow err
-                            pure (Left err)
-                          Right cfg -> do
-                            let categoryResult = resolveCategory cfg.banking cfg direction tx.mcc
-                            case categoryResult of
-                              Left err -> do
-                                logWarn $ "Category resolution failed for tx " <> display tx.externalId <> ": " <> displayShow err
-                                pure (Left err)
-                              Right (categoryId, resolution) -> do
-                                logCategoryResolution tx direction cfg categoryId resolution
-                                let (sourceAccId, targetAccId, transferType) =
-                                      classifyEndpoints localAccId externalAccId direction categoryId
-
-                                    -- 10. Create InitiateTransfer command. Phase 1 always sets
-                                    -- exchangeRate = Nothing and sourceAmount == targetAmount — see
-                                    -- docs/specs/2026-04-10-bank-integration-design.md
-                                    -- (amendment 2026-04-16).
-                                    cmd = buildTransferCmd sourceAccId targetAccId money transferType
-
-                                    -- 11. Metadata enricher (business timestamp).
-                                    -- Note: correlationId not set — external IDs are opaque strings,
-                                    -- not UUIDs. Tracing uses externalTransactionId on the event
-                                    -- instead.
-                                    enricher m = m {occurredAt = Just tx.time}
-
-                                -- 12. Execute transfer
-                                result <- TransactionService.initiateTransfer enricher cmd
-                                case result of
-                                  Left err -> do
-                                    logError $ "Failed to import transaction " <> display tx.externalId <> ": " <> displayShow err
-                                    pure (Left err)
-                                  Right (txId, _) -> do
-                                    logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
-                                    pure (Right (Just txId))
+-- | Commit the genuinely-fallible suffix of the import: configuration lookup,
+-- category resolution, and transfer initiation. All errors short-circuit via
+-- 'ExceptT', so this layer reads as a flat sequence of binds.
+commitImport ::
+  BankProvider ->
+  UserId ->
+  UserRM.UserData ->
+  AccountId ->
+  BankTransaction ->
+  Money ->
+  ExceptT DomainError AppM (Maybe TransactionId)
+commitImport provider userId userData localAccId tx money = do
+  let externalAccId = userData.externalAccountId
+      direction = provider.classifyTransaction tx
+  cfg <- ExceptT $ do
+    result <- ConfigurationService.getConfigurationForUser userId
+    case result of
+      Left err -> do
+        logWarn $ "Failed to load configuration for user " <> displayShow userId <> ": " <> displayShow err
+        pure (Left err)
+      Right c -> pure (Right c)
+  (categoryId, resolution) <- case resolveCategory cfg.banking cfg direction tx.mcc of
+    Left err -> do
+      lift $ logWarn $ "Category resolution failed for tx " <> display tx.externalId <> ": " <> displayShow err
+      throwE err
+    Right ok -> pure ok
+  lift $ logCategoryResolution tx direction cfg categoryId resolution
+  let (sourceAccId, targetAccId, transferType) =
+        classifyEndpoints localAccId externalAccId direction categoryId
+      cmd = buildTransferCmd userId tx sourceAccId targetAccId money transferType
+      enricher m = m {occurredAt = Just tx.time}
+  (txId, _) <- ExceptT (TransactionService.initiateTransfer enricher cmd)
+  lift $ logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
+  pure (Just txId)
   where
-    logCrossCurrencyRate = case tx.originalAmount of
-      Nothing -> pure () -- same currency
-      Just _ | tx.amount == 0 -> pure () -- defensive
-      Just origAmt ->
-        let rate = abs origAmt / abs tx.amount
-         in logInfo
-              $ "Cross-currency Mono tx "
-              <> display tx.externalId
-              <> ": rate="
-              <> displayShow rate
-              <> " (not persisted in Phase 1)"
-
-    classifyEndpoints localAccId externalAccId direction categoryId =
-      case direction of
+    classifyEndpoints localAcc externalAcc dir categoryId =
+      case dir of
         ClassifiedExpense ->
-          (localAccId, externalAccId, Expense categoryId)
+          (localAcc, externalAcc, Expense categoryId)
         ClassifiedIncome ->
-          (externalAccId, localAccId, Income categoryId)
+          (externalAcc, localAcc, Income categoryId)
 
-    buildTransferCmd sourceAccId targetAccId money transferType =
+    buildTransferCmd uid bankTx sourceAccId targetAccId m transferType =
       InitiateTransfer
         { sourceAccountId = sourceAccId,
           targetAccountId = targetAccId,
-          sourceAmount = money,
-          targetAmount = money,
+          sourceAmount = m,
+          targetAmount = m,
           exchangeRate = Nothing,
-          description = tx.description,
-          initiatedBy = userId,
+          description = bankTx.description,
+          initiatedBy = uid,
           transferType = transferType,
-          externalTransactionId = Just tx.externalId,
+          externalTransactionId = Just bankTx.externalId,
           labels = Set.empty
         }
