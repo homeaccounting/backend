@@ -34,7 +34,9 @@ module Application.Services.AuthService
     login,
     initiateOAuth,
     handleOAuthCallback,
+    linkOrSignInWithOAuth,
     linkOAuth,
+    linkOAuthIdentityToUser,
     authenticateTelegram,
     linkTelegram,
     refreshToken,
@@ -234,9 +236,8 @@ initiateOAuth provider = runExceptT $ do
 -- | Handle OAuth callback after provider redirect.
 --
 -- Orchestrates:
---   1. Exchange code for user info
---   2. Find or create user by OAuth identity
---   3. Generate JWT token
+--   1. Exchange code for user info (HTTP — Infrastructure.Auth.OAuth)
+--   2. Delegate the find-or-create logic to 'linkOrSignInWithOAuth'.
 handleOAuthCallback ::
   OAuthProvider ->
   Text ->
@@ -251,6 +252,22 @@ handleOAuthCallback provider code state = runExceptT $ do
     Left err -> do
       lift $ logError $ "OAuth callback error: " <> displayShow err
       throwE (AccountError "OAuth authentication failed")
+  ExceptT (linkOrSignInWithOAuth provider userInfo)
+
+-- | Find-or-create a user from an already-resolved 'OAuth.OAuthUserInfo'.
+--
+-- Decision tree (see docs/specs/2026-04-28-oauth-auto-link-by-email-design.md §6):
+--   - If a user already has this @(provider, subject)@ identity → sign in as that user.
+--   - Otherwise (auto-link branch implemented in Task 3):
+--       - if the provider didn't return an email → ValidationErr.
+--       - else create a new user via OAuth.
+--
+-- Exported for white-box tests in @Application.Services.AuthServiceSpec@.
+linkOrSignInWithOAuth ::
+  OAuthProvider ->
+  OAuth.OAuthUserInfo ->
+  AppM (Either DomainError AuthResult)
+linkOrSignInWithOAuth provider userInfo = runExceptT $ do
   let oauthIdentity =
         OAuthIdentity
           { provider = provider,
@@ -262,25 +279,71 @@ handleOAuthCallback provider code state = runExceptT $ do
     Just (uid, user) -> do
       lift $ logInfo "Existing user found via OAuth"
       ExceptT (generateAuthResult uid user.email)
-    Nothing -> do
-      lift $ logInfo "Creating new user via OAuth"
-      case userInfo.email of
-        Just email -> ExceptT (createUserViaOAuth email oauthIdentity)
-        Nothing -> do
-          lift $ logError "OAuth provider did not return email"
-          throwE (ValidationErr (mkValidationError "email" "OAuth provider did not return email address" ""))
+    Nothing -> case (userInfo.email, userInfo.emailVerified) of
+      (Nothing, _) -> do
+        lift $ logError "OAuth provider did not return email"
+        throwE
+          ( ValidationErr
+              (mkValidationError "email" "OAuth provider did not return email address" "")
+          )
+      (Just email, False) -> do
+        lift $ logInfo "OAuth email not verified — creating new user without auto-link"
+        ExceptT (createUserViaOAuth email oauthIdentity)
+      (Just email, True) -> do
+        maybeByEmail <- lift (getUserByEmail userReadModel email)
+        case maybeByEmail of
+          Just (uid, user) -> do
+            lift $ logInfo "Auto-linking verified OAuth email to existing user"
+            runUserCmd
+              id
+              (unUserId uid)
+              (LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity})
+            ExceptT (generateAuthResult uid user.email)
+          Nothing -> do
+            lift $ logInfo "Creating new user via OAuth (no existing email match)"
+            ExceptT (createUserViaOAuth email oauthIdentity)
 
 -- | Link an OAuth identity to an existing user.
+--
+-- Exchanges the authorization @code@ for an 'OAuth.OAuthUserInfo' (so we
+-- key the linked identity on the provider's stable @subject@ — not the
+-- one-time auth code) and then delegates to 'linkOAuthIdentityToUser'.
+--
+-- @state@ is forwarded to the OAuth provider abstraction. CSRF protection
+-- already ran at the API boundary; this layer treats received state as
+-- both expected and actual (matches the pattern in 'handleOAuthCallback').
 linkOAuth ::
   UserId ->
   OAuthProvider ->
-  Text ->
+  Text -> -- Authorization code
+  Text -> -- State (received from provider, validated frontend-side)
   AppM (Either DomainError ())
-linkOAuth userId provider oauthCode = runExceptT $ do
+linkOAuth userId provider code state = runExceptT $ do
   lift $ logInfo "Processing link OAuth request"
+  oauthConfig <- lift (view oauthConfigL)
+  result <- lift (OAuth.handleOAuthCallback oauthConfig provider code state state)
+  userInfo <- case result of
+    Right ok -> pure ok
+    Left err -> do
+      lift $ logError $ "OAuth callback error during link: " <> displayShow err
+      throwE (AccountError "OAuth authentication failed")
+  ExceptT (linkOAuthIdentityToUser userId provider userInfo)
+
+-- | Attach an already-resolved 'OAuth.OAuthUserInfo' to an existing user.
+--
+-- Refuses if the @(provider, subject)@ identity is already linked to any
+-- user (including this one) — the aggregate's idempotency invariant.
+--
+-- Exported for white-box tests in @Application.Services.AuthServiceSpec@.
+linkOAuthIdentityToUser ::
+  UserId ->
+  OAuthProvider ->
+  OAuth.OAuthUserInfo ->
+  AppM (Either DomainError ())
+linkOAuthIdentityToUser userId provider userInfo = runExceptT $ do
+  let oauthIdentity = OAuthIdentity {provider = provider, subject = userInfo.subject}
   userReadModel <- lift (view userReadModelL)
-  let oauthIdentity = OAuthIdentity provider oauthCode
-  maybeExisting <- lift (getUserByOAuthIdentity userReadModel provider oauthIdentity.subject)
+  maybeExisting <- lift (getUserByOAuthIdentity userReadModel provider userInfo.subject)
   guardE (isNothing maybeExisting) (AccountError "OAuth account already linked to another user")
   let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
   runUserCmd id (unUserId userId) linkCmd

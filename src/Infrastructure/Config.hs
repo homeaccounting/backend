@@ -69,7 +69,7 @@ import Data.Yaml (decodeEither', prettyPrintParseException)
 import Domain.ExchangeRate.Events (Provider (..), unProvider)
 import GHC.Generics (Generic)
 import Infrastructure.Auth.JWT (JWTConfig (..))
-import Infrastructure.Auth.OAuth (OAuthConfig (..))
+import Infrastructure.Auth.OAuth (OAuthConfig (..), applyOAuthDefaults)
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import System.Environment (lookupEnv)
 import qualified Text.Read as Read
@@ -146,7 +146,8 @@ instance ToJSON AppConfig
 data ServerConfig = ServerConfig
   { host :: !Text,
     port :: !Int,
-    apiBaseUrl :: !Text
+    apiBaseUrl :: !Text,
+    appBaseUrl :: !Text
   }
   deriving (Show, Eq, Generic)
 
@@ -156,6 +157,7 @@ instance FromJSON ServerConfig where
       <$> v .: "host"
       <*> v .: "port"
       <*> v .:? "api_base_url" .!= "http://localhost:8080"
+      <*> v .:? "app_base_url" .!= "http://localhost:5173"
 
 instance ToJSON ServerConfig
 
@@ -402,10 +404,11 @@ loadConfig path = do
       case decodeEither' contents of
         Left err ->
           pure $ Left $ T.pack $ "Failed to parse config: " <> prettyPrintParseException err
-        Right config ->
-          case validateConfig config of
+        Right config -> do
+          let configWithDefaults = config {oauth = applyOAuthDefaults config.oauth}
+          case validateConfig configWithDefaults of
             Left validationErr -> pure $ Left validationErr
-            Right () -> pure $ Right config
+            Right () -> pure $ Right configWithDefaults
 
 -- | Load configuration from a YAML file with environment variable substitution.
 --
@@ -447,10 +450,11 @@ loadConfigWithEnv path = do
               case Aeson.fromJSON newValue of
                 Aeson.Error err ->
                   pure $ Left $ T.pack $ "Failed to parse config after substitution: " <> err
-                Aeson.Success config ->
-                  case validateConfig config of
+                Aeson.Success config -> do
+                  let configWithDefaults = config {oauth = applyOAuthDefaults config.oauth}
+                  case validateConfig configWithDefaults of
                     Left validationErr -> pure $ Left validationErr
-                    Right () -> pure $ Right config
+                    Right () -> pure $ Right configWithDefaults
 
 -- | Substitute environment variables in a JSON value.
 --

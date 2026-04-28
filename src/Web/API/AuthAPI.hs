@@ -284,7 +284,7 @@ handleOAuthCallbackEndpoint providerText maybeCode maybeState = do
 -- | Handle link OAuth to existing account.
 handleLinkOAuth :: AuthenticatedUser -> LinkOAuthRequest -> AppM NoContent
 handleLinkOAuth user LinkOAuthRequest {..} = do
-  result <- AuthService.linkOAuth user.userId provider code
+  result <- AuthService.linkOAuth user.userId provider code state
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err

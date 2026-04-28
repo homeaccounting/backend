@@ -260,6 +260,7 @@ test-suite backend-test
       Application.ReadModels.TransactionQuerySpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
+      Application.Services.AuthServiceSpec
       Application.Services.BankImportServiceSpec
       Application.Services.ConfigurationServiceIntegrationSpec
       Application.Services.ConfigurationServiceInUseSpec
@@ -284,6 +285,7 @@ test-suite backend-test
       Domain.Transaction.LabelsAndCategorySpec
       Domain.Transaction.LabelsProjectionSpec
       Domain.User.CommandHandlerSpec
+      Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Auth.TelegramSpec
       Infrastructure.Banking.MonobankSpec

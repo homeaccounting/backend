@@ -245,7 +245,8 @@ testAppConfig =
         ServerConfig
           { port = 8080,
             host = T.pack "127.0.0.1",
-            apiBaseUrl = T.pack "http://localhost:8080"
+            apiBaseUrl = T.pack "http://localhost:8080",
+            appBaseUrl = T.pack "http://localhost:5173"
           },
       database =
         DatabaseConfig

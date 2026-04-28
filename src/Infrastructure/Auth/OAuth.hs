@@ -39,11 +39,13 @@ module Infrastructure.Auth.OAuth
 
     -- * User Info
     OAuthUserInfo (..),
+    parseUserInfo,
 
     -- * Default Configs
     defaultGoogleConfig,
     defaultGitHubConfig,
     defaultMicrosoftConfig,
+    applyOAuthDefaults,
 
     -- * Errors
     OAuthError (..),
@@ -166,6 +168,31 @@ defaultMicrosoftConfig clientId' clientSecret' redirectUri' =
       scopes = ["openid", "email", "profile"]
     }
 
+-- | Fill in well-known provider URLs and scopes from the per-provider defaults
+-- when the loaded config left them empty. YAML configs only need to carry
+-- @client_id@, @client_secret@, and @redirect_uri@; the rest is supplied here.
+-- Non-empty YAML values are preserved (in case a deployment needs to override).
+applyOAuthDefaults :: OAuthConfig -> OAuthConfig
+applyOAuthDefaults cfg =
+  cfg
+    { google = fmap (applyProviderDefaults Google) cfg.google,
+      gitHub = fmap (applyProviderDefaults GitHub) cfg.gitHub,
+      microsoft = fmap (applyProviderDefaults Microsoft) cfg.microsoft
+    }
+  where
+    applyProviderDefaults :: OAuthProvider -> OAuthProviderConfig -> OAuthProviderConfig
+    applyProviderDefaults provider c =
+      let defaults = case provider of
+            Google -> defaultGoogleConfig c.clientId c.clientSecret c.redirectUri
+            GitHub -> defaultGitHubConfig c.clientId c.clientSecret c.redirectUri
+            Microsoft -> defaultMicrosoftConfig c.clientId c.clientSecret c.redirectUri
+       in c
+            { authorizeUrl = if T.null c.authorizeUrl then defaults.authorizeUrl else c.authorizeUrl,
+              tokenUrl = if T.null c.tokenUrl then defaults.tokenUrl else c.tokenUrl,
+              userInfoUrl = if T.null c.userInfoUrl then defaults.userInfoUrl else c.userInfoUrl,
+              scopes = if null c.scopes then defaults.scopes else c.scopes
+            }
+
 -- -----------------------------------------------------------------------------
 -- User Info
 -- -----------------------------------------------------------------------------
@@ -176,6 +203,10 @@ data OAuthUserInfo = OAuthUserInfo
     subject :: Text,
     -- | User's email (may be Nothing if not provided)
     email :: Maybe Text,
+    -- | Whether the provider asserts the email has been verified.
+    -- For Google this is the OIDC `email_verified` claim; for providers
+    -- that don't expose verification, defaults to False (do not auto-link).
+    emailVerified :: Bool,
     -- | User's display name
     name :: Maybe Text,
     -- | URL to user's profile picture
@@ -382,6 +413,9 @@ parseGoogleUserInfo body = do
       let emailVal = case Aeson.lookup "email" v of
             Just (Aeson.String e) -> Just e
             _ -> Nothing
+          emailVerifiedVal = case Aeson.lookup "email_verified" v of
+            Just (Aeson.Bool b) -> b
+            _ -> False
           nameVal = case Aeson.lookup "name" v of
             Just (Aeson.String n) -> Just n
             _ -> Nothing
@@ -392,6 +426,7 @@ parseGoogleUserInfo body = do
         OAuthUserInfo
           { subject = subjectVal,
             email = emailVal,
+            emailVerified = emailVerifiedVal,
             name = nameVal,
             picture = pictureVal
           }
@@ -421,6 +456,7 @@ parseGitHubUserInfo body = do
         OAuthUserInfo
           { subject = subjectVal,
             email = emailVal,
+            emailVerified = False,
             name = nameVal,
             picture = pictureVal
           }
@@ -447,6 +483,7 @@ parseMicrosoftUserInfo body = do
         OAuthUserInfo
           { subject = subjectVal,
             email = emailVal,
+            emailVerified = False,
             name = nameVal,
             picture = Nothing -- Microsoft Graph doesn't return picture URL directly
           }
