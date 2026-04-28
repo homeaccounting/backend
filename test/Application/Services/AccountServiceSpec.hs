@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -145,6 +146,16 @@ spec = describe "AccountService" $ do
       _ <- runAppM env $ shareAccount testUserId1 (unAccountId accountId) testUserUuid2 "viewer"
       user2Accounts <- runAppM env $ listAccountsForUser testUserId2
       length user2Accounts `shouldBe` 1
+
+    it "excludes External accounts" $ do
+      env <- createTestAppEnv
+      _ <- runAppM env $ do
+        _ <- createAccount validCreateAccount {name = "Cash"}
+        createAccount validCreateAccount {name = "External", accountType = External}
+      result <- runAppM env $ listAccountsForUser testUserId1
+      length result `shouldBe` 1
+      let names = [account.name | (_, account) <- result]
+      names `shouldBe` ["Cash"]
 
   describe "shareAccount" $ do
     it "shares an account with another user" $ do

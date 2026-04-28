@@ -132,7 +132,9 @@ getAccount accountUuid = runExceptT $ do
 -- | List accounts accessible to a given user.
 --
 -- Queries the read model for accounts where the user has access (owner, editor, or viewer).
--- Returns a list of (AccountId, AccountData) pairs.
+-- Returns a list of (AccountId, AccountData) pairs, excluding the user's External
+-- account: External accounts are an internal bookkeeping device for income/expense
+-- and are not surfaced through the public API.
 listAccountsForUser :: UserId -> AppM [(AccountId, AccountData)]
 listAccountsForUser userId = do
   logInfo $ "Listing accounts for user " <> displayShow userId
@@ -140,7 +142,11 @@ listAccountsForUser userId = do
   readModel <- view accountReadModelL
   accountsList <- liftIO $ ReadModel.getAccessibleAccounts readModel userId
 
-  let result = map (\(aid, account, _role) -> (aid, account)) accountsList
+  let result =
+        [ (aid, account)
+        | (aid, account, _role) <- accountsList,
+          account.accountType /= External
+        ]
 
   logInfo $ "Found " <> displayShow (length result) <> " account(s)"
   return result
