@@ -25,6 +25,7 @@ flag ci
 
 library
   exposed-modules:
+      Application.LinkCodeStore
       Application.ProcessManagers
       Application.ProcessManagers.TransferManager
       Application.ReadModels
@@ -137,6 +138,7 @@ library
       aeson >=2.0 && <2.3
     , aeson-pretty ==0.8.*
     , aeson-yaml ==1.1.*
+    , async ==2.2.*
     , base >=4.17 && <5
     , base64-bytestring ==1.2.*
     , bytestring >=0.10 && <0.13
@@ -146,6 +148,7 @@ library
     , eventium-memory >=0.3.1 && <0.4.0
     , eventium-postgresql >=0.3.1 && <0.4.0
     , eventium-sql-common >=0.3.1 && <0.4.0
+    , hashable ==1.4.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
@@ -169,6 +172,7 @@ library
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
     , unliftio ==0.2.*
+    , unordered-containers ==0.2.*
     , uuid ==1.3.*
     , wai ==3.2.*
     , wai-cors ==0.2.*
@@ -203,6 +207,7 @@ executable backend
       aeson >=2.0 && <2.3
     , aeson-pretty ==0.8.*
     , aeson-yaml ==1.1.*
+    , async ==2.2.*
     , backend
     , base >=4.17 && <5
     , base64-bytestring ==1.2.*
@@ -213,6 +218,7 @@ executable backend
     , eventium-memory >=0.3.1 && <0.4.0
     , eventium-postgresql >=0.3.1 && <0.4.0
     , eventium-sql-common >=0.3.1 && <0.4.0
+    , hashable ==1.4.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
@@ -236,6 +242,7 @@ executable backend
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
     , unliftio ==0.2.*
+    , unordered-containers ==0.2.*
     , uuid ==1.3.*
     , wai ==3.2.*
     , wai-cors ==0.2.*
@@ -251,6 +258,8 @@ test-suite backend-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      Application.LinkCodeStorePropertySpec
+      Application.LinkCodeStoreSpec
       Application.ProcessManagers.TransferManagerPropertySpec
       Application.ProcessManagers.TransferManagerSpec
       Application.ReadModels.ExchangeRatePropertySpec
@@ -287,7 +296,6 @@ test-suite backend-test
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
-      Infrastructure.Auth.TelegramSpec
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.ProviderSpec
       Infrastructure.ConfigSpec
@@ -301,6 +309,7 @@ test-suite backend-test
       Integration.TransactionLabelsIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
+      Telegram.CommandsSpec
       Telegram.FormattingSpec
       Testkit.AppEnv
       Testkit.Auth
@@ -311,6 +320,7 @@ test-suite backend-test
       Testkit.HspecWai
       Testkit.InMemoryEventStore
       Testkit.TransactionEditFixture
+      Web.API.AuthAPIIntegrationSpec
       Web.API.BankingAPISpec
       Web.API.ConfigurationBankingAPISpec
       Web.API.TransactionAPISpec
@@ -340,6 +350,7 @@ test-suite backend-test
     , aeson >=2.0 && <2.3
     , aeson-pretty ==0.8.*
     , aeson-yaml ==1.1.*
+    , async ==2.2.*
     , backend
     , base >=4.17 && <5
     , base64-bytestring ==1.2.*
@@ -351,6 +362,7 @@ test-suite backend-test
     , eventium-postgresql >=0.3.1 && <0.4.0
     , eventium-sql-common >=0.3.1 && <0.4.0
     , eventium-testkit >=0.3.1 && <0.4.0
+    , hashable ==1.4.*
     , hspec >=2.10 && <2.12
     , hspec-discover >=2.10 && <2.12
     , hspec-wai ==0.11.*
@@ -378,6 +390,7 @@ test-suite backend-test
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
     , unliftio ==0.2.*
+    , unordered-containers ==0.2.*
     , uuid ==1.3.*
     , vector >=0.12 && <0.14
     , wai ==3.2.*

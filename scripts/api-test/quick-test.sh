@@ -35,7 +35,6 @@ print_usage() {
     echo "Authentication Commands:"
     echo "  register <email> <password>  - Register a new user"
     echo "  login <email> <password>     - Login and save token"
-    echo "  telegram-login [id] [name] [username] - Login via Telegram (requires TELEGRAM_BOT_TOKEN)"
     echo "  token                        - Show current saved token"
     echo ""
     echo "Account Commands:"
@@ -73,18 +72,10 @@ print_usage() {
     echo "  --prod           - Use https://homeaccounting.com"
     echo "  API_BASE_URL=... - Override with any URL"
     echo ""
-    echo "Environment variables (for Telegram):"
-    echo "  TELEGRAM_BOT_TOKEN   - Required for telegram-login"
-    echo "  TELEGRAM_USER_ID     - Default Telegram user ID"
-    echo "  TELEGRAM_FIRST_NAME  - Default first name"
-    echo "  TELEGRAM_USERNAME    - Default username (without @)"
-    echo ""
     echo "Examples:"
     echo "  $0 register user@example.com MyPassword123"
     echo "  $0 login user@example.com MyPassword123"
     echo "  $0 list --prod"
-    echo "  $0 telegram-login                          # Uses env var defaults"
-    echo "  $0 telegram-login 12345 John johndoe       # Override with args"
     echo "  $0 create \"My Account\" 1000"
     echo "  $0 config"
     echo "  $0 config-dict income-category"
@@ -148,46 +139,6 @@ case "${1:-help}" in
             echo "$TOKEN" > /tmp/test_auth_token.txt
             echo "$EMAIL" > /tmp/test_auth_email.txt
             echo "$PASSWORD" > /tmp/test_auth_password.txt
-            echo -e "${GREEN}✓ Token saved to /tmp/test_auth_token.txt${NC}"
-        fi
-        ;;
-
-    telegram-login)
-        # Compute Telegram auth hash and login
-        # Uses env vars as defaults: TELEGRAM_BOT_TOKEN (required),
-        # TELEGRAM_USER_ID, TELEGRAM_FIRST_NAME, TELEGRAM_USERNAME (optional)
-        if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-            echo -e "${RED}TELEGRAM_BOT_TOKEN env var is required${NC}"
-            echo "  export TELEGRAM_BOT_TOKEN='your-bot-token'"
-            exit 1
-        fi
-        if ! command -v openssl &> /dev/null; then
-            echo -e "${RED}openssl is required for hash computation${NC}"
-            exit 1
-        fi
-        TG_ID="${2:-${TELEGRAM_USER_ID:-$(( RANDOM * 10000 + RANDOM ))}}"
-        TG_NAME="${3:-${TELEGRAM_FIRST_NAME:-TestUser}}"
-        TG_USERNAME="${4:-${TELEGRAM_USERNAME:-tguser_$(date +%s)}}"
-        TG_AUTH_DATE=$(date +%s)
-
-        # Build data-check-string (sorted key=value pairs)
-        DATA_CHECK="auth_date=${TG_AUTH_DATE}\nfirst_name=${TG_NAME}\nid=${TG_ID}\nusername=${TG_USERNAME}"
-        DATA_CHECK_SORTED=$(printf '%b' "$DATA_CHECK" | sort | tr '\n' $'\n')
-        DATA_CHECK_SORTED="${DATA_CHECK_SORTED%$'\n'}"
-
-        # secret_key = SHA256(bot_token), hash = HMAC-SHA256(data, secret_key)
-        SECRET_HEX=$(printf '%s' "$TELEGRAM_BOT_TOKEN" | openssl dgst -sha256 -binary | xxd -p | tr -d '\n')
-        TG_HASH=$(printf '%s' "$DATA_CHECK_SORTED" | openssl dgst -sha256 -mac hmac -macopt "hexkey:${SECRET_HEX}" -binary | xxd -p | tr -d '\n')
-
-        echo -e "${YELLOW}Logging in via Telegram (ID: $TG_ID, @$TG_USERNAME)${NC}"
-        RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/telegram" \
-            -H "Content-Type: application/json" \
-            -d "{\"id\": $TG_ID, \"firstName\": \"$TG_NAME\", \"lastName\": null, \"username\": \"$TG_USERNAME\", \"photoUrl\": null, \"authDate\": $TG_AUTH_DATE, \"hash\": \"$TG_HASH\"}")
-        check_jq "$RESPONSE"
-        TOKEN=$(echo "$RESPONSE" | jq -r '.token' 2>/dev/null)
-        if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-            echo "$TOKEN" > /tmp/test_auth_token.txt
-            echo "$TG_ID" > /tmp/test_telegram_id.txt
             echo -e "${GREEN}✓ Token saved to /tmp/test_auth_token.txt${NC}"
         fi
         ;;

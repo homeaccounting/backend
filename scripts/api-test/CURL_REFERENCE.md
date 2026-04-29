@@ -116,45 +116,25 @@ curl -X POST $API_BASE/api/auth/link-oauth \
   }' | jq
 ```
 
-### 7. Telegram Auth
+### 7. Issue Telegram Deep-Link Code (Requires Auth)
 
-Authenticate via Telegram login widget.
-
-**Request:**
-```bash
-curl -X POST $API_BASE/api/auth/telegram \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": 123456789,
-    "firstName": "John",
-    "lastName": "Doe",
-    "username": "johndoe",
-    "photoUrl": null,
-    "authDate": 1700000000,
-    "hash": "abc123hash"
-  }' | jq
-```
-
-### 8. Link Telegram (Requires Auth)
-
-Link a Telegram account to an existing user.
+Issue a single-use deep-link the authenticated user can open in Telegram to attach
+their Telegram identity to their existing account. The link expires after 10 minutes.
 
 **Request:**
 ```bash
-curl -X POST $API_BASE/api/auth/link-telegram \
+curl -X POST $API_BASE/api/auth/telegram/link-code \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ***REMOVED***" \
-  -d '{
-    "authData": {
-      "id": 123456789,
-      "firstName": "John",
-      "lastName": "Doe",
-      "username": "johndoe",
-      "photoUrl": null,
-      "authDate": 1700000000,
-      "hash": "abc123hash"
-    }
-  }' | jq
+  -d '{}' | jq
+```
+
+**Expected Response (200 OK):**
+```json
+{
+  "deepLink": "https://t.me/YourBot?start=LINK_<token>",
+  "expiresAt": "2026-04-28T20:00:00Z"
+}
 ```
 
 ---

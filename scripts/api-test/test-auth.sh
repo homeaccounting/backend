@@ -213,59 +213,6 @@ test_oauth_initiate() {
     fi
 }
 
-# Test: Telegram Login
-test_telegram_login() {
-    print_header "TEST: Telegram Login"
-
-    if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-        print_info "TELEGRAM_BOT_TOKEN not set, skipping Telegram test"
-        print_info "Set it to enable: export TELEGRAM_BOT_TOKEN='your-token'"
-        return 0
-    fi
-
-    if ! command -v xxd &> /dev/null; then
-        print_info "xxd not found, skipping Telegram test"
-        return 0
-    fi
-
-    local TG_ID="${TELEGRAM_USER_ID:-$(( RANDOM * 10000 + RANDOM ))}"
-    local TG_NAME="${TELEGRAM_FIRST_NAME:-AuthTestUser}"
-    local TG_USERNAME="${TELEGRAM_USERNAME:-auth_tg_$(date +%s)}"
-    local TG_AUTH_DATE
-    TG_AUTH_DATE=$(date +%s)
-
-    # Build data-check-string (sorted key=value pairs)
-    local DATA_CHECK
-    DATA_CHECK=$(printf 'auth_date=%s\nfirst_name=%s\nid=%s\nusername=%s' \
-        "$TG_AUTH_DATE" "$TG_NAME" "$TG_ID" "$TG_USERNAME" | sort)
-
-    # secret_key = SHA256(bot_token), hash = HMAC-SHA256(data, secret_key)
-    local SECRET_HEX
-    SECRET_HEX=$(printf '%s' "$TELEGRAM_BOT_TOKEN" | openssl dgst -sha256 -binary | xxd -p | tr -d '\n')
-    local TG_HASH
-    TG_HASH=$(printf '%s' "$DATA_CHECK" | openssl dgst -sha256 -mac hmac -macopt "hexkey:${SECRET_HEX}" -binary | xxd -p | tr -d '\n')
-
-    print_info "Logging in via Telegram (ID: $TG_ID, @$TG_USERNAME)"
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/telegram" \
-        -H "Content-Type: application/json" \
-        -d "{\"id\": $TG_ID, \"firstName\": \"$TG_NAME\", \"lastName\": null, \"username\": \"$TG_USERNAME\", \"photoUrl\": null, \"authDate\": $TG_AUTH_DATE, \"hash\": \"$TG_HASH\"}")
-
-    HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-    BODY=$(echo "$RESPONSE" | sed '$d')
-
-    echo "$BODY" | jq '.'
-
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
-
-    if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
-        print_success "Telegram login successful"
-        echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
-    else
-        print_error "Telegram login failed (HTTP $HTTP_CODE)"
-        return 1
-    fi
-}
-
 # Test: Access Protected Endpoint Without Token (expected 401)
 test_unauthorized_access() {
     print_header "TEST: Access Protected Endpoint Without Token (Expected 401)"
@@ -307,7 +254,6 @@ main() {
         echo "  wrong-password   - Test login with wrong password (expected failure)"
         echo "  refresh          - Refresh JWT token"
         echo "  oauth            - Test OAuth initiate (Google)"
-        echo "  telegram         - Test Telegram login (requires TELEGRAM_BOT_TOKEN)"
         echo "  unauthorized     - Test accessing protected endpoint without token"
         echo ""
         echo "Endpoint flags:"
@@ -327,7 +273,6 @@ main() {
             test_login_wrong_password
             test_refresh_token
             test_oauth_initiate
-            test_telegram_login
             test_unauthorized_access
             print_header "ALL AUTH TESTS COMPLETED"
             ;;
@@ -348,9 +293,6 @@ main() {
             ;;
         oauth)
             test_oauth_initiate
-            ;;
-        telegram)
-            test_telegram_login
             ;;
         unauthorized)
             test_unauthorized_access

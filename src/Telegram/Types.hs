@@ -60,6 +60,7 @@ emptyBotState = BotState Map.empty Map.empty
 botCommands :: [(Text, Text)]
 botCommands =
   [ ("/start", "Start using the bot"),
+    ("/signup", "Create a new account via Telegram"),
     ("/accounts", "View & select accounts"),
     ("/newaccount", "Create a new account"),
     ("/income", "Record income"),

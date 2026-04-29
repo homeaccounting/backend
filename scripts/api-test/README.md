@@ -15,8 +15,7 @@ scripts/api-test/
 ├── QUICK_START.md         # Quick reference guide
 ├── CURL_REFERENCE.md      # Complete curl command reference
 ├── quick-test.sh          # Quick helper commands
-├── test-auth.sh           # Authentication tests (register, login, refresh, telegram)
-├── test-telegram.sh       # Telegram-specific auth tests and workflows
+├── test-auth.sh           # Authentication tests (register, login, refresh, OAuth)
 ├── test-user.sh           # User profile tests (get, update, change password)
 ├── test-accounts.sh       # Account operations tests (create, share, revoke)
 ├── test-transactions.sh   # Transaction operations tests (transfer, status)
@@ -156,17 +155,6 @@ Available operations:
 - List transactions (no filters, by accountId, by date range, validation 400, unauthorized 401)
 - Test insufficient funds
 
-#### Test Telegram Authentication
-
-```bash
-# Requires TELEGRAM_BOT_TOKEN env var (same token the server uses)
-export TELEGRAM_BOT_TOKEN='your-bot-token'
-
-./scripts/api-test/test-telegram.sh all        # All Telegram tests
-./scripts/api-test/test-telegram.sh login       # Login via Telegram
-./scripts/api-test/test-telegram.sh workflow    # Full workflow: login → accounts → transfer
-```
-
 #### Test Banking (Monobank resync)
 
 Smoke-tests `POST /api/banking/resync` end-to-end with a real Monobank
@@ -174,9 +162,8 @@ personal token.
 
 **Prerequisites**
 
-1. A cached JWT in `/tmp/test_auth_token.txt`. Three ways to obtain one:
+1. A cached JWT in `/tmp/test_auth_token.txt`. Two ways to obtain one:
    - **Password user:** `./scripts/api-test/test-auth.sh login`
-   - **Bot-registered Telegram user:** `./scripts/api-test/test-telegram.sh login <YOUR_TG_ID> <FirstName> <username>` — the widget endpoint resolves your existing bot-registered user by `TelegramId` and returns a matching JWT.
    - **Pasted JWT:** `export TEST_AUTH_TOKEN='<jwt>'` and the script will seed the cache on the next run.
 2. A Monobank personal token from <https://api.monobank.ua/>. Export as `MONOBANK_TOKEN`.
 3. The exact IBAN Monobank reports for the account you want to import. Export as `MONOBANK_IBAN`.
@@ -218,8 +205,6 @@ export MONOBANK_IBAN='UA000000000000000000000000000'
 # Authentication
 ./scripts/api-test/quick-test.sh register user@example.com MyPassword123
 ./scripts/api-test/quick-test.sh login user@example.com MyPassword123
-./scripts/api-test/quick-test.sh telegram-login                     # Login via Telegram (random ID)
-./scripts/api-test/quick-test.sh telegram-login 12345 John johndoe  # Login with specific Telegram ID
 ./scripts/api-test/quick-test.sh token
 
 # Accounts (create/share/revoke require auth)
@@ -263,9 +248,8 @@ export MONOBANK_IBAN='UA000000000000000000000000000'
 | GET | `/api/auth/oauth/:provider` | No | Initiate OAuth flow |
 | GET | `/api/auth/oauth/:provider/callback` | No | OAuth callback |
 | POST | `/api/auth/link-oauth` | JWT | Link OAuth to existing account |
-| POST | `/api/auth/telegram` | No | Telegram login widget auth |
-| POST | `/api/auth/link-telegram` | JWT | Link Telegram to existing account |
 | POST | `/api/auth/refresh` | No | Refresh JWT token |
+| POST | `/api/auth/telegram/link-code` | JWT | Issue Telegram bot deep-link code |
 
 ### User Profile Endpoints
 

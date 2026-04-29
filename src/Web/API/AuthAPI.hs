@@ -20,9 +20,8 @@
 --   - GET /api/auth/oauth/:provider - Initiate OAuth flow
 --   - GET /api/auth/oauth/:provider/callback - OAuth callback
 --   - POST /api/auth/link-oauth - Link OAuth to existing account
---   - POST /api/auth/telegram - Telegram login widget auth
---   - POST /api/auth/link-telegram - Link Telegram to existing account
 --   - POST /api/auth/refresh - Refresh JWT token
+--   - POST /api/auth/telegram/link-code - Issue Telegram deep-link code
 module Web.API.AuthAPI
   ( -- * API Type
     AuthAPI,
@@ -30,14 +29,13 @@ module Web.API.AuthAPI
     -- * Request Types
     RegisterRequest (..),
     LoginRequest (..),
-    TelegramAuthRequest (..),
     LinkOAuthRequest (..),
-    LinkTelegramRequest (..),
     RefreshTokenRequest (..),
 
     -- * Response Types
     AuthResponse (..),
     OAuthRedirectResponse (..),
+    TelegramLinkCodeResponse (..),
 
     -- * Server
     authServer,
@@ -46,9 +44,9 @@ where
 
 import qualified Application.Services.AuthService as AuthService
 import Data.Aeson (FromJSON, ToJSON)
+import Data.Time (UTCTime)
 import Domain.Core.Types (OAuthProvider (..), UserId)
 import Infrastructure.App (AppM)
-import qualified Infrastructure.Auth.Telegram as TelegramAuth
 import RIO hiding (Handler)
 import Servant
 import Web.ErrorMapping (throwDomainError)
@@ -95,25 +93,19 @@ type AuthAPI =
       :> "link-oauth"
       :> ReqBody '[JSON] LinkOAuthRequest
       :> Post '[JSON] NoContent
-    -- Telegram login widget authentication
-    :<|> "api"
-      :> "auth"
-      :> "telegram"
-      :> ReqBody '[JSON] TelegramAuthRequest
-      :> Post '[JSON] AuthResponse
-    -- Link Telegram to existing account (requires auth)
-    :<|> AuthProtect "jwt"
-      :> "api"
-      :> "auth"
-      :> "link-telegram"
-      :> ReqBody '[JSON] LinkTelegramRequest
-      :> Post '[JSON] NoContent
     -- Refresh token
     :<|> "api"
       :> "auth"
       :> "refresh"
       :> ReqBody '[JSON] RefreshTokenRequest
       :> Post '[JSON] AuthResponse
+    -- Issue Telegram deep-link code (requires auth)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "auth"
+      :> "telegram"
+      :> "link-code"
+      :> Post '[JSON] TelegramLinkCodeResponse
 
 -- -----------------------------------------------------------------------------
 -- Request Types
@@ -141,22 +133,6 @@ instance ToJSON LoginRequest
 
 instance FromJSON LoginRequest
 
--- | Telegram login widget auth request.
-data TelegramAuthRequest = TelegramAuthRequest
-  { id :: Int,
-    firstName :: Text,
-    lastName :: Maybe Text,
-    username :: Maybe Text,
-    photoUrl :: Maybe Text,
-    authDate :: Int,
-    hash :: Text
-  }
-  deriving (Show, Eq, Generic)
-
-instance ToJSON TelegramAuthRequest
-
-instance FromJSON TelegramAuthRequest
-
 -- | Link OAuth account request.
 data LinkOAuthRequest = LinkOAuthRequest
   { provider :: OAuthProvider,
@@ -168,16 +144,6 @@ data LinkOAuthRequest = LinkOAuthRequest
 instance ToJSON LinkOAuthRequest
 
 instance FromJSON LinkOAuthRequest
-
--- | Link Telegram account request.
-data LinkTelegramRequest = LinkTelegramRequest
-  { authData :: TelegramAuthRequest
-  }
-  deriving (Show, Eq, Generic)
-
-instance ToJSON LinkTelegramRequest
-
-instance FromJSON LinkTelegramRequest
 
 -- | Token refresh request.
 data RefreshTokenRequest = RefreshTokenRequest
@@ -217,6 +183,17 @@ instance ToJSON OAuthRedirectResponse
 
 instance FromJSON OAuthRedirectResponse
 
+-- | Telegram link-code issuance response.
+data TelegramLinkCodeResponse = TelegramLinkCodeResponse
+  { deepLink :: Text,
+    expiresAt :: UTCTime
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON TelegramLinkCodeResponse
+
+instance FromJSON TelegramLinkCodeResponse
+
 -- -----------------------------------------------------------------------------
 -- Server Implementation
 -- -----------------------------------------------------------------------------
@@ -229,9 +206,8 @@ authServer =
     :<|> handleOAuthInitiate
     :<|> handleOAuthCallbackEndpoint
     :<|> handleLinkOAuth
-    :<|> handleTelegramAuth
-    :<|> handleLinkTelegram
     :<|> handleRefreshToken
+    :<|> handleIssueTelegramLinkCode
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
@@ -289,24 +265,6 @@ handleLinkOAuth user LinkOAuthRequest {..} = do
     Right () -> return NoContent
     Left err -> throwDomainError err
 
--- | Handle Telegram login widget auth.
-handleTelegramAuth :: TelegramAuthRequest -> AppM AuthResponse
-handleTelegramAuth req = do
-  let authData = toTelegramAuthData req
-  result <- AuthService.authenticateTelegram authData
-  case result of
-    Right r -> return $ toAuthResponse r
-    Left err -> throwDomainError err
-
--- | Handle link Telegram to existing account.
-handleLinkTelegram :: AuthenticatedUser -> LinkTelegramRequest -> AppM NoContent
-handleLinkTelegram user LinkTelegramRequest {..} = do
-  let telegramAuthData = toTelegramAuthData authData
-  result <- AuthService.linkTelegram user.userId telegramAuthData
-  case result of
-    Right () -> return NoContent
-    Left err -> throwDomainError err
-
 -- | Handle token refresh.
 handleRefreshToken :: RefreshTokenRequest -> AppM AuthResponse
 handleRefreshToken RefreshTokenRequest {..} = do
@@ -314,6 +272,19 @@ handleRefreshToken RefreshTokenRequest {..} = do
   case result of
     Right r -> return $ toAuthResponse r
     Left err -> throwDomainError err
+
+-- | Handle issuance of a Telegram deep-link code for the authenticated user.
+handleIssueTelegramLinkCode :: AuthenticatedUser -> AppM TelegramLinkCodeResponse
+handleIssueTelegramLinkCode user = do
+  result <- AuthService.issueTelegramLinkCode user.userId
+  case result of
+    Left err -> throwDomainError err
+    Right res ->
+      pure
+        TelegramLinkCodeResponse
+          { deepLink = res.deepLink,
+            expiresAt = res.expiresAt
+          }
 
 -- -----------------------------------------------------------------------------
 -- Conversion Helpers
@@ -327,17 +298,4 @@ toAuthResponse r =
       userId = r.userId,
       email = r.email,
       expiresIn = r.expiresIn
-    }
-
--- | Convert TelegramAuthRequest to TelegramAuthData.
-toTelegramAuthData :: TelegramAuthRequest -> TelegramAuth.TelegramAuthData
-toTelegramAuthData req =
-  TelegramAuth.TelegramAuthData
-    { TelegramAuth.id = fromIntegral req.id,
-      TelegramAuth.firstName = req.firstName,
-      TelegramAuth.lastName = req.lastName,
-      TelegramAuth.username = req.username,
-      TelegramAuth.photoUrl = req.photoUrl,
-      TelegramAuth.authDate = fromIntegral req.authDate,
-      TelegramAuth.hash = req.hash
     }

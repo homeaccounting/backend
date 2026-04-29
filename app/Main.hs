@@ -78,6 +78,7 @@ module Main (main) where
 
 -- Application
 
+import Application.LinkCodeStore (newLinkCodeStore)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
@@ -353,6 +354,7 @@ initializeEnvironment logFunc config versionInfo = do
           }
 
   -- 7. Build application environment
+  linkCodeStore <- liftIO newLinkCodeStore
   let configDbConfig = config.database -- Config.DatabaseConfig for AppEnv
       env =
         initializeAppEnv
@@ -375,6 +377,7 @@ initializeEnvironment logFunc config versionInfo = do
           readModels.exchangeRate
           versionInfo
           bankingEnv'
+          linkCodeStore
 
   logInfo "Application environment initialized successfully"
   return env

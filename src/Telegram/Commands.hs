@@ -24,6 +24,7 @@ module Telegram.Commands
 
     -- * Individual Commands
     handleStart,
+    handleSignup,
     handleLogin,
     handleAccounts,
     handleNewAccount,
@@ -45,6 +46,7 @@ module Telegram.Commands
   )
 where
 
+import Application.LinkCodeStore (mkLinkCodeToken)
 import Application.ReadModels.Account
   ( AccountData (..),
     getAccount,
@@ -57,7 +59,7 @@ import Application.ReadModels.User
     getUserByTelegramId,
   )
 import Application.Services.AccountService (createAccount)
-import Application.Services.AuthService (findOrCreateTelegramBotUser)
+import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTelegramLinkCode)
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
 import qualified Application.Services.TransactionService as TransactionService
@@ -118,6 +120,7 @@ handleCommand botState tgIdentity chatId text = do
       telegramId = (.id) tgIdentity
   case cmd of
     "/start" -> handleStart botState tgIdentity chatId args
+    "/signup" -> handleSignup botState tgIdentity chatId args
     "/login" -> handleLogin botState telegramId chatId args
     "/accounts" -> handleAccounts botState telegramId chatId
     "/newaccount" -> handleNewAccount botState telegramId chatId
@@ -220,24 +223,81 @@ dispatchCallback _botState _telegramId chatId _ _ =
 
 -- | Handle /start command.
 --
--- Auto-registers the user if they don't have an account yet.
+-- When the payload begins with @LINK_@, redeems the token and links the
+-- Telegram identity to the issuing user. Otherwise falls back to the
+-- existing find-or-create behaviour (Task 8 will replace the fallback
+-- with the block-and-prompt flow).
 handleStart :: TVar BotState -> TelegramIdentity -> Int64 -> Maybe Text -> AppM ()
-handleStart _botState tgIdentity chatId _args = do
+handleStart _botState tgIdentity chatId args =
+  case stripLinkPrefix args of
+    Just tok -> do
+      result <- redeemTelegramLinkCode (mkLinkCodeToken tok) tgIdentity
+      case result of
+        Right _uid ->
+          sendMsg
+            chatId
+            "Done \8212 this Telegram is now linked to your account. Send /help to get started."
+        Left err -> do
+          logInfo $ "Telegram link redemption failed: " <> displayShow err
+          sendMsg
+            chatId
+            "That link is no longer valid. Generate a new one in the web app under \"Link Telegram\"."
+    Nothing -> handleStartNoPayload tgIdentity chatId
+
+-- | Handle /start with no payload.
+--
+-- Looks up the Telegram identity in the read model:
+--   - If found, greets the user (welcome back).
+--   - If not found, prompts them to link via the web app or use /signup.
+-- No user is created in this branch.
+handleStartNoPayload :: TelegramIdentity -> Int64 -> AppM ()
+handleStartNoPayload tgIdentity chatId = do
+  rm <- view userReadModelL
+  existing <- liftIO (getUserByTelegramId rm ((.id) tgIdentity))
+  case existing of
+    Just _ -> sendWelcome False chatId
+    Nothing ->
+      sendMsg chatId
+        $ T.unlines
+          [ "I don't recognise this Telegram account.",
+            "",
+            "To use it with your existing account, open the web app and tap \"Link Telegram\".",
+            "To create a brand-new account, send /signup."
+          ]
+
+-- | Handle /signup command.
+--
+-- Explicitly creates a new Telegram-only user (or returns the existing one).
+-- This is the entry point that was previously the default behaviour of /start.
+handleSignup :: TVar BotState -> TelegramIdentity -> Int64 -> Maybe Text -> AppM ()
+handleSignup _botState tgIdentity chatId _args = do
   result <- findOrCreateTelegramBotUser tgIdentity
   case result of
     Left err -> do
-      logError $ "Failed to register Telegram user: " <> displayShow err
+      logError $ "Telegram /signup failed: " <> displayShow err
       sendMsg chatId "Failed to create your account. Please try again later."
-    Right (_userId, isNew) ->
-      sendMsg chatId
-        $ T.unlines
-        $ [ if isNew
-              then "Welcome to HomeAccounting Bot!\n\nYour account has been created successfully."
-              else "Welcome back to HomeAccounting Bot!",
-            "",
-            "Available commands:"
-          ]
-        ++ formatCommandList
+    Right (_userId, isNew) -> sendWelcome isNew chatId
+
+-- | Send the welcome message to a chat.
+sendWelcome :: Bool -> Int64 -> AppM ()
+sendWelcome isNew chatId =
+  sendMsg chatId
+    $ T.unlines
+    $ [ if isNew
+          then "Welcome to HomeAccounting Bot!\n\nYour account has been created successfully."
+          else "Welcome back to HomeAccounting Bot!",
+        "",
+        "Available commands:"
+      ]
+    ++ formatCommandList
+
+-- | Strip the @LINK_@ prefix from the start payload.
+--
+-- Returns @Just tok@ when the argument is @Just \"LINK_<tok>\"@, and
+-- @Nothing@ for any other payload (or no payload at all).
+stripLinkPrefix :: Maybe Text -> Maybe Text
+stripLinkPrefix Nothing = Nothing
+stripLinkPrefix (Just t) = T.stripPrefix "LINK_" t
 
 -- | Handle /login command.
 handleLogin :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()

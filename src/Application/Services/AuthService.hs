@@ -16,7 +16,6 @@
 --   - Password hashing and verification
 --   - JWT token generation and refresh
 --   - OAuth flow orchestration
---   - Telegram authentication verification
 --   - Identity linking (OAuth, Telegram)
 --
 -- Note: This module handles authentication (identity verification).
@@ -28,6 +27,7 @@ module Application.Services.AuthService
   ( -- * Result Types
     AuthResult (..),
     OAuthRedirectResult (..),
+    TelegramLinkCodeResult (..),
 
     -- * Service Functions
     register,
@@ -37,8 +37,8 @@ module Application.Services.AuthService
     linkOrSignInWithOAuth,
     linkOAuth,
     linkOAuthIdentityToUser,
-    authenticateTelegram,
-    linkTelegram,
+    issueTelegramLinkCode,
+    redeemTelegramLinkCode,
     refreshToken,
     findOrCreateTelegramBotUser,
 
@@ -47,6 +47,7 @@ module Application.Services.AuthService
   )
 where
 
+import qualified Application.LinkCodeStore as LinkCodeStore
 import Application.ReadModels.Configuration (ConfigurationData (..), getConfiguration)
 import Application.ReadModels.User
   ( UserData (..),
@@ -63,6 +64,7 @@ import Application.Services.Internal
     runUserCmd,
   )
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
+import Data.Time (NominalDiffTime, UTCTime)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..))
@@ -93,6 +95,7 @@ import Infrastructure.App
   ( AppM,
     HasAuthConfig (..),
     HasEventStore (..),
+    HasLinkCodeStore (..),
     HasReadModel (..),
   )
 import Infrastructure.Auth.JWT (JWTClaims (..), JWTConfig (..))
@@ -102,7 +105,7 @@ import Infrastructure.Auth.OAuth
   )
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.Password (hashPassword, verifyPassword)
-import qualified Infrastructure.Auth.Telegram as TelegramAuth
+import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import Infrastructure.Eventium (loadUserAggregate)
 import RIO hiding (Handler)
 import qualified RIO.Text as T
@@ -123,6 +126,12 @@ data AuthResult = AuthResult
 data OAuthRedirectResult = OAuthRedirectResult
   { url :: Text,
     state :: Text
+  }
+
+-- | Result of issuing a Telegram link-code deep-link.
+data TelegramLinkCodeResult = TelegramLinkCodeResult
+  { deepLink :: Text,
+    expiresAt :: UTCTime
   }
 
 -- -----------------------------------------------------------------------------
@@ -349,54 +358,59 @@ linkOAuthIdentityToUser userId provider userInfo = runExceptT $ do
   runUserCmd id (unUserId userId) linkCmd
   lift $ logInfo "OAuth account linked successfully"
 
--- | Authenticate via Telegram login widget.
+-- | Issue a single-use deep-link the user can open in Telegram to attach
+-- their Telegram identity to their existing account.
 --
--- Orchestrates:
---   1. Verify Telegram auth data
---   2. Find or create user by Telegram ID
---   3. Generate JWT token
-authenticateTelegram ::
-  TelegramAuth.TelegramAuthData ->
-  AppM (Either DomainError AuthResult)
-authenticateTelegram authData = runExceptT $ do
-  lift $ logInfo "Processing Telegram authentication"
+-- Replaces any prior active code for the same user. The 10-minute TTL is
+-- defined here, not in 'LinkCodeStore', because it is an authentication
+-- policy decision rather than a storage detail.
+issueTelegramLinkCode :: UserId -> AppM (Either DomainError TelegramLinkCodeResult)
+issueTelegramLinkCode userId = runExceptT $ do
+  lift $ logInfo "Issuing Telegram link code"
+  store <- lift (view linkCodeStoreL)
   telegramConfig <- lift (view telegramConfigL)
-  result <- lift (TelegramAuth.authenticateViaTelegram telegramConfig authData)
-  identity <- case result of
-    Right ok -> pure ok
-    Left err -> do
-      lift $ logError $ "Telegram auth verification failed: " <> displayShow err
-      throwE (AccountError "Telegram authentication failed")
-  userReadModel <- lift (view userReadModelL)
-  maybeUser <- lift (getUserByTelegramId userReadModel identity.id)
-  case maybeUser of
-    Just (uid, user) -> do
-      lift $ logInfo "Existing user found via Telegram"
-      ExceptT (generateAuthResult uid user.email)
-    Nothing -> do
-      lift $ logInfo "Creating new user via Telegram"
-      ExceptT (createUserViaTelegram identity)
+  (tok, expiresAt) <- liftIO (LinkCodeStore.issue store userId linkCodeTtl)
+  let deepLink =
+        "https://t.me/"
+          <> telegramConfig.botUsername
+          <> "?start=LINK_"
+          <> LinkCodeStore.unLinkCodeToken tok
+  pure TelegramLinkCodeResult {deepLink = deepLink, expiresAt = expiresAt}
 
--- | Link a Telegram identity to an existing user.
-linkTelegram ::
-  UserId ->
-  TelegramAuth.TelegramAuthData ->
-  AppM (Either DomainError ())
-linkTelegram userId authData = runExceptT $ do
-  lift $ logInfo "Processing link Telegram request"
-  telegramConfig <- lift (view telegramConfigL)
-  result <- lift (TelegramAuth.authenticateViaTelegram telegramConfig authData)
-  identity <- case result of
-    Right ok -> pure ok
-    Left err -> do
-      lift $ logError $ "Telegram auth verification failed: " <> displayShow err
-      throwE (AccountError "Telegram authentication failed")
+linkCodeTtl :: NominalDiffTime
+linkCodeTtl = 600 -- 10 minutes
+
+-- | Redeem a Telegram link code: atomically consume the token and attach
+-- the supplied Telegram identity to the user that issued the code.
+--
+-- Cross-user collision (the Telegram ID is already linked to a *different*
+-- user) is rejected here. The target-user-already-linked invariant is
+-- enforced inside the LinkTelegramAccount aggregate handler; whatever it
+-- returns is propagated to the caller.
+redeemTelegramLinkCode ::
+  LinkCodeStore.LinkCodeToken ->
+  TelegramIdentity ->
+  AppM (Either DomainError UserId)
+redeemTelegramLinkCode tok tgIdent = runExceptT $ do
+  lift $ logInfo "Processing Telegram link-code redemption"
+  store <- lift (view linkCodeStoreL)
+  maybeUid <- liftIO (LinkCodeStore.redeem store tok)
+  uid <- case maybeUid of
+    Nothing -> do
+      lift $ logInfo "Telegram link code not found / expired / consumed"
+      throwE (NotFound "telegram-link-code" "")
+    Just u -> pure u
   userReadModel <- lift (view userReadModelL)
-  maybeExisting <- lift (getUserByTelegramId userReadModel identity.id)
-  guardE (isNothing maybeExisting) (AccountError "Telegram account already linked to another user")
-  let linkCmd = LinkTelegramAccountUserCommand LinkTelegramAccount {identity = identity}
-  runUserCmd id (unUserId userId) linkCmd
-  lift $ logInfo "Telegram account linked successfully"
+  maybeExisting <- lift (getUserByTelegramId userReadModel tgIdent.id)
+  guardE
+    (isNothing maybeExisting)
+    (AccountError "Telegram account already linked to another user")
+  runUserCmd
+    id
+    (unUserId uid)
+    (LinkTelegramAccountUserCommand LinkTelegramAccount {identity = tgIdent})
+  lift $ logInfo "Telegram identity linked via redemption"
+  pure uid
 
 -- | Refresh a JWT token.
 refreshToken ::

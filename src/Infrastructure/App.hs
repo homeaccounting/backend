@@ -93,6 +93,7 @@ module Infrastructure.App
     HasBankImportReadModel (..),
     HasBankImportLocks (..),
     HasHttpManager (..),
+    HasLinkCodeStore (..),
 
     -- * Running the Application
     runAppM,
@@ -109,6 +110,7 @@ module Infrastructure.App
 where
 
 -- Local imports
+import Application.LinkCodeStore (LinkCodeStore)
 import Application.ReadModels.Account (AccountReadModel)
 import Application.ReadModels.BankImportReadModel (BankImportReadModel)
 import Application.ReadModels.Configuration (ConfigurationReadModel)
@@ -208,7 +210,10 @@ data AppEnv = AppEnv
     -- 'HasBankImportLocks', 'HasHttpManager') which are re-exported from
     -- 'BankingEnv'. Named 'bankingEnv' to avoid clashing with
     -- 'AppConfig.banking'.
-    bankingEnv :: !BankingEnv
+    bankingEnv :: !BankingEnv,
+    -- | In-memory store for short-lived, single-use Telegram link codes
+    -- used in the bot deep-link account-linking flow.
+    linkCodeStore :: !LinkCodeStore
   }
 
 -- | Runtime dependencies scoped to the banking subsystem.
@@ -263,8 +268,9 @@ initializeAppEnv ::
   TVar ExchangeRateReadModel ->
   VersionInfo ->
   BankingEnv ->
+  LinkCodeStore ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv linkCodeStore' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -284,7 +290,8 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       telegramClientEnv = telegramClientEnv,
       exchangeRateReadModel = exchangeRateReadModel,
       versionInfo = versionInfo,
-      bankingEnv = bankingEnv
+      bankingEnv = bankingEnv,
+      linkCodeStore = linkCodeStore'
     }
 
 -- -----------------------------------------------------------------------------
@@ -468,6 +475,14 @@ instance HasHttpManager AppEnv where
 
 instance HasHttpManager BankingEnv where
   httpManagerL = lens (.httpManager) (\x y -> x {httpManager = y})
+
+-- | Type class for environments that have the short-lived Telegram link-code
+-- store (used in the bot deep-link account-linking flow).
+class HasLinkCodeStore env where
+  linkCodeStoreL :: Lens' env LinkCodeStore
+
+instance HasLinkCodeStore AppEnv where
+  linkCodeStoreL = lens (.linkCodeStore) (\x y -> x {linkCodeStore = y})
 
 -- | Type class for environments that have application configuration.
 --

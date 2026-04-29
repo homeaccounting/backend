@@ -338,7 +338,7 @@ The Application Services layer sits between the Web handlers and the Domain laye
 |---------|---------------|
 | `AccountService` | Account CRUD, sharing, access revocation. Accepts domain commands, returns `Either DomainError (AccountId, AccountSummaryData)` |
 | `TransactionService` | Transfer initiation and status queries. Accepts domain commands, returns `Either DomainError (TransactionId, TransactionSummaryData)` |
-| `AuthService` | Registration, login, OAuth, Telegram auth, token refresh. Returns `Either DomainError AuthResult` |
+| `AuthService` | Registration, login, OAuth, Telegram link-code issue/redeem, token refresh. Returns `Either DomainError AuthResult` |
 | `UserService` | User profile queries, password change, OAuth/Telegram unlinking. Returns `Either DomainError (UserId, UserSummaryData)` or `Either DomainError ()` |
 | `AuthorizationService` | Pure RBAC access control. No IO — evaluates permissions from data |
 
@@ -395,6 +395,10 @@ All API handlers follow a uniform pattern:
   backdated transactions and bank imports.
 - Rebuilt from event stream on startup
 
+### Transient Auth Stores
+
+`Application.LinkCodeStore` is also an in-memory `TVar`, but it is **not** a read model — it is not a projection from events and is not rebuilt on startup. It holds short-lived (~10 min), single-use Telegram link codes used by the bot deep-link account-linking flow: `POST /auth/telegram/link-code` issues a token and stores `(UserId, expiresAt)`; the bot's `/start LINK_<token>` handler redeems it atomically and runs the `LinkTelegramAccount` aggregate command. This state is intentionally transient — too short-lived to event-source and too auth-specific to mix with read-model rebuild logic. Codes that are not redeemed simply expire and are evicted.
+
 ### Authentication
 
 | Provider | Purpose |
@@ -402,7 +406,7 @@ All API handlers follow a uniform pattern:
 | Password (Argon2) | Email/password login |
 | JWT | Session tokens |
 | OAuth2 | Google, GitHub, Microsoft |
-| Telegram | Bot authentication |
+| Telegram | Bot deep-link account linking (`POST /auth/telegram/link-code` issues a short-lived code; bot's `/start LINK_<token>` redeems it and runs `LinkTelegramAccount`) |
 
 ### Configuration
 

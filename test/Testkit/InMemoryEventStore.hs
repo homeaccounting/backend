@@ -34,6 +34,7 @@ module Testkit.InMemoryEventStore
   )
 where
 
+import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transferProcessManager)
 import Application.ReadModels.ExchangeRate (createExchangeRateReadModel)
 import Application.ReadModels.User ()
@@ -203,6 +204,7 @@ mkAppEnv withProcessManager = do
   exchangeRateRM <- createExchangeRateReadModel
   testHttpManager <- newManager defaultManagerSettings
   bankImportLocksVar <- RIO.newTVarIO Set.empty
+  linkCodeStore <- newLinkCodeStore
 
   return
     AppEnv
@@ -229,7 +231,8 @@ mkAppEnv withProcessManager = do
             { bankImportReadModel = readModels.bankImport,
               bankImportLocks = bankImportLocksVar,
               httpManager = testHttpManager
-            }
+            },
+        linkCodeStore = linkCodeStore
       }
 
 -- | The default 'AppConfig' used by every in-memory test environment.
