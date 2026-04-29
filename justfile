@@ -57,14 +57,20 @@ format-check:
     find src app test -name '*.hs' -exec ormolu --mode check {} \;
     @echo "✓ Format check complete"
 
-# Lint code with hlint
+# Lint code with hlint (read-only)
 lint:
     @echo "Linting code..."
     hlint src test
     @echo "✓ Lint complete"
 
-# Format and lint code
-check: format lint
+# Auto-fix lint issues with hlint --refactor (requires apply-refact)
+lint-fix:
+    @echo "Auto-fixing lint issues..."
+    hlint src test --refactor --refactor-options="-i"
+    @echo "✓ Lint fix complete"
+
+# Read-only quality umbrella: format check + lint (CI-safe)
+check: format-check lint
     @echo "✓ Code quality checks complete"
 
 # Start PostgreSQL with Docker Compose
