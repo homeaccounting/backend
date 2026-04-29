@@ -21,8 +21,6 @@ docs/
 test/
 scripts/
 database/
-infra/terraform/
-infra/scripts/
 *.sqlite
 *.sqlite3
 *.db

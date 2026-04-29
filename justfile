@@ -182,93 +182,29 @@ profile:
 ci:
     gh workflow run CI --ref "$(git branch --show-current)"
 
-# Trigger CI workflow with deploy for the current branch
-ci-deploy:
-    gh workflow run CI --ref "$(git branch --show-current)" -f deploy=true
+# --- Image ---
 
-# --- Deployment ---
-
-# Build and push Docker image to GHCR
-image-push tag="latest":
+# Build and push image to ghcr.io. Tag defaults to dev-<short-sha>.
+# Requires `gh auth login` and `docker login ghcr.io` (or runs gh-token login below).
+publish tag="":
     #!/usr/bin/env bash
     set -euo pipefail
-    source "infra/deploy.env"
-    IMAGE="ghcr.io/${GHCR_OWNER}/backend:{{tag}}"
     SHA="$(git rev-parse --short HEAD)"
-    if ! git diff --quiet HEAD || [ -n "$(git status --porcelain)" ]; then
-        SHA="${SHA}-dirty"
-    fi
-    docker build \
-        --platform linux/amd64 \
-        --build-arg APP_COMMIT_HASH="$SHA" \
-        -f infra/docker/Dockerfile -t "$IMAGE" .
+    TAG="{{tag}}"
+    [[ -z "$TAG" ]] && TAG="dev-$SHA"
+    OWNER="homeaccounting"
+    IMAGE="ghcr.io/${OWNER}/backend:${TAG}"
+    echo "==> docker login ghcr.io"
+    gh auth token | docker login ghcr.io -u "$(gh api user -q .login)" --password-stdin
+    echo "==> docker build $IMAGE"
+    docker build --platform linux/amd64 \
+      --build-arg APP_COMMIT_HASH="$SHA" \
+      -t "$IMAGE" .
+    echo "==> docker push $IMAGE"
     docker push "$IMAGE"
+    echo "==> Published: $IMAGE"
 
-# Build SSH/SCP flags from infra/deploy.env (DEPLOY_SSH_KEY is optional — omit for agent-based auth)
-_ssh_opts := ""
-
-# Load deploy env and SSH into server to pull & restart
-deploy:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "infra/deploy.env"
-    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
-    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/backend && docker compose pull && docker compose up -d && docker image prune -f"
-
-# Sync docker-compose and Caddyfile to the server
-deploy-sync:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "infra/deploy.env"
-    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
-    scp "${SSH_OPTS[@]}" infra/docker/docker-compose.yaml "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/docker-compose.yaml"
-    scp "${SSH_OPTS[@]}" infra/caddy/Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/Caddyfile"
-    scp "${SSH_OPTS[@]}" infra/.env "$DEPLOY_USER@$DEPLOY_HOST:/opt/backend/.env"
-
-# Show service status on the server
-deploy-status:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "infra/deploy.env"
-    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
-    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/backend && docker compose ps"
-
-# Tail logs from the server (optionally filter by service: api, caddy, postgres)
-deploy-logs *service:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "infra/deploy.env"
-    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
-    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/backend && docker compose logs -f {{service}}"
-
-# Rollback to a specific image SHA
-deploy-rollback sha:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "infra/deploy.env"
-    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
-    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/backend && sed -i 's/BACKEND_TAG=.*/BACKEND_TAG={{sha}}/' .env && docker compose pull && docker compose up -d"
-
-# Recreate the database on the deploy server (DESTRUCTIVE — wipes postgres_data volume)
-deploy-db-recreate:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "infra/deploy.env"
-    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
-    read -r -p "⚠️  About to DROP the database on $DEPLOY_HOST. Continue? [y/N] " ans
-    [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
-    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
-      "cd /opt/backend && docker compose down && docker volume rm backend_postgres_data && docker compose up -d"
-
-# Run setup script on a fresh server
-infra-setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "infra/deploy.env"
-    SSH_OPTS=( ${DEPLOY_SSH_KEY:+-i "$DEPLOY_SSH_KEY"} )
-    scp "${SSH_OPTS[@]}" infra/scripts/setup-server.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/setup-server.sh"
-    ssh "${SSH_OPTS[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "bash /tmp/setup-server.sh"
+# Deployment moved to homeaccounting/infra. From that repo:
+#   just deploy-backend <sha>   # deploy this image
+#   just deploy-config           # push compose/Caddyfile changes
+# Or via gh: gh workflow run deploy.yml -R homeaccounting/infra -f service=backend -f tag=<sha>

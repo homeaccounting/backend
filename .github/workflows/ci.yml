@@ -11,12 +11,6 @@ on:
     branches:
       - '**'
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: 'Build image and deploy'
-        required: false
-        default: false
-        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
@@ -129,7 +123,7 @@ jobs:
   build-image:
     name: Build & Push Docker Image
     needs: build-and-test
-    if: (github.ref == 'refs/heads/master' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true')
+    if: (github.ref == 'refs/heads/master' && github.event_name == 'push') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -181,36 +175,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: infra/docker/Dockerfile
+          file: Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             APP_COMMIT_HASH=${{ steps.meta.outputs.sha_short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to Production
-    needs: build-image
-    runs-on: ubuntu-latest
-    env:
-      BACKEND_TAG: ${{ needs.build-image.outputs.image_tag }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Load deploy config
-        run: source infra/deploy.env && echo "DEPLOY_HOST=$DEPLOY_HOST" >> "$GITHUB_ENV" && echo "DEPLOY_USER=$DEPLOY_USER" >> "$GITHUB_ENV"
-
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key_path: infra/deploy_key
-          envs: BACKEND_TAG
-          script: |
-            cd /opt/backend
-            sed -i "s/^BACKEND_TAG=.*/BACKEND_TAG=$BACKEND_TAG/" .env
-            docker compose pull api
-            docker compose up -d api
-            docker image prune -f

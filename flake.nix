@@ -59,9 +59,6 @@
           # Shell utilities (envsubst for scripts/api-test templates)
           gettext
 
-          # Infrastructure
-          opentofu
-
           # System dependencies
           pkg-config
           zlib
