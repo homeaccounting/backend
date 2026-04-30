@@ -95,7 +95,7 @@ import Domain.Transaction.Commands
     InitiateTransfer (..),
     SetTransactionLabels (..),
   )
-import Eventium (CommandHandlerError (..), EventMetadata (..), MetadataEnricher)
+import Eventium (CommandHandlerError (..))
 import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
@@ -127,10 +127,9 @@ import qualified RIO.Text as T
 --
 -- Returns the TransactionId and TransactionData on success.
 initiateTransfer ::
-  MetadataEnricher ->
   InitiateTransfer ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateTransfer enricher transferCmd = runExceptT $ do
+initiateTransfer transferCmd = runExceptT $ do
   lift $ logInfo "Initiating money transfer..."
   transactionUuid <- liftIO UUID.nextRandom
   transactionId <-
@@ -140,7 +139,7 @@ initiateTransfer enricher transferCmd = runExceptT $ do
   lift $ logInfo $ "Generated transaction ID: " <> displayShow transactionUuid
   runTransactionCmd
     (\_ -> TransactionError "Transfer initiation rejected by domain")
-    enricher
+    id
     transactionUuid
     (InitiateTransferTransactionCommand transferCmd)
   ExceptT (queryTransactionResult transactionId)
@@ -229,7 +228,7 @@ initiateIncome userId targetAccountId amount categoryEntryId labels description 
     -- Income: user provides amount in target (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency False Nothing
-          $ \srcAmt tgtAmt rate ->
+          $ \date srcAmt tgtAmt rate ->
             InitiateTransfer
               { sourceAccountId = externalAccId,
                 targetAccountId = targetAccountId,
@@ -238,6 +237,7 @@ initiateIncome userId targetAccountId amount categoryEntryId labels description 
                 exchangeRate = rate,
                 description = description,
                 initiatedBy = userId,
+                at = date,
                 transferType = Income categoryEntryId,
                 externalTransactionId = Nothing,
                 labels = labels
@@ -285,7 +285,7 @@ initiateExpense userId sourceAccountId amount categoryEntryId labels description
     -- Expense: user provides amount in source (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True Nothing
-          $ \srcAmt tgtAmt rate ->
+          $ \date srcAmt tgtAmt rate ->
             InitiateTransfer
               { sourceAccountId = sourceAccountId,
                 targetAccountId = externalAccId,
@@ -294,6 +294,7 @@ initiateExpense userId sourceAccountId amount categoryEntryId labels description
                 exchangeRate = rate,
                 description = description,
                 initiatedBy = userId,
+                at = date,
                 transferType = Expense categoryEntryId,
                 externalTransactionId = Nothing,
                 labels = labels
@@ -343,7 +344,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount labels de
     -- Internal: user provides amount in source currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate
-          $ \srcAmt tgtAmt rate ->
+          $ \date srcAmt tgtAmt rate ->
             InitiateTransfer
               { sourceAccountId = sourceAccountId,
                 targetAccountId = targetAccountId,
@@ -352,6 +353,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount labels de
                 exchangeRate = rate,
                 description = description,
                 initiatedBy = userId,
+                at = date,
                 transferType = Transfer,
                 externalTransactionId = Nothing,
                 labels = labels
@@ -516,8 +518,9 @@ pickCategoryDict Transfer = Nothing
 
 -- | Resolve cross-currency amounts and initiate a transfer.
 --
--- Computes the enricher and rate date from the transfer date, resolves
--- amounts via exchange rates, then delegates to 'initiateTransfer'.
+-- Computes the rate date from the transfer date, resolves amounts via
+-- exchange rates, then delegates to 'initiateTransfer'. The transfer
+-- date is passed into 'mkCmd' so it can be set as the command's @at@.
 resolveAndInitiate ::
   Maybe UTCTime ->
   UTCTime ->
@@ -526,17 +529,14 @@ resolveAndInitiate ::
   Currency ->
   Bool ->
   Maybe Rational ->
-  (Money -> Money -> Maybe ExchangeRate -> InitiateTransfer) ->
+  (UTCTime -> Money -> Money -> Maybe ExchangeRate -> InitiateTransfer) ->
   AppM (Either DomainError (TransactionId, TransactionData))
 resolveAndInitiate maybeTransferDate now userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate mkCmd = runExceptT $ do
   let transferDate = fromMaybe now maybeTransferDate
       rateDay = utctDay transferDate
-      enricher = case maybeTransferDate of
-        Just d -> \m -> m {occurredAt = Just d}
-        Nothing -> id
   (srcAmt, tgtAmt, rate) <-
     ExceptT (resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate rateDay)
-  ExceptT (initiateTransfer enricher (mkCmd srcAmt tgtAmt rate))
+  ExceptT (initiateTransfer (mkCmd transferDate srcAmt tgtAmt rate))
 
 -- | Query the read model for a transaction and return the result.
 queryTransactionResult ::

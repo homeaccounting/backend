@@ -41,6 +41,7 @@ import Application.Services.AuthorizationService
     canTransfer,
   )
 import qualified Data.Set as Set
+import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
@@ -76,6 +77,10 @@ import Test.Hspec
 import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
 
 -- | Test DictionaryEntryId for "Salary" income category.
+-- | Fixed business time used for transfer fixtures.
+mockTime :: UTCTime
+mockTime = UTCTime (fromGregorian 2026 4 1) 0
+
 testSalaryCatId :: DictionaryEntryId
 testSalaryCatId = unsafeDictionaryEntryId (UUID.fromWords 100 0 0 1)
 
@@ -193,6 +198,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             exchangeRate = Nothing,
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
+            at = mockTime,
             transferType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
@@ -232,6 +238,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             exchangeRate = Nothing,
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
+            at = mockTime,
             transferType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
@@ -684,6 +691,7 @@ categorizedTransferSpec =
                 exchangeRate = Nothing,
                 description = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
+                at = mockTime,
                 transferType = Income testSalaryCatId,
                 externalTransactionId = Nothing,
                 labels = Set.empty
@@ -758,6 +766,7 @@ categorizedTransferSpec =
                 exchangeRate = Nothing,
                 description = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
+                at = mockTime,
                 transferType = Expense testFoodCatId,
                 externalTransactionId = Nothing,
                 labels = Set.empty
@@ -804,6 +813,7 @@ categorizedTransferSpec =
                 exchangeRate = Nothing,
                 description = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
+                at = mockTime,
                 transferType = Transfer,
                 externalTransactionId = Nothing,
                 labels = Set.empty
@@ -839,6 +849,7 @@ categorizedTransferSpec =
                 exchangeRate = Nothing,
                 description = "Bank-sourced transfer",
                 initiatedBy = unsafeUserId userUuid,
+                at = mockTime,
                 transferType = Transfer,
                 externalTransactionId = Just extTxId,
                 labels = expectedLabels

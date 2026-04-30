@@ -18,7 +18,7 @@ import Application.Services.AccountService (createAccount)
 import Application.Services.TransactionService
 import Data.Ratio ((%))
 import qualified Data.Set as Set
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime (..), fromGregorian, getCurrentTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
@@ -45,6 +45,10 @@ testUserUuid1 = UUID.fromWords 1 0 0 0
 
 testUserId1 :: UserId
 testUserId1 = mockUserId testUserUuid1
+
+-- | Fixed business time used for transfer fixtures.
+mockTime :: UTCTime
+mockTime = UTCTime (fromGregorian 2026 4 1) 0
 
 mkCreateAccount :: Text -> UserId -> AccountType -> CreateAccount
 mkCreateAccount acctName userId accountType =
@@ -74,17 +78,17 @@ mkCreateAccountWith currency balance acctName userId accountType =
 createTestAppEnvWithRates :: [(Currency, Currency, Rational)] -> IO AppEnv
 createTestAppEnvWithRates rates = do
   env <- createTestAppEnv
-  now <- getCurrentTime
+  today <- utctDay <$> getCurrentTime
   let rateMap = Map.fromList [((src, tgt), mockExchangeRate src tgt r) | (src, tgt, r) <- rates]
       providerName = env.config.exchangeRate.provider
       payload =
         ExchangeRatesPublishedEvent
           ExchangeRatesPublished
             { provider = providerName,
-              rates = rateMap
+              rates = rateMap,
+              at = today
             }
-      meta = (emptyMetadata mempty) {occurredAt = Just now}
-      versionedEvent = StreamEvent UUID.nil 0 meta payload
+      versionedEvent = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
       globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
   handleExchangeRateEvents env.exchangeRateReadModel [globalEvent]
   pure env
@@ -131,11 +135,12 @@ spec = describe "TransactionService" $ do
                 exchangeRate = Nothing,
                 description = "Test transfer",
                 initiatedBy = testUserId1,
+                at = mockTime,
                 transferType = Transfer,
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
-      result <- runAppM env $ initiateTransfer id transferCmd
+      result <- runAppM env $ initiateTransfer transferCmd
       shouldBeRight result
       let (_, transaction) = fromRight' result
       transaction.sourceAccountId `shouldBe` fromAccId
@@ -155,11 +160,12 @@ spec = describe "TransactionService" $ do
                 exchangeRate = Nothing,
                 description = "Retrieve test",
                 initiatedBy = testUserId1,
+                at = mockTime,
                 transferType = Transfer,
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
-      createResult <- runAppM env $ initiateTransfer id transferCmd
+      createResult <- runAppM env $ initiateTransfer transferCmd
       let (txId, _) = fromRight' createResult
       result <- runAppM env $ getTransaction (unTransactionId txId)
       shouldBeRight result
@@ -189,12 +195,13 @@ spec = describe "TransactionService" $ do
                 exchangeRate = Nothing,
                 description = rsn,
                 initiatedBy = testUserId1,
+                at = mockTime,
                 transferType = Transfer,
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
-      result1 <- runAppM env $ initiateTransfer id (mkTransferCmd 100 "First")
-      result2 <- runAppM env $ initiateTransfer id (mkTransferCmd 200 "Second")
+      result1 <- runAppM env $ initiateTransfer (mkTransferCmd 100 "First")
+      result2 <- runAppM env $ initiateTransfer (mkTransferCmd 200 "Second")
       let (txId1, _) = fromRight' result1
       let (txId2, _) = fromRight' result2
 

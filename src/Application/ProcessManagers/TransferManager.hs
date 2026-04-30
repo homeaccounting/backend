@@ -60,9 +60,7 @@ import Data.Time (UTCTime)
 import Domain.Core.Types (AccountId, Money, TransactionId, mkTransactionIdSafe, unAccountId, unTransactionId)
 import Domain.Models
 import Eventium
-  ( EventMetadata (..),
-    MetadataEnricher,
-    ProcessManager (..),
+  ( ProcessManager (..),
     ProcessManagerEffect (..),
     Projection (..),
     RejectionReason (..),
@@ -117,8 +115,8 @@ data TransferData = TransferData
     description :: Text,
     -- | Current phase of the transfer saga
     phase :: TransferPhase,
-    -- | Optional backdated timestamp to propagate through the saga
-    occurredAt :: Maybe UTCTime
+    -- | Business time of the transfer, propagated to debit/credit commands
+    at :: UTCTime
   }
   deriving (Show, Eq)
 
@@ -148,7 +146,7 @@ transferManagerProjection =
 -- State updates only — no side effects or command generation.
 handleTransferEvent :: TransferManager -> VersionedStreamEvent AccountingEvent -> TransferManager
 -- Store transfer data when a new transfer is initiated
-handleTransferEvent manager (StreamEvent txUuid _ metadata (TransferInitiatedEvent evt)) =
+handleTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)) =
   case mkTransactionIdSafe txUuid of
     Nothing -> manager
     Just txId ->
@@ -165,7 +163,7 @@ handleTransferEvent manager (StreamEvent txUuid _ metadata (TransferInitiatedEve
                 targetAmount = evt.targetAmount,
                 description = evt.description,
                 phase = AwaitingDebit,
-                occurredAt = metadata.occurredAt
+                at = evt.at
               }
         Just td
           | td.phase == AwaitingDebit ->
@@ -180,20 +178,6 @@ handleTransferEvent manager (StreamEvent _ _ _ (AccountCreditedEvent evt)) =
   manager & #transfers %~ Map.delete evt.transactionId
 -- All other events: no state change
 handleTransferEvent manager _ = manager
-
--- -----------------------------------------------------------------------------
--- Metadata Enricher Helper
--- -----------------------------------------------------------------------------
-
--- | Build a 'MetadataEnricher' that sets @occurredAt@ when a backdated
--- timestamp is present. Returns 'id' when no backdating is needed.
-mkEnricher :: Maybe UTCTime -> MetadataEnricher
-mkEnricher (Just t) = setOccurredAt (Just t)
-mkEnricher Nothing = id
-
--- | Set the @occurredAt@ field on 'EventMetadata' without ambiguity.
-setOccurredAt :: Maybe UTCTime -> EventMetadata -> EventMetadata
-setOccurredAt ts EventMetadata {..} = EventMetadata {occurredAt = ts, ..}
 
 -- -----------------------------------------------------------------------------
 -- React Function (pure command generation)
@@ -214,69 +198,68 @@ setOccurredAt ts EventMetadata {..} = EventMetadata {occurredAt = ts, ..}
 -- The process manager handles its own compensation.
 reactToTransferEvent :: TransferManager -> VersionedStreamEvent AccountingEvent -> [ProcessManagerEffect AccountingCommand]
 -- TransferInitiated -> Issue DebitAccount to source (with compensation on failure)
-reactToTransferEvent manager (StreamEvent txUuid _ metadata (TransferInitiatedEvent evt)) =
+reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)) =
   case mkTransactionIdSafe txUuid of
     Nothing -> []
     Just txId ->
       case manager ^. #transfers % at txId of
         Just td
           | td.phase == AwaitingDebit ->
-              let enricher = mkEnricher metadata.occurredAt
-               in [ IssueCommandWithCompensation
-                      (unAccountId evt.sourceAccountId)
-                      ( embedWith
-                          accountCommandEmbedding
-                          ( DebitAccountAccountCommand
-                              DebitAccount
-                                { amount = evt.sourceAmount,
-                                  transactionId = txId,
-                                  description = evt.description
-                                }
-                          )
+              [ IssueCommandWithCompensation
+                  (unAccountId evt.sourceAccountId)
+                  ( embedWith
+                      accountCommandEmbedding
+                      ( DebitAccountAccountCommand
+                          DebitAccount
+                            { amount = evt.sourceAmount,
+                              transactionId = txId,
+                              description = evt.description,
+                              at = evt.at
+                            }
                       )
-                      enricher
-                      ( \(RejectionReason rejReason) ->
-                          [ IssueCommand
-                              (unTransactionId txId)
-                              ( embedWith
-                                  transactionCommandEmbedding
-                                  ( FailTransferTransactionCommand
-                                      FailTransfer {reason = rejReason}
-                                  )
+                  )
+                  id
+                  ( \(RejectionReason rejReason) ->
+                      [ IssueCommand
+                          (unTransactionId txId)
+                          ( embedWith
+                              transactionCommandEmbedding
+                              ( FailTransferTransactionCommand
+                                  FailTransfer {reason = rejReason}
                               )
-                              enricher
-                          ]
-                      )
-                  ]
+                          )
+                          id
+                      ]
+                  )
+              ]
         _ -> [] -- Idempotency: not in AwaitingDebit phase
         -- AccountDebited -> Issue CreditAccount + CompleteTransfer
 reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
   case Map.lookup evt.transactionId (manager ^. #transfers) of
     Nothing -> []
-    Just TransferData {..} ->
-      let tdOccurredAt = occurredAt
-          enricher = mkEnricher tdOccurredAt
-       in [ IssueCommand
-              (unAccountId targetAccount)
-              ( embedWith
-                  accountCommandEmbedding
-                  ( CreditAccountAccountCommand
-                      CreditAccount
-                        { amount = targetAmount,
-                          transactionId = evt.transactionId,
-                          description = description
-                        }
-                  )
+    Just td ->
+      [ IssueCommand
+          (unAccountId td.targetAccount)
+          ( embedWith
+              accountCommandEmbedding
+              ( CreditAccountAccountCommand
+                  CreditAccount
+                    { amount = td.targetAmount,
+                      transactionId = evt.transactionId,
+                      description = td.description,
+                      at = td.at
+                    }
               )
-              enricher,
-            IssueCommand
-              (unTransactionId evt.transactionId)
-              ( embedWith
-                  transactionCommandEmbedding
-                  (CompleteTransferTransactionCommand CompleteTransfer)
-              )
-              enricher
-          ]
+          )
+          id,
+        IssueCommand
+          (unTransactionId evt.transactionId)
+          ( embedWith
+              transactionCommandEmbedding
+              (CompleteTransferTransactionCommand CompleteTransfer)
+          )
+          id
+      ]
 -- All other events: no reaction
 reactToTransferEvent _ _ = []
 

@@ -10,10 +10,8 @@
 -- published rates. Lookups fall back to the nearest available date
 -- (see 'lookupNearestDate' below).
 --
--- The business date for a published rate set is carried on the inner
--- 'Eventium.EventMetadata.occurredAt' of the 'VersionedStreamEvent',
--- not on the outer 'GlobalStreamEvent' metadata — destructuring
--- reaches through both layers.
+-- The business date for a published rate set is the payload field
+-- 'ExchangeRatesPublished.at'.
 module Application.ReadModels.ExchangeRate
   ( -- * Read Model Types
     ExchangeRateReadModel (..),
@@ -37,11 +35,11 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Time (Day, diffDays, utctDay)
+import Data.Time (Day, diffDays)
 import Domain.Core.Types (Currency, ExchangeRate)
 import Domain.ExchangeRate.Events (ExchangeRateMap, ExchangeRatesPublished (..), Provider)
 import Domain.Models (AccountingEvent (..))
-import Eventium (EventMetadata (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import Infrastructure.ExchangeRate.Provider (getRate)
 import Safe (maximumDef)
 
@@ -53,10 +51,10 @@ import Safe (maximumDef)
 --
 -- Outer key is the provider name (matches
 -- 'Infrastructure.ExchangeRate.Provider.RateProvider.providerName').
--- Inner key is the business date (from
--- 'EventMetadata.occurredAt'). The value is the full
--- 'ExchangeRateMap' published for that day so subsequent lookups can
--- resolve any currency pair without replaying events.
+-- Inner key is the business date (from 'ExchangeRatesPublished.at').
+-- The value is the full 'ExchangeRateMap' published for that day so
+-- subsequent lookups can resolve any currency pair without replaying
+-- events.
 data ExchangeRateReadModel = ExchangeRateReadModel
   { latestSequence :: SequenceNumber,
     historyByProvider :: !(Map Provider (Map Day ExchangeRateMap))
@@ -89,8 +87,6 @@ createExchangeRateReadModel =
 --
 -- Behaviour:
 --   * Non-matching 'AccountingEvent' variants are silently skipped.
---   * Events without 'occurredAt' on the inner metadata are silently
---     skipped (defensive — writes should always set it).
 --   * The highest 'SequenceNumber' seen is tracked.
 --   * Update is atomic via the TVar.
 handleExchangeRateEvents ::
@@ -110,27 +106,20 @@ handleExchangeRateEvents rmTVar events = do
 
 -- | Project a single global event into the per-provider history.
 --
--- 'GlobalStreamEvent' is
--- @StreamEvent () SequenceNumber (VersionedStreamEvent event)@, where
--- @VersionedStreamEvent event = StreamEvent UUID EventVersion event@.
--- The business date lives on the INNER metadata's 'occurredAt'.
+-- The business date lives on the payload field 'ExchangeRatesPublished.at'.
 processEvent ::
   Map Provider (Map Day ExchangeRateMap) ->
   GlobalStreamEvent AccountingEvent ->
   Map Provider (Map Day ExchangeRateMap)
 processEvent acc globalEvent =
-  let inner = globalEvent.payload
-      innerMeta = inner.metadata
-      payload = inner.payload
-   in case (payload, innerMeta.occurredAt) of
-        (ExchangeRatesPublishedEvent published, Just occurred) ->
-          let day = utctDay occurred
-              providerKey = published.provider
-              providerHistory =
-                fromMaybe Map.empty (Map.lookup providerKey acc)
-              providerHistory' = Map.insert day published.rates providerHistory
-           in Map.insert providerKey providerHistory' acc
-        _ -> acc
+  case globalEvent.payload.payload of
+    ExchangeRatesPublishedEvent published ->
+      let providerKey = published.provider
+          providerHistory =
+            fromMaybe Map.empty (Map.lookup providerKey acc)
+          providerHistory' = Map.insert published.at published.rates providerHistory
+       in Map.insert providerKey providerHistory' acc
+    _ -> acc
 
 -- -----------------------------------------------------------------------------
 -- Query Functions

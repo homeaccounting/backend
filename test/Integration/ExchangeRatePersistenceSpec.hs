@@ -71,11 +71,9 @@ import Testkit.InMemoryEventStore
 -- -----------------------------------------------------------------------------
 
 -- | Everything a publish-then-replay test needs from the in-memory
--- store. Unlike 'Testkit.InMemoryEventStore.createTestAppEnv', the
--- tagged writer is backed by 'tvarTaggedEventStoreWriter' so that
--- 'EventMetadata.occurredAt' is preserved through to the persisted
--- event — the replayed read model relies on that metadata for its
--- business-day index.
+-- store. The tagged writer is backed by 'tvarTaggedEventStoreWriter';
+-- the replayed read model reads the business date from the payload
+-- field 'ExchangeRatesPublished.at'.
 data PersistenceHarness = PersistenceHarness
   { persistWriter :: !(AccountingTaggedEventStoreWriter IO),
     persistReader :: !(AccountingVersionedEventStoreReader IO),

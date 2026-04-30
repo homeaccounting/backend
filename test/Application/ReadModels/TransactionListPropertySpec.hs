@@ -55,8 +55,7 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
           (unTransactionId txId)
           0
           ( (emptyMetadata "TransferInitiated")
-              { Eventium.createdAt = Just persistedAt,
-                Eventium.occurredAt = Just businessAt
+              { Eventium.createdAt = Just persistedAt
               }
           )
           ( TransferInitiatedEvent
@@ -68,6 +67,7 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
                   exchangeRate = Nothing,
                   description = "seed",
                   by = mockUserId (UUID.fromWords 9 0 0 0),
+                  at = businessAt,
                   transferType = Transfer,
                   externalTransactionId = Nothing,
                   labels = Set.empty

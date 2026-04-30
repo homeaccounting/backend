@@ -60,7 +60,6 @@ import Domain.Core.Types
     unEntryName,
   )
 import Domain.Transaction.Commands (InitiateTransfer (..))
-import Eventium (EventMetadata (..))
 import Infrastructure.App
   ( AppM,
     HasBankImportReadModel (..),
@@ -364,8 +363,7 @@ commitImport provider userId userData localAccId tx money = do
   let (sourceAccId, targetAccId, transferType) =
         classifyEndpoints localAccId externalAccId direction categoryId
       cmd = buildTransferCmd userId tx sourceAccId targetAccId money transferType
-      enricher m = m {occurredAt = Just tx.time}
-  (txId, _) <- ExceptT (TransactionService.initiateTransfer enricher cmd)
+  (txId, _) <- ExceptT (TransactionService.initiateTransfer cmd)
   lift $ logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
   pure (Just txId)
   where
@@ -385,6 +383,7 @@ commitImport provider userId userData localAccId tx money = do
           exchangeRate = Nothing,
           description = bankTx.description,
           initiatedBy = uid,
+          at = bankTx.time,
           transferType = transferType,
           externalTransactionId = Just bankTx.externalId,
           labels = Set.empty

@@ -36,6 +36,7 @@ import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import Domain.Core.Types (AccountId, CategoryId, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
@@ -87,6 +88,8 @@ data TransferInitiated = TransferInitiated
     description :: Text,
     -- | User who initiated the transfer (for audit trail)
     by :: UserId,
+    -- | Business time of the transfer (user-supplied or 'now' at initiation)
+    at :: UTCTime,
     -- | Type of transfer (Income, Expense, Transfer)
     transferType :: TransferType,
     -- | Identifier for this transaction in an external system (e.g., Monobank)
@@ -169,6 +172,7 @@ instance FromJSON TransferInitiated where
       <*> o .:? "exchangeRate" .!= Nothing
       <*> o .: "description"
       <*> o .: "by"
+      <*> o .: "at"
       <*> o .: "transferType"
       <*> o .:? "externalTransactionId" .!= Nothing
       <*> (fromMaybe Set.empty <$> o .:? "labels")

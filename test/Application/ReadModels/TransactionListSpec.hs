@@ -55,8 +55,8 @@ mkInitiatedEvent ::
   TransactionId ->
   AccountId -> -- source
   AccountId -> -- target
-  UTCTime -> -- businessAt (occurredAt)
-  UTCTime -> -- persistedAt (createdAt)
+  UTCTime -> -- business time (TransferInitiated.at)
+  UTCTime -> -- persistedAt (createdAt) — kept on outer metadata for completeness
   Eventium.SequenceNumber -> -- global sequence number
   Eventium.GlobalStreamEvent AccountingEvent
 mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
@@ -65,8 +65,7 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
           (unTransactionId txId)
           0
           ( (emptyMetadata "TransferInitiated")
-              { Eventium.createdAt = Just persistedAt,
-                Eventium.occurredAt = Just businessAt
+              { Eventium.createdAt = Just persistedAt
               }
           )
           ( TransferInitiatedEvent
@@ -78,6 +77,7 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
                   exchangeRate = Nothing,
                   description = "seed",
                   by = mockUserId (UUID.fromWords 9 0 0 0),
+                  at = businessAt,
                   transferType = Transfer,
                   externalTransactionId = Nothing,
                   labels = Set.empty
@@ -176,7 +176,7 @@ spec = do
       map fst results `shouldBe` [tx 2, tx 1]
 
   describe "listTransactions / business-time filter (backdated regression guard)" $ do
-    it "matches the occurredAt window, NOT the createdAt window" $ do
+    it "matches the payload at window, NOT the createdAt window" $ do
       let occurredPast = t 2026 1 15
           createdNow = t 2026 4 18
           e = mkInitiatedEvent (tx 1) acctA acctB occurredPast createdNow 0

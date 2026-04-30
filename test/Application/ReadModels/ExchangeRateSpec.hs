@@ -23,7 +23,7 @@ import Application.ReadModels.ExchangeRate
     handleExchangeRateEvents,
     lookupHistoricalRate,
   )
-import Data.Time (Day, UTCTime (..), fromGregorian, secondsToDiffTime)
+import Data.Time (Day, fromGregorian)
 import qualified Data.UUID as UUID
 import Domain.Core.Types (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRateMap, ExchangeRatesPublished (..), Provider)
@@ -35,12 +35,8 @@ import qualified RIO.Map as Map
 import Test.Hspec
 import Testkit.Helpers (mockExchangeRate)
 
--- | Shape identical to mkInitiatedEvent in TransactionListSpec: the
--- GlobalStreamEvent is a StreamEvent () SequenceNumber (VersionedStreamEvent)
--- where the inner VersionedStreamEvent = StreamEvent UUID EventVersion
--- AccountingEvent. The business date (the day the rates apply to) is
--- carried on the inner VersionedStreamEvent's metadata.occurredAt, per
--- the spec.
+-- | The business date is carried on the payload field
+-- 'ExchangeRatesPublished.at'.
 mkPublishedEvent ::
   Day ->
   Provider ->
@@ -48,34 +44,12 @@ mkPublishedEvent ::
   Eventium.SequenceNumber ->
   Eventium.GlobalStreamEvent AccountingEvent
 mkPublishedEvent day providerName rates seqNo =
-  let businessAt = UTCTime day (secondsToDiffTime 0)
-      payload =
-        ExchangeRatesPublishedEvent
-          ExchangeRatesPublished
-            { provider = providerName,
-              rates = rates
-            }
-      inner =
-        StreamEvent
-          UUID.nil
-          0
-          ((emptyMetadata "ExchangeRatesPublished") {Eventium.occurredAt = Just businessAt})
-          payload
-   in StreamEvent () seqNo (emptyMetadata "ExchangeRatesPublished") inner
-
--- | Like 'mkPublishedEvent' but omits the business-date metadata.
--- Used to prove the handler tolerates events with no occurredAt.
-mkPublishedEventNoDate ::
-  Provider ->
-  ExchangeRateMap ->
-  Eventium.SequenceNumber ->
-  Eventium.GlobalStreamEvent AccountingEvent
-mkPublishedEventNoDate providerName rates seqNo =
   let payload =
         ExchangeRatesPublishedEvent
           ExchangeRatesPublished
             { provider = providerName,
-              rates = rates
+              rates = rates,
+              at = day
             }
       inner =
         StreamEvent
@@ -124,11 +98,3 @@ spec = describe "Application.ReadModels.ExchangeRate" $ do
       ]
     result <- lookupHistoricalRate rm "ecb" queryDay USD UAH
     result `shouldBe` Just rate2
-
-  it "skips events whose metadata has no occurredAt" $ do
-    rm <- createExchangeRateReadModel
-    let rates = usdToUah 41
-    -- Handler must not throw, and the event must not populate history.
-    handleExchangeRateEvents rm [mkPublishedEventNoDate "ecb" rates 0]
-    result <- lookupHistoricalRate rm "ecb" (fromGregorian 2026 4 20) USD UAH
-    result `shouldBe` Nothing

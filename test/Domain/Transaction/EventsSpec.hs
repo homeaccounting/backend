@@ -16,6 +16,7 @@ import Data.Aeson (Value (Object), decode, eitherDecode, encode)
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Set as Set
+import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
@@ -62,6 +63,7 @@ sampleEvent =
       exchangeRate = Nothing,
       description = "legacy test transfer",
       by = mockUserId (uuidFromInt 3),
+      at = UTCTime (fromGregorian 2026 4 1) 0,
       transferType = Income (unsafeDictionaryEntryId (uuidFromInt 4)),
       externalTransactionId = Nothing,
       labels = Set.empty

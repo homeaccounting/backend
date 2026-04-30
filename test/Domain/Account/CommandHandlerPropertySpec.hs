@@ -22,6 +22,7 @@ module Domain.Account.CommandHandlerPropertySpec (spec) where
 
 import Data.Either (fromRight, isLeft)
 import qualified Data.Text as T
+import Data.Time (UTCTime (..), fromGregorian)
 import Domain.Account
 import Domain.Account.CommandHandler
 import Domain.Account.Commands (DebitAccount (..), SetOverdraftLimit (..))
@@ -45,6 +46,10 @@ spec = do
 -- -----------------------------------------------------------------------------
 -- Helper Functions
 -- -----------------------------------------------------------------------------
+
+-- | Fixed business time used for debit fixtures.
+mockTime :: UTCTime
+mockTime = UTCTime (fromGregorian 2026 4 1) 0
 
 -- | Apply events to get account state
 applyEvents :: [AccountEvent] -> Account
@@ -308,7 +313,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                   .~ Just debitAmt
               command =
                 DebitAccountAccountCommand
-                  $ DebitAccount debitAmt txId "Transfer"
+                  $ DebitAccount debitAmt txId "Transfer" mockTime
               result = handleAccountCommand account command
            in result =/= Left InsufficientFunds
 
@@ -321,7 +326,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                 -- Default overdraft is 0, so any positive debit on zero balance fails
                 command =
                   DebitAccountAccountCommand
-                    $ DebitAccount debitAmt txId "Transfer"
+                    $ DebitAccount debitAmt txId "Transfer" mockTime
                 result = handleAccountCommand account command
              in result === Left InsufficientFunds
 
@@ -335,7 +340,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                   .~ Nothing
               command =
                 DebitAccountAccountCommand
-                  $ DebitAccount debitAmt txId "Transfer"
+                  $ DebitAccount debitAmt txId "Transfer" mockTime
               result = handleAccountCommand account command
            in result =/= Left InsufficientFunds
 
@@ -368,7 +373,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId (Regular defaultCash)
               command =
                 DebitAccountAccountCommand
-                  $ DebitAccount amt txId "Transfer"
+                  $ DebitAccount amt txId "Transfer" mockTime
               result = handleAccountCommand account command
            in result === Left CurrencyMismatch
 

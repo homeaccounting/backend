@@ -107,9 +107,9 @@ mkHarness = do
       }
 
 -- | Lift an STM tagged (AccountingEvent) writer to IO. The tagged
--- variant preserves 'EventMetadata' (including 'occurredAt') through to
--- the in-memory store — unlike the versioned writer used in the
--- broader testkit which synthesises empty metadata.
+-- variant preserves 'EventMetadata' through to the in-memory store —
+-- unlike the versioned writer used in the broader testkit which
+-- synthesises empty metadata.
 liftSTMTaggedEventWriter ::
   EventStoreWriter UUID.UUID EventVersion STM (TaggedEvent AccountingEvent) ->
   EventStoreWriter UUID.UUID EventVersion IO (TaggedEvent AccountingEvent)
@@ -211,14 +211,18 @@ spec = describe "Application.Services.ExchangeRatePublisher" $ do
             $ "Expected ExchangeRatesPublishedEvent, got: "
             <> show other
 
-    it "stamps the persisted event's occurredAt to today (UTC)" $ do
+    it "stamps the persisted event's at field to today (UTC)" $ do
       h <- mkHarness
       today <- utctDay <$> getCurrentTime
       let prov = fixedRateProvider "ecb" sampleRates
       _ <- publishRates prov h.harnessWriter h.harnessReader h.harnessReadModel
       persisted <- singleStreamEvent h.harnessReader (providerStreamId "ecb")
-      let businessDay = utctDay <$> persisted.metadata.occurredAt
-      businessDay `shouldBe` Just today
+      case persisted.payload of
+        ExchangeRatesPublishedEvent published -> published.at `shouldBe` today
+        other ->
+          expectationFailure
+            $ "Expected ExchangeRatesPublishedEvent, got: "
+            <> show other
 
     it "is idempotent for the same day — second call returns Left and does not re-append" $ do
       h <- mkHarness

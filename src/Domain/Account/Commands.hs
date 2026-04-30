@@ -44,6 +44,7 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import Domain.Core.Types (AccountRole, AccountSubtype, AccountType, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
@@ -168,7 +169,9 @@ data DebitAccount = DebitAccount
     -- | Transaction ID for saga correlation
     transactionId :: TransactionId,
     -- | Description for the debit
-    description :: Text
+    description :: Text,
+    -- | Business time of the debit (propagated from the originating transfer)
+    at :: UTCTime
   }
   deriving (Show, Eq)
 
@@ -191,7 +194,9 @@ data CreditAccount = CreditAccount
     -- | Transaction ID for saga correlation
     transactionId :: TransactionId,
     -- | Description for the credit
-    description :: Text
+    description :: Text,
+    -- | Business time of the credit (propagated from the originating transfer)
+    at :: UTCTime
   }
   deriving (Show, Eq)
 

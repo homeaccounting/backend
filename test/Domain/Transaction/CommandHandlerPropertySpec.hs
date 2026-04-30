@@ -20,6 +20,7 @@ module Domain.Transaction.CommandHandlerPropertySpec (spec) where
 import Data.Either (fromRight, isLeft)
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Time (UTCTime (..), fromGregorian)
 import Domain.Core.Types
 import Domain.Transaction
 import Domain.Transaction.CommandHandler
@@ -31,6 +32,10 @@ import Test.QuickCheck
 import Testkit.Generators (genLabelSet)
 import Testkit.Helpers
 import Prelude (read)
+
+-- | Fixed business time used for test fixtures.
+mockTime :: UTCTime
+mockTime = UTCTime (fromGregorian 2026 4 1) 0
 
 spec :: Spec
 spec = do
@@ -63,6 +68,7 @@ createPendingTransaction fromId toId amt =
             exchangeRate = Nothing,
             description = "Test transfer",
             by = testUserId,
+            at = mockTime,
             transferType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
@@ -81,7 +87,7 @@ determinismSpec = describe "Determinism Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId Transfer Nothing Set.empty
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId mockTime Transfer Nothing Set.empty
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
@@ -94,7 +100,7 @@ determinismSpec = describe "Determinism Properties" $ do
             $ \labels ->
               let transaction = applyEvents []
                   extTxId = unsafeExternalTransactionId extRaw
-                  command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId Transfer (Just extTxId) labels
+                  command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId mockTime Transfer (Just extTxId) labels
                in case handleTransactionCommand transaction command of
                     Right (TransferInitiatedTransactionEvent initiated : _) ->
                       initiated.labels === labels
@@ -134,7 +140,7 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId Transfer Nothing Set.empty,
+                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty,
                   TransferCompletedTransactionEvent TransferCompleted
                 ]
               transaction = applyEvents initialEvents
@@ -151,7 +157,7 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId Transfer Nothing Set.empty,
+                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty,
                   TransferFailedTransactionEvent $ TransferFailed "Error"
                 ]
               transaction = applyEvents initialEvents
@@ -211,7 +217,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(accountId :: AccountId) (amt :: Money) ->
         unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer accountId accountId amt amt Nothing "Self-transfer" testUserId Transfer Nothing Set.empty
+              command = InitiateTransferTransactionCommand $ InitiateTransfer accountId accountId amt amt Nothing "Self-transfer" testUserId mockTime Transfer Nothing Set.empty
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -220,7 +226,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) ->
         fromId /= toId ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId Transfer Nothing Set.empty
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId mockTime Transfer Nothing Set.empty
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -229,7 +235,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing "Valid" testUserId Transfer Nothing Set.empty
+              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing "Valid" testUserId mockTime Transfer Nothing Set.empty
               result = handleTransactionCommand transaction command
            in case result of
                 Right [TransferInitiatedTransactionEvent _] -> property True
@@ -246,6 +252,6 @@ validationSpec = describe "Validation Properties" $ do
          (amount2 :: Money) ->
           fromId1 /= toId1 && fromId2 /= toId2 ==>
             let transaction = createPendingTransaction fromId1 toId1 amount1
-                command = InitiateTransferTransactionCommand $ InitiateTransfer fromId2 toId2 amount2 amount2 Nothing "Second" testUserId Transfer Nothing Set.empty
+                command = InitiateTransferTransactionCommand $ InitiateTransfer fromId2 toId2 amount2 amount2 Nothing "Second" testUserId mockTime Transfer Nothing Set.empty
                 result = handleTransactionCommand transaction command
              in isLeft result

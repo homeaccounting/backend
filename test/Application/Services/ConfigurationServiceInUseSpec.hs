@@ -28,6 +28,7 @@ import Application.Services.ConfigurationService
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
@@ -106,6 +107,7 @@ seedTransaction env userId tt labels = do
               exchangeRate = Nothing,
               description = "seed for in-use check",
               initiatedBy = userId,
+              at = UTCTime (fromGregorian 2026 4 1) 0,
               transferType = tt,
               externalTransactionId = Nothing,
               labels = labels

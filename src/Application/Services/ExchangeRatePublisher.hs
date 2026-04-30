@@ -13,9 +13,8 @@
 -- the read-model TVar which is updated synchronously by the event bus
 -- after the first successful write.
 --
--- The business date is stamped on 'EventMetadata.occurredAt' by
--- eventium's default 'metadataEnrichingEventStoreWriter', which sets it
--- to the current UTC time at write.
+-- The business date is carried in the payload as 'ExchangeRatesPublished.at',
+-- set to today's UTC day at publish time.
 module Application.Services.ExchangeRatePublisher
   ( publishRates,
     spawnRatePublisher,
@@ -84,8 +83,8 @@ providerStreamId prov =
 --   * Otherwise, fetches rates from the provider. On provider failure,
 --     returns @Left err@ without writing anything.
 --   * On success, appends a single 'ExchangeRatesPublishedEvent' to the
---     per-provider stream ('providerStreamId'). 'EventMetadata.occurredAt'
---     is populated by eventium's default metadata enricher.
+--     per-provider stream ('providerStreamId') with @at = today@ in the
+--     payload.
 --
 -- Idempotence relies on the tagged writer being composed with a
 -- synchronous publisher that updates the read-model TVar before this
@@ -114,7 +113,8 @@ publishRates prov writer _reader rm = liftIO $ do
                 ExchangeRatesPublishedEvent
                   ExchangeRatesPublished
                     { provider = prov.providerName,
-                      rates = rates
+                      rates = rates,
+                      at = today
                     }
               enrichedWriter =
                 metadataEnrichingEventStoreWriter jsonStringCodec writer

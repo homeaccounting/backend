@@ -64,12 +64,10 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.List (sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..))
-import Data.Time.Calendar (fromGregorian)
 import Domain.Core.Types (AccountId, DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransferType (..), mkTransactionIdSafe)
 import Domain.Models
   ( AccountingEvent
@@ -87,7 +85,7 @@ import Domain.Transaction.Events
     TransferInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Completed, Failed, Pending))
-import Eventium (EventMetadata (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
 import Safe (maximumDef)
 
@@ -269,11 +267,7 @@ processEvent transactions globalEvent =
               -- In depth-first event bus dispatch, TransferCompleted/TransferFailed
               -- may be processed before TransferInitiated for the same transaction.
               -- The merge function keeps the existing entry if one already exists.
-              let eventDate =
-                    fromMaybe
-                      (fromMaybe (UTCTime (fromGregorian 1970 1 1) 0) versionedEvent.metadata.createdAt)
-                      versionedEvent.metadata.occurredAt
-                  newEntry =
+              let newEntry =
                     TransactionData
                       { sourceAccountId = evt.sourceAccountId,
                         targetAccountId = evt.targetAccountId,
@@ -283,7 +277,7 @@ processEvent transactions globalEvent =
                         description = evt.description,
                         status = Pending,
                         transferType = evt.transferType,
-                        date = eventDate,
+                        date = evt.at,
                         labels = evt.labels
                       }
                in Map.insertWith (\_ existing -> existing) transactionId newEntry transactions
@@ -394,8 +388,7 @@ transactionExists readModelTVar transactionId = do
 --     source or target. An accountId outside the visible set therefore
 --     naturally produces zero matches.
 --  3. Apply inclusive from/to bounds to 'TransactionData.date', which is
---     the transaction's business timestamp (TransferInitiated event's
---     occurredAt, falling back to createdAt only when occurredAt is unset).
+--     the transaction's business timestamp ('TransferInitiated.at').
 --  4. Sort by date descending; ties are broken by TransactionId.
 listTransactions ::
   (MonadIO m) =>

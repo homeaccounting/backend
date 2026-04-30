@@ -35,6 +35,7 @@ where
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Set (Set)
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import Domain.Core.Types (AccountId, CategoryId, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
@@ -96,6 +97,8 @@ data InitiateTransfer = InitiateTransfer
     description :: Text,
     -- | User who initiated the transfer (for audit trail)
     initiatedBy :: UserId,
+    -- | Business time of the transfer (user-supplied or 'now' at the API edge)
+    at :: UTCTime,
     -- | Type of transfer (Income, Expense, Transfer)
     transferType :: TransferType,
     -- | Identifier for this transaction in an external system (e.g., Monobank)

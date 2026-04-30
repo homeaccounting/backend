@@ -145,6 +145,7 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
                             exchangeRate = exchangeRate,
                             description = description,
                             by = initiatedBy,
+                            at = at,
                             transferType = transferType,
                             externalTransactionId = externalTransactionId,
                             labels = labels

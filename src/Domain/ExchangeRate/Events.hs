@@ -6,10 +6,9 @@
 -- Module      : Domain.ExchangeRate.Events
 -- Description : Exchange-rate-publication domain events.
 --
--- The event payload does not carry a date field — the business date
--- (the day the rates are for) is carried in EventMetadata.occurredAt,
--- matching the pattern used by TransferInitiated and other domain
--- events since the backdated-transactions work.
+-- The business date (the day the rates are for) is carried in the
+-- payload as @at :: Day@, matching the bare-preposition convention
+-- (alongside @by@ on user-initiated events).
 --
 -- Follows the two-tier eventium pattern used by the Account,
 -- Transaction, User and Configuration bounded contexts:
@@ -37,6 +36,7 @@ where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.Time (Day)
 import Domain.Core.Types (Currency, ExchangeRate)
 import Language.Haskell.TH (Name)
 import RIO
@@ -67,11 +67,11 @@ unProvider (Provider t) = t
 
 -- | Event emitted when a set of exchange rates is published by a provider.
 --
--- The business date for these rates is carried on
--- @EventMetadata.occurredAt@, not in the payload.
+-- @at@ is the business date the rates are for.
 data ExchangeRatesPublished = ExchangeRatesPublished
   { provider :: !Provider,
-    rates :: !ExchangeRateMap
+    rates :: !ExchangeRateMap,
+    at :: !Day
   }
   deriving (Show, Eq)
 

@@ -28,6 +28,7 @@ import Application.Services.ConfigurationService
     seedDefaultConfiguration,
   )
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreditAccount (..))
@@ -218,7 +219,8 @@ changeBaseCurrencySpec =
                     CreditAccount
                       { amount = unsafeMoney EUR 100,
                         transactionId = txId,
-                        description = "Test income"
+                        description = "Test income",
+                        at = UTCTime (fromGregorian 2026 4 1) 0
                       }
 
               -- Now try to change base currency again - should fail

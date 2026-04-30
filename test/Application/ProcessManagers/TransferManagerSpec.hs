@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -14,11 +13,12 @@
 --
 -- Test Coverage:
 --   - Initial state: Empty transfers map
---   - TransferInitiated: State tracking + DebitAccount effect
+--   - TransferInitiated: State tracking + DebitAccount effect (carrying `at`)
 --   - AccountDebited: State update + CreditAccount + CompleteTransfer effects
 --   - AccountCredited: Cleans up transfer tracking
 --   - Idempotency: Duplicate events don't produce duplicate effects
 --   - Unrelated events: No effects produced
+--   - `at` propagation: TransferInitiated.at lands on subsequent saga commands
 module Application.ProcessManagers.TransferManagerSpec (spec) where
 
 import Application.ProcessManagers.TransferManager
@@ -47,7 +47,7 @@ import Domain.Models
   )
 import Domain.Transaction.Commands (FailTransfer (..))
 import Domain.Transaction.Events (TransferCompleted (..), TransferInitiated (..))
-import Eventium (EventMetadata (..), ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
+import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
 import RIO hiding (view, (^.))
 import Test.Hspec
@@ -60,9 +60,9 @@ import Test.Hspec
 emptyTransferManager :: TransferManager
 emptyTransferManager = TransferManager Map.empty
 
--- | Set @occurredAt@ on an 'EventMetadata' without field-selector ambiguity.
-withOccurredAt :: UTCTime -> EventMetadata -> EventMetadata
-withOccurredAt t EventMetadata {..} = EventMetadata {occurredAt = Just t, ..}
+-- | Fixed business time for deterministic testing.
+sampleAt :: UTCTime
+sampleAt = UTCTime (fromGregorian 2026 4 1) 0
 
 -- | Fixed UUIDs for deterministic testing.
 txUuid :: UUID.UUID
@@ -79,7 +79,10 @@ userUuid = UUID.fromWords 4 0 0 4
 
 -- | Construct a VersionedStreamEvent for a TransferInitiated event.
 mkTransferInitiatedEvent :: VersionedStreamEvent AccountingEvent
-mkTransferInitiatedEvent =
+mkTransferInitiatedEvent = mkTransferInitiatedEventAt sampleAt
+
+mkTransferInitiatedEventAt :: UTCTime -> VersionedStreamEvent AccountingEvent
+mkTransferInitiatedEventAt t =
   StreamEvent
     txUuid
     0
@@ -93,6 +96,7 @@ mkTransferInitiatedEvent =
             exchangeRate = Nothing,
             description = "Test transfer",
             by = unsafeUserId userUuid,
+            at = t,
             transferType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
@@ -117,6 +121,7 @@ mkTransferInitiatedEventWithLabelsAndExternalId =
             exchangeRate = Nothing,
             description = "Test transfer",
             by = unsafeUserId userUuid,
+            at = sampleAt,
             transferType = Transfer,
             externalTransactionId = Just (unsafeExternalTransactionId "mono:stmt-42"),
             labels = Set.fromList [unsafeDictionaryEntryId (UUID.fromWords 10 0 0 1), unsafeDictionaryEntryId (UUID.fromWords 10 0 0 2)]
@@ -134,7 +139,8 @@ mkAccountDebitedEvent =
         AccountDebited
           { amount = unsafeMoney USD 200,
             transactionId = unsafeTransactionId txUuid,
-            description = "Test transfer"
+            description = "Test transfer",
+            at = sampleAt
           }
     )
 
@@ -149,7 +155,8 @@ mkAccountCreditedEvent =
         AccountCredited
           { amount = unsafeMoney USD 200,
             transactionId = unsafeTransactionId txUuid,
-            description = "Test transfer"
+            description = "Test transfer",
+            at = sampleAt
           }
     )
 
@@ -192,6 +199,7 @@ spec = describe "TransferManager (Saga)" $ do
           td.targetAccount `shouldBe` unsafeAccountId targetAcctUuid
           td.sourceAmount `shouldBe` unsafeMoney USD 200
           td.description `shouldBe` "Test transfer"
+          td.at `shouldBe` sampleAt
 
     it "issues DebitAccount effect with compensation to source account" $ do
       let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
@@ -201,10 +209,11 @@ spec = describe "TransferManager (Saga)" $ do
         [IssueCommandWithCompensation targetId cmd _ onFailure] -> do
           targetId `shouldBe` sourceAcctUuid
           case cmd of
-            DebitAccountCommand (DebitAccount amt txId rsn) -> do
-              amt `shouldBe` unsafeMoney USD 200
-              txId `shouldBe` unsafeTransactionId txUuid
-              rsn `shouldBe` "Test transfer"
+            DebitAccountCommand debit -> do
+              debit.amount `shouldBe` unsafeMoney USD 200
+              debit.transactionId `shouldBe` unsafeTransactionId txUuid
+              debit.description `shouldBe` "Test transfer"
+              debit.at `shouldBe` sampleAt
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
           -- Verify compensation produces FailTransfer
           let compensationEffects = onFailure (RejectionReason "Insufficient funds")
@@ -228,9 +237,9 @@ spec = describe "TransferManager (Saga)" $ do
         [IssueCommandWithCompensation targetId cmd _ _] -> do
           targetId `shouldBe` sourceAcctUuid
           case cmd of
-            DebitAccountCommand (DebitAccount amt txId _) -> do
-              amt `shouldBe` unsafeMoney USD 200
-              txId `shouldBe` unsafeTransactionId txUuid
+            DebitAccountCommand debit -> do
+              debit.amount `shouldBe` unsafeMoney USD 200
+              debit.transactionId `shouldBe` unsafeTransactionId txUuid
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
         _ -> expectationFailure "Expected exactly 1 IssueCommandWithCompensation effect"
 
@@ -256,6 +265,7 @@ spec = describe "TransferManager (Saga)" $ do
                       exchangeRate = Nothing,
                       description = "Bad",
                       by = unsafeUserId userUuid,
+                      at = sampleAt,
                       transferType = Transfer,
                       externalTransactionId = Nothing,
                       labels = Set.empty
@@ -278,10 +288,11 @@ spec = describe "TransferManager (Saga)" $ do
           -- First effect: CreditAccount to target
           creditTarget `shouldBe` targetAcctUuid
           case creditCmd of
-            CreditAccountCommand (CreditAccount amt txId rsn) -> do
-              amt `shouldBe` unsafeMoney USD 200
-              txId `shouldBe` unsafeTransactionId txUuid
-              rsn `shouldBe` "Test transfer"
+            CreditAccountCommand credit -> do
+              credit.amount `shouldBe` unsafeMoney USD 200
+              credit.transactionId `shouldBe` unsafeTransactionId txUuid
+              credit.description `shouldBe` "Test transfer"
+              credit.at `shouldBe` sampleAt
             other -> expectationFailure $ "Expected CreditAccountCommand, got: " ++ show other
 
           -- Second effect: CompleteTransfer to transaction
@@ -323,77 +334,24 @@ spec = describe "TransferManager (Saga)" $ do
       -- State should remain unchanged (transfer still tracked)
       transferCount stateAfterUnrelated `shouldBe` 1
 
-  describe "occurredAt Propagation" $ do
-    it "propagates occurredAt from TransferInitiated to saga effects" $ do
-      let pastTime = UTCTime (fromGregorian 2025 3 15) 0
-          metadata = withOccurredAt pastTime (emptyMetadata "")
-          event =
-            StreamEvent
-              txUuid
-              0
-              metadata
-              ( TransferInitiatedEvent
-                  TransferInitiated
-                    { sourceAccountId = unsafeAccountId sourceAcctUuid,
-                      targetAccountId = unsafeAccountId targetAcctUuid,
-                      sourceAmount = unsafeMoney USD 200,
-                      targetAmount = unsafeMoney USD 200,
-                      exchangeRate = Nothing,
-                      description = "Backdated transfer",
-                      by = unsafeUserId userUuid,
-                      transferType = Transfer,
-                      externalTransactionId = Nothing,
-                      labels = Set.empty
-                    }
-              )
+  describe "`at` Propagation" $ do
+    it "propagates TransferInitiated.at to the issued DebitAccount command" $ do
+      let backdated = UTCTime (fromGregorian 2025 3 15) 0
+          event = mkTransferInitiatedEventAt backdated
           stateAfterInit = handleTransferEvent emptyTransferManager event
           effects = reactToTransferEvent stateAfterInit event
       case effects of
-        [IssueCommandWithCompensation _ _ enricher onFailure] -> do
-          (enricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
-          -- Compensation effects should also carry the enricher
-          let compensationEffects = onFailure (RejectionReason "Insufficient funds")
-          case compensationEffects of
-            [IssueCommand _ _ compEnricher] ->
-              (compEnricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
-            _ -> expectationFailure "Expected exactly 1 compensation effect"
-        _ -> expectationFailure $ "Expected IssueCommandWithCompensation, got " ++ show (length effects) ++ " effects"
+        [IssueCommandWithCompensation _ (DebitAccountCommand debit) _ _] ->
+          debit.at `shouldBe` backdated
+        _ -> expectationFailure $ "Expected one IssueCommandWithCompensation, got " ++ show (length effects) ++ " effects"
 
-    it "propagates occurredAt from TransferData to AccountDebited reactions" $ do
-      let pastTime = UTCTime (fromGregorian 2025 3 15) 0
-          metadata = withOccurredAt pastTime (emptyMetadata "")
-          initEvent =
-            StreamEvent
-              txUuid
-              0
-              metadata
-              ( TransferInitiatedEvent
-                  TransferInitiated
-                    { sourceAccountId = unsafeAccountId sourceAcctUuid,
-                      targetAccountId = unsafeAccountId targetAcctUuid,
-                      sourceAmount = unsafeMoney USD 200,
-                      targetAmount = unsafeMoney USD 200,
-                      exchangeRate = Nothing,
-                      description = "Backdated transfer",
-                      by = unsafeUserId userUuid,
-                      transferType = Transfer,
-                      externalTransactionId = Nothing,
-                      labels = Set.empty
-                    }
-              )
+    it "propagates TransferInitiated.at to the issued CreditAccount command via TransferData" $ do
+      let backdated = UTCTime (fromGregorian 2025 3 15) 0
+          initEvent = mkTransferInitiatedEventAt backdated
           stateAfterInit = handleTransferEvent emptyTransferManager initEvent
           stateAfterDebit = handleTransferEvent stateAfterInit mkAccountDebitedEvent
           effects = reactToTransferEvent stateAfterDebit mkAccountDebitedEvent
       case effects of
-        [IssueCommand _ _ creditEnricher, IssueCommand _ _ completeEnricher] -> do
-          (creditEnricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
-          (completeEnricher (emptyMetadata "test")).occurredAt `shouldBe` Just pastTime
-        _ -> expectationFailure $ "Expected 2 IssueCommand effects, got " ++ show (length effects)
-
-    it "uses id enricher when occurredAt is Nothing" $ do
-      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
-          effects = reactToTransferEvent stateAfterInit mkTransferInitiatedEvent
-      case effects of
-        [IssueCommandWithCompensation _ _ enricher _] ->
-          (enricher (emptyMetadata "test")).occurredAt `shouldBe` Nothing
-        _ -> expectationFailure "Expected IssueCommandWithCompensation"
+        [IssueCommand _ (CreditAccountCommand credit) _, IssueCommand _ (CompleteTransferCommand _) _] ->
+          credit.at `shouldBe` backdated
+        _ -> expectationFailure $ "Expected 2 IssueCommand effects with credit then complete, got " ++ show (length effects)

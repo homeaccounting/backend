@@ -667,11 +667,12 @@ toCreateAccountCommand createdBy CreateAccountRequest {..} = do
 -- Right (InitiateTransfer fromId toId (Money 300.0) "Rent" userId)
 toInitiateTransferCommand ::
   UserId ->
+  UTCTime ->
   AccountId ->
   AccountId ->
   TransferRequest ->
   Either Text InitiateTransfer
-toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
+toInitiateTransferCommand initiatedBy at fromId toId TransferRequest {..} = do
   -- Validate amount is positive
   when (amount <= 0) $
     Left "Transfer amount must be positive"
@@ -700,6 +701,7 @@ toInitiateTransferCommand initiatedBy fromId toId TransferRequest {..} = do
         exchangeRate = Nothing,
         description = description,
         initiatedBy = initiatedBy,
+        at = at,
         transferType = Transfer,
         externalTransactionId = Nothing,
         labels = Set.empty
