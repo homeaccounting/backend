@@ -21,13 +21,13 @@ PAYLOADS_DIR="${SCRIPT_DIR}/payloads/transactions"
 setup_accounts() {
     print_header "SETUP: Creating Test Accounts"
 
-    ensure_authenticated
+    ensure_user_auth
 
     # Create source account
     print_info "Creating source account (Savings, \$1000)..."
     SOURCE_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"name": "Transfer Test - Source", "currency": "USD", "initialBalance": 1000.0}')
 
     SOURCE_ACCOUNT_ID=$(echo "$SOURCE_RESPONSE" | jq -r '.id')
@@ -44,7 +44,7 @@ setup_accounts() {
     print_info "Creating target account (Checking, \$500)..."
     TARGET_RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"name": "Transfer Test - Target", "currency": "USD", "initialBalance": 500.0}')
 
     TARGET_ACCOUNT_ID=$(echo "$TARGET_RESPONSE" | jq -r '.id')
@@ -66,7 +66,7 @@ setup_accounts() {
 test_initiate_income() {
     print_header "TEST: Initiate Income"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_source_account_id.txt ]; then
         print_error "Accounts not set up. Run setup first."
@@ -98,7 +98,7 @@ EOF
 
     RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/income" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d "$INCOME_PAYLOAD")
 
     echo "$RESPONSE" | jq '.'
@@ -120,7 +120,7 @@ EOF
 test_initiate_expense() {
     print_header "TEST: Initiate Expense"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_source_account_id.txt ]; then
         print_error "Accounts not set up. Run setup first."
@@ -152,7 +152,7 @@ EOF
 
     RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/expense" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d "$EXPENSE_PAYLOAD")
 
     echo "$RESPONSE" | jq '.'
@@ -174,7 +174,7 @@ EOF
 test_initiate_transfer() {
     print_header "TEST: Initiate Transfer"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_source_account_id.txt ] || [ ! -f /tmp/test_target_account_id.txt ]; then
         print_error "Accounts not set up. Run setup first."
@@ -199,7 +199,7 @@ EOF
 
     RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d "$TRANSFER_PAYLOAD")
 
     echo "$RESPONSE" | jq '.'
@@ -248,7 +248,7 @@ test_transfer_unauthorized() {
 test_get_transaction() {
     print_header "TEST: Get Transaction Status"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_transaction_id.txt ]; then
         print_error "No transaction ID found. Run initiate test first."
@@ -263,7 +263,7 @@ test_get_transaction() {
         print_info "Polling attempt $i/5..."
 
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
-            -H "Authorization: Bearer $AUTH_TOKEN")
+            -H "Authorization: Bearer $TEST_USER_TOKEN")
         echo "$RESPONSE" | jq '.'
 
         STATUS=$(echo "$RESPONSE" | jq -r '.status')
@@ -291,7 +291,7 @@ test_get_transaction() {
 test_verify_balances() {
     print_header "TEST: Verify Account Balances"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_source_account_id.txt ] || [ ! -f /tmp/test_target_account_id.txt ]; then
         print_error "Accounts not set up."
@@ -304,7 +304,7 @@ test_verify_balances() {
     # Check source account
     print_info "Checking source account balance..."
     SOURCE_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${SOURCE_ACCOUNT_ID}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     SOURCE_BALANCE=$(echo "$SOURCE_RESPONSE" | jq -r '.balance')
     echo "$SOURCE_RESPONSE" | jq '.'
     print_info "Source account balance: \$${SOURCE_BALANCE}"
@@ -312,7 +312,7 @@ test_verify_balances() {
     # Check target account
     print_info "Checking target account balance..."
     TARGET_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${TARGET_ACCOUNT_ID}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     TARGET_BALANCE=$(echo "$TARGET_RESPONSE" | jq -r '.balance')
     echo "$TARGET_RESPONSE" | jq '.'
     print_info "Target account balance: \$${TARGET_BALANCE}"
@@ -324,12 +324,12 @@ test_verify_balances() {
 test_list_transactions() {
     print_header "TEST: List Transactions"
 
-    ensure_authenticated
+    ensure_user_auth
 
     # 1) No filters — all visible transactions
     print_info "Listing all transactions (no filters)..."
     RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     echo "$RESPONSE" | jq '.'
 
     TOTAL_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
@@ -352,7 +352,7 @@ test_list_transactions() {
         SOURCE_ACCOUNT_ID=$(cat /tmp/test_source_account_id.txt)
         print_info "Listing transactions for source account $SOURCE_ACCOUNT_ID..."
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions?accountId=${SOURCE_ACCOUNT_ID}" \
-            -H "Authorization: Bearer $AUTH_TOKEN")
+            -H "Authorization: Bearer $TEST_USER_TOKEN")
         echo "$RESPONSE" | jq '.'
         FILTERED_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
         if [ -n "$FILTERED_COUNT" ] && [ "$FILTERED_COUNT" != "null" ]; then
@@ -369,7 +369,7 @@ test_list_transactions() {
     TO_DATE="2100-01-01T00:00:00Z"
     print_info "Listing transactions with from=${FROM_DATE} to=${TO_DATE}..."
     RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions?from=${FROM_DATE}&to=${TO_DATE}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     echo "$RESPONSE" | jq '.'
     RANGE_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
     if [ -n "$RANGE_COUNT" ] && [ "$RANGE_COUNT" != "null" ]; then
@@ -382,7 +382,7 @@ test_list_transactions() {
     print_info "Attempting invalid range (from > to, expected 400)..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X GET \
         "${API_BASE_URL}/api/transactions?from=2100-01-01T00:00:00Z&to=2020-01-01T00:00:00Z" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -412,7 +412,7 @@ test_list_transactions() {
 test_insufficient_funds_transfer() {
     print_header "TEST: Transfer with Insufficient Funds (Expected Failure)"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_source_account_id.txt ] || [ ! -f /tmp/test_target_account_id.txt ]; then
         print_error "Accounts not set up. Run setup first."
@@ -437,7 +437,7 @@ EOF
 
     RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d "$TRANSFER_PAYLOAD")
 
     echo "$RESPONSE" | jq '.'
@@ -451,7 +451,7 @@ EOF
         for i in {1..5}; do
             sleep 1
             STATUS_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
-                -H "Authorization: Bearer $AUTH_TOKEN")
+                -H "Authorization: Bearer $TEST_USER_TOKEN")
             STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status')
 
             if [ "$STATUS" = "Failed" ]; then

@@ -52,14 +52,52 @@ _strip_endpoint_flags() {
 
 # --- .env loader --------------------------------------------------------------
 
+# Source two .env files in order:
+#   1. <project_root>/.env             — app runtime (DB, JWT, OAuth, ...)
+#   2. <project_root>/scripts/api-test/.env — test fixtures (TEST_USER_*,
+#      TELEGRAM_USER_*, MONOBANK_*); shadows root for any overlap.
+# The nested file is what isolates test fixtures from `cabal run` / `just run`.
 load_env() {
     local project_root="${1:-$(cd "$(dirname "${BASH_SOURCE[1]}")/../.." && pwd)}"
-    if [ -z "$TELEGRAM_USER_ID" ] && [ -f "${project_root}/.env" ]; then
-        set -a
-        # shellcheck disable=SC1091
-        source "${project_root}/.env"
-        set +a
+    if [ -n "$_API_TEST_ENV_LOADED" ]; then
+        return
     fi
+    local f
+    for f in "${project_root}/.env" "${project_root}/scripts/api-test/.env"; do
+        if [ -f "$f" ]; then
+            set -a
+            # shellcheck disable=SC1090
+            source "$f"
+            set +a
+        fi
+    done
+    export _API_TEST_ENV_LOADED=1
+}
+
+# Auto-load .env when common.sh is sourced so every test script has access to
+# TEST_USER_*, TELEGRAM_*, MONOBANK_*, etc. without explicit setup.
+load_env "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# --- Test credentials ---------------------------------------------------------
+
+# Resolve primary test user email/password into TEST_USER_EMAIL / TEST_USER_PASSWORD.
+# Priority: existing env vars (from .env) > saved /tmp credentials > generated.
+resolve_user_credentials() {
+    if [ -z "$TEST_USER_EMAIL" ] \
+        && [ -f /tmp/test_user_email.txt ] \
+        && [ -f /tmp/test_user_password.txt ]; then
+        TEST_USER_EMAIL=$(cat /tmp/test_user_email.txt)
+        TEST_USER_PASSWORD=$(cat /tmp/test_user_password.txt)
+    fi
+    : "${TEST_USER_EMAIL:=testuser-$(date +%s)@example.com}"
+    : "${TEST_USER_PASSWORD:=SecurePass123!}"
+}
+
+# Resolve secondary test user email/password into TEST_USER2_EMAIL / TEST_USER2_PASSWORD.
+# Priority: existing env vars (from .env) > generated.
+resolve_user2_credentials() {
+    : "${TEST_USER2_EMAIL:=seconduser-$(date +%s)@example.com}"
+    : "${TEST_USER2_PASSWORD:=SecurePass456!}"
 }
 
 # --- Colors -------------------------------------------------------------------
@@ -115,64 +153,82 @@ check_server() {
 
 # --- Auth helpers -------------------------------------------------------------
 
-# Get saved auth token (returns empty string if none)
-get_saved_token() {
-    if [ -f /tmp/test_auth_token.txt ]; then
-        cat /tmp/test_auth_token.txt
-    else
-        echo ""
+# Persist resolved primary credentials and token to /tmp for cross-script reuse.
+save_user_session() {
+    echo "$TEST_USER_TOKEN"    > /tmp/test_user_token.txt
+    echo "$TEST_USER_EMAIL"    > /tmp/test_user_email.txt
+    echo "$TEST_USER_PASSWORD" > /tmp/test_user_password.txt
+}
+
+# Populate TEST_USER_TOKEN from the /tmp cache if it isn't already set.
+# Env-provided tokens take precedence — the cache is only a cross-process bridge.
+load_user_token() {
+    if [ -z "$TEST_USER_TOKEN" ] && [ -s /tmp/test_user_token.txt ]; then
+        TEST_USER_TOKEN=$(cat /tmp/test_user_token.txt)
     fi
 }
 
-# Ensure a valid auth token exists; registers a new test user if needed.
-# Sets AUTH_TOKEN in the caller's scope.
-ensure_authenticated() {
-    if [ -f /tmp/test_auth_token.txt ]; then
-        AUTH_TOKEN=$(cat /tmp/test_auth_token.txt)
-        print_info "Using saved auth token"
-    else
-        print_info "No saved token found. Registering a new test user..."
-        local test_email="autotest-$(date +%s)@example.com"
-        local test_password="SecurePass123!"
+# Echo the resolved token (loading from cache if needed). Empty string if none.
+get_user_token() {
+    load_user_token
+    echo "$TEST_USER_TOKEN"
+}
 
-        local response
+# Ensure TEST_USER_TOKEN is populated. Tries (in order):
+#   1. existing env var / cached token (load_user_token)
+#   2. login with resolved credentials
+#   3. register with resolved credentials
+ensure_user_auth() {
+    load_user_token
+    if [ -n "$TEST_USER_TOKEN" ]; then
+        print_info "Using saved auth token"
+        return
+    fi
+
+    resolve_user_credentials
+
+    print_info "Attempting login as: $TEST_USER_EMAIL"
+    local response
+    response=$(curl -s -X POST "${API_BASE_URL}/api/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\": \"$TEST_USER_EMAIL\", \"password\": \"$TEST_USER_PASSWORD\"}")
+    TEST_USER_TOKEN=$(echo "$response" | jq -r '.token')
+
+    if [ -z "$TEST_USER_TOKEN" ] || [ "$TEST_USER_TOKEN" = "null" ]; then
+        print_info "Login failed; registering new user..."
         response=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
             -H "Content-Type: application/json" \
-            -d "{\"email\": \"$test_email\", \"password\": \"$test_password\"}")
+            -d "{\"email\": \"$TEST_USER_EMAIL\", \"password\": \"$TEST_USER_PASSWORD\"}")
+        TEST_USER_TOKEN=$(echo "$response" | jq -r '.token')
+    fi
 
-        AUTH_TOKEN=$(echo "$response" | jq -r '.token')
-
-        if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
-            echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
-            echo "$test_email" > /tmp/test_auth_email.txt
-            echo "$test_password" > /tmp/test_auth_password.txt
-            print_success "Test user registered: $test_email"
-        else
-            print_error "Failed to register test user"
-            echo "$response" | jq '.' 2>/dev/null || echo "$response"
-            exit 1
-        fi
+    if [ -n "$TEST_USER_TOKEN" ] && [ "$TEST_USER_TOKEN" != "null" ]; then
+        save_user_session
+        print_success "Authenticated as: $TEST_USER_EMAIL"
+    else
+        print_error "Failed to authenticate"
+        echo "$response" | jq '.' 2>/dev/null || echo "$response"
+        exit 1
     fi
 }
 
-# Print Authorization header value (exits if no token)
-auth_header() {
-    local token
-    token=$(get_saved_token)
-    if [ -z "$token" ]; then
+# Print Authorization header value (exits if no token).
+user_auth_header() {
+    load_user_token
+    if [ -z "$TEST_USER_TOKEN" ]; then
         echo -e "${RED}No auth token found. Register or login first.${NC}" >&2
         exit 1
     fi
-    echo "Authorization: Bearer $token"
+    echo "Authorization: Bearer $TEST_USER_TOKEN"
 }
 
 # --- Configuration helpers ----------------------------------------------------
 
 # Fetch the current user's configuration JSON.
-# Requires AUTH_TOKEN to be set. Stores result in CONFIG_JSON.
+# Requires TEST_USER_TOKEN to be set. Stores result in CONFIG_JSON.
 fetch_configuration() {
     CONFIG_JSON=$(curl -s -X GET "${API_BASE_URL}/api/users/me/configuration" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 }
 
 # Look up a category entry UUID by name from a dictionary.

@@ -6,7 +6,7 @@
 # Auth token management:
 #   - Protected endpoints require a JWT token
 #   - Use 'register' or 'login' to obtain and save a token
-#   - Token is saved to /tmp/test_auth_token.txt and reused automatically
+#   - Token is saved to /tmp/test_user_token.txt and reused automatically
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
@@ -115,10 +115,10 @@ case "${1:-help}" in
         check_jq "$RESPONSE"
         TOKEN=$(echo "$RESPONSE" | jq -r '.token' 2>/dev/null)
         if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-            echo "$TOKEN" > /tmp/test_auth_token.txt
-            echo "$EMAIL" > /tmp/test_auth_email.txt
-            echo "$PASSWORD" > /tmp/test_auth_password.txt
-            echo -e "${GREEN}✓ Token saved to /tmp/test_auth_token.txt${NC}"
+            echo "$TOKEN" > /tmp/test_user_token.txt
+            echo "$EMAIL" > /tmp/test_user_email.txt
+            echo "$PASSWORD" > /tmp/test_user_password.txt
+            echo -e "${GREEN}✓ Token saved to /tmp/test_user_token.txt${NC}"
         fi
         ;;
 
@@ -136,20 +136,20 @@ case "${1:-help}" in
         check_jq "$RESPONSE"
         TOKEN=$(echo "$RESPONSE" | jq -r '.token' 2>/dev/null)
         if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-            echo "$TOKEN" > /tmp/test_auth_token.txt
-            echo "$EMAIL" > /tmp/test_auth_email.txt
-            echo "$PASSWORD" > /tmp/test_auth_password.txt
-            echo -e "${GREEN}✓ Token saved to /tmp/test_auth_token.txt${NC}"
+            echo "$TOKEN" > /tmp/test_user_token.txt
+            echo "$EMAIL" > /tmp/test_user_email.txt
+            echo "$PASSWORD" > /tmp/test_user_password.txt
+            echo -e "${GREEN}✓ Token saved to /tmp/test_user_token.txt${NC}"
         fi
         ;;
 
     token)
-        TOKEN=$(get_saved_token)
+        TOKEN=$(get_user_token)
         if [ -n "$TOKEN" ]; then
             echo -e "${YELLOW}Current auth token:${NC}"
             echo "$TOKEN"
-            if [ -f /tmp/test_auth_email.txt ]; then
-                echo -e "${YELLOW}Email: $(cat /tmp/test_auth_email.txt)${NC}"
+            if [ -f /tmp/test_user_email.txt ]; then
+                echo -e "${YELLOW}Email: $(cat /tmp/test_user_email.txt)${NC}"
             fi
         else
             echo -e "${RED}No auth token saved. Run '$0 register' or '$0 login' first.${NC}"
@@ -168,7 +168,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Creating account: $NAME with balance \$$BALANCE${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"name\": \"$NAME\", \"currency\": \"USD\", \"initialBalance\": $BALANCE}")
         check_jq "$RESPONSE"
         ;;
@@ -176,7 +176,7 @@ case "${1:-help}" in
     list)
         echo -e "${YELLOW}Listing all accounts...${NC}"
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -188,7 +188,7 @@ case "${1:-help}" in
         ACCOUNT_ID="$2"
         echo -e "${YELLOW}Getting account: $ACCOUNT_ID${NC}"
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -204,7 +204,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Sharing account $ACCOUNT_ID with user $TARGET_USER_ID (role: $ROLE)${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}/share" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"userId\": \"$TARGET_USER_ID\", \"role\": \"$ROLE\"}")
         if [ -z "$RESPONSE" ]; then
             echo -e "${GREEN}✓ Account shared (204 No Content)${NC}"
@@ -223,7 +223,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Revoking access for user $TARGET_USER_ID from account $ACCOUNT_ID${NC}"
         RESPONSE=$(curl -s -X DELETE \
             "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}/access/${TARGET_USER_ID}" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         if [ -z "$RESPONSE" ]; then
             echo -e "${GREEN}✓ Access revoked (204 No Content)${NC}"
         else
@@ -245,7 +245,7 @@ case "${1:-help}" in
         CATEGORY="$4"
         if [ -z "$CATEGORY" ]; then
             echo -e "${YELLOW}No category UUID provided. Fetching first income category...${NC}"
-            AUTH_TOKEN=$(get_saved_token)
+            TEST_USER_TOKEN=$(get_user_token)
             fetch_configuration
             CATEGORY=$(first_category_id "income-category")
             if [ -z "$CATEGORY" ]; then
@@ -257,7 +257,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Recording income of \$$AMOUNT to $ACCOUNT_ID${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/income" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"category\": \"$CATEGORY\", \"description\": \"Quick income\"}")
         check_jq "$RESPONSE"
         ;;
@@ -274,7 +274,7 @@ case "${1:-help}" in
         CATEGORY="$4"
         if [ -z "$CATEGORY" ]; then
             echo -e "${YELLOW}No category UUID provided. Fetching first expense category...${NC}"
-            AUTH_TOKEN=$(get_saved_token)
+            TEST_USER_TOKEN=$(get_user_token)
             fetch_configuration
             CATEGORY=$(first_category_id "expense-category")
             if [ -z "$CATEGORY" ]; then
@@ -286,7 +286,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Recording expense of \$$AMOUNT from $ACCOUNT_ID${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/expense" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"accountId\": \"$ACCOUNT_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"category\": \"$CATEGORY\", \"description\": \"Quick expense\"}")
         check_jq "$RESPONSE"
         ;;
@@ -302,7 +302,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Transferring \$$AMOUNT from $FROM_ID to $TO_ID${NC}"
         RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/transactions/transfer" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"sourceAccountId\": \"$FROM_ID\", \"targetAccountId\": \"$TO_ID\", \"amount\": $AMOUNT, \"currency\": \"USD\", \"description\": \"Quick transfer\"}")
         check_jq "$RESPONSE"
         ;;
@@ -315,7 +315,7 @@ case "${1:-help}" in
         TRANSACTION_ID="$2"
         echo -e "${YELLOW}Getting transaction: $TRANSACTION_ID${NC}"
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions/${TRANSACTION_ID}" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -339,7 +339,7 @@ case "${1:-help}" in
         fi
         echo -e "${YELLOW}Listing transactions${QS:+ (}${QS}${QS:+)}...${NC}"
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/transactions${QS}" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -348,7 +348,7 @@ case "${1:-help}" in
     profile)
         echo -e "${YELLOW}Getting user profile...${NC}"
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/users/me" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -362,13 +362,13 @@ case "${1:-help}" in
         echo -e "${YELLOW}Changing password...${NC}"
         RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/users/me/change-password" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"currentPassword\": \"$CURRENT\", \"newPassword\": \"$NEW\"}")
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
         BODY=$(echo "$RESPONSE" | sed '$d')
         if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
             echo -e "${GREEN}✓ Password changed successfully${NC}"
-            echo "$NEW" > /tmp/test_auth_password.txt
+            echo "$NEW" > /tmp/test_user_password.txt
         else
             check_jq "$BODY"
         fi
@@ -379,7 +379,7 @@ case "${1:-help}" in
     config)
         echo -e "${YELLOW}Getting configuration...${NC}"
         RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/users/me/configuration" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -393,7 +393,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Listing dictionary entries for: $DICT_ID${NC}"
         RESPONSE=$(curl -s -X GET \
             "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         check_jq "$RESPONSE"
         ;;
 
@@ -408,7 +408,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -X POST \
             "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}/entries" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"name\": \"$ENTRY_NAME\"}")
         check_jq "$RESPONSE"
         ;;
@@ -425,7 +425,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}/entries/${ENTRY_ID}" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"name\": \"$NEW_NAME\"}")
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
         BODY=$(echo "$RESPONSE" | sed '$d')
@@ -446,7 +446,7 @@ case "${1:-help}" in
         echo -e "${YELLOW}Removing entry $ENTRY_ID from $DICT_ID...${NC}"
         RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
             "${API_BASE_URL}/api/users/me/configuration/dictionaries/${DICT_ID}/entries/${ENTRY_ID}" \
-            -H "$(auth_header)")
+            -H "$(user_auth_header)")
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
         BODY=$(echo "$RESPONSE" | sed '$d')
         if [ "$HTTP_CODE" = "204" ]; then
@@ -466,7 +466,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             "${API_BASE_URL}/api/users/me/configuration/base-currency" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"currency\": \"$CURRENCY\"}")
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
         BODY=$(echo "$RESPONSE" | sed '$d')
@@ -487,7 +487,7 @@ case "${1:-help}" in
         RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
             "${API_BASE_URL}/api/users/me/configuration/default-currency" \
             -H "Content-Type: application/json" \
-            -H "$(auth_header)" \
+            -H "$(user_auth_header)" \
             -d "{\"currency\": \"$CURRENCY\"}")
         HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
         BODY=$(echo "$RESPONSE" | sed '$d')

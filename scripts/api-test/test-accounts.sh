@@ -17,25 +17,34 @@ set -- $ARGS
 
 PAYLOADS_DIR="${SCRIPT_DIR}/payloads/accounts"
 
-# Register a second user and return their ID and token
+# Register (or log in) a second user and capture their ID into TEST_USER2_ID.
+# Honors TEST_USER2_EMAIL/TEST_USER2_PASSWORD from .env when set.
 register_second_user() {
-    SECOND_EMAIL="seconduser-$(date +%s)@example.com"
-    SECOND_PASSWORD="SecurePass456!"
+    resolve_user2_credentials
 
-    RESPONSE=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
+    local response token
+    response=$(curl -s -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"email\": \"$SECOND_EMAIL\", \"password\": \"$SECOND_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_USER2_EMAIL\", \"password\": \"$TEST_USER2_PASSWORD\"}")
 
-    SECOND_TOKEN=$(echo "$RESPONSE" | jq -r '.token')
-    SECOND_USER_ID=$(echo "$RESPONSE" | jq -r '.userId')
+    token=$(echo "$response" | jq -r '.token')
+    TEST_USER2_ID=$(echo "$response" | jq -r '.userId')
 
-    if [ -n "$SECOND_TOKEN" ] && [ "$SECOND_TOKEN" != "null" ]; then
-        echo "$SECOND_USER_ID" > /tmp/test_second_user_id.txt
-        echo "$SECOND_TOKEN" > /tmp/test_second_auth_token.txt
-        print_success "Second user registered: $SECOND_EMAIL (ID: $SECOND_USER_ID)"
+    # If the second user already exists (fixed email from .env), fall back to login.
+    if [ -z "$token" ] || [ "$token" = "null" ]; then
+        response=$(curl -s -X POST "${API_BASE_URL}/api/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\": \"$TEST_USER2_EMAIL\", \"password\": \"$TEST_USER2_PASSWORD\"}")
+        token=$(echo "$response" | jq -r '.token')
+        TEST_USER2_ID=$(echo "$response" | jq -r '.userId')
+    fi
+
+    if [ -n "$token" ] && [ "$token" != "null" ]; then
+        echo "$TEST_USER2_ID" > /tmp/test_user2_id.txt
+        print_success "Second user ready: $TEST_USER2_EMAIL (ID: $TEST_USER2_ID)"
     else
-        print_error "Failed to register second user"
-        echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
+        print_error "Failed to register/login second user"
+        echo "$response" | jq '.' 2>/dev/null || echo "$response"
         return 1
     fi
 }
@@ -44,12 +53,12 @@ register_second_user() {
 test_create_account() {
     print_header "TEST: Create Account"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Creating Savings Account (requires auth)..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d @"${PAYLOADS_DIR}/create-savings.json")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -93,7 +102,7 @@ test_create_account_unauthorized() {
 test_get_account() {
     print_header "TEST: Get Account by ID"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_account_id.txt ]; then
         print_error "No account ID found. Run create test first."
@@ -104,7 +113,7 @@ test_get_account() {
     print_info "Getting account: $ACCOUNT_ID"
 
     RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     echo "$RESPONSE" | jq '.'
 
     if echo "$RESPONSE" | jq -e '.id' > /dev/null 2>&1; then
@@ -119,11 +128,11 @@ test_get_account() {
 test_list_accounts() {
     print_header "TEST: List All Accounts"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Listing all accounts..."
     RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     echo "$RESPONSE" | jq '.'
 
     TOTAL_COUNT=$(echo "$RESPONSE" | jq -r '.totalCount')
@@ -134,7 +143,7 @@ test_list_accounts() {
 test_share_account() {
     print_header "TEST: Share Account"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_account_id.txt ]; then
         print_error "No account ID found. Run create test first."
@@ -147,18 +156,18 @@ test_share_account() {
     print_info "Creating a second user to share the account with..."
     register_second_user
 
-    if [ ! -f /tmp/test_second_user_id.txt ]; then
+    if [ ! -f /tmp/test_user2_id.txt ]; then
         print_error "Failed to create second user for sharing."
         return 1
     fi
 
-    SECOND_USER_ID=$(cat /tmp/test_second_user_id.txt)
+    TEST_USER2_ID=$(cat /tmp/test_user2_id.txt)
 
-    print_info "Sharing account $ACCOUNT_ID with user $SECOND_USER_ID (role: editor)..."
+    print_info "Sharing account $ACCOUNT_ID with user $TEST_USER2_ID (role: editor)..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}/share" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
-        -d "{\"userId\": \"$SECOND_USER_ID\", \"role\": \"editor\"}")
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
+        -d "{\"userId\": \"$TEST_USER2_ID\", \"role\": \"editor\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -177,20 +186,20 @@ test_share_account() {
 test_revoke_access() {
     print_header "TEST: Revoke Account Access"
 
-    ensure_authenticated
+    ensure_user_auth
 
-    if [ ! -f /tmp/test_account_id.txt ] || [ ! -f /tmp/test_second_user_id.txt ]; then
+    if [ ! -f /tmp/test_account_id.txt ] || [ ! -f /tmp/test_user2_id.txt ]; then
         print_error "No account ID or second user ID found. Run share test first."
         return 1
     fi
 
     ACCOUNT_ID=$(cat /tmp/test_account_id.txt)
-    SECOND_USER_ID=$(cat /tmp/test_second_user_id.txt)
+    TEST_USER2_ID=$(cat /tmp/test_user2_id.txt)
 
-    print_info "Revoking access for user $SECOND_USER_ID from account $ACCOUNT_ID..."
+    print_info "Revoking access for user $TEST_USER2_ID from account $ACCOUNT_ID..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
-        "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}/access/${SECOND_USER_ID}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        "${API_BASE_URL}/api/accounts/${ACCOUNT_ID}/access/${TEST_USER2_ID}" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

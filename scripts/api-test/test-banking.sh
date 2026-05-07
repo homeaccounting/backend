@@ -5,8 +5,9 @@
 #
 # Prerequisites:
 #   - Server running (use --prod or --local to select endpoint)
-#   - A cached JWT at /tmp/test_auth_token.txt (obtained via test-auth.sh,
-#     test-telegram.sh login <YOUR_TG_ID>, or by seeding TEST_AUTH_TOKEN)
+#   - A JWT, supplied as either TEST_USER_TOKEN env var or the
+#     /tmp/test_user_token.txt cache populated by test-auth.sh /
+#     test-telegram.sh login
 #   - MONOBANK_TOKEN env var (personal token from api.monobank.ua)
 #   - MONOBANK_IBAN env var (must match the IBAN Monobank returns for
 #     the account you want to import)
@@ -31,12 +32,6 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PAYLOADS_DIR="${SCRIPT_DIR}/payloads/banking"
 
 load_env "$PROJECT_ROOT"
-
-# Seed the shared token cache from TEST_AUTH_TOKEN when present, so a
-# user can run this script with a pasted JWT and no prior login step.
-if [ -n "$TEST_AUTH_TOKEN" ]; then
-    echo "$TEST_AUTH_TOKEN" > /tmp/test_auth_token.txt
-fi
 
 # Defaults
 CURRENCY="${CURRENCY:-UAH}"
@@ -85,16 +80,16 @@ check_prerequisites() {
 }
 
 require_auth_token() {
-    if [ ! -s /tmp/test_auth_token.txt ]; then
-        print_error "No cached JWT found at /tmp/test_auth_token.txt"
+    load_user_token
+    if [ -z "$TEST_USER_TOKEN" ]; then
+        print_error "No JWT found in TEST_USER_TOKEN env or /tmp/test_user_token.txt"
         echo ""
         echo "Obtain a token using one of:"
         echo "  1. Password login:    ./scripts/api-test/test-auth.sh login"
         echo "  2. Telegram widget:   ./scripts/api-test/test-telegram.sh login <YOUR_TG_ID> <FirstName> <username>"
-        echo "  3. Pasted JWT:        export TEST_AUTH_TOKEN='...' and re-run"
+        echo "  3. Pasted JWT:        export TEST_USER_TOKEN='...' and re-run"
         exit 1
     fi
-    AUTH_TOKEN=$(cat /tmp/test_auth_token.txt)
 }
 
 require_iban() {
@@ -130,7 +125,7 @@ test_setup() {
 
     print_info "Listing accounts and matching bankAccount/accountNumber=$MONOBANK_IBAN..."
     LIST_RESPONSE=$(curl -s -X GET "${API_BASE_URL}/api/accounts" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     # Defensive check: if the DTO does not expose subtype.accountNumber,
     # bail out loudly rather than silently creating duplicates.
@@ -160,7 +155,7 @@ test_setup() {
 
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/accounts" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d "$body")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -194,7 +189,7 @@ test_resync() {
     print_info "Snapshotting balance of $account_id before resync..."
     local acc_before
     acc_before=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${account_id}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     local balance_before
     balance_before=$(echo "$acc_before" | jq -r '.balance // empty')
     if [ -z "$balance_before" ]; then
@@ -226,7 +221,7 @@ test_resync() {
     # Use a separate variable so the curl -w suffix does not pollute the JSON body.
     response=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/banking/resync" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -H "X-Banking-Token: $MONOBANK_TOKEN" \
         -d "$body")
 
@@ -287,7 +282,7 @@ test_verify() {
     resync_json=$(cat "$RESYNC_RESPONSE_CACHE")
 
     acc_after=$(curl -s -X GET "${API_BASE_URL}/api/accounts/${account_id}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     balance_after=$(echo "$acc_after" | jq -r '.balance // empty')
     if [ -z "$balance_after" ]; then
         print_error "Could not read balance of $account_id after resync"
@@ -362,7 +357,7 @@ Optional:
   CURRENCY         default UAH
   BANK_NAME        default Monobank
   ACCOUNT_NAME     default "Mono \${CURRENCY}"
-  TEST_AUTH_TOKEN  seed /tmp/test_auth_token.txt with a pasted JWT
+  TEST_USER_TOKEN  pasted JWT (alternative to /tmp/test_user_token.txt cache)
 
 Auth: see require_auth_token() in this script.
 EOF

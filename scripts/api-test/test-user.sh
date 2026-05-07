@@ -20,11 +20,11 @@ PAYLOADS_DIR="${SCRIPT_DIR}/payloads/user"
 test_get_profile() {
     print_header "TEST: Get User Profile"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Fetching current user profile..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X GET "${API_BASE_URL}/api/users/me" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -67,11 +67,11 @@ test_get_profile_unauthorized() {
 test_update_profile() {
     print_header "TEST: Update Profile"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Updating profile (email change)..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${API_BASE_URL}/api/users/me" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -H "Content-Type: application/json" \
         -d '{"email": "newemail@example.com"}')
 
@@ -91,19 +91,19 @@ test_update_profile() {
 test_change_password() {
     print_header "TEST: Change Password"
 
-    ensure_authenticated
+    ensure_user_auth
 
-    if [ ! -f /tmp/test_auth_password.txt ]; then
+    if [ ! -f /tmp/test_user_password.txt ]; then
         print_error "No saved password found. Cannot test password change."
         return 1
     fi
 
-    CURRENT_PASSWORD=$(cat /tmp/test_auth_password.txt)
+    CURRENT_PASSWORD=$(cat /tmp/test_user_password.txt)
     NEW_PASSWORD="NewSecurePass789!"
 
     print_info "Changing password..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/users/me/change-password" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{\"currentPassword\": \"$CURRENT_PASSWORD\", \"newPassword\": \"$NEW_PASSWORD\"}")
 
@@ -114,7 +114,7 @@ test_change_password() {
 
     if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
         print_success "Password changed successfully"
-        echo "$NEW_PASSWORD" > /tmp/test_auth_password.txt
+        echo "$NEW_PASSWORD" > /tmp/test_user_password.txt
     else
         print_error "Failed to change password (HTTP $HTTP_CODE)"
         return 1
@@ -125,11 +125,11 @@ test_change_password() {
 test_change_password_wrong() {
     print_header "TEST: Change Password with Wrong Current (Expected Failure)"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Attempting password change with wrong current password..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/users/me/change-password" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -H "Content-Type: application/json" \
         -d '{"currentPassword": "WrongPassword!", "newPassword": "ShouldNotWork123!"}')
 
@@ -150,11 +150,11 @@ test_change_password_wrong() {
 test_unlink_oauth() {
     print_header "TEST: Unlink OAuth Provider"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Attempting to unlink Google OAuth..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_BASE_URL}/api/users/me/oauth/google" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -172,11 +172,11 @@ test_unlink_oauth() {
 test_unlink_telegram() {
     print_header "TEST: Unlink Telegram"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Attempting to unlink Telegram..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE "${API_BASE_URL}/api/users/me/telegram" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

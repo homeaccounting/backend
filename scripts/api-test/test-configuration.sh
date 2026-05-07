@@ -21,11 +21,11 @@ CONFIG_BASE="${API_BASE_URL}/api/users/me/configuration"
 test_get_configuration() {
     print_header "TEST: Get Configuration"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Fetching user configuration..."
     RESPONSE=$(curl -s -X GET "${CONFIG_BASE}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     echo "$RESPONSE" | jq '.'
 
@@ -50,12 +50,12 @@ test_get_configuration() {
 test_change_base_currency() {
     print_header "TEST: Change Base Currency"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Changing base currency to EUR..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${CONFIG_BASE}/base-currency" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"currency": "EUR"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -72,7 +72,7 @@ test_change_base_currency() {
     # Verify the change
     print_info "Verifying change..."
     VERIFY=$(curl -s -X GET "${CONFIG_BASE}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     NEW_BASE=$(echo "$VERIFY" | jq -r '.baseCurrency')
 
     if [ "$NEW_BASE" = "EUR" ]; then
@@ -85,7 +85,7 @@ test_change_base_currency() {
     print_info "Reverting base currency to USD..."
     curl -s -w "\n%{http_code}" -X PUT "${CONFIG_BASE}/base-currency" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"currency": "USD"}' > /dev/null
     print_info "Reverted to USD"
 }
@@ -94,12 +94,12 @@ test_change_base_currency() {
 test_change_default_currency() {
     print_header "TEST: Change Default Currency"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Changing default currency to UAH..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${CONFIG_BASE}/default-currency" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"currency": "UAH"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -115,7 +115,7 @@ test_change_default_currency() {
 
     # Verify
     VERIFY=$(curl -s -X GET "${CONFIG_BASE}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     NEW_DEFAULT=$(echo "$VERIFY" | jq -r '.defaultCurrency')
 
     if [ "$NEW_DEFAULT" = "UAH" ]; then
@@ -127,7 +127,7 @@ test_change_default_currency() {
     # Revert
     curl -s -X PUT "${CONFIG_BASE}/default-currency" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"currency": "USD"}' > /dev/null
     print_info "Reverted to USD"
 }
@@ -136,12 +136,12 @@ test_change_default_currency() {
 test_invalid_currency() {
     print_header "TEST: Change to Invalid Currency (Expected 400)"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Attempting to set base currency to 'NOPE'..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "${CONFIG_BASE}/base-currency" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"currency": "NOPE"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -160,11 +160,11 @@ test_invalid_currency() {
 test_list_dictionary() {
     print_header "TEST: List Dictionary Entries"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Listing income categories..."
     RESPONSE=$(curl -s -X GET "${CONFIG_BASE}/dictionaries/income-category" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     echo "$RESPONSE" | jq '.'
 
@@ -184,7 +184,7 @@ test_list_dictionary() {
 
     print_info "Listing expense categories..."
     EXPENSE_RESPONSE=$(curl -s -X GET "${CONFIG_BASE}/dictionaries/expense-category" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     EXPENSE_COUNT=$(echo "$EXPENSE_RESPONSE" | jq '.entries | length')
     print_success "Found $EXPENSE_COUNT expense categories"
@@ -194,13 +194,13 @@ test_list_dictionary() {
 test_add_entry() {
     print_header "TEST: Add Dictionary Entry"
 
-    ensure_authenticated
+    ensure_user_auth
 
     print_info "Adding custom income category 'Side Hustle'..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
         "${CONFIG_BASE}/dictionaries/income-category/entries" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"name": "Side Hustle"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -223,7 +223,7 @@ test_add_entry() {
 test_rename_entry() {
     print_header "TEST: Rename Dictionary Entry"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_config_entry_id.txt ]; then
         print_error "No entry ID found. Run 'add' test first."
@@ -236,7 +236,7 @@ test_rename_entry() {
     RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT \
         "${CONFIG_BASE}/dictionaries/income-category/entries/${ENTRY_ID}" \
         -H "Content-Type: application/json" \
-        -H "Authorization: Bearer $AUTH_TOKEN" \
+        -H "Authorization: Bearer $TEST_USER_TOKEN" \
         -d '{"name": "Gig Work"}')
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
@@ -252,7 +252,7 @@ test_rename_entry() {
 
     # Verify
     VERIFY=$(curl -s -X GET "${CONFIG_BASE}/dictionaries/income-category" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
     FOUND=$(echo "$VERIFY" | jq -r --arg id "$ENTRY_ID" '.entries[] | select(.id == $id) | .name')
 
     if [ "$FOUND" = "Gig Work" ]; then
@@ -266,7 +266,7 @@ test_rename_entry() {
 test_remove_entry() {
     print_header "TEST: Remove Dictionary Entry"
 
-    ensure_authenticated
+    ensure_user_auth
 
     if [ ! -f /tmp/test_config_entry_id.txt ]; then
         print_error "No entry ID found. Run 'add' test first."
@@ -278,7 +278,7 @@ test_remove_entry() {
     print_info "Removing entry $ENTRY_ID..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
         "${CONFIG_BASE}/dictionaries/income-category/entries/${ENTRY_ID}" \
-        -H "Authorization: Bearer $AUTH_TOKEN")
+        -H "Authorization: Bearer $TEST_USER_TOKEN")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')

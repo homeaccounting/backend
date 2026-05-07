@@ -13,45 +13,31 @@ ARGS=$(_strip_endpoint_flags "$@")
 set -- $ARGS
 
 PAYLOADS_DIR="${SCRIPT_DIR}/payloads/auth"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-
-load_env "$PROJECT_ROOT"
-
-# Generate a unique email for testing
-generate_test_email() {
-    echo "testuser-$(date +%s)@example.com"
-}
 
 # Test: Register
 test_register() {
     print_header "TEST: Register New User"
 
-    TEST_EMAIL=$(generate_test_email)
-    TEST_PASSWORD="SecurePass123!"
+    resolve_user_credentials
 
-    print_info "Registering user: $TEST_EMAIL"
+    print_info "Registering user: $TEST_USER_EMAIL"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_USER_EMAIL\", \"password\": \"$TEST_USER_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
-    AUTH_USER_ID=$(echo "$BODY" | jq -r '.userId')
+    TEST_USER_TOKEN=$(echo "$BODY" | jq -r '.token')
+    USER_ID=$(echo "$BODY" | jq -r '.userId')
 
-    if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
+    if [ -n "$TEST_USER_TOKEN" ] && [ "$TEST_USER_TOKEN" != "null" ]; then
         print_success "User registered successfully"
-        print_info "User ID: $AUTH_USER_ID"
-        print_info "Token (first 20 chars): ${AUTH_TOKEN:0:20}..."
-
-        # Save credentials for subsequent tests
-        echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
-        echo "$AUTH_USER_ID" > /tmp/test_auth_user_id.txt
-        echo "$TEST_EMAIL" > /tmp/test_auth_email.txt
-        echo "$TEST_PASSWORD" > /tmp/test_auth_password.txt
+        print_info "User ID: $USER_ID"
+        print_info "Token (first 20 chars): ${TEST_USER_TOKEN:0:20}..."
+        save_user_session
     else
         print_error "Failed to register user (HTTP $HTTP_CODE)"
         return 1
@@ -62,18 +48,12 @@ test_register() {
 test_register_duplicate() {
     print_header "TEST: Register Duplicate User (Expected Failure)"
 
-    if [ ! -f /tmp/test_auth_email.txt ] || [ ! -f /tmp/test_auth_password.txt ]; then
-        print_error "No test credentials found. Run register test first."
-        return 1
-    fi
+    resolve_user_credentials
 
-    TEST_EMAIL=$(cat /tmp/test_auth_email.txt)
-    TEST_PASSWORD=$(cat /tmp/test_auth_password.txt)
-
-    print_info "Attempting duplicate registration for: $TEST_EMAIL"
+    print_info "Attempting duplicate registration for: $TEST_USER_EMAIL"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/register" \
         -H "Content-Type: application/json" \
-        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_USER_EMAIL\", \"password\": \"$TEST_USER_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -92,33 +72,25 @@ test_register_duplicate() {
 test_login() {
     print_header "TEST: Login"
 
-    if [ ! -f /tmp/test_auth_email.txt ] || [ ! -f /tmp/test_auth_password.txt ]; then
-        print_error "No test credentials found. Run register test first."
-        return 1
-    fi
+    resolve_user_credentials
 
-    TEST_EMAIL=$(cat /tmp/test_auth_email.txt)
-    TEST_PASSWORD=$(cat /tmp/test_auth_password.txt)
-
-    print_info "Logging in as: $TEST_EMAIL"
+    print_info "Logging in as: $TEST_USER_EMAIL"
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/login" \
         -H "Content-Type: application/json" \
-        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"$TEST_PASSWORD\"}")
+        -d "{\"email\": \"$TEST_USER_EMAIL\", \"password\": \"$TEST_USER_PASSWORD\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
 
     echo "$BODY" | jq '.'
 
-    AUTH_TOKEN=$(echo "$BODY" | jq -r '.token')
+    TEST_USER_TOKEN=$(echo "$BODY" | jq -r '.token')
     EXPIRES_IN=$(echo "$BODY" | jq -r '.expiresIn')
 
-    if [ -n "$AUTH_TOKEN" ] && [ "$AUTH_TOKEN" != "null" ]; then
+    if [ -n "$TEST_USER_TOKEN" ] && [ "$TEST_USER_TOKEN" != "null" ]; then
         print_success "Login successful"
         print_info "Token expires in: ${EXPIRES_IN}s"
-
-        # Update saved token
-        echo "$AUTH_TOKEN" > /tmp/test_auth_token.txt
+        save_user_session
     else
         print_error "Failed to login (HTTP $HTTP_CODE)"
         return 1
@@ -133,17 +105,12 @@ test_login() {
 test_login_wrong_password() {
     print_header "TEST: Login with Wrong Password (Expected Failure)"
 
-    if [ ! -f /tmp/test_auth_email.txt ]; then
-        print_error "No test credentials found. Run register test first."
-        return 1
-    fi
-
-    TEST_EMAIL=$(cat /tmp/test_auth_email.txt)
+    resolve_user_credentials
 
     print_info "Attempting login with wrong password..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/login" \
         -H "Content-Type: application/json" \
-        -d "{\"email\": \"$TEST_EMAIL\", \"password\": \"WrongPassword!\"}")
+        -d "{\"email\": \"$TEST_USER_EMAIL\", \"password\": \"WrongPassword!\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -163,17 +130,17 @@ test_login_wrong_password() {
 test_refresh_token() {
     print_header "TEST: Refresh Token"
 
-    if [ ! -f /tmp/test_auth_token.txt ]; then
+    if [ ! -f /tmp/test_user_token.txt ]; then
         print_error "No auth token found. Run login test first."
         return 1
     fi
 
-    AUTH_TOKEN=$(cat /tmp/test_auth_token.txt)
+    TEST_USER_TOKEN=$(cat /tmp/test_user_token.txt)
 
     print_info "Refreshing token..."
     RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/auth/refresh" \
         -H "Content-Type: application/json" \
-        -d "{\"token\": \"$AUTH_TOKEN\"}")
+        -d "{\"token\": \"$TEST_USER_TOKEN\"}")
 
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | sed '$d')
@@ -184,7 +151,7 @@ test_refresh_token() {
 
     if [ -n "$NEW_TOKEN" ] && [ "$NEW_TOKEN" != "null" ]; then
         print_success "Token refreshed successfully"
-        echo "$NEW_TOKEN" > /tmp/test_auth_token.txt
+        echo "$NEW_TOKEN" > /tmp/test_user_token.txt
     else
         print_info "Token refresh returned HTTP $HTTP_CODE (may require a dedicated refresh token)"
         echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"

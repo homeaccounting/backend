@@ -53,7 +53,7 @@ Most endpoints now require JWT authentication. The typical flow is:
 2. **Login** with email/password → receive a JWT token
 3. Use the token in the `Authorization: Bearer <token>` header for protected endpoints
 
-The test scripts automatically manage token storage in `/tmp/test_auth_token.txt`.
+The test scripts automatically manage token storage in `/tmp/test_user_token.txt`.
 
 ## Usage
 
@@ -162,9 +162,9 @@ personal token.
 
 **Prerequisites**
 
-1. A cached JWT in `/tmp/test_auth_token.txt`. Two ways to obtain one:
+1. A cached JWT in `/tmp/test_user_token.txt`. Two ways to obtain one:
    - **Password user:** `./scripts/api-test/test-auth.sh login`
-   - **Pasted JWT:** `export TEST_AUTH_TOKEN='<jwt>'` and the script will seed the cache on the next run.
+   - **Pasted JWT:** `export TEST_USER_TOKEN='<jwt>'` and the script will seed the cache on the next run.
 2. A Monobank personal token from <https://api.monobank.ua/>. Export as `MONOBANK_TOKEN`.
 3. The exact IBAN Monobank reports for the account you want to import. Export as `MONOBANK_IBAN`.
 
