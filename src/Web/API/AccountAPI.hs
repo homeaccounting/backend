@@ -59,12 +59,12 @@ import Domain.Core.Types (mkMoney, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
-import Web.ErrorMapping (throwDomainError)
+import Web.ErrorMapping (throwDomainError, throwValidation)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
   ( AccountListResponse (..),
     AccountResponse,
-    CreateAccountRequest,
+    CreateAccountRequest (..),
     SetAccountSubtypeRequest (..),
     fromAccountData,
     toAccountSubtype,
@@ -196,6 +196,21 @@ accountServer =
 createAccountHandler :: AuthenticatedUser -> CreateAccountRequest -> AppM AccountResponse
 createAccountHandler user request = do
   let userId = user.userId
+
+  -- Reject negative initial balance unless overdraft covers it.
+  -- Mirrors handleAccountCommand's domain rule for a per-field 400 response.
+  when (request.initialBalance < 0) $ case request.overdraftLimit of
+    Nothing ->
+      throwValidation
+        "overdraftLimit"
+        "Overdraft limit is required when initial balance is negative"
+    Just lim
+      | abs request.initialBalance > lim ->
+          throwValidation
+            "overdraftLimit"
+            "Overdraft limit must be at least the absolute value of the initial balance"
+      | otherwise -> pure ()
+
   -- 1. Convert DTO to domain command (Web layer responsibility)
   createCmd <- validateField "request" $ toCreateAccountCommand userId request
   -- 2. Delegate to service

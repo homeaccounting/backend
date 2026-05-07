@@ -78,6 +78,7 @@ data AccountError
   | CurrencyMismatch
   | ExternalTypeNotSettable
   | AccountCurrencyLocked
+  | NegativeInitialBalanceExceedsOverdraftLimit
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -130,6 +131,9 @@ constructSumType
 --   6. Debit enforces overdraft limit (Nothing = unlimited, Just limit = balance - debit >= -limit)
 --   7. Credit always succeeds (adding money never fails)
 --   8. Only Owner can set overdraft limit, currency must match
+--   9. CreateAccount enforces overdraft limit on negative initialBalance
+--      (|initialBalance| <= overdraftLimit; rejected with
+--      NegativeInitialBalanceExceedsOverdraftLimit)
 --
 -- Returns:
 --   @'Right' events@ on success, @'Left' error@ on rejection.
@@ -142,6 +146,15 @@ handleAccountCommand :: Account -> AccountCommand -> Either AccountError [Accoun
 handleAccountCommand account (CreateAccountAccountCommand CreateAccount {..})
   | not (T.null (account ^. #name)) = Left AccountAlreadyExists
   | T.null name = Left AccountNameEmpty
+  | unMoney initialBalance < 0
+      && ( case overdraftLimit of
+             Nothing -> True
+             Just Nothing -> True
+             Just (Just lim)
+               | moneyCurrency lim /= moneyCurrency initialBalance -> False
+               | otherwise -> abs (unMoney initialBalance) > unMoney lim
+         ) =
+      Left NegativeInitialBalanceExceedsOverdraftLimit
   | otherwise =
       case overdraftLimit of
         Just (Just limit)

@@ -229,7 +229,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
     it "Then sets initial balance"
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
-        not (T.null acctName) ==>
+        not (T.null acctName) && unMoney balance >= 0 ==>
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand
@@ -242,7 +242,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
     it "Then sets account name"
       $ property
       $ \(acctName :: Text) (balance :: Money) (ownerId :: UserId) ->
-        not (T.null acctName) ==>
+        not (T.null acctName) && unMoney balance >= 0 ==>
           let account = applyEvents []
               command =
                 CreateAccountAccountCommand

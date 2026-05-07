@@ -33,6 +33,7 @@ module Integration.WebAPISpec (spec) where
 
 import Data.Aeson (Value (..), decode, encode, object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.UUID as UUID
 import Network.HTTP.Types (hAuthorization, hContentType, status200, statusCode)
@@ -291,8 +292,8 @@ accountCreationSpec =
 
         postJSONAuth "/api/accounts" token (encode payload) `shouldRespondWith` 400
 
-    describe "accepts account creation with negative balance" $ with mkApp $ do
-      it "returns 201" $ do
+    describe "rejects negative balance with no overdraft limit" $ with mkApp $ do
+      it "returns 400 with fieldErrors.overdraftLimit" $ do
         token <- liftIO generateTestToken
         let payload =
               object
@@ -301,7 +302,30 @@ accountCreationSpec =
                   "currency" .= ("USD" :: Text)
                 ]
 
-        postJSONAuth "/api/accounts" token (encode payload) `shouldRespondWith` 201
+        response <- postJSONAuth "/api/accounts" token (encode payload)
+        liftIO $ do
+          statusCode (simpleStatus response) `shouldBe` 400
+          let body = simpleBody response
+          let parsed = decode body :: Maybe Aeson.Value
+          parsed `shouldSatisfy` hasFieldError "overdraftLimit"
+
+    describe "rejects negative balance with insufficient overdraft limit" $ with mkApp $ do
+      it "returns 400 with fieldErrors.overdraftLimit" $ do
+        token <- liftIO generateTestToken
+        let payload =
+              object
+                [ "name" .= ("Test" :: Text),
+                  "initialBalance" .= (-100.0 :: Double),
+                  "currency" .= ("USD" :: Text),
+                  "overdraftLimit" .= (50.0 :: Double)
+                ]
+
+        response <- postJSONAuth "/api/accounts" token (encode payload)
+        liftIO $ do
+          statusCode (simpleStatus response) `shouldBe` 400
+          let body = simpleBody response
+          let parsed = decode body :: Maybe Aeson.Value
+          parsed `shouldSatisfy` hasFieldError "overdraftLimit"
 
 -- | Test account retrieval via GET /api/accounts/:id
 accountRetrievalSpec :: Spec
@@ -512,3 +536,16 @@ errorHandlingSpec =
           let body = simpleBody response
           -- Should contain error message
           body `shouldSatisfy` LBS.isPrefixOf "{"
+
+-- -----------------------------------------------------------------------------
+-- Test Helpers
+-- -----------------------------------------------------------------------------
+
+-- | Check that a parsed JSON response contains a 'fieldErrors' object with the
+-- given field name as a key. Used to assert per-field validation errors from
+-- 'ValidationErrorResponse' bodies.
+hasFieldError :: Text -> Maybe Aeson.Value -> Bool
+hasFieldError field (Just (Aeson.Object o)) = case KeyMap.lookup "fieldErrors" o of
+  Just (Aeson.Object fe) -> KeyMap.member (Key.fromText field) fe
+  _ -> False
+hasFieldError _ _ = False

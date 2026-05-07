@@ -583,18 +583,24 @@ instance FromJSON ValidationErrorResponse
 -- Conversion Functions: Request DTOs → Domain Commands
 -- -----------------------------------------------------------------------------
 
--- | Converts a Double to Domain Money type with validation.
+-- | Converts a Double to Domain Money type.
 --
--- Returns Left with error message if amount is negative.
+-- Total: Money values can be negative (overdraft enforcement is at the
+-- account level — see Domain/Account/CommandHandler.hs), and 'mkMoney' is
+-- itself currently total.
 --
 -- Example:
--- >>> toDomainMoney 100.0
--- Right (Money 100.0)
+-- >>> toDomainMoney USD 100.0
+-- Money (100 % 1) USD
 --
--- >>> toDomainMoney (-50.0)
--- Left "Money amount must be non-negative: -50.0"
-toDomainMoney :: Currency -> Double -> Either Text Money
-toDomainMoney cur d = mkMoney cur (toRational d)
+-- >>> toDomainMoney USD (-50.0)
+-- Money ((-50) % 1) USD
+toDomainMoney :: Currency -> Double -> Money
+toDomainMoney cur d = case mkMoney cur (toRational d) of
+  Right m -> m
+  -- 'mkMoney' is total today; this branch is unreachable. Once mkMoney
+  -- itself drops the Either (tracked separately), this case can go.
+  Left err -> error ("toDomainMoney: " <> T.unpack err)
 
 -- | Converts Domain Money to Double for API responses.
 --
@@ -608,7 +614,8 @@ fromDomainMoney = fromRational . unMoney
 --
 -- Validates:
 --  - Account name is not empty
---  - Initial balance is non-negative
+--  - Initial balance is non-negative, unless an overdraft limit is set and
+--    |initialBalance| <= overdraftLimit
 --
 -- Additional parameters:
 --  - createdBy: User ID of the account creator (becomes Owner)
@@ -627,15 +634,13 @@ toCreateAccountCommand createdBy CreateAccountRequest {..} = do
   -- Parse currency
   cur <- parseCurrency currency
 
-  -- Validate and convert initial balance
-  domainBalance <- toDomainMoney cur initialBalance
+  -- Convert initial balance
+  let domainBalance = toDomainMoney cur initialBalance
 
   -- Convert optional overdraft limit
-  domainLimit <- case overdraftLimit of
-    Nothing -> Right Nothing
-    Just amt -> do
-      money <- toDomainMoney cur (abs amt)
-      Right (Just (Just money))
+  let domainLimit = case overdraftLimit of
+        Nothing -> Nothing
+        Just amt -> Just (Just (toDomainMoney cur (abs amt)))
 
   -- Parse account subtype (defaults to Cash)
   parsedType <- case subtype of
@@ -681,7 +686,7 @@ toInitiateTransferCommand initiatedBy at fromId toId TransferRequest {..} = do
   cur <- parseCurrency currency
 
   -- Convert to domain Money
-  domainAmount <- toDomainMoney cur amount
+  let domainAmount = toDomainMoney cur amount
 
   -- Validate source and destination are different
   when (fromId == toId) $

@@ -230,6 +230,140 @@ createAccountSpec = describe "CreateAccount Command" $ do
 
         result `shouldSatisfy` isLeft
 
+  context "Given empty account, when applying CreateAccount with various balance/limit combinations" $ do
+    it "Then accepts positive balance with no limit" $ do
+      let account = emptyAccount
+      let command =
+            CreateAccountAccountCommand
+              $ CreateAccount
+                { name = "Acc1",
+                  initialBalance = mockMoney 100,
+                  createdBy = testOwnerId,
+                  accountType = Regular defaultCash,
+                  overdraftLimit = Nothing
+                }
+      let result = handleAccountCommand account command
+
+      case result of
+        Right events -> do
+          length events `shouldBe` 1
+          case head events of
+            AccountCreatedAccountEvent _ -> pure ()
+            _ -> expectationFailure "Expected AccountCreated event"
+        Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+    it "Then accepts positive balance with limit" $ do
+      let account = emptyAccount
+      let command =
+            CreateAccountAccountCommand
+              $ CreateAccount
+                { name = "Acc2",
+                  initialBalance = mockMoney 100,
+                  createdBy = testOwnerId,
+                  accountType = Regular defaultCash,
+                  overdraftLimit = Just (Just (mockMoney 50))
+                }
+      let result = handleAccountCommand account command
+
+      case result of
+        Right events -> do
+          length events `shouldBe` 1
+          case head events of
+            AccountCreatedAccountEvent _ -> pure ()
+            _ -> expectationFailure "Expected AccountCreated event"
+        Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+    it "Then accepts zero balance" $ do
+      let account = emptyAccount
+      let command =
+            CreateAccountAccountCommand
+              $ CreateAccount
+                { name = "Acc3",
+                  initialBalance = mockMoney 0,
+                  createdBy = testOwnerId,
+                  accountType = Regular defaultCash,
+                  overdraftLimit = Nothing
+                }
+      let result = handleAccountCommand account command
+
+      case result of
+        Right events -> do
+          length events `shouldBe` 1
+          case head events of
+            AccountCreatedAccountEvent _ -> pure ()
+            _ -> expectationFailure "Expected AccountCreated event"
+        Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+    it "Then rejects negative balance with no limit" $ do
+      let account = emptyAccount
+      let command =
+            CreateAccountAccountCommand
+              $ CreateAccount
+                { name = "Acc4",
+                  initialBalance = mockMoney (-100),
+                  createdBy = testOwnerId,
+                  accountType = Regular defaultCash,
+                  overdraftLimit = Nothing
+                }
+      let result = handleAccountCommand account command
+      result `shouldBe` Left NegativeInitialBalanceExceedsOverdraftLimit
+
+    it "Then rejects negative balance when |balance| > limit" $ do
+      let account = emptyAccount
+      let command =
+            CreateAccountAccountCommand
+              $ CreateAccount
+                { name = "Acc5",
+                  initialBalance = mockMoney (-100),
+                  createdBy = testOwnerId,
+                  accountType = Regular defaultCash,
+                  overdraftLimit = Just (Just (mockMoney 50))
+                }
+      let result = handleAccountCommand account command
+      result `shouldBe` Left NegativeInitialBalanceExceedsOverdraftLimit
+
+    it "Then accepts negative balance when |balance| < limit" $ do
+      let account = emptyAccount
+      let command =
+            CreateAccountAccountCommand
+              $ CreateAccount
+                { name = "Acc6",
+                  initialBalance = mockMoney (-50),
+                  createdBy = testOwnerId,
+                  accountType = Regular defaultCash,
+                  overdraftLimit = Just (Just (mockMoney 100))
+                }
+      let result = handleAccountCommand account command
+
+      case result of
+        Right events -> do
+          length events `shouldBe` 1
+          case head events of
+            AccountCreatedAccountEvent _ -> pure ()
+            _ -> expectationFailure "Expected AccountCreated event"
+        Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+    it "Then accepts negative balance when |balance| == limit" $ do
+      let account = emptyAccount
+      let command =
+            CreateAccountAccountCommand
+              $ CreateAccount
+                { name = "Acc7",
+                  initialBalance = mockMoney (-100),
+                  createdBy = testOwnerId,
+                  accountType = Regular defaultCash,
+                  overdraftLimit = Just (Just (mockMoney 100))
+                }
+      let result = handleAccountCommand account command
+
+      case result of
+        Right events -> do
+          length events `shouldBe` 1
+          case head events of
+            AccountCreatedAccountEvent _ -> pure ()
+            _ -> expectationFailure "Expected AccountCreated event"
+        Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
 -- -----------------------------------------------------------------------------
 -- ShareAccount Tests
 -- -----------------------------------------------------------------------------

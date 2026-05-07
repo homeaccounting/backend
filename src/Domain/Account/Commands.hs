@@ -81,7 +81,8 @@ accountCommands =
 -- If accepted, produces an AccountCreated event.
 --
 -- Business Rules:
---   - Initial balance must be non-negative (enforced by Money type)
+--   - Initial balance must be non-negative unless an overdraft limit
+--     is set and |initialBalance| <= overdraftLimit
 --   - Account name should not be empty (validated by command handler)
 --   - Creator automatically becomes Owner of the account
 --   - External accounts are auto-created during user registration

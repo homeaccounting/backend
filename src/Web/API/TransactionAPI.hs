@@ -164,7 +164,7 @@ incomeHandler user request = do
   categoryEntryId <- validateField "category" $ parseCategoryId request.category
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
-  money <- validateField "amount" $ toDomainMoney cur request.amount
+  let money = toDomainMoney cur request.amount
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   result <- TransactionService.initiateIncome userId accountId money categoryEntryId labelSet request.description request.date
   case result of
@@ -179,7 +179,7 @@ expenseHandler user request = do
   categoryEntryId <- validateField "category" $ parseCategoryId request.category
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
-  money <- validateField "amount" $ toDomainMoney cur request.amount
+  let money = toDomainMoney cur request.amount
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   result <- TransactionService.initiateExpense userId accountId money categoryEntryId labelSet request.description request.date
   case result of
@@ -194,7 +194,7 @@ transferHandler user request = do
   fromAccId <- validateField "sourceAccountId" $ mkAccountId request.sourceAccountId
   toAccId <- validateField "targetAccountId" $ mkAccountId request.targetAccountId
   cur <- validateField "currency" $ parseCurrency request.currency
-  money <- validateField "amount" $ toDomainMoney cur request.amount
+  let money = toDomainMoney cur request.amount
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   let maybeRate = fmap toRational request.exchangeRate
   result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money labelSet request.description maybeRate request.date
