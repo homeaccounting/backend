@@ -26,6 +26,7 @@ RUN cabal build -j && \
 
 # Stage 2: Runtime
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/homeaccounting/backend"
 
 ARG APP_COMMIT_HASH=dev
 ENV APP_COMMIT_HASH=${APP_COMMIT_HASH}
