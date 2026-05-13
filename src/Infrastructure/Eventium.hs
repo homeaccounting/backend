@@ -61,50 +61,20 @@ module Infrastructure.Eventium
     -- * Aggregate Loading
     loadUserAggregate,
 
-    -- * Read Models
-    ReadModels (..),
-    createReadModelHandlers,
+    -- * Process Manager Wiring
+    AccountingProcessManagerFactory,
+    wireProcessManager,
 
-    -- * Read Model Replay
-    replayReadModels,
+    -- * Event Handler Bundle
+    AccountingReadModelHandler,
+    createReadModelHandlersFrom,
+    replayWith,
 
     -- * Utilities
     printEventJSON,
   )
 where
 
-import Application.ProcessManagers (transferProcessManager)
-import Application.ReadModels.Account
-  ( AccountReadModel,
-    createAccountReadModel,
-    handleAccountEvents,
-  )
-import Application.ReadModels.BankImportReadModel
-  ( BankImportReadModel,
-    createBankImportReadModel,
-    handleBankImportEvents,
-  )
-import Application.ReadModels.Configuration
-  ( ConfigurationReadModel,
-    createConfigurationReadModel,
-    handleConfigurationEvents,
-  )
-import Application.ReadModels.ExchangeRate
-  ( ExchangeRateReadModel,
-    createExchangeRateReadModel,
-    handleExchangeRateEvents,
-  )
-import Application.ReadModels.Transaction
-  ( TransactionReadModel,
-    createTransactionReadModel,
-    handleTransactionEvents,
-  )
-import Application.ReadModels.User
-  ( UserReadModel,
-    createUserReadModel,
-    handleUserEvents,
-  )
-import Control.Concurrent.STM (TVar)
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (ToJSON)
 import Data.Aeson.Encode.Pretty (encodePretty)
@@ -127,7 +97,9 @@ import Eventium
     EventStoreWriter,
     EventVersion,
     GlobalEventStoreReader,
+    GlobalStreamEvent,
     MetadataEnricher,
+    ProcessManager,
     QueryRange,
     RejectionReason (..),
     StreamEvent (..),
@@ -196,6 +168,25 @@ type AccountingEventStoreWriter m = AccountingVersionedEventStoreWriter m
 -- | Event handler for versioned stream events.
 type AccountingEventHandler m = EventHandler m (VersionedStreamEvent AccountingEvent)
 
+-- | Factory for wiring a process manager into the event bus.
+--
+-- Receives the (lazily-bound) publishing writer, global reader, and versioned
+-- reader — all of which are computed inside 'accountingEventStoreWriter' — and
+-- returns an 'AccountingEventHandler' that forwards commands back through the
+-- writer, closing the saga loop.
+type AccountingProcessManagerFactory m =
+  AccountingTaggedEventStoreWriter m ->
+  AccountingGlobalEventStoreReader m ->
+  AccountingVersionedEventStoreReader m ->
+  AccountingEventHandler m
+
+-- | Batch event handler for one accounting read-model context.
+--
+-- Wraps a function @[GlobalStreamEvent AccountingEvent] -> m ()@: the list
+-- allows read models to do a single STM write covering all events in a replay
+-- pass, rather than N individual writes.
+type AccountingReadModelHandler m = EventHandler m [GlobalStreamEvent AccountingEvent]
+
 -- -----------------------------------------------------------------------------
 -- Event Store Creation
 -- -----------------------------------------------------------------------------
@@ -235,19 +226,20 @@ accountingEventStoreReader = accountingVersionedEventStoreReader
 --   - Writes events to PostgreSQL via eventium-postgresql
 --   - Encodes AccountingEvent to JSON via jsonStringCodec
 --   - Publishes events synchronously to registered handlers
---   - Includes the transfer process manager via lazy binding
+--   - Wires the supplied process manager factory via lazy binding
 --
 -- The lazy binding pattern resolves the circular dependency:
--- @publishingWriter@ is used by @transferManagerHandler@ (via @commandDispatcher@),
+-- @publishingWriter@ is used by the process manager (via @commandDispatcher@),
 -- but @publishingWriter@ is defined in terms of @combinedHandler@ which includes
--- @transferManagerHandler@. Haskell's laziness resolves this.
+-- the process manager. Haskell's laziness resolves this.
 accountingEventStoreWriter ::
   forall m entity.
   (MonadIO m, PersistEntity entity, PersistEntityBackend entity ~ SqlBackend, SafeToInsert entity) =>
   SqlEventStoreConfig entity JSONString ->
+  AccountingProcessManagerFactory (SqlPersistT m) ->
   [AccountingEventHandler (SqlPersistT m)] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
-accountingEventStoreWriter config extraHandlers =
+accountingEventStoreWriter config pmFactory extraHandlers =
   let rawWriter = postgresqlTaggedEventStoreWriter config
       globalReader = accountingGlobalEventStoreReader config
       versionedReader = accountingVersionedEventStoreReader config
@@ -258,7 +250,7 @@ accountingEventStoreWriter config extraHandlers =
           -- dispatched commands (e.g. AccountDebited from DebitAccount) re-enter
           -- the event bus and trigger the next saga step. The circular reference
           -- is resolved by Haskell's laziness.
-          <> transferManagerHandler publishingWriter globalReader versionedReader
+          <> pmFactory publishingWriter globalReader versionedReader
       -- Wrap the raw tagged writer with event bus publishing.
       -- Writes TaggedEvent JSONString to DB, decodes via jsonStringCodec for handlers.
       publishingWriter =
@@ -274,18 +266,17 @@ eventLoggerHandler :: (MonadIO m) => AccountingEventHandler m
 eventLoggerHandler = EventHandler $ \versionedEvent ->
   liftIO $ printEventJSON (versionedEvent.key, versionedEvent.payload)
 
--- | Transfer process manager event handler.
+-- | Wire a process manager into the event bus.
 --
--- Uses 'processManagerEventHandler' from eventium to wire the transfer
--- process manager to the global reader and command dispatcher.
-transferManagerHandler ::
+-- Satisfies 'AccountingProcessManagerFactory': receives the lazily-bound
+-- publishing writer, global reader, and versioned reader, then delegates to
+-- 'processManagerEventHandler' and 'commandDispatcher'.
+wireProcessManager ::
   (MonadIO m) =>
-  AccountingTaggedEventStoreWriter m ->
-  AccountingGlobalEventStoreReader m ->
-  AccountingVersionedEventStoreReader m ->
-  AccountingEventHandler m
-transferManagerHandler writer globalReader versionedReader =
-  processManagerEventHandler transferProcessManager globalReader (commandDispatcher writer versionedReader)
+  ProcessManager state AccountingEvent AccountingCommand ->
+  AccountingProcessManagerFactory m
+wireProcessManager pm writer globalReader versionedReader =
+  processManagerEventHandler pm globalReader (commandDispatcher writer versionedReader)
 
 -- | Build a 'CommandDispatcher' that routes commands to the correct
 -- aggregate handler and reports success/failure via 'CommandDispatchResult'.
@@ -329,40 +320,30 @@ liftIOEventHandler (EventHandler h) = EventHandler $ \e -> liftIO (h e)
 -- Read Models
 -- -----------------------------------------------------------------------------
 
--- | Combined read model state for all bounded contexts.
-data ReadModels = ReadModels
-  { account :: TVar AccountReadModel,
-    transaction :: TVar TransactionReadModel,
-    user :: TVar UserReadModel,
-    configuration :: TVar ConfigurationReadModel,
-    bankImport :: TVar BankImportReadModel,
-    exchangeRate :: TVar ExchangeRateReadModel
-  }
+-- | Adapt a composite read-model handler for the real-time event bus.
+--
+-- Wraps each incoming 'VersionedStreamEvent' in a singleton
+-- @[GlobalStreamEvent]@ batch and forwards it to the handler.
+createReadModelHandlersFrom ::
+  AccountingReadModelHandler m ->
+  [AccountingEventHandler m]
+createReadModelHandlersFrom (EventHandler h) =
+  [ EventHandler $ \versionedEvent -> do
+      let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
+      h [globalEvent]
+  ]
 
--- | Create all read models and their event bus handlers.
-createReadModelHandlers ::
-  (MonadIO m) =>
-  m (ReadModels, [AccountingEventHandler m])
-createReadModelHandlers = do
-  accountRM <- createAccountReadModel
-  transactionRM <- createTransactionReadModel
-  userRM <- createUserReadModel
-  configRM <- createConfigurationReadModel
-  bankImportRM <- createBankImportReadModel
-  exchangeRateRM <- createExchangeRateReadModel
-  let mkHandler handle rm = EventHandler $ \versionedEvent -> do
-        let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-        handle rm [globalEvent]
-      handlers =
-        [ mkHandler handleAccountEvents accountRM,
-          mkHandler handleTransactionEvents transactionRM,
-          mkHandler handleUserEvents userRM,
-          mkHandler handleConfigurationEvents configRM,
-          mkHandler handleBankImportEvents bankImportRM,
-          mkHandler handleExchangeRateEvents exchangeRateRM
-        ]
-      readModels = ReadModels accountRM transactionRM userRM configRM bankImportRM exchangeRateRM
-  return (readModels, handlers)
+-- | Replay all historical global events through a read-model handler and
+-- return the event count.
+replayWith ::
+  (Monad m) =>
+  AccountingGlobalEventStoreReader m ->
+  AccountingReadModelHandler m ->
+  m Int
+replayWith globalReader (EventHandler h) = do
+  events <- readEvents globalReader (allEvents ())
+  h events
+  pure (length events)
 
 -- -----------------------------------------------------------------------------
 -- Command Handler Registry
@@ -485,27 +466,6 @@ liftGlobalReader pool = runEventStoreReaderUsing (runDbDirect pool)
 -- -----------------------------------------------------------------------------
 -- Utilities
 -- -----------------------------------------------------------------------------
-
--- | Replay all historical events from the event store into read models.
---
--- This must be called on startup to populate in-memory read models
--- from persisted events. Without this, read models start empty and
--- cannot find previously created users/accounts.
-replayReadModels ::
-  (MonadIO m) =>
-  AccountingGlobalEventStoreReader m ->
-  ReadModels ->
-  m Int
--- Must run before server/bot starts to avoid concurrent writes to TVars.
-replayReadModels globalReader' readModels = do
-  events <- readEvents globalReader' (allEvents ())
-  handleAccountEvents readModels.account events
-  handleTransactionEvents readModels.transaction events
-  handleUserEvents readModels.user events
-  handleConfigurationEvents readModels.configuration events
-  handleBankImportEvents readModels.bankImport events
-  handleExchangeRateEvents readModels.exchangeRate events
-  pure (length events)
 
 -- | Print an event as pretty-printed JSON.
 printEventJSON :: (MonadIO m, ToJSON a) => a -> m ()

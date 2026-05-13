@@ -114,7 +114,8 @@ spec = describe "listTransactions / date bounds (property)" $ do
               | (i, d) <- zip [(1 :: Word32) ..] dates
               ]
         tvar <- createTransactionReadModel :: IO (TVar TransactionReadModel)
-        handleTransactionEvents tvar events
+        let h = handleTransactionEvents tvar
+        h.handleEvent events
         q <-
           either (fail . show) pure
             $ mkTransactionQuery Nothing (Just fromD) (Just toD)

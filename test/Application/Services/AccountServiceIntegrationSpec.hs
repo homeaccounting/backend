@@ -45,7 +45,7 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Eventium (StreamEvent (..), emptyMetadata)
+import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import Infrastructure.Eventium (applyAccountCommand)
@@ -172,8 +172,9 @@ seedExchangeRate env rates = do
               at = today
             }
       versionedEvent = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
+      globalEvent :: GlobalStreamEvent AccountingEvent
       globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-  ExchangeRateRM.handleExchangeRateEvents env.exchangeRateReadModel [globalEvent]
+  (ExchangeRateRM.handleExchangeRateEvents env.exchangeRateReadModel).handleEvent [globalEvent]
 
 -- | Construct a 'Money' value via the smart constructor.
 money :: Currency -> Rational -> Money

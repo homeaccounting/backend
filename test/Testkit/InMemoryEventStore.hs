@@ -34,9 +34,9 @@ module Testkit.InMemoryEventStore
   )
 where
 
+import Application.EventDispatch (ReadModels (..), createReadModels, fromReadModels)
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transferProcessManager)
-import Application.ReadModels.ExchangeRate (createExchangeRateReadModel)
 import Application.ReadModels.User ()
 import Control.Concurrent.STM (atomically)
 import qualified Data.Set as Set
@@ -75,9 +75,8 @@ import Infrastructure.Eventium
     AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
     AccountingVersionedEventStoreWriter,
-    ReadModels (..),
     commandDispatcher,
-    createReadModelHandlers,
+    createReadModelHandlersFrom,
   )
 import Infrastructure.Version (VersionInfo (..))
 import Network.HTTP.Client (defaultManagerSettings, newManager)
@@ -178,7 +177,9 @@ mkAppEnv withProcessManager = do
         hPutBuilder stderr (getUtf8Builder (msg <> "\n"))
 
   stores <- createInMemoryEventStores
-  (readModels, readModelHandlers) <- createReadModelHandlers
+  readModels <- createReadModels
+  let handlers = fromReadModels readModels
+      readModelHandlers = createReadModelHandlersFrom handlers
 
   let baseWriter = liftSTMWriter stores.inMemoryWriter
       reader = liftSTMReader stores.inMemoryReader
@@ -201,7 +202,6 @@ mkAppEnv withProcessManager = do
       testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
 
   botState <- RIO.newTVarIO emptyBotState
-  exchangeRateRM <- createExchangeRateReadModel
   testHttpManager <- newManager defaultManagerSettings
   bankImportLocksVar <- RIO.newTVarIO Set.empty
   linkCodeStore <- newLinkCodeStore
@@ -224,7 +224,7 @@ mkAppEnv withProcessManager = do
         telegramConfig = config.telegram,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateReadModel = exchangeRateRM,
+        exchangeRateReadModel = readModels.exchangeRate,
         versionInfo = testVersionInfo,
         bankingEnv =
           BankingEnv

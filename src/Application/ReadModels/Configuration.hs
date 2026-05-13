@@ -70,8 +70,9 @@ import Domain.Core.Types
     mkConfigurationIdSafe,
   )
 import Domain.Models (AccountingEvent (..))
-import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
+import Infrastructure.Eventium (AccountingReadModelHandler)
 import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 import Safe (maximumDef)
 
@@ -165,9 +166,8 @@ createConfigurationReadModel =
 handleConfigurationEvents ::
   (MonadIO m) =>
   TVar ConfigurationReadModel ->
-  [GlobalStreamEvent AccountingEvent] ->
-  m ()
-handleConfigurationEvents readModelTVar events = do
+  AccountingReadModelHandler m
+handleConfigurationEvents readModelTVar = EventHandler $ \events -> do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)

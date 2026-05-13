@@ -33,7 +33,8 @@ import qualified Data.Map.Strict as Map
 import Domain.Core.Types (ExternalTransactionId, TransactionId, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransferInitiated (..))
-import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Infrastructure.Eventium (AccountingReadModelHandler)
 import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 import Safe (maximumDef)
 
@@ -86,9 +87,8 @@ isImported rmTVar extId = do
 handleBankImportEvents ::
   (MonadIO m) =>
   TVar BankImportReadModel ->
-  [GlobalStreamEvent AccountingEvent] ->
-  m ()
-handleBankImportEvents rmTVar events = do
+  AccountingReadModelHandler m
+handleBankImportEvents rmTVar = EventHandler $ \events -> do
   currentModel <- liftIO $ readTVarIO rmTVar
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
       updatedMap = foldl processEvent currentModel.importedTransactions events

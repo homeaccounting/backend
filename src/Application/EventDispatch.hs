@@ -1,0 +1,93 @@
+{-# LANGUAGE NoImplicitPrelude #-}
+
+-- |
+-- Module      : Application.EventDispatch
+-- Description : Read-model registry and event-handler bundle construction
+--
+-- Owns 'ReadModels' and provides 'fromReadModels' to build a single composite
+-- 'AccountingReadModelHandler m' for 'Infrastructure.Eventium'.
+-- This is the only module that imports concrete @Application.ReadModels.*@
+-- handler functions; Infrastructure depends only on the abstract handler type.
+module Application.EventDispatch
+  ( ReadModels (..),
+    createReadModels,
+    fromReadModels,
+  )
+where
+
+import Application.ReadModels.Account
+  ( AccountReadModel,
+    createAccountReadModel,
+    handleAccountEvents,
+  )
+import Application.ReadModels.BankImportReadModel
+  ( BankImportReadModel,
+    createBankImportReadModel,
+    handleBankImportEvents,
+  )
+import Application.ReadModels.Configuration
+  ( ConfigurationReadModel,
+    createConfigurationReadModel,
+    handleConfigurationEvents,
+  )
+import Application.ReadModels.ExchangeRate
+  ( ExchangeRateReadModel,
+    createExchangeRateReadModel,
+    handleExchangeRateEvents,
+  )
+import Application.ReadModels.Transaction
+  ( TransactionReadModel,
+    createTransactionReadModel,
+    handleTransactionEvents,
+  )
+import Application.ReadModels.User
+  ( UserReadModel,
+    createUserReadModel,
+    handleUserEvents,
+  )
+import Infrastructure.Eventium (AccountingReadModelHandler)
+import RIO
+
+-- | Combined in-memory read-model state for all bounded contexts.
+data ReadModels = ReadModels
+  { account :: TVar AccountReadModel,
+    transaction :: TVar TransactionReadModel,
+    user :: TVar UserReadModel,
+    configuration :: TVar ConfigurationReadModel,
+    bankImport :: TVar BankImportReadModel,
+    exchangeRate :: TVar ExchangeRateReadModel
+  }
+
+-- | Allocate fresh TVars for every read model.
+createReadModels :: (MonadIO m) => m ReadModels
+createReadModels = do
+  accountRM <- createAccountReadModel
+  transactionRM <- createTransactionReadModel
+  userRM <- createUserReadModel
+  configRM <- createConfigurationReadModel
+  bankImportRM <- createBankImportReadModel
+  exchangeRateRM <- createExchangeRateReadModel
+  pure
+    ReadModels
+      { account = accountRM,
+        transaction = transactionRM,
+        user = userRM,
+        configuration = configRM,
+        bankImport = bankImportRM,
+        exchangeRate = exchangeRateRM
+      }
+
+-- | Build a composite read-model handler from concrete read-model TVars.
+--
+-- Each per-context handler is composed via 'Monoid'; all receive the full
+-- event list and filter internally by event type.
+fromReadModels :: (MonadIO m) => ReadModels -> AccountingReadModelHandler m
+fromReadModels rms =
+  mconcat
+    [ handleAccountEvents rms.account,
+      handleTransactionEvents rms.transaction,
+      handleUserEvents rms.user,
+      handleConfigurationEvents rms.configuration,
+      handleBankImportEvents rms.bankImport,
+      handleExchangeRateEvents rms.exchangeRate
+    ]

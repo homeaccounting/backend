@@ -178,7 +178,7 @@ spec = describe "Integration.ExchangeRatePersistence" $ do
     freshRM <- createExchangeRateReadModel
     let EventStoreReader readGlobal = globalReader
     globalEvents <- readGlobal (allEvents ())
-    handleExchangeRateEvents freshRM globalEvents
+    (handleExchangeRateEvents freshRM).handleEvent globalEvents
 
     -- 3. The fresh model must now resolve the rate that was fetched
     -- by the provider stub in the first process.

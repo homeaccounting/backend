@@ -27,7 +27,7 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Commands (InitiateTransfer (..))
-import Eventium (EventMetadata (..), StreamEvent (..), emptyMetadata)
+import Eventium (EventHandler (..), EventMetadata (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
@@ -89,8 +89,9 @@ createTestAppEnvWithRates rates = do
               at = today
             }
       versionedEvent = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
+      globalEvent :: GlobalStreamEvent AccountingEvent
       globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-  handleExchangeRateEvents env.exchangeRateReadModel [globalEvent]
+  (handleExchangeRateEvents env.exchangeRateReadModel).handleEvent [globalEvent]
   pure env
 
 -- | Helper to create two accounts in different currencies.

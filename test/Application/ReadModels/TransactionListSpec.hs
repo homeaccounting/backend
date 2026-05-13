@@ -90,7 +90,8 @@ seedReadModel ::
   IO (TVar TransactionReadModel)
 seedReadModel events = do
   tvar <- createTransactionReadModel
-  handleTransactionEvents tvar events
+  let h = handleTransactionEvents tvar
+  h.handleEvent events
   pure tvar
 
 t :: Integer -> Int -> Int -> UTCTime

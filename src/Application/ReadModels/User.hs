@@ -78,8 +78,9 @@ import Domain.User.Events
     UserRegistered (..),
     UserRegisteredViaTelegram (..),
   )
-import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
+import Infrastructure.Eventium (AccountingReadModelHandler)
 import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 import Safe (maximumDef)
 
@@ -188,9 +189,8 @@ emptyUserReadModel =
 handleUserEvents ::
   (MonadIO m) =>
   TVar UserReadModel ->
-  [GlobalStreamEvent AccountingEvent] ->
-  m ()
-handleUserEvents readModelTVar events = do
+  AccountingReadModelHandler m
+handleUserEvents readModelTVar = EventHandler $ \events -> do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)

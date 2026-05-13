@@ -44,13 +44,26 @@ cabal build                               # build (run hpack first if package.ya
 
 For detailed architecture documentation, see [`docs/architecture.md`](docs/architecture.md).
 
-Four-layer architecture with strict dependency direction (top layers depend on lower):
+Four-layer architecture with strict dependency direction:
 
 ```
 Web → Application → Domain (pure, no IO)
-         ↓
-    Infrastructure
+           ↓
+      Infrastructure → Domain
 ```
+
+Arrows mean "may import". `app/Main.hs` is the composition root and is exempt — it wires all layers together.
+
+### Layering Rules
+
+| Layer | May import | Must NOT import |
+|-------|------------|-----------------|
+| `Domain.*` | (nothing — pure Haskell + base only) | `Application.*`, `Infrastructure.*`, `Web.*` |
+| `Infrastructure.*` | `Domain.*`, third-party libs | `Application.*`, `Web.*` |
+| `Application.*` | `Domain.*`, `Infrastructure.*` | `Web.*` |
+| `Web.*` | Any layer | — |
+
+These rules are not enforced by the compiler, but violations produce import cycles that surface immediately. The canonical failure is `Infrastructure.X → Application.Y → Infrastructure.Z → Infrastructure.X`. When adding an import, verify the arrow runs in the permitted direction before committing.
 
 ### Domain Layer (`src/Domain/`)
 

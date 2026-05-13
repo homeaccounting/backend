@@ -78,7 +78,13 @@ module Main (main) where
 
 -- Application
 
+import Application.EventDispatch
+  ( ReadModels (..),
+    createReadModels,
+    fromReadModels,
+  )
 import Application.LinkCodeStore (newLinkCodeStore)
+import Application.ProcessManagers (transferProcessManager)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
@@ -108,16 +114,16 @@ import Infrastructure.Database
     initializeDatabase,
   )
 import Infrastructure.Eventium
-  ( ReadModels (..),
-    accountingEventStoreWriter,
+  ( accountingEventStoreWriter,
     accountingGlobalEventStoreReader,
     accountingVersionedEventStoreReader,
-    createReadModelHandlers,
+    createReadModelHandlersFrom,
     liftGlobalReader,
     liftIOEventHandler,
     liftTaggedWriter,
     liftVersionedReader,
-    replayReadModels,
+    replayWith,
+    wireProcessManager,
   )
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
@@ -267,7 +273,9 @@ initializeEnvironment logFunc config versionInfo = do
 
   -- 3. Initialize read models (must happen before creating the writer)
   logInfo "Initializing read models..."
-  (readModels, readModelHandlers) <- liftIO createReadModelHandlers
+  readModels <- liftIO createReadModels
+  let handlers = fromReadModels readModels
+      readModelHandlers = createReadModelHandlersFrom handlers
   logInfo "Read models initialized"
 
   -- 4. Create event store readers/writers with read model handlers on the event bus
@@ -277,6 +285,7 @@ initializeEnvironment logFunc config versionInfo = do
       sqlWriter =
         accountingEventStoreWriter
           eventStoreConfig
+          (wireProcessManager transferProcessManager)
           (map liftIOEventHandler readModelHandlers)
       sqlReader = accountingVersionedEventStoreReader eventStoreConfig
       sqlGlobalReader = accountingGlobalEventStoreReader eventStoreConfig
@@ -289,7 +298,7 @@ initializeEnvironment logFunc config versionInfo = do
   -- 4b. Replay historical events into read models
   -- Must run before server/bot starts to avoid concurrent writes to TVars.
   logInfo "Replaying historical events into read models..."
-  eventCount <- liftIO $ replayReadModels globalReader readModels
+  eventCount <- liftIO $ replayWith globalReader handlers
   logInfo $ "Read models populated from event store (" <> displayShow eventCount <> " events)"
 
   -- 5. Auth configurations (loaded from YAML config)
@@ -320,8 +329,7 @@ initializeEnvironment logFunc config versionInfo = do
         return (Just cEnv)
 
   -- 6. Register process managers
-  -- Note: Process managers are registered via the event bus in the writer
-  -- The transferProcessManager is already wired in accountingEventStoreWriter
+  -- transferProcessManager is passed to accountingEventStoreWriter via transferManagerHandler
   logInfo "Process managers registered via event bus"
 
   -- 6b. Spawn background rate publisher (best-effort, app starts even if provider is unreachable).

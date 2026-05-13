@@ -40,12 +40,12 @@ where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
-import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), TransactionQuery)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.ReadModels.User (UserData (..))
+import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Application.Services.Internal
   ( getUserData,

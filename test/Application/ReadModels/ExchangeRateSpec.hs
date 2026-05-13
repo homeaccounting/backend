@@ -74,14 +74,16 @@ spec = describe "Application.ReadModels.ExchangeRate" $ do
     let day = fromGregorian 2026 4 20
         rate = mockExchangeRate USD UAH 41
         rates = Map.singleton (USD, UAH) rate
-    handleExchangeRateEvents rm [mkPublishedEvent day "ecb" rates 0]
+    let h = handleExchangeRateEvents rm
+    h.handleEvent [mkPublishedEvent day "ecb" rates 0]
     result <- lookupHistoricalRate rm "ecb" day USD UAH
     result `shouldBe` Just rate
 
   it "isolates rate history per provider" $ do
     rm <- createExchangeRateReadModel
     let day = fromGregorian 2026 4 20
-    handleExchangeRateEvents rm [mkPublishedEvent day "ecb" (usdToUah 41) 0]
+        h = handleExchangeRateEvents rm
+    h.handleEvent [mkPublishedEvent day "ecb" (usdToUah 41) 0]
     resultNbu <- lookupHistoricalRate rm "nbu" day USD UAH
     resultNbu `shouldBe` Nothing
 
@@ -91,8 +93,8 @@ spec = describe "Application.ReadModels.ExchangeRate" $ do
         day2 = fromGregorian 2026 4 18
         queryDay = fromGregorian 2026 4 20
         rate2 = mockExchangeRate USD UAH 41
-    handleExchangeRateEvents
-      rm
+        h = handleExchangeRateEvents rm
+    h.handleEvent
       [ mkPublishedEvent day1 "ecb" (usdToUah 40) 0,
         mkPublishedEvent day2 "ecb" (Map.singleton (USD, UAH) rate2) 1
       ]

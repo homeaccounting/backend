@@ -39,7 +39,8 @@ import Data.Time (Day, diffDays)
 import Domain.Core.Types (Currency, ExchangeRate)
 import Domain.ExchangeRate.Events (ExchangeRateMap, ExchangeRatesPublished (..), Provider)
 import Domain.Models (AccountingEvent (..))
-import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Infrastructure.Eventium (AccountingReadModelHandler)
 import Infrastructure.ExchangeRate.Provider (getRate)
 import Safe (maximumDef)
 
@@ -92,9 +93,8 @@ createExchangeRateReadModel =
 handleExchangeRateEvents ::
   (MonadIO m) =>
   TVar ExchangeRateReadModel ->
-  [GlobalStreamEvent AccountingEvent] ->
-  m ()
-handleExchangeRateEvents rmTVar events = do
+  AccountingReadModelHandler m
+handleExchangeRateEvents rmTVar = EventHandler $ \events -> do
   currentModel <- liftIO $ readTVarIO rmTVar
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
       updated = foldl processEvent currentModel.historyByProvider events

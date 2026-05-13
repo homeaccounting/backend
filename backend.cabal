@@ -25,6 +25,7 @@ flag ci
 
 library
   exposed-modules:
+      Application.EventDispatch
       Application.LinkCodeStore
       Application.ProcessManagers
       Application.ProcessManagers.TransferManager

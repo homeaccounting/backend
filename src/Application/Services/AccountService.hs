@@ -39,6 +39,7 @@ import Application.ReadModels.Account (AccountData (..), balanceAsOf)
 import qualified Application.ReadModels.Account as ReadModel
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.ReadModels.User (UserData (..))
+import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Application.Services.Internal
   ( getUserData,
     guardE,
@@ -61,7 +62,6 @@ import Domain.Account.Commands
     ShareAccount (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Domain.Core.Types
   ( AccountId,
     AccountRole (..),
@@ -365,7 +365,8 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
 
   -- 2. Authorize Editor+ on the account.
   guardE
-    ( canModifyAccount userId
+    ( canModifyAccount
+        userId
         AccountAuthData
           { createdBy = account.createdBy,
             accountType = account.accountType,
@@ -458,4 +459,3 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
               labels = mempty
             }
     )
-

@@ -92,7 +92,7 @@ mkHarness = do
         liftSTMTaggedEventWriter (tvarTaggedEventStoreWriter stores.inMemoryEventMap)
       rmHandler = EventHandler $ \versionedEvent ->
         let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-         in handleExchangeRateEvents rm [globalEvent]
+         in (handleExchangeRateEvents rm).handleEvent [globalEvent]
       writer =
         publishingTaggedCodecEventStoreWriter
           (jsonStringCodec :: Codec AccountingEvent JSONString)

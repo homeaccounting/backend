@@ -85,8 +85,9 @@ import Domain.Transaction.Events
     TransferInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Completed, Failed, Pending))
-import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
+import Infrastructure.Eventium (AccountingReadModelHandler)
 import Safe (maximumDef)
 
 -- -----------------------------------------------------------------------------
@@ -231,9 +232,8 @@ createTransactionReadModel =
 handleTransactionEvents ::
   (MonadIO m) =>
   TVar TransactionReadModel ->
-  [GlobalStreamEvent AccountingEvent] ->
-  m ()
-handleTransactionEvents readModelTVar events = do
+  AccountingReadModelHandler m
+handleTransactionEvents readModelTVar = EventHandler $ \events -> do
   currentModel <- liftIO $ readTVarIO readModelTVar
 
   let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
