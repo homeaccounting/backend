@@ -222,12 +222,12 @@ mapDomainError CannotEditTransactionLabelsInCurrentState =
               details = Nothing
             }
     }
-mapDomainError CannotChangeCategoryOnInternalTransfer =
+mapDomainError CannotChangeCategoryOnUncategorizedTransaction =
   err409
     { errBody =
         encode $
           ErrorResponse
-            { message = "Category cannot be set on an internal transfer",
+            { message = "Category cannot be set on a Transfer or Adjustment",
               code = "CATEGORY_NOT_APPLICABLE",
               details = Nothing
             }

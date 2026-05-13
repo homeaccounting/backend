@@ -31,19 +31,25 @@ module Application.Services.AccountService
     revokeAccountAccess,
     setOverdraftLimit,
     setAccountSubtype,
+    adjustAccountBalance,
   )
 where
 
-import Application.ReadModels.Account (AccountData (..))
+import Application.ReadModels.Account (AccountData (..), balanceAsOf)
 import qualified Application.ReadModels.Account as ReadModel
+import qualified Application.ReadModels.Transaction as TransactionRM
+import Application.ReadModels.User (UserData (..))
 import Application.Services.Internal
-  ( guardE,
+  ( getUserData,
+    guardE,
     liftEitherWith,
     liftMaybe,
     liftMaybeM,
     runAccountCmd,
   )
-import Control.Monad.Trans.Except (runExceptT)
+import qualified Application.Services.TransactionService as TransactionService
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
+import Data.Time (UTCTime, getCurrentTime)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
@@ -55,18 +61,27 @@ import Domain.Account.Commands
     ShareAccount (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
+import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Domain.Core.Types
   ( AccountId,
     AccountRole (..),
     AccountSubtype,
     AccountType (..),
-    Money,
+    Money (..),
+    TransactionId,
+    TransferType (..),
     UserId,
     mkAccountId,
     mkUserId,
+    moneyIsPositive,
+    moneyIsZero,
+    negateMoney,
+    subtractMoney,
   )
+import Domain.Transaction.Commands (InitiateTransfer (..))
 import Infrastructure.App
   ( AppM,
+    HasEventStore (..),
     HasReadModel (..),
   )
 import RIO
@@ -279,4 +294,168 @@ setAccountSubtype requestingUserId accountUuid newType = runExceptT $ do
   runAccountCmd id accountUuid cmd
   lift $ logInfo "Account type set successfully"
 
--- Note: Uses 'tshow' from RIO for Text conversion of Show-able values.
+-- -----------------------------------------------------------------------------
+-- Balance adjustment
+-- -----------------------------------------------------------------------------
+
+-- | Reconcile a Regular account's balance to a target value as of a given
+-- business date.
+--
+-- Routes through the existing transfer saga using the user's singleton
+-- External account as the contra side. The computed delta determines the
+-- direction:
+--
+--  * @delta > 0@ — credit the Regular account: source = External, target = Regular.
+--  * @delta < 0@ — debit the Regular account: source = Regular, target = External.
+--
+-- Cross-currency cases (External denominated in a different currency from
+-- the target account) are resolved by 'TransactionService.resolveAndInitiate'
+-- using the same ECB rate path Income\/Expense already use.
+--
+-- Validation (synchronous, pre-saga):
+--
+--  * Editor+ role on the account (otherwise 'AccountError').
+--  * Account exists and is not External.
+--  * @targetBalance@ is denominated in the account's currency.
+--  * @at@ is in the past or present.
+--  * Resulting delta is non-zero.
+--
+-- Post-saga failures (e.g. overdraft on a debit leg) surface through the
+-- existing 'TransferManager' path: the returned 'TransactionData' carries
+-- a 'Failed' status with the saga's reason.
+adjustAccountBalance ::
+  UserId ->
+  AccountId ->
+  -- | Target balance, must be in the account's currency.
+  Money ->
+  -- | Business date @D@ (the moment the target balance was correct).
+  UTCTime ->
+  -- | Human-readable reason; stored as the transaction's description.
+  Text ->
+  AppM (Either DomainError (TransactionId, TransactionRM.TransactionData))
+adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ do
+  lift
+    $ logInfo
+    $ "Adjusting balance for account "
+    <> displayShow accountId
+    <> " to target "
+    <> displayShow targetBalance.amount
+    <> " "
+    <> displayShow targetBalance.currency
+    <> " as of "
+    <> displayShow asOf
+  now <- liftIO getCurrentTime
+  guardE
+    (asOf <= now)
+    ( ValidationErr
+        (mkValidationError "date" "Adjustment date must be in the past or present" (tshow asOf))
+    )
+
+  -- 1. Load account; reject if missing or External.
+  accountRM <- lift (view accountReadModelL)
+  account <-
+    liftMaybeM
+      (NotFound "Account" (tshow accountId))
+      (ReadModel.getAccount accountRM accountId)
+  guardE
+    (account.accountType /= External)
+    ( ValidationErr
+        (mkValidationError "accountType" "Cannot adjust an External account" (tshow accountId))
+    )
+
+  -- 2. Authorize Editor+ on the account.
+  guardE
+    ( canModifyAccount userId
+        AccountAuthData
+          { createdBy = account.createdBy,
+            accountType = account.accountType,
+            accessList = account.accessList
+          }
+    )
+    (AccountError "User does not have edit access to this account")
+
+  -- 3. Currency match.
+  guardE
+    (targetBalance.currency == account.balance.currency)
+    ( ValidationErr
+        ( mkValidationError
+            "currency"
+            "Currency does not match account currency"
+            (tshow targetBalance.currency)
+        )
+    )
+
+  -- 4. Look up the caller's External account.
+  userData <- getUserData userId
+  let externalAccId = userData.externalAccountId
+  externalAccount <-
+    liftMaybeM
+      (NotFound "Account" (tshow externalAccId))
+      (ReadModel.getAccount accountRM externalAccId)
+
+  -- 5. Compute delta against the historical balance at D.
+  reader <- lift (view eventStoreReaderL)
+  currentAtD <-
+    liftMaybeM
+      (NotFound "Account" (tshow accountId))
+      (liftIO (balanceAsOf reader accountId asOf))
+  delta <-
+    liftEitherWith
+      ( \msg ->
+          ValidationErr
+            (mkValidationError "currency" msg (tshow targetBalance.currency))
+      )
+      (subtractMoney targetBalance currentAtD)
+
+  -- 6. Reject no-op adjustments.
+  guardE
+    (not (moneyIsZero delta))
+    ( ValidationErr
+        ( mkValidationError
+            "targetBalance"
+            "Target balance equals current balance at this date"
+            (tshow targetBalance.amount)
+        )
+    )
+
+  -- 7. Direction + amount. The user-supplied magnitude is always in the
+  -- account-being-adjusted's currency (= account.balance currency):
+  --   * Positive delta — direction is External -> Regular. The Regular
+  --     account is the target leg, so the user amount is on the target
+  --     side: @userAmountIsSource = False@.
+  --   * Negative delta — direction is Regular -> External. The Regular
+  --     account is the source leg: @userAmountIsSource = True@.
+  let positive = moneyIsPositive delta
+      (sourceAccId, targetAccId, magnitude)
+        | positive = (externalAccId, accountId, delta)
+        | otherwise = (accountId, externalAccId, negateMoney delta)
+      srcCurrency = (if positive then externalAccount else account).balance.currency
+      tgtCurrency = (if positive then account else externalAccount).balance.currency
+      userAmountIsSource = not positive
+
+  -- 8. Cross-currency resolution + saga kick-off.
+  ExceptT
+    ( TransactionService.resolveAndInitiate
+        (Just asOf)
+        now
+        magnitude
+        srcCurrency
+        tgtCurrency
+        userAmountIsSource
+        Nothing
+        $ \date srcAmt tgtAmt rate ->
+          InitiateTransfer
+            { sourceAccountId = sourceAccId,
+              targetAccountId = targetAccId,
+              sourceAmount = srcAmt,
+              targetAmount = tgtAmt,
+              exchangeRate = rate,
+              description = reason,
+              initiatedBy = userId,
+              at = date,
+              transferType = Adjustment,
+              externalTransactionId = Nothing,
+              labels = mempty
+            }
+    )
+

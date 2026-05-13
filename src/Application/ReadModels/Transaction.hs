@@ -318,6 +318,7 @@ processEvent transactions globalEvent =
                           Income _ -> Income evt.newCategory
                           Expense _ -> Expense evt.newCategory
                           Transfer -> Transfer
+                          Adjustment -> Adjustment
                       }
                 )
                 transactionId
@@ -463,3 +464,4 @@ findReferencingTransactions readModelTVar entryId = do
           Income cid -> cid == entryId
           Expense cid -> cid == entryId
           Transfer -> False
+          Adjustment -> False

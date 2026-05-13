@@ -45,6 +45,7 @@ module Application.ReadModels.Account
     getAccessibleAccounts,
     getUserRegularAccounts,
     accountExists,
+    balanceAsOf,
 
     -- * Helper Functions
     accountToMap,
@@ -57,6 +58,8 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
@@ -76,11 +79,12 @@ import Domain.Core.Types
     addMoney,
     mkAccountIdSafe,
     subtractMoney,
+    unAccountId,
   )
 import Domain.Models
   ( AccountingEvent (..),
   )
-import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium (EventStoreReader (..), EventVersion, GlobalStreamEvent, SequenceNumber, StreamEvent (..), VersionedStreamEvent, allEvents)
 import GHC.Generics (Generic)
 import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 import Safe (maximumDef)
@@ -490,3 +494,65 @@ getUserRole uid accessList =
       if acc.userId == uid
         then Just acc
         else result
+
+-- -----------------------------------------------------------------------------
+-- Temporal balance query
+-- -----------------------------------------------------------------------------
+
+-- | Compute the account's balance as of business date @D@ by re-folding the
+-- aggregate's event stream.
+--
+-- This is an on-demand event-store fold, not a maintained projection. It is
+-- exposed alongside the read model because callers usually reach for it in
+-- the same place they reach for current balance, but the live read-model
+-- 'AccountReadModel' is not an input — the reader is passed explicitly,
+-- mirroring 'Infrastructure.Eventium.loadUserAggregate'.
+--
+-- Returns 'Nothing' when the account has no events at all (i.e. does not
+-- exist). The genesis balance is the @initialBalance@ from 'AccountCreated';
+-- any 'AccountDebited' / 'AccountCredited' events with @at <= D@ are folded
+-- in. Other event payloads do not affect balance.
+--
+-- Callers (typically the service layer) are responsible for lifting
+-- 'Nothing' to a domain error such as @NotFound \"Account\" ...@.
+balanceAsOf ::
+  (Monad m) =>
+  EventStoreReader UUID EventVersion m (VersionedStreamEvent AccountingEvent) ->
+  AccountId ->
+  UTCTime ->
+  m (Maybe Money)
+balanceAsOf (EventStoreReader readStream) accountId asOf = do
+  events <- readStream (allEvents (unAccountId accountId))
+  pure (foldBalanceAsOf asOf ((.payload) <$> events))
+
+-- | Fold a list of 'AccountingEvent' payloads into a balance as of @D@.
+--
+-- Pure helper exposed for testability (kept package-private). Returns
+-- 'Nothing' when no 'AccountCreated' event is present; otherwise folds
+-- 'AccountCredited' / 'AccountDebited' events whose business date is at or
+-- before @asOf@. Currency-mismatch errors from 'addMoney' / 'subtractMoney'
+-- are silently ignored, mirroring 'handleAccountEvents' — such mismatches
+-- cannot arise from valid event streams produced by the command handler.
+foldBalanceAsOf :: UTCTime -> [AccountingEvent] -> Maybe Money
+foldBalanceAsOf asOf events =
+  case dropWhile (not . isAccountCreated) events of
+    [] -> Nothing
+    (AccountCreatedEvent c : rest) ->
+      Just (foldl' (applyAsOf asOf) c.initialBalance rest)
+    _ -> Nothing
+  where
+    isAccountCreated (AccountCreatedEvent _) = True
+    isAccountCreated _ = False
+
+    applyAsOf :: UTCTime -> Money -> AccountingEvent -> Money
+    applyAsOf cutoff bal (AccountDebitedEvent e)
+      | e.at <= cutoff =
+          case subtractMoney bal e.amount of
+            Right newBal -> newBal
+            Left _ -> bal -- currency mismatch cannot occur in valid streams
+    applyAsOf cutoff bal (AccountCreditedEvent e)
+      | e.at <= cutoff =
+          case addMoney bal e.amount of
+            Right newBal -> newBal
+            Left _ -> bal
+    applyAsOf _ bal _ = bal

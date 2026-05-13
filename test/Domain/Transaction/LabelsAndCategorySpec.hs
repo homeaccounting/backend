@@ -107,7 +107,7 @@ spec = do
                 }
       handleTransactionCommand completedExpense cmd `shouldSatisfy` isRight
 
-    it "rejected on internal Transfer with CannotChangeCategoryOnInternalTransfer" $ do
+    it "rejected on internal Transfer with CannotChangeCategoryOnUncategorizedTransaction" $ do
       let cmd =
             ChangeTransactionCategoryTransactionCommand
               ChangeTransactionCategory
@@ -115,7 +115,7 @@ spec = do
                   newCategory = unsafeDictionaryEntryId (UUID.fromWords 6 0 0 0)
                 }
       handleTransactionCommand completedTransfer cmd
-        `shouldBe` Left CannotChangeCategoryOnInternalTransfer
+        `shouldBe` Left CannotChangeCategoryOnUncategorizedTransaction
 
     it "rejected in Pending state with CannotEditLabelsInCurrentState" $ do
       let cmd =

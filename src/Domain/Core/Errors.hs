@@ -77,8 +77,8 @@ data DomainError
       }
   | -- | Cannot edit labels on a transaction that is not in the Completed state.
     CannotEditTransactionLabelsInCurrentState
-  | -- | Cannot change the category on an internal (no-category) transfer.
-    CannotChangeCategoryOnInternalTransfer
+  | -- | Cannot change the category on a transaction with no category (Transfer or Adjustment).
+    CannotChangeCategoryOnUncategorizedTransaction
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -154,5 +154,5 @@ renderDomainError err = case err of
     "Cannot delete category " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
   CannotEditTransactionLabelsInCurrentState ->
     "Transaction labels can only be changed after the transfer has completed"
-  CannotChangeCategoryOnInternalTransfer ->
-    "Category cannot be set on an internal transfer"
+  CannotChangeCategoryOnUncategorizedTransaction ->
+    "Category cannot be set on a Transfer or Adjustment"

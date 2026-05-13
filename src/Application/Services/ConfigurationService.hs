@@ -42,9 +42,10 @@ where
 
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
 import Application.ReadModels.Transaction (findReferencingTransactions)
-import Application.ReadModels.User (UserData (..), getUser)
+import Application.ReadModels.User (UserData (..))
 import Application.Services.Internal
-  ( guardE,
+  ( getUserData,
+    guardE,
     liftEitherWith,
     liftMaybeM,
     runAccountCmd,
@@ -145,11 +146,7 @@ getConfigurationForUser userId = runExceptT $ do
 changeBaseCurrency :: UserId -> Currency -> AppM (Either DomainError ())
 changeBaseCurrency userId newCurrency = runExceptT $ do
   lift $ logInfo $ "Changing base currency to " <> displayShow newCurrency <> " for user " <> displayShow userId
-  userRM <- lift (view userReadModelL)
-  userData <-
-    liftMaybeM
-      (NotFound "User" (tshow userId))
-      (liftIO $ getUser userRM userId)
+  userData <- getUserData userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runAccountCmd
     id
@@ -368,11 +365,7 @@ seedFresh = do
 -- | Look up a user's configuration ID and data from the read models.
 lookupUserConfiguration :: UserId -> AppM (Either DomainError (ConfigurationId, ConfigurationData))
 lookupUserConfiguration userId = runExceptT $ do
-  userRM <- lift (view userReadModelL)
-  userData <-
-    liftMaybeM
-      (NotFound "User" (tshow userId))
-      (liftIO $ getUser userRM userId)
+  userData <- getUserData userId
   configRM <- lift (view configurationReadModelL)
   configData <-
     liftMaybeM

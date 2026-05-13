@@ -34,6 +34,7 @@ spec = do
   accountIdSpec
   transactionIdSpec
   externalTransactionIdSpec
+  transferTypeSpec
 
 -- -----------------------------------------------------------------------------
 -- Money Tests
@@ -222,3 +223,16 @@ externalTransactionIdSpec = describe "ExternalTransactionId" $ do
   it "FromJSON accepts non-empty string"
     $ (Aeson.eitherDecode "\"tx-123\"" :: Either String ExternalTransactionId)
     `shouldSatisfy` isRight
+
+-- -----------------------------------------------------------------------------
+-- TransferType Tests
+-- -----------------------------------------------------------------------------
+
+transferTypeSpec :: Spec
+transferTypeSpec = describe "TransferType JSON" $ do
+  it "round-trips Adjustment via Aeson Generic encoding" $ do
+    let encoded = Aeson.encode Adjustment
+    Aeson.decode encoded `shouldBe` Just Adjustment
+  it "encodes Adjustment with a tag-only object (no category)"
+    $ Aeson.encode Adjustment
+    `shouldBe` "{\"tag\":\"Adjustment\"}"

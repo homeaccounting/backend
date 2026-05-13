@@ -32,20 +32,24 @@ module Application.Services.TransactionService
     listTransactions,
     setTransactionLabels,
     changeTransactionCategory,
+
+    -- * Re-exported helpers for sibling services
+    resolveAndInitiate,
   )
 where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
+import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), TransactionQuery)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.ReadModels.User (UserData (..))
-import qualified Application.ReadModels.User as UserRM
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Application.Services.Internal
-  ( guardE,
+  ( getUserData,
+    guardE,
     liftEitherWith,
     liftMaybe,
     liftMaybeM,
@@ -61,7 +65,6 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
-    AccountRole (..),
     AccountType (..),
     CategoryId,
     Currency,
@@ -206,8 +209,7 @@ initiateIncome userId targetAccountId amount categoryEntryId labels description 
     lift $ logInfo "Initiating income transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
-    userRM <- lift (view userReadModelL)
-    userData <- liftMaybeM (NotFound "User" (tshow userId)) (UserRM.getUser userRM userId)
+    userData <- getUserData userId
     let externalAccId = userData.externalAccountId
     accountRM <- lift (view accountReadModelL)
     targetData <-
@@ -263,8 +265,7 @@ initiateExpense userId sourceAccountId amount categoryEntryId labels description
     lift $ logInfo "Initiating expense transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
-    userRM <- lift (view userReadModelL)
-    userData <- liftMaybeM (NotFound "User" (tshow userId)) (UserRM.getUser userRM userId)
+    userData <- getUserData userId
     let externalAccId = userData.externalAccountId
     accountRM <- lift (view accountReadModelL)
     sourceData <-
@@ -409,7 +410,7 @@ changeTransactionCategory userId transactionId newCategory = runExceptT $ do
     <> displayShow userId
   transaction <- ExceptT (ensureEditorAccess userId transactionId)
   dictId <-
-    liftMaybe CannotChangeCategoryOnInternalTransfer (pickCategoryDict transaction.transferType)
+    liftMaybe CannotChangeCategoryOnUncategorizedTransaction (pickCategoryDict transaction.transferType)
   known <- ExceptT (categoryExists userId dictId newCategory)
   guardE known (CategoryNotFound (tshow (unDictionaryEntryId newCategory)))
   let cmd =
@@ -463,16 +464,15 @@ ensureEditorAccess userId transactionId = runExceptT $ do
       (NotFound "Transaction" (tshow transactionId))
       (liftIO (ReadModel.getTransaction txnRM transactionId))
   accountRM <- lift (view accountReadModelL)
-  accessible <- lift (AccountRM.getAccessibleAccounts accountRM userId)
-  let editorAccounts =
-        Set.fromList
-          [ aid
-          | (aid, _, role) <- accessible,
-            role == Owner || role == Editor
-          ]
-      allowed =
-        Set.member transaction.sourceAccountId editorAccounts
-          || Set.member transaction.targetAccountId editorAccounts
+  mSrc <- liftIO (AccountRM.getAccount accountRM transaction.sourceAccountId)
+  mTgt <- liftIO (AccountRM.getAccount accountRM transaction.targetAccountId)
+  let toAuthData acc =
+        AccountAuthData
+          { createdBy = acc.createdBy,
+            accountType = acc.accountType,
+            accessList = acc.accessList
+          }
+      allowed = any (canModifyAccount userId . toAuthData) $ catMaybes [mSrc, mTgt]
   guardE allowed (AccountError "User does not have edit access to this transaction")
   pure transaction
 
@@ -496,8 +496,8 @@ translateTransactionError ::
   DomainError
 translateTransactionError (CommandRejected TxCh.CannotEditLabelsInCurrentState) =
   CannotEditTransactionLabelsInCurrentState
-translateTransactionError (CommandRejected TxCh.CannotChangeCategoryOnInternalTransfer) =
-  CannotChangeCategoryOnInternalTransfer
+translateTransactionError (CommandRejected TxCh.CannotChangeCategoryOnUncategorizedTransaction) =
+  CannotChangeCategoryOnUncategorizedTransaction
 translateTransactionError other =
   TransactionError (T.pack (show other))
 
@@ -515,6 +515,7 @@ pickCategoryDict :: TransferType -> Maybe DictionaryId
 pickCategoryDict (Income _) = Just ConfigurationService.incomeCategoryDictId
 pickCategoryDict (Expense _) = Just ConfigurationService.expenseCategoryDictId
 pickCategoryDict Transfer = Nothing
+pickCategoryDict Adjustment = Nothing
 
 -- | Resolve cross-currency amounts and initiate a transfer.
 --

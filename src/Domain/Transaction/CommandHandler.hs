@@ -65,9 +65,9 @@ data TransactionError
   | -- | SetTransactionLabels or ChangeTransactionCategory was issued against
     -- a transaction whose status is not Completed.
     CannotEditLabelsInCurrentState
-  | -- | ChangeTransactionCategory was issued against an internal transfer,
+  | -- | ChangeTransactionCategory was issued against a Transfer or Adjustment,
     -- which has no category to change.
-    CannotChangeCategoryOnInternalTransfer
+    CannotChangeCategoryOnUncategorizedTransaction
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -186,15 +186,17 @@ handleTransactionCommand transaction (ChangeTransactionCategoryTransactionComman
   case transaction ^. #status of
     Completed ->
       case transaction ^. #transferType of
-        Transfer -> Left CannotChangeCategoryOnInternalTransfer
-        _ ->
-          Right
-            [ TransactionCategoryChangedTransactionEvent
-                TransactionCategoryChanged
-                  { transactionId = transactionId,
-                    newCategory = newCategory
-                  }
-            ]
+        Transfer -> Left CannotChangeCategoryOnUncategorizedTransaction
+        Adjustment -> Left CannotChangeCategoryOnUncategorizedTransaction
+        Income _ -> Right [evt]
+        Expense _ -> Right [evt]
+      where
+        evt =
+          TransactionCategoryChangedTransactionEvent
+            TransactionCategoryChanged
+              { transactionId = transactionId,
+                newCategory = newCategory
+              }
     _ -> Left CannotEditLabelsInCurrentState
 
 -- -----------------------------------------------------------------------------

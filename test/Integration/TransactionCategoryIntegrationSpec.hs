@@ -13,7 +13,7 @@
 -- 1.  Create an income categorised as @Salary@; switch the category to
 --     a newly-added @Freelance@ entry and verify the read model.
 -- 2.  Create an internal transfer; attempt to change its category →
---     'CannotChangeCategoryOnInternalTransfer'.
+--     'CannotChangeCategoryOnUncategorizedTransaction'.
 -- 3.  Create an income and try to switch to a category id that is not
 --     in the income-category dictionary → 'CategoryNotFound'.
 --
@@ -185,10 +185,10 @@ spec = describe "Integration / TransactionCategoryEdit" $ do
           txId
           h.harnessSalaryCategory
     case result of
-      Left CannotChangeCategoryOnInternalTransfer -> pure ()
+      Left CannotChangeCategoryOnUncategorizedTransaction -> pure ()
       other ->
         expectationFailure
-          $ "expected CannotChangeCategoryOnInternalTransfer, got: "
+          $ "expected CannotChangeCategoryOnUncategorizedTransaction, got: "
           <> show other
 
   it "rejects an unknown category id with CategoryNotFound" $ do

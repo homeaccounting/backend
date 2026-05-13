@@ -371,10 +371,10 @@ spec = describe "TransactionService / labels" $ do
         runAppM env
           $ changeTransactionCategory fx.userId txId fx.incomeCategory
       case result of
-        Left CannotChangeCategoryOnInternalTransfer -> pure ()
+        Left CannotChangeCategoryOnUncategorizedTransaction -> pure ()
         other ->
           expectationFailure
-            $ "expected CannotChangeCategoryOnInternalTransfer, got: "
+            $ "expected CannotChangeCategoryOnUncategorizedTransaction, got: "
             <> show other
 
     it "rejects an unknown category id" $ do

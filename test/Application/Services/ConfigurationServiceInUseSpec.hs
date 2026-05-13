@@ -171,3 +171,29 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
 
     result <- runRIO env $ removeDictionaryEntry userId labelsDictId labelId
     result `shouldSatisfy` isRight
+
+  -- \| An Adjustment carries no category, so it must never contribute to the
+  -- category in-use count. This locks the report-exclusion contract for
+  -- 'TransferType = Adjustment' end-to-end: the in-use guard powers
+  -- category-deletion enforcement, which is the same code path any future
+  -- income/expense aggregator would walk through.
+  it "Adjustment transactions do not count towards CategoryInUse" $ do
+    env <- createTestAppEnv
+    runRIO env seedDefaultConfiguration
+    userId <- registerUser env "inuse-cat-adjustment@test.com"
+
+    -- Clone-on-write the configuration so the user owns it.
+    _ <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "Spark")
+
+    categoryId <- firstEntryId env userId "income-category"
+    -- One real Income reference + several Adjustments that should be invisible
+    -- to the category in-use scan.
+    seedTransaction env userId (Income categoryId) Set.empty
+    seedTransaction env userId Adjustment Set.empty
+    seedTransaction env userId Adjustment Set.empty
+    seedTransaction env userId Adjustment Set.empty
+
+    result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId categoryId
+    case result of
+      Left (CategoryInUse _ n) -> n `shouldBe` 1
+      other -> expectationFailure $ "expected CategoryInUse with count 1, got: " <> show other

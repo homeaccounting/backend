@@ -94,6 +94,7 @@ formatTransactionLine entryNames (_txId, td) =
         Income catId -> withCategory "Income" catId
         Expense catId -> withCategory "Expense" catId
         Transfer -> "Transfer"
+        Adjustment -> "Adjustment"
       amt = formatMoney td.sourceAmount <> " " <> showCurrency (moneyCurrency td.sourceAmount)
       statusSuffix = case td.status of
         Completed -> ""

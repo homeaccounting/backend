@@ -55,6 +55,7 @@ module Web.Types
     TransferRequest (..),
     IncomeRequest (..),
     ExpenseRequest (..),
+    AdjustBalanceRequest (..),
     InternalTransferRequest (..),
     SetTransactionLabelsRequest (..),
     ChangeTransactionCategoryRequest (..),
@@ -371,6 +372,30 @@ data ExpenseRequest
 instance ToJSON ExpenseRequest
 
 instance FromJSON ExpenseRequest
+
+-- | Request to adjust an account balance to a specific target value.
+--
+-- The @date@ field is the business date at which the target balance was
+-- correct (must not be in the future). The service computes the delta against
+-- the account's balance at that point and records a synthetic adjustment
+-- transaction.
+--
+-- Unlike 'IncomeRequest' / 'ExpenseRequest', whose @date@ field is optional
+-- and defaults to server time when omitted, 'AdjustBalanceRequest.date' is
+-- required: the business date defines /which/ historical snapshot the user
+-- is reconciling to, so there is no sensible default. Do not relax this to
+-- @Maybe UTCTime@ without first revisiting the service-layer contract.
+data AdjustBalanceRequest = AdjustBalanceRequest
+  { targetBalance :: Double,
+    currency :: Text,
+    date :: UTCTime,
+    reason :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AdjustBalanceRequest
+
+instance FromJSON AdjustBalanceRequest
 
 -- | Request to initiate an internal transfer (Regular -> Regular account).
 data InternalTransferRequest
@@ -953,12 +978,14 @@ transferTypeToText :: TransferType -> Text
 transferTypeToText (Income _) = "income"
 transferTypeToText (Expense _) = "expense"
 transferTypeToText Transfer = "transfer"
+transferTypeToText Adjustment = "adjustment"
 
 -- | Extract category UUID from TransferType, if present.
 transferTypeCategoryText :: TransferType -> Maybe Text
 transferTypeCategoryText (Income entryId) = Just $ T.pack $ UUID.toString $ unDictionaryEntryId entryId
 transferTypeCategoryText (Expense entryId) = Just $ T.pack $ UUID.toString $ unDictionaryEntryId entryId
 transferTypeCategoryText Transfer = Nothing
+transferTypeCategoryText Adjustment = Nothing
 
 -- -----------------------------------------------------------------------------
 -- Category Parsing

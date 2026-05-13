@@ -22,6 +22,9 @@ module Application.Services.Internal
     liftEitherWith,
     guardE,
 
+    -- * Read-model helpers
+    getUserData,
+
     -- * Aggregate command runners
     runAccountCmd,
     runUserCmd,
@@ -30,16 +33,18 @@ module Application.Services.Internal
   )
 where
 
+import Application.ReadModels.User (UserData, getUser)
 import Control.Monad.Trans.Except (ExceptT (..), throwE)
 import qualified Data.Text as T
 import Data.UUID (UUID)
 import Domain.Account.CommandHandler (AccountCommand)
 import Domain.Configuration.CommandHandler (ConfigurationCommand)
 import Domain.Core.Errors (DomainError (..))
+import Domain.Core.Types (UserId)
 import Domain.Transaction.CommandHandler (TransactionCommand, TransactionError)
 import Domain.User.CommandHandler (UserCommand)
 import Eventium (CommandHandlerError, MetadataEnricher)
-import Infrastructure.App (AppM, HasEventStore (..))
+import Infrastructure.App (AppM, HasEventStore (..), HasReadModel (..))
 import Infrastructure.Eventium
   ( applyAccountCommand,
     applyConfigurationCommand,
@@ -47,6 +52,16 @@ import Infrastructure.Eventium
     applyUserCommand,
   )
 import RIO
+
+-- -----------------------------------------------------------------------------
+-- Read-model helpers
+-- -----------------------------------------------------------------------------
+
+-- | Look up a 'UserData' record by 'UserId', throwing 'NotFound' if missing.
+getUserData :: UserId -> ExceptT DomainError AppM UserData
+getUserData userId = do
+  userRM <- lift (view userReadModelL)
+  liftMaybeM (NotFound "User" (tshow userId)) (getUser userRM userId)
 
 -- -----------------------------------------------------------------------------
 -- Pure Lifters
@@ -132,7 +147,7 @@ runConfigurationCmd enricher configId cmd = do
 --
 -- Takes an explicit translator so 'TransactionService.translateTransactionError'
 -- (which maps 'CannotEditLabelsInCurrentState' and
--- 'CannotChangeCategoryOnInternalTransfer' to dedicated 'DomainError' values)
+-- 'CannotChangeCategoryOnUncategorizedTransaction' to dedicated 'DomainError' values)
 -- stays local to its service.
 runTransactionCmd ::
   (CommandHandlerError TransactionError -> DomainError) ->

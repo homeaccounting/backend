@@ -32,14 +32,11 @@ module Application.Services.UserService
   )
 where
 
-import Application.ReadModels.User
-  ( UserData (..),
-    getUser,
-  )
+import Application.ReadModels.User (UserData (..))
 import Application.Services.Internal
-  ( guardE,
+  ( getUserData,
+    guardE,
     liftMaybe,
-    liftMaybeM,
     runUserCmd,
   )
 import Control.Monad.Trans.Except (runExceptT, throwE)
@@ -56,10 +53,7 @@ import Domain.User.Commands
     UnlinkOAuthAccount (..),
     UnlinkTelegramAccount (..),
   )
-import Infrastructure.App
-  ( AppM,
-    HasReadModel (..),
-  )
+import Infrastructure.App (AppM)
 import Infrastructure.Auth.Password (hashPassword)
 import RIO
 import qualified RIO.List as L
@@ -78,8 +72,7 @@ getProfile ::
   AppM (Either DomainError (UserId, UserData))
 getProfile userId = runExceptT $ do
   lift $ logInfo "Getting user profile"
-  userReadModel <- lift (view userReadModelL)
-  userData <- liftMaybeM (NotFound "User" (tshow userId)) (getUser userReadModel userId)
+  userData <- getUserData userId
   lift $ logInfo "User profile retrieved successfully"
   pure (userId, userData)
 
@@ -135,8 +128,7 @@ unlinkOAuth userId providerText = runExceptT $ do
     liftMaybe
       (ValidationErr (mkValidationError "provider" "Unknown OAuth provider" providerText))
       (parseOAuthProvider providerText)
-  userReadModel <- lift (view userReadModelL)
-  userData <- liftMaybeM (NotFound "User" (tshow userId)) (getUser userReadModel userId)
+  userData <- getUserData userId
   identity <-
     liftMaybe (NotFound "OAuthProvider" providerText)
       $ L.find (\i -> i.provider == provider) userData.oauthIdentities
@@ -164,8 +156,7 @@ unlinkTelegram ::
   AppM (Either DomainError ())
 unlinkTelegram userId = runExceptT $ do
   lift $ logInfo "Unlinking Telegram account"
-  userReadModel <- lift (view userReadModelL)
-  userData <- liftMaybeM (NotFound "User" (tshow userId)) (getUser userReadModel userId)
+  userData <- getUserData userId
   _telegramIdentity <-
     liftMaybe (NotFound "TelegramLink" (tshow userId)) userData.telegramIdentity
   when (countLoginMethods userData <= 1) $ do

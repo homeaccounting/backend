@@ -49,13 +49,14 @@ module Web.API.AccountAPI
     revokeAccountAccessHandler,
     setOverdraftLimitHandler,
     setAccountSubtypeHandler,
+    adjustBalanceHandler,
   )
 where
 
 import qualified Application.Services.AccountService as AccountService
 import Data.Aeson (FromJSON, ToJSON)
 import Data.UUID (UUID)
-import Domain.Core.Types (mkMoney, parseCurrency)
+import Domain.Core.Types (mkAccountId, mkMoney, parseCurrency)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
@@ -64,11 +65,15 @@ import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
   ( AccountListResponse (..),
     AccountResponse,
+    AdjustBalanceRequest (..),
     CreateAccountRequest (..),
     SetAccountSubtypeRequest (..),
+    TransactionResponse,
     fromAccountData,
+    fromTransactionData,
     toAccountSubtype,
     toCreateAccountCommand,
+    toDomainMoney,
   )
 import Web.Validation (validateField, validateFieldCtx)
 
@@ -142,6 +147,14 @@ type AccountAPI =
       :> "type"
       :> ReqBody '[JSON] SetAccountSubtypeRequest
       :> Put '[JSON] NoContent
+    -- PUT /api/accounts/:id/balance - Adjust account balance (requires auth, editor+)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "accounts"
+      :> Capture "id" UUID
+      :> "balance"
+      :> ReqBody '[JSON] AdjustBalanceRequest
+      :> Put '[JSON] TransactionResponse
 
 -- -----------------------------------------------------------------------------
 -- Request Types
@@ -187,6 +200,7 @@ accountServer =
     :<|> revokeAccountAccessHandler
     :<|> setOverdraftLimitHandler
     :<|> setAccountSubtypeHandler
+    :<|> adjustBalanceHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
@@ -281,4 +295,26 @@ setAccountSubtypeHandler user accountUuid SetAccountSubtypeRequest {..} = do
   result <- AccountService.setAccountSubtype userId accountUuid domainType
   case result of
     Right () -> return NoContent
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/accounts/:id/balance - Adjust account balance.
+adjustBalanceHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  AdjustBalanceRequest ->
+  AppM TransactionResponse
+adjustBalanceHandler user accountUuid req = do
+  let userId = user.userId
+  accountId <- validateField "id" $ mkAccountId accountUuid
+  cur <- validateField "currency" $ parseCurrency req.currency
+  let amount = toDomainMoney cur req.targetBalance
+  result <-
+    AccountService.adjustAccountBalance
+      userId
+      accountId
+      amount
+      req.date
+      req.reason
+  case result of
+    Right (txId, txData) -> pure $ fromTransactionData txId txData
     Left err -> throwDomainError err

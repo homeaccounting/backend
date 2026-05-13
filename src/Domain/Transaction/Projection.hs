@@ -291,6 +291,7 @@ handleTransactionEvent transaction (TransactionCategoryChangedTransactionEvent e
         Income _ -> Income evt.newCategory
         Expense _ -> Expense evt.newCategory
         Transfer -> Transfer
+        Adjustment -> Adjustment
    in transaction & #transferType .~ newTransferType
 
 -- -----------------------------------------------------------------------------

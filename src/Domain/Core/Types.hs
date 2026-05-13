@@ -16,7 +16,7 @@ module Domain.Core.Types
     currencyFromNumericCode,
 
     -- * Money Type
-    Money,
+    Money (..),
     mkMoney,
     mkDefaultMoney,
     unsafeMoney,
@@ -24,6 +24,9 @@ module Domain.Core.Types
     moneyCurrency,
     addMoney,
     subtractMoney,
+    moneyIsZero,
+    moneyIsPositive,
+    negateMoney,
 
     -- * Exchange Rate Type
     ExchangeRate,
@@ -281,6 +284,18 @@ subtractMoney :: Money -> Money -> Either Text Money
 subtractMoney (Money a ca) (Money b cb)
   | ca /= cb = Left $ "Currency mismatch: cannot subtract " <> T.pack (show cb) <> " from " <> T.pack (show ca)
   | otherwise = Right (Money (a - b) ca)
+
+-- | True when the 'Money' amount is exactly zero (currency-agnostic).
+moneyIsZero :: Money -> Bool
+moneyIsZero (Money a _) = a == 0
+
+-- | True when the 'Money' amount is strictly positive.
+moneyIsPositive :: Money -> Bool
+moneyIsPositive (Money a _) = a > 0
+
+-- | Negate a 'Money' amount, preserving its currency.
+negateMoney :: Money -> Money
+negateMoney (Money a c) = Money (negate a) c
 
 -- -----------------------------------------------------------------------------
 -- Exchange Rate Type
@@ -906,11 +921,13 @@ instance FromJSON AccountAccess
 -- | Type of transfer operation.
 --
 -- Income and Expense carry a CategoryId referencing the user's
--- configured category. Transfer (internal) has no category.
+-- configured category. Transfer (internal account-to-account) and
+-- Adjustment (balance reconciliation) have no category.
 data TransferType
   = Income CategoryId
   | Expense CategoryId
   | Transfer
+  | Adjustment
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransferType
