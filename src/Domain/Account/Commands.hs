@@ -39,6 +39,7 @@ module Domain.Account.Commands
     SetOverdraftLimit (..),
     SetAccountSubtype (..),
     ChangeAccountCurrency (..),
+    RenameAccount (..),
   )
 where
 
@@ -65,7 +66,8 @@ accountCommands =
     ''CreditAccount,
     ''SetOverdraftLimit,
     ''SetAccountSubtype,
-    ''ChangeAccountCurrency
+    ''ChangeAccountCurrency,
+    ''RenameAccount
   ]
 
 -- -----------------------------------------------------------------------------
@@ -237,6 +239,23 @@ data ChangeAccountCurrency = ChangeAccountCurrency
   }
   deriving (Show, Eq)
 
+-- | Command to rename an account.
+--
+-- Business Rules:
+--   - Only Owner can rename
+--   - New name must differ from the current name (no-op rejection)
+--   - Empty / over-length name is rejected at the web layer; the domain
+--     handler trusts the input is non-empty.
+--
+-- If accepted, produces an AccountRenamed event.
+data RenameAccount = RenameAccount
+  { -- | New human-readable name for the account.
+    newName :: Text,
+    -- | User issuing the rename (must be Owner).
+    renamedBy :: UserId
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all commands
 deriveJSON defaultOptions ''CreateAccount
 deriveJSON defaultOptions ''ShareAccount
@@ -246,3 +265,4 @@ deriveJSON defaultOptions ''CreditAccount
 deriveJSON defaultOptions ''SetOverdraftLimit
 deriveJSON defaultOptions ''SetAccountSubtype
 deriveJSON defaultOptions ''ChangeAccountCurrency
+deriveJSON defaultOptions ''RenameAccount

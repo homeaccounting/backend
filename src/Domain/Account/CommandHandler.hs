@@ -79,6 +79,7 @@ data AccountError
   | ExternalTypeNotSettable
   | AccountCurrencyLocked
   | NegativeInitialBalanceExceedsOverdraftLimit
+  | AccountNameUnchanged
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -278,6 +279,19 @@ handleAccountCommand account (ChangeAccountCurrencyAccountCommand cmd)
   | account.name == "" = Left AccountDoesNotExist
   | account.hasTransactions = Left AccountCurrencyLocked
   | otherwise = Right [AccountCurrencyChangedAccountEvent (AccountCurrencyChanged cmd.newCurrency)]
+-- Handle RenameAccount command
+handleAccountCommand account (RenameAccountAccountCommand RenameAccount {..})
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | not (isOwner renamedBy account) = Left NotAccountOwner
+  | account ^. #name == newName = Left AccountNameUnchanged
+  | otherwise =
+      Right
+        [ AccountRenamedAccountEvent
+            AccountRenamed
+              { newName = newName,
+                by = renamedBy
+              }
+        ]
 -- Handle CreditAccount command (internal, issued by TransferManager saga)
 handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist

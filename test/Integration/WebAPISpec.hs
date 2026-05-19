@@ -40,6 +40,7 @@ import Network.HTTP.Types (hAuthorization, hContentType, status200, statusCode)
 import Network.Wai.Test (SResponse (..))
 import RIO
 import qualified RIO.ByteString.Lazy as LBS
+import qualified RIO.Text as T
 import Test.Hspec
 import Test.Hspec.Wai
 import Testkit.AppEnv (mkApp)
@@ -51,6 +52,7 @@ import Testkit.HspecWai
     invalidToken,
     postJSON,
     postJSONAuth,
+    putJSONAuth,
   )
 
 -- -----------------------------------------------------------------------------
@@ -242,6 +244,7 @@ accountAPISpec = do
     accountCreationSpec
     accountRetrievalSpec
     accountListingSpec
+    accountRenameSpec
 
 -- Note: Credit/Debit endpoints removed in favor of transfer-only model
 -- Use POST /api/transactions/transfer with External accounts instead
@@ -405,6 +408,90 @@ accountListingSpec =
           -- Should return empty accounts array
           body `shouldSatisfy` LBS.isPrefixOf "{\"accounts\":[]"
 
+-- | Test account renaming via PUT /api/accounts/:id/name
+accountRenameSpec :: Spec
+accountRenameSpec =
+  describe "PUT /api/accounts/:id/name" $ do
+    describe "renames an account with a valid non-empty trimmed name" $ with mkApp $ do
+      it "returns 200 (NoContent) and subsequent GET returns the new name" $ do
+        token <- liftIO generateTestToken
+        let createPayload =
+              object
+                [ "name" .= ("Old Name" :: Text),
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
+                ]
+
+        createResp <- postJSONAuth "/api/accounts" token (encode createPayload)
+        liftIO $ statusCode (simpleStatus createResp) `shouldBe` 201
+        let accountUuid = extractAccountId (simpleBody createResp)
+
+        let renamePayload = object ["name" .= ("New Name" :: Text)]
+        renameResp <-
+          putJSONAuth
+            (fromString $ "/api/accounts/" <> UUID.toString accountUuid <> "/name")
+            token
+            (encode renamePayload)
+        liftIO $ statusCode (simpleStatus renameResp) `shouldBe` 200
+
+        getResp <-
+          getJSONAuth
+            (fromString $ "/api/accounts/" <> UUID.toString accountUuid)
+            token
+        liftIO $ do
+          statusCode (simpleStatus getResp) `shouldBe` 200
+          let body = decode (simpleBody getResp) :: Maybe Aeson.Value
+          body `shouldSatisfy` hasName "New Name"
+
+    describe "rejects an empty or whitespace-only name" $ with mkApp $ do
+      it "returns 400 with fieldErrors.name" $ do
+        token <- liftIO generateTestToken
+        let createPayload =
+              object
+                [ "name" .= ("Original" :: Text),
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
+                ]
+
+        createResp <- postJSONAuth "/api/accounts" token (encode createPayload)
+        let accountUuid = extractAccountId (simpleBody createResp)
+
+        let renamePayload = object ["name" .= ("   " :: Text)]
+        response <-
+          putJSONAuth
+            (fromString $ "/api/accounts/" <> UUID.toString accountUuid <> "/name")
+            token
+            (encode renamePayload)
+        liftIO $ do
+          statusCode (simpleStatus response) `shouldBe` 400
+          let parsed = decode (simpleBody response) :: Maybe Aeson.Value
+          parsed `shouldSatisfy` hasFieldError "name"
+
+    describe "rejects a name longer than 120 characters" $ with mkApp $ do
+      it "returns 400 with fieldErrors.name" $ do
+        token <- liftIO generateTestToken
+        let createPayload =
+              object
+                [ "name" .= ("Original" :: Text),
+                  "initialBalance" .= (100.0 :: Double),
+                  "currency" .= ("USD" :: Text)
+                ]
+
+        createResp <- postJSONAuth "/api/accounts" token (encode createPayload)
+        let accountUuid = extractAccountId (simpleBody createResp)
+
+        let tooLong = T.replicate 121 "a"
+        let renamePayload = object ["name" .= tooLong]
+        response <-
+          putJSONAuth
+            (fromString $ "/api/accounts/" <> UUID.toString accountUuid <> "/name")
+            token
+            (encode renamePayload)
+        liftIO $ do
+          statusCode (simpleStatus response) `shouldBe` 400
+          let parsed = decode (simpleBody response) :: Maybe Aeson.Value
+          parsed `shouldSatisfy` hasFieldError "name"
+
 -- Note: Credit/Debit endpoints were removed in favor of the transfer-only model.
 -- Use POST /api/transactions to transfer to/from External accounts instead.
 
@@ -549,3 +636,21 @@ hasFieldError field (Just (Aeson.Object o)) = case KeyMap.lookup "fieldErrors" o
   Just (Aeson.Object fe) -> KeyMap.member (Key.fromText field) fe
   _ -> False
 hasFieldError _ _ = False
+
+-- | Extract the @id@ field (a UUID) from an 'AccountResponse' JSON body.
+-- Used by mutation specs that first create an account and then act on it.
+extractAccountId :: LBS.ByteString -> UUID.UUID
+extractAccountId body = case decode body :: Maybe Aeson.Value of
+  Just (Aeson.Object o) -> case KeyMap.lookup "id" o of
+    Just (Aeson.String t) -> case UUID.fromText t of
+      Just u -> u
+      Nothing -> error "extractAccountId: id field is not a valid UUID"
+    _ -> error "extractAccountId: id field missing or not a string"
+  _ -> error "extractAccountId: response is not a JSON object"
+
+-- | Check that a parsed 'AccountResponse' body has the expected @name@ value.
+hasName :: Text -> Maybe Aeson.Value -> Bool
+hasName expected (Just (Aeson.Object o)) = case KeyMap.lookup "name" o of
+  Just (Aeson.String t) -> t == expected
+  _ -> False
+hasName _ _ = False

@@ -22,11 +22,12 @@ module Domain.Account.CommandHandlerSpec (spec) where
 import Data.Either (isLeft)
 import Domain.Account
 import Domain.Account.CommandHandler
-import Domain.Account.Commands (CreditAccount (..), DebitAccount (..), SetOverdraftLimit (..))
+import Domain.Account.Commands (CreditAccount (..), DebitAccount (..), RenameAccount (..), SetOverdraftLimit (..))
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
     AccountCreated (..),
+    AccountRenamed (..),
   )
 import Domain.Core.Types
 import Eventium (latestProjection)
@@ -44,6 +45,7 @@ spec = do
   revokeAccessSpec
   currencyMismatchSpec
   setOverdraftLimitSpec
+  renameAccountSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -714,3 +716,49 @@ setOverdraftLimitSpec = describe "SetOverdraftLimit Command" $ do
                   }
         let result = handleAccountCommand account command
         result `shouldBe` Left CurrencyMismatch
+
+-- -----------------------------------------------------------------------------
+-- RenameAccount Tests
+-- -----------------------------------------------------------------------------
+
+renameAccountSpec :: Spec
+renameAccountSpec = describe "RenameAccount Command" $ do
+  context "Given regular account with owner" $ do
+    describe "When owner renames account to the same current name" $ do
+      it "Then rejects command with AccountNameUnchanged" $ do
+        let account = regularAccountWithOwner testOwnerId
+        let command =
+              RenameAccountAccountCommand
+                $ RenameAccount
+                  { newName = "Test Account",
+                    renamedBy = testOwnerId
+                  }
+        let result = handleAccountCommand account command
+        result `shouldBe` Left AccountNameUnchanged
+
+    describe "When a non-owner attempts to rename the account" $ do
+      it "Then rejects command with NotAccountOwner" $ do
+        let account = accountWithSharedAccess testOwnerId testEditorId Editor
+        let command =
+              RenameAccountAccountCommand
+                $ RenameAccount
+                  { newName = "Checking",
+                    renamedBy = testEditorId
+                  }
+        let result = handleAccountCommand account command
+        result `shouldBe` Left NotAccountOwner
+
+    describe "When owner renames account to a different non-empty name" $ do
+      it "Then emits AccountRenamed event with the new name and owner" $ do
+        let account = regularAccountWithOwner testOwnerId
+        let command =
+              RenameAccountAccountCommand
+                $ RenameAccount
+                  { newName = "Checking",
+                    renamedBy = testOwnerId
+                  }
+        case handleAccountCommand account command of
+          Right [AccountRenamedAccountEvent renamed] -> do
+            renamed.newName `shouldBe` "Checking"
+            renamed.by `shouldBe` testOwnerId
+          other -> expectationFailure $ "Expected single AccountRenamed event, got: " ++ show other

@@ -66,6 +66,7 @@ import Domain.Account.Events
     AccountCreated (..),
     AccountCredited (..),
     AccountDebited (..),
+    AccountRenamed (..),
     AccountSubtypeSet (..),
     OverdraftLimitSet (..),
   )
@@ -326,6 +327,19 @@ processEvent accounts globalEvent =
                 ( \account ->
                     account
                       { accountType = Regular evt.subtype,
+                        version = account.version + 1
+                      }
+                )
+                accountId
+                accounts
+        AccountRenamedEvent evt ->
+          case mkAccountIdSafe streamUuid of
+            Nothing -> accounts
+            Just accountId ->
+              Map.adjust
+                ( \account ->
+                    account
+                      { name = evt.newName,
                         version = account.version + 1
                       }
                 )

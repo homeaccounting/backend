@@ -30,6 +30,7 @@ module Application.Services.AccountService
     shareAccount,
     revokeAccountAccess,
     setOverdraftLimit,
+    renameAccount,
     setAccountSubtype,
     adjustAccountBalance,
   )
@@ -56,6 +57,7 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands
   ( CreateAccount,
+    RenameAccount (..),
     RevokeAccountAccess (..),
     SetAccountSubtype (..),
     SetOverdraftLimit (..),
@@ -278,6 +280,21 @@ setOverdraftLimit requestingUserId accountUuid newLimit = runExceptT $ do
           SetOverdraftLimit {overdraftLimit = newLimit, setBy = requestingUserId}
   runAccountCmd id accountUuid cmd
   lift $ logInfo "Overdraft limit set successfully"
+
+-- | Rename an account.
+renameAccount ::
+  UserId ->
+  UUID ->
+  Text ->
+  AppM (Either DomainError ())
+renameAccount requestingUserId accountUuid newName = runExceptT $ do
+  lift $ logInfo $ "Renaming account: " <> displayShow accountUuid
+  _ <- liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  let cmd =
+        RenameAccountAccountCommand
+          RenameAccount {newName = newName, renamedBy = requestingUserId}
+  runAccountCmd id accountUuid cmd
+  lift $ logInfo "Account renamed successfully"
 
 -- | Set the account type on an account.
 setAccountSubtype ::

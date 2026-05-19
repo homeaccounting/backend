@@ -37,6 +37,7 @@ module Domain.Account.Events
     OverdraftLimitSet (..),
     AccountSubtypeSet (..),
     AccountCurrencyChanged (..),
+    AccountRenamed (..),
   )
 where
 
@@ -63,7 +64,8 @@ accountEvents =
     ''AccountCredited,
     ''OverdraftLimitSet,
     ''AccountSubtypeSet,
-    ''AccountCurrencyChanged
+    ''AccountCurrencyChanged,
+    ''AccountRenamed
   ]
 
 -- -----------------------------------------------------------------------------
@@ -193,6 +195,17 @@ data AccountCurrencyChanged = AccountCurrencyChanged
   }
   deriving (Show, Eq)
 
+-- | Event emitted when an account is renamed.
+--
+-- Records the new name and the user who issued the rename.
+data AccountRenamed = AccountRenamed
+  { -- | New human-readable name for the account.
+    newName :: Text,
+    -- | User who renamed the account (Owner).
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all events
 deriveJSON defaultOptions ''AccountCreated
 deriveJSON defaultOptions ''AccountAccessGranted
@@ -202,3 +215,4 @@ deriveJSON defaultOptions ''AccountCredited
 deriveJSON defaultOptions ''OverdraftLimitSet
 deriveJSON defaultOptions ''AccountSubtypeSet
 deriveJSON defaultOptions ''AccountCurrencyChanged
+deriveJSON defaultOptions ''AccountRenamed

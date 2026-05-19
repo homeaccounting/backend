@@ -22,6 +22,7 @@
 --   POST   /api/accounts/:id/share    - Share account with another user
 --   DELETE /api/accounts/:id/access/:userId - Revoke user's access
 --   PUT    /api/accounts/:id/overdraft-limit - Set overdraft limit
+--   PUT    /api/accounts/:id/name    - Rename account
 --
 -- Handler Responsibilities (HTTP concerns only):
 --   1. Extract data from HTTP request (path params, body, auth)
@@ -37,6 +38,7 @@ module Web.API.AccountAPI
     -- * Request/Response Types
     ShareAccountRequest (..),
     SetOverdraftLimitRequest (..),
+    RenameAccountRequest (..),
 
     -- * Server
     accountServer,
@@ -50,11 +52,13 @@ module Web.API.AccountAPI
     setOverdraftLimitHandler,
     setAccountSubtypeHandler,
     adjustBalanceHandler,
+    renameAccountHandler,
   )
 where
 
 import qualified Application.Services.AccountService as AccountService
 import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Text as T
 import Data.UUID (UUID)
 import Domain.Core.Types (mkAccountId, mkMoney, parseCurrency)
 import Infrastructure.App (AppM)
@@ -147,6 +151,14 @@ type AccountAPI =
       :> "type"
       :> ReqBody '[JSON] SetAccountSubtypeRequest
       :> Put '[JSON] NoContent
+    -- PUT /api/accounts/:id/name - Rename account (requires auth, owner only)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "accounts"
+      :> Capture "id" UUID
+      :> "name"
+      :> ReqBody '[JSON] RenameAccountRequest
+      :> Put '[JSON] NoContent
     -- PUT /api/accounts/:id/balance - Adjust account balance (requires auth, editor+)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -182,6 +194,16 @@ instance ToJSON SetOverdraftLimitRequest
 
 instance FromJSON SetOverdraftLimitRequest
 
+-- | Rename account request.
+data RenameAccountRequest = RenameAccountRequest
+  { name :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON RenameAccountRequest
+
+instance FromJSON RenameAccountRequest
+
 -- | Proxy for the AccountAPI.
 accountAPI :: Proxy AccountAPI
 accountAPI = Proxy
@@ -200,6 +222,7 @@ accountServer =
     :<|> revokeAccountAccessHandler
     :<|> setOverdraftLimitHandler
     :<|> setAccountSubtypeHandler
+    :<|> renameAccountHandler
     :<|> adjustBalanceHandler
 
 -- -----------------------------------------------------------------------------
@@ -293,6 +316,22 @@ setAccountSubtypeHandler user accountUuid SetAccountSubtypeRequest {..} = do
   let userId = user.userId
   domainType <- validateField "subtype" $ toAccountSubtype subtype
   result <- AccountService.setAccountSubtype userId accountUuid domainType
+  case result of
+    Right () -> return NoContent
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/accounts/:id/name - Rename an account.
+--
+-- Trims the name and rejects empty or whitespace-only inputs and names
+-- longer than 120 characters with per-field 400 responses. Other errors
+-- (not found, forbidden, name unchanged) are mapped via 'throwDomainError'.
+renameAccountHandler :: AuthenticatedUser -> UUID -> RenameAccountRequest -> AppM NoContent
+renameAccountHandler user accountUuid RenameAccountRequest {..} = do
+  let userId = user.userId
+  let trimmed = T.strip name
+  when (T.null trimmed) $ throwValidation "name" "Name is required"
+  when (T.length trimmed > 120) $ throwValidation "name" "Name must be 120 characters or fewer"
+  result <- AccountService.renameAccount userId accountUuid trimmed
   case result of
     Right () -> return NoContent
     Left err -> throwDomainError err

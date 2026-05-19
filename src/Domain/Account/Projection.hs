@@ -56,6 +56,7 @@ import Domain.Account.Events
     AccountCredited (..),
     AccountCurrencyChanged (..),
     AccountDebited (..),
+    AccountRenamed (..),
     AccountSubtypeSet (..),
     OverdraftLimitSet (..),
     accountEvents,
@@ -278,6 +279,8 @@ handleAccountEvent account (AccountCurrencyChangedAccountEvent AccountCurrencyCh
   let currentBalance = account ^. #balance
       newBalance = unsafeMoney newCurrency (unMoney currentBalance)
    in account & #balance .~ newBalance
+handleAccountEvent account (AccountRenamedAccountEvent AccountRenamed {..}) =
+  account & #name .~ newName
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition
