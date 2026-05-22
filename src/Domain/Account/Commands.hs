@@ -45,7 +45,6 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Data.Time (UTCTime)
 import Domain.Core.Types (AccountRole, AccountSubtype, AccountType, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
@@ -165,16 +164,12 @@ data RevokeAccountAccess = RevokeAccountAccess
 --   - Account must exist (name not empty)
 --
 -- Example:
--- >>> DebitAccount (Money 200) txId "Transfer to Savings"
+-- >>> DebitAccount (Money 200) txId
 data DebitAccount = DebitAccount
   { -- | Amount to debit (always positive)
     amount :: Money,
     -- | Transaction ID for saga correlation
-    transactionId :: TransactionId,
-    -- | Description for the debit
-    description :: Text,
-    -- | Business time of the debit (propagated from the originating transfer)
-    at :: UTCTime
+    transactionId :: TransactionId
   }
   deriving (Show, Eq)
 
@@ -190,16 +185,12 @@ data DebitAccount = DebitAccount
 --   - Always succeeds (no balance validation needed for credits)
 --
 -- Example:
--- >>> CreditAccount (Money 200) txId "Transfer from Checking"
+-- >>> CreditAccount (Money 200) txId
 data CreditAccount = CreditAccount
   { -- | Amount to credit (always positive)
     amount :: Money,
     -- | Transaction ID for saga correlation
-    transactionId :: TransactionId,
-    -- | Description for the credit
-    description :: Text,
-    -- | Business time of the credit (propagated from the originating transfer)
-    at :: UTCTime
+    transactionId :: TransactionId
   }
   deriving (Show, Eq)
 

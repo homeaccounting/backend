@@ -14,10 +14,14 @@
 --
 -- API Endpoints:
 --
---   POST   /api/transactions/income    - Record an income transaction
---   POST   /api/transactions/expense   - Record an expense transaction
---   POST   /api/transactions/transfer  - Initiate an internal transfer
---   GET    /api/transactions/:id       - Get transaction status
+--   POST   /api/transactions/income            - Record an income transaction
+--   POST   /api/transactions/expense           - Record an expense transaction
+--   POST   /api/transactions/transfer          - Initiate an internal transfer
+--   PUT    /api/transactions/:id/labels        - Replace label set
+--   PUT    /api/transactions/:id/category      - Replace category
+--   PUT    /api/transactions/:id/description   - Replace description
+--   PUT    /api/transactions/:id/date          - Replace business date
+--   GET    /api/transactions/:id               - Get transaction status
 --
 -- Handler Responsibilities (HTTP concerns only):
 --   1. Extract data from HTTP request (path params, body, auth)
@@ -41,6 +45,8 @@ module Web.API.TransactionAPI
     getTransactionHandler,
     setLabelsHandler,
     changeCategoryHandler,
+    changeDescriptionHandler,
+    changeDateHandler,
   )
 where
 
@@ -56,6 +62,8 @@ import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
   ( ChangeTransactionCategoryRequest (..),
+    ChangeTransactionDateRequest (..),
+    ChangeTransactionDescriptionRequest (..),
     ExpenseRequest (..),
     IncomeRequest (..),
     InternalTransferRequest (..),
@@ -126,6 +134,22 @@ type TransactionAPI =
       :> "category"
       :> ReqBody '[JSON] ChangeTransactionCategoryRequest
       :> Put '[JSON] TransactionResponse
+    -- PUT /api/transactions/:id/description - Replace the description on a Completed transaction.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "description"
+      :> ReqBody '[JSON] ChangeTransactionDescriptionRequest
+      :> Put '[JSON] TransactionResponse
+    -- PUT /api/transactions/:id/date - Replace the business date on a Completed transaction.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "date"
+      :> ReqBody '[JSON] ChangeTransactionDateRequest
+      :> Put '[JSON] TransactionResponse
     -- GET /api/transactions/:id - Get transaction status (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -150,6 +174,8 @@ transactionServer =
     :<|> listTransactionsHandler
     :<|> setLabelsHandler
     :<|> changeCategoryHandler
+    :<|> changeDescriptionHandler
+    :<|> changeDateHandler
     :<|> getTransactionHandler
 
 -- -----------------------------------------------------------------------------
@@ -228,6 +254,34 @@ changeCategoryHandler user rawId req = do
   transactionId <- validateField "id" $ mkTransactionId rawId
   categoryId <- validateField "categoryId" $ mkDictionaryEntryId req.categoryId
   result <- TransactionService.changeTransactionCategory user.userId transactionId categoryId
+  case result of
+    Right td -> pure $ fromTransactionData transactionId td
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/transactions/:id/description — replace the
+-- description on an existing Completed transaction.
+changeDescriptionHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  ChangeTransactionDescriptionRequest ->
+  AppM TransactionResponse
+changeDescriptionHandler user rawId req = do
+  transactionId <- validateField "id" $ mkTransactionId rawId
+  result <- TransactionService.changeTransactionDescription user.userId transactionId req.description
+  case result of
+    Right td -> pure $ fromTransactionData transactionId td
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/transactions/:id/date — replace the business
+-- date on an existing Completed transaction.
+changeDateHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  ChangeTransactionDateRequest ->
+  AppM TransactionResponse
+changeDateHandler user rawId req = do
+  transactionId <- validateField "id" $ mkTransactionId rawId
+  result <- TransactionService.changeTransactionDate user.userId transactionId req.at
   case result of
     Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err

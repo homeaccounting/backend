@@ -35,10 +35,10 @@ where
 
 import Application.ReadModels.User (UserData, getUser)
 import Control.Monad.Trans.Except (ExceptT (..), throwE)
-import qualified Data.Text as T
 import Data.UUID (UUID)
 import Domain.Account.CommandHandler (AccountCommand)
 import Domain.Configuration.CommandHandler (ConfigurationCommand)
+import qualified Domain.Configuration.CommandHandler as ConfigCh
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (UserId)
 import Domain.Transaction.CommandHandler (TransactionCommand, TransactionError)
@@ -128,25 +128,30 @@ runUserCmd enricher userId cmd = do
     Right _events -> pure ()
 
 -- | Apply a Configuration command, logging and translating rejection.
+--
+-- Takes an explicit translator so 'ConfigurationService.translateConfigurationError'
+-- (which maps 'CannotRewindBooksCloseDate' to a dedicated 'DomainError' value)
+-- stays local to its service.
 runConfigurationCmd ::
+  (CommandHandlerError ConfigCh.ConfigurationError -> DomainError) ->
   MetadataEnricher ->
   UUID ->
   ConfigurationCommand ->
   ExceptT DomainError AppM ()
-runConfigurationCmd enricher configId cmd = do
+runConfigurationCmd translate enricher configId cmd = do
   writer <- lift (view eventStoreWriterL)
   reader <- lift (view eventStoreReaderL)
   result <- liftIO $ applyConfigurationCommand writer reader enricher configId cmd
   case result of
     Left err -> do
       lift $ logError $ "Configuration command rejected: " <> displayShow err
-      throwE $ ConfigurationError (T.pack (show err))
+      throwE (translate err)
     Right _events -> pure ()
 
 -- | Apply a Transaction command, logging and translating rejection.
 --
 -- Takes an explicit translator so 'TransactionService.translateTransactionError'
--- (which maps 'CannotEditLabelsInCurrentState' and
+-- (which maps 'CannotEditUncompletedTransaction' and
 -- 'CannotChangeCategoryOnUncategorizedTransaction' to dedicated 'DomainError' values)
 -- stays local to its service.
 runTransactionCmd ::

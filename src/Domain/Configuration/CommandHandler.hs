@@ -36,6 +36,7 @@ module Domain.Configuration.CommandHandler
 where
 
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime)
 import Domain.Configuration.Commands
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Events
@@ -49,6 +50,10 @@ import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructS
 -- -----------------------------------------------------------------------------
 
 -- | Errors that can occur when handling configuration commands.
+--
+-- These are aggregate-local errors. The service layer translates them into
+-- their 'Domain.Core.Errors.DomainError' counterparts before surfacing to
+-- the HTTP layer.
 data ConfigurationError
   = ConfigurationAlreadyExists
   | ConfigurationNotCreated
@@ -59,6 +64,13 @@ data ConfigurationError
   | EntryNotInDictionary
   | EntryIsBankingDefault
   | EntryIsInMccMap
+  | -- | 'CloseBooksThrough' would rewind (or leave unchanged) the cutoff.
+    -- The cutoff is advance-only: @attempted@ must be strictly greater than
+    -- @current@.
+    CannotRewindBooksCloseDate
+      { current :: UTCTime,
+        attempted :: UTCTime
+      }
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -242,6 +254,23 @@ handleConfigurationCommand config (SetBankingMccExpenseCategoryMapConfigurationC
           { mapping = mapping
           }
     ]
+-- Handle CloseBooksThrough command (advance-only)
+handleConfigurationCommand config (CloseBooksThroughConfigurationCommand CloseBooksThrough {..}) =
+  case config.booksClosedThrough of
+    Just cur
+      | closedThrough <= cur ->
+          Left
+            CannotRewindBooksCloseDate
+              { current = cur,
+                attempted = closedThrough
+              }
+    _ ->
+      Right
+        [ BooksClosedThroughSetConfigurationEvent
+            BooksClosedThroughSet
+              { closedThrough = closedThrough
+              }
+        ]
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

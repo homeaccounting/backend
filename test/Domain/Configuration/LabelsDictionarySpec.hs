@@ -45,7 +45,8 @@ seedConfig dictId =
             },
       banking = emptyBankingConfiguration,
       createdBy = System,
-      isCreated = True
+      isCreated = True,
+      booksClosedThrough = Nothing
     }
 
 spec :: Spec

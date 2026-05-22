@@ -25,6 +25,8 @@ import Data.Time (UTCTime (..), addUTCTime, fromGregorian, getCurrentTime, utctD
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..), CreditAccount (..))
+import Domain.Transaction.CommandHandler (TransactionCommand (..))
+import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
   ( AccountId,
@@ -41,6 +43,7 @@ import Domain.Core.Types
     unUserId,
     unsafeMoney,
     unsafeTransactionId,
+    unsafeUserId,
   )
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
@@ -48,7 +51,7 @@ import Domain.Transaction.Projection (TransactionStatus (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
-import Infrastructure.Eventium (applyAccountCommand)
+import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
 import RIO
 import qualified RIO.Map as Map
 import qualified RIO.Text as T
@@ -406,12 +409,38 @@ crossCurrencySpec = do
 -- -----------------------------------------------------------------------------
 
 -- | Emit a 'CreditAccount' command directly at a specific business date,
--- bypassing the transfer saga. Produces an 'AccountCredited' event with
--- the supplied @at@, exactly what 'balanceAsOf' folds on. Used by the
--- backdate spec to seed a future-dated credit before the adjustment.
+-- bypassing the transfer saga. Produces an 'AccountCredited' event whose
+-- effective business date is supplied by the Transaction read model
+-- (which 'balanceAsOf' joins against). To make the leg visible to the
+-- fold we also seed a matching 'TransferInitiated' event on the TX
+-- stream so the TX read model records @atTime@ as the authoritative date.
 creditAccountAt :: AppEnv -> AccountId -> UTCTime -> Money -> IO ()
 creditAccountAt env accountId atTime amt = do
   let txUuid = UUID.fromWords 42 0 0 1
+      txId = unsafeTransactionId txUuid
+  -- Seed the TX stream first so the TX read model has @atTime@ available
+  -- by the time the leg event lands. We use a dummy user UUID; the saga
+  -- is bypassed entirely.
+  _ <-
+    applyTransactionCommand
+      env.eventStoreWriter
+      env.eventStoreReader
+      id
+      txUuid
+      $ InitiateTransferTransactionCommand
+        InitiateTransfer
+          { sourceAccountId = accountId,
+            targetAccountId = accountId,
+            sourceAmount = amt,
+            targetAmount = amt,
+            exchangeRate = Nothing,
+            description = "Backdated credit",
+            initiatedBy = unsafeUserId (UUID.fromWords 42 0 0 2),
+            at = atTime,
+            transferType = Transfer,
+            externalTransactionId = Nothing,
+            labels = mempty
+          }
   _ <-
     applyAccountCommand
       env.eventStoreWriter
@@ -421,8 +450,6 @@ creditAccountAt env accountId atTime amt = do
       $ CreditAccountAccountCommand
         CreditAccount
           { amount = amt,
-            transactionId = unsafeTransactionId txUuid,
-            description = "Backdated credit",
-            at = atTime
+            transactionId = txId
           }
   pure ()

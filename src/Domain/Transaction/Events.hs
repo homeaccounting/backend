@@ -14,6 +14,8 @@
 --   - TransferFailed: A money transfer failed (e.g., insufficient funds)
 --   - TransactionLabelsSet: The label set on a completed transaction was replaced
 --   - TransactionCategoryChanged: The category on a completed Income/Expense transaction was changed
+--   - TransactionDescriptionChanged: The free-text description on a completed transaction was edited
+--   - TransactionDateChanged: The business date on a completed transaction was edited
 --
 -- All events use Template Haskell for integration with the eventium library
 -- and include JSON serialization instances.
@@ -27,6 +29,8 @@ module Domain.Transaction.Events
     TransferFailed (..),
     TransactionLabelsSet (..),
     TransactionCategoryChanged (..),
+    TransactionDescriptionChanged (..),
+    TransactionDateChanged (..),
   )
 where
 
@@ -54,7 +58,9 @@ transactionEvents =
     ''TransferCompleted,
     ''TransferFailed,
     ''TransactionLabelsSet,
-    ''TransactionCategoryChanged
+    ''TransactionCategoryChanged,
+    ''TransactionDescriptionChanged,
+    ''TransactionDateChanged
   ]
 
 -- -----------------------------------------------------------------------------
@@ -152,6 +158,33 @@ data TransactionCategoryChanged = TransactionCategoryChanged
   }
   deriving (Show, Eq)
 
+-- | Event emitted when the free-text description of a completed transaction
+-- is changed.
+--
+-- The event carries the full new description; the audit trail is the sequence
+-- of these events, each a complete snapshot of the description at that point
+-- in time.
+data TransactionDescriptionChanged = TransactionDescriptionChanged
+  { -- | The transaction whose description changed.
+    transactionId :: TransactionId,
+    -- | The new description text.
+    newDescription :: Text
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the business date ('at') of a completed transaction
+-- is changed.
+--
+-- The event carries the full new timestamp; the audit trail is the sequence
+-- of these events, each a complete snapshot of the date at that point in time.
+data TransactionDateChanged = TransactionDateChanged
+  { -- | The transaction whose date changed.
+    transactionId :: TransactionId,
+    -- | The new business date / time.
+    newAt :: UTCTime
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -181,3 +214,5 @@ deriveJSON defaultOptions ''TransferCompleted
 deriveJSON defaultOptions ''TransferFailed
 deriveJSON defaultOptions ''TransactionLabelsSet
 deriveJSON defaultOptions ''TransactionCategoryChanged
+deriveJSON defaultOptions ''TransactionDescriptionChanged
+deriveJSON defaultOptions ''TransactionDateChanged

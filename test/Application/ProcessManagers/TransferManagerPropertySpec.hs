@@ -98,8 +98,7 @@ genAccountDebitedFor txId td =
     ( AccountDebitedEvent
         AccountDebited
           { amount = td.sourceAmount,
-            transactionId = unsafeTransactionId txId,
-            description = td.description
+            transactionId = unsafeTransactionId txId
           }
     )
 
@@ -113,8 +112,7 @@ genAccountCreditedFor txId td =
     ( AccountCreditedEvent
         AccountCredited
           { amount = td.targetAmount,
-            transactionId = unsafeTransactionId txId,
-            description = td.description
+            transactionId = unsafeTransactionId txId
           }
     )
 

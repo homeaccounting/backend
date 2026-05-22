@@ -72,6 +72,8 @@ import Domain.Core.Types (AccountId, DictionaryEntryId, ExchangeRate, LabelId, M
 import Domain.Models
   ( AccountingEvent
       ( TransactionCategoryChangedEvent,
+        TransactionDateChangedEvent,
+        TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
         TransferCompletedEvent,
         TransferFailedEvent,
@@ -80,6 +82,8 @@ import Domain.Models
   )
 import Domain.Transaction.Events
   ( TransactionCategoryChanged (..),
+    TransactionDateChanged (..),
+    TransactionDescriptionChanged (..),
     TransactionLabelsSet (..),
     TransferFailed (..),
     TransferInitiated (..),
@@ -223,6 +227,10 @@ createTransactionReadModel =
 --  - TransferInitiated: Adds new transaction with Pending status
 --  - TransferCompleted: Updates status to Completed
 --  - TransferFailed: Updates status to Failed with reason
+--  - TransactionLabelsSet: Replaces the labels set
+--  - TransactionCategoryChanged: Replaces the categorised TransferType payload
+--  - TransactionDescriptionChanged: Replaces the description
+--  - TransactionDateChanged: Replaces the business date
 --
 -- The function is idempotent - replaying the same events produces the same result.
 --
@@ -321,6 +329,22 @@ processEvent transactions globalEvent =
                           Adjustment -> Adjustment
                       }
                 )
+                transactionId
+                transactions
+        TransactionDescriptionChangedEvent evt ->
+          case mkTransactionIdSafe streamUuid of
+            Nothing -> transactions
+            Just transactionId ->
+              Map.adjust
+                (\transaction -> (transaction :: TransactionData) {description = evt.newDescription})
+                transactionId
+                transactions
+        TransactionDateChangedEvent evt ->
+          case mkTransactionIdSafe streamUuid of
+            Nothing -> transactions
+            Just transactionId ->
+              Map.adjust
+                (\transaction -> (transaction :: TransactionData) {date = evt.newAt})
                 transactionId
                 transactions
         _ -> transactions -- Ignore account events

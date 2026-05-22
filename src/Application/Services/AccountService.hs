@@ -38,6 +38,7 @@ where
 
 import Application.ReadModels.Account (AccountData (..), balanceAsOf)
 import qualified Application.ReadModels.Account as ReadModel
+import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.ReadModels.User (UserData (..))
 import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
@@ -51,6 +52,7 @@ import Application.Services.Internal
   )
 import qualified Application.Services.TransactionService as TransactionService
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
+import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime, getCurrentTime)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
@@ -412,11 +414,18 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
       (ReadModel.getAccount accountRM externalAccId)
 
   -- 5. Compute delta against the historical balance at D.
+  --
+  -- The balance-as-of fold joins each leg event back to its Transaction
+  -- aggregate to honour user edits of the TX's business date. We snapshot
+  -- the transaction read model once and feed a pure lookup into the fold.
   reader <- lift (view eventStoreReaderL)
+  txnRM <- lift (view transactionReadModelL)
+  txnMap <- liftIO (TransactionRM.getAllTransactions txnRM)
+  let lookupTxAt txId = (.date) <$> Map.lookup txId txnMap
   currentAtD <-
     liftMaybeM
       (NotFound "Account" (tshow accountId))
-      (liftIO (balanceAsOf reader accountId asOf))
+      (liftIO (balanceAsOf reader lookupTxAt accountId asOf))
   delta <-
     liftEitherWith
       ( \msg ->

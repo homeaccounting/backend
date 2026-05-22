@@ -8,6 +8,7 @@
 module Domain.Transaction.LabelsProjectionSpec (spec) where
 
 import qualified Data.Set as Set
+import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( DictionaryEntryId,
@@ -50,10 +51,17 @@ mkInitiated =
       exchangeRate = Nothing,
       description = "",
       by = transactionDefault ^. #initiatedBy,
+      at = anyTime,
       transferType = Income (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)),
       externalTransactionId = Nothing,
       labels = Set.empty
     }
+
+-- | Placeholder business date for projection-fold tests. The labels /
+-- category specs do not exercise date semantics; this value is here
+-- only because 'TransferInitiated' carries 'at' as a load-bearing field.
+anyTime :: UTCTime
+anyTime = UTCTime (fromGregorian 2026 3 15) (secondsToDiffTime 0)
 
 -- | Seed event for a transaction with the given initial labels.
 seedInitiatedLabels :: [DictionaryEntryId] -> TransactionEvent

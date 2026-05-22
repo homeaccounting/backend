@@ -19,6 +19,7 @@
 --   PUT    /api/users/me/configuration/base-currency                         - Update base currency
 --   PUT    /api/users/me/configuration/default-currency                      - Update default currency
 --   PUT    /api/users/me/configuration/banking                               - Update banking defaults
+--   PUT    /api/users/me/configuration/books-close                           - Close books through a cutoff
 --   GET    /api/users/me/configuration/dictionaries/:dictId                  - List dictionary entries
 --   POST   /api/users/me/configuration/dictionaries/:dictId/entries          - Add entry
 --   PUT    /api/users/me/configuration/dictionaries/:dictId/entries/:entryId - Rename entry
@@ -35,6 +36,7 @@ module Web.API.ConfigurationAPI
     DictionaryEntryResponse (..),
     ChangeCurrencyRequest (..),
     UpdateBankingRequest (..),
+    CloseBooksThroughRequest (..),
     AddEntryRequest (..),
     AddEntryResponse (..),
     RenameEntryRequest (..),
@@ -48,6 +50,7 @@ import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryD
 import qualified Application.Services.ConfigurationService as ConfigService
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Configuration.Projection (BankingConfiguration (..))
 import Domain.Core.Types
@@ -106,6 +109,15 @@ type ConfigurationAPI =
       :> "banking"
       :> ReqBody '[JSON] UpdateBankingRequest
       :> Put '[JSON] BankingConfigurationDTO
+    -- PUT /api/users/me/configuration/books-close - Close books through a cutoff
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "books-close"
+      :> ReqBody '[JSON] CloseBooksThroughRequest
+      :> Put '[JSON] ConfigurationResponse
     -- GET /api/users/me/configuration/dictionaries/:dictId - List dictionary entries
     :<|> AuthProtect "jwt"
       :> "api"
@@ -180,7 +192,8 @@ data ConfigurationResponse = ConfigurationResponse
   { baseCurrency :: Text,
     defaultCurrency :: Text,
     dictionaries :: Map Text DictionaryResponse,
-    banking :: BankingConfigurationDTO
+    banking :: BankingConfigurationDTO,
+    booksClosedThrough :: Maybe UTCTime
   }
   deriving (Show, Eq, Generic)
 
@@ -264,6 +277,17 @@ instance ToJSON UpdateBankingRequest
 
 instance FromJSON UpdateBankingRequest
 
+-- | Body for @PUT \/api\/users\/me\/configuration\/books-close@ — sets the
+-- inclusive books-closed cutoff to the supplied UTC instant.
+newtype CloseBooksThroughRequest = CloseBooksThroughRequest
+  { closedThrough :: UTCTime
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON CloseBooksThroughRequest
+
+instance FromJSON CloseBooksThroughRequest
+
 -- | Proxy for the ConfigurationAPI.
 configurationAPI :: Proxy ConfigurationAPI
 configurationAPI = Proxy
@@ -279,6 +303,7 @@ configurationServer =
     :<|> changeBaseCurrencyHandler
     :<|> changeDefaultCurrencyHandler
     :<|> updateBankingHandler
+    :<|> closeBooksThroughHandler
     :<|> listDictionaryHandler
     :<|> addEntryHandler
     :<|> renameEntryHandler
@@ -351,6 +376,17 @@ updateBankingHandler user req = do
     Left err -> throwDomainError err
     Right configData -> pure (toBankingDTO configData.banking)
 
+-- | Handler for PUT /api/users/me/configuration/books-close
+--
+-- Sets the inclusive books-closed cutoff. Service rejects rewind / equal
+-- attempts with @CannotRewindBooksCloseDate@ (HTTP 409).
+closeBooksThroughHandler :: AuthenticatedUser -> CloseBooksThroughRequest -> AppM ConfigurationResponse
+closeBooksThroughHandler user req = do
+  result <- ConfigService.closeBooksThrough user.userId req.closedThrough
+  case result of
+    Left err -> throwDomainError err
+    Right configData -> return $ toConfigurationResponse configData
+
 -- | Handler for GET /api/users/me/configuration/dictionaries/:dictId
 listDictionaryHandler :: AuthenticatedUser -> Text -> AppM DictionaryResponse
 listDictionaryHandler user dictIdText = do
@@ -421,7 +457,8 @@ toConfigurationResponse configData =
       dictionaries =
         Map.mapKeys unDictionaryId
           $ Map.map toDictionaryResponse configData.dictionaries,
-      banking = toBankingDTO configData.banking
+      banking = toBankingDTO configData.banking,
+      booksClosedThrough = configData.booksClosedThrough
     }
 
 -- | Convert domain DictionaryData to API response DTO.

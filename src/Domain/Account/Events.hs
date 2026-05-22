@@ -43,7 +43,6 @@ where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
-import Data.Time (UTCTime)
 import Domain.Core.Types (AccountRole, AccountSubtype, AccountType, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
@@ -132,16 +131,12 @@ data AccountAccessRevoked = AccountAccessRevoked
 -- the target account.
 --
 -- Example:
--- >>> AccountDebited (Money 200) txId "Transfer to Savings"
+-- >>> AccountDebited (Money 200) txId
 data AccountDebited = AccountDebited
   { -- | Amount debited from the account (always positive)
     amount :: Money,
     -- | Transaction ID for saga correlation
-    transactionId :: TransactionId,
-    -- | Description for the debit
-    description :: Text,
-    -- | Business time of the debit (carried from the originating transfer)
-    at :: UTCTime
+    transactionId :: TransactionId
   }
   deriving (Show, Eq)
 
@@ -151,16 +146,12 @@ data AccountDebited = AccountDebited
 -- The TransferManager saga listens for this event to finalize transfer tracking.
 --
 -- Example:
--- >>> AccountCredited (Money 200) txId "Transfer from Checking"
+-- >>> AccountCredited (Money 200) txId
 data AccountCredited = AccountCredited
   { -- | Amount credited to the account (always positive)
     amount :: Money,
     -- | Transaction ID for saga correlation
-    transactionId :: TransactionId,
-    -- | Description for the credit
-    description :: Text,
-    -- | Business time of the credit (carried from the originating transfer)
-    at :: UTCTime
+    transactionId :: TransactionId
   }
   deriving (Show, Eq)
 

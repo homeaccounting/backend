@@ -265,6 +265,7 @@ test-suite backend-test
       Application.ProcessManagers.TransferManagerSpec
       Application.ReadModels.AccountPropertySpec
       Application.ReadModels.AccountSpec
+      Application.ReadModels.BalanceAsOfJoinSpec
       Application.ReadModels.ExchangeRatePropertySpec
       Application.ReadModels.ExchangeRateSpec
       Application.ReadModels.TransactionListPropertySpec
@@ -275,16 +276,19 @@ test-suite backend-test
       Application.Services.AuthorizationServiceSpec
       Application.Services.AuthServiceSpec
       Application.Services.BankImportServiceSpec
+      Application.Services.BooksCloseServiceSpec
       Application.Services.ConfigurationServiceIntegrationSpec
       Application.Services.ConfigurationServiceInUseSpec
       Application.Services.ConfigurationServiceSpec
       Application.Services.ExchangeRatePublisherSpec
       Application.Services.InternalSpec
+      Application.Services.TransactionMetadataEditSpec
       Application.Services.TransactionServiceLabelsSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
+      Domain.Configuration.BooksCloseSpec
       Domain.Configuration.CommandHandlerSpec
       Domain.Configuration.DefaultsSpec
       Domain.Configuration.LabelsDictionarySpec
@@ -294,6 +298,8 @@ test-suite backend-test
       Domain.Core.TypesSpec
       Domain.Transaction.CommandHandlerPropertySpec
       Domain.Transaction.CommandHandlerSpec
+      Domain.Transaction.DescriptionAndDatePropertySpec
+      Domain.Transaction.DescriptionAndDateSpec
       Domain.Transaction.EventsSpec
       Domain.Transaction.LabelsAndCategorySpec
       Domain.Transaction.LabelsProjectionSpec
@@ -308,9 +314,11 @@ test-suite backend-test
       Infrastructure.ExchangeRate.ProviderPropertySpec
       Infrastructure.ExchangeRateIntegrationSpec
       Integration.BankImportWorkflowSpec
+      Integration.BooksClosePeriodIntegrationSpec
       Integration.ExchangeRatePersistenceSpec
       Integration.TransactionCategoryIntegrationSpec
       Integration.TransactionLabelsIntegrationSpec
+      Integration.TransactionMetadataEditIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.CommandsSpec
@@ -323,6 +331,7 @@ test-suite backend-test
       Testkit.Helpers
       Testkit.HspecWai
       Testkit.InMemoryEventStore
+      Testkit.Time
       Testkit.TransactionEditFixture
       Web.API.AccountAPISpec
       Web.API.AuthAPIIntegrationSpec

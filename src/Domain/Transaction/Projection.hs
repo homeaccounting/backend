@@ -50,6 +50,7 @@ import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
+import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (nil)
 import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
@@ -134,6 +135,9 @@ data Transaction = Transaction
     exchangeRate :: Maybe ExchangeRate,
     -- | Description of the transfer
     description :: Text,
+    -- | Business date / time of the transfer, replayed from
+    -- 'TransferInitiated' and mutated by 'TransactionDateChanged'.
+    at :: UTCTime,
     -- | Current status of the transaction
     status :: TransactionStatus,
     -- | User who initiated the transfer
@@ -181,6 +185,7 @@ transactionDefault =
         Left _ -> error "transactionDefault: mkDefaultMoney 0 should never fail",
       exchangeRate = Nothing,
       description = "",
+      at = UTCTime (fromGregorian 1970 1 1) 0,
       status = Pending,
       initiatedBy = unsafeUserId nil,
       transferType = Income (unsafeDictionaryEntryId nil),
@@ -257,6 +262,8 @@ handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
     .~ evt.exchangeRate
     & #description
     .~ evt.description
+    & #at
+    .~ evt.at
     & #status
     .~ Pending
     & #initiatedBy
@@ -293,6 +300,14 @@ handleTransactionEvent transaction (TransactionCategoryChangedTransactionEvent e
         Transfer -> Transfer
         Adjustment -> Adjustment
    in transaction & #transferType .~ newTransferType
+handleTransactionEvent transaction (TransactionDescriptionChangedTransactionEvent evt) =
+  -- Replace the description. The command handler enforces Completed-only;
+  -- the projection itself is permissive.
+  transaction & #description .~ evt.newDescription
+handleTransactionEvent transaction (TransactionDateChangedTransactionEvent evt) =
+  -- Replace the business date. The command handler enforces Completed-only;
+  -- the projection itself is permissive.
+  transaction & #at .~ evt.newAt
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

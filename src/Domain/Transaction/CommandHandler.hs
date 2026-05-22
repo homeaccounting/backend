@@ -62,9 +62,9 @@ data TransactionError
   | TransactionNotPending
   | TransferToSameAccount
   | TransferAmountNotPositive
-  | -- | SetTransactionLabels or ChangeTransactionCategory was issued against
-    -- a transaction whose status is not Completed.
-    CannotEditLabelsInCurrentState
+  | -- | An edit command (labels, category, description, business date)
+    -- was issued against a transaction whose status is not Completed.
+    CannotEditUncompletedTransaction
   | -- | ChangeTransactionCategory was issued against a Transfer or Adjustment,
     -- which has no category to change.
     CannotChangeCategoryOnUncategorizedTransaction
@@ -180,7 +180,7 @@ handleTransactionCommand transaction (SetTransactionLabelsTransactionCommand Set
                 labels = labels
               }
         ]
-    _ -> Left CannotEditLabelsInCurrentState
+    _ -> Left CannotEditUncompletedTransaction
 -- Handle ChangeTransactionCategory command
 handleTransactionCommand transaction (ChangeTransactionCategoryTransactionCommand ChangeTransactionCategory {..}) =
   case transaction ^. #status of
@@ -197,7 +197,31 @@ handleTransactionCommand transaction (ChangeTransactionCategoryTransactionComman
               { transactionId = transactionId,
                 newCategory = newCategory
               }
-    _ -> Left CannotEditLabelsInCurrentState
+    _ -> Left CannotEditUncompletedTransaction
+-- Handle ChangeTransactionDescription command
+handleTransactionCommand transaction (ChangeTransactionDescriptionTransactionCommand ChangeTransactionDescription {..}) =
+  case transaction ^. #status of
+    Completed ->
+      Right
+        [ TransactionDescriptionChangedTransactionEvent
+            TransactionDescriptionChanged
+              { transactionId = transactionId,
+                newDescription = newDescription
+              }
+        ]
+    _ -> Left CannotEditUncompletedTransaction
+-- Handle ChangeTransactionDate command
+handleTransactionCommand transaction (ChangeTransactionDateTransactionCommand ChangeTransactionDate {..}) =
+  case transaction ^. #status of
+    Completed ->
+      Right
+        [ TransactionDateChangedTransactionEvent
+            TransactionDateChanged
+              { transactionId = transactionId,
+                newAt = newAt
+              }
+        ]
+    _ -> Left CannotEditUncompletedTransaction
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

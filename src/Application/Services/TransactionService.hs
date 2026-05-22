@@ -32,6 +32,8 @@ module Application.Services.TransactionService
     listTransactions,
     setTransactionLabels,
     changeTransactionCategory,
+    changeTransactionDescription,
+    changeTransactionDate,
 
     -- * Re-exported helpers for sibling services
     resolveAndInitiate,
@@ -87,6 +89,8 @@ import Domain.Core.Types
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
       ( ChangeTransactionCategoryTransactionCommand,
+        ChangeTransactionDateTransactionCommand,
+        ChangeTransactionDescriptionTransactionCommand,
         InitiateTransferTransactionCommand,
         SetTransactionLabelsTransactionCommand
       ),
@@ -95,6 +99,8 @@ import Domain.Transaction.CommandHandler
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
   ( ChangeTransactionCategory (..),
+    ChangeTransactionDate (..),
+    ChangeTransactionDescription (..),
     InitiateTransfer (..),
     SetTransactionLabels (..),
   )
@@ -209,6 +215,7 @@ initiateIncome userId targetAccountId amount categoryEntryId labels description 
     lift $ logInfo "Initiating income transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
+    ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     userData <- getUserData userId
     let externalAccId = userData.externalAccountId
     accountRM <- lift (view accountReadModelL)
@@ -265,6 +272,7 @@ initiateExpense userId sourceAccountId amount categoryEntryId labels description
     lift $ logInfo "Initiating expense transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
+    ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     userData <- getUserData userId
     let externalAccId = userData.externalAccountId
     accountRM <- lift (view accountReadModelL)
@@ -321,6 +329,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount labels de
     lift $ logInfo "Initiating internal transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
+    ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     accountRM <- lift (view accountReadModelL)
     sourceData <-
       liftMaybeM
@@ -421,9 +430,103 @@ changeTransactionCategory userId transactionId newCategory = runExceptT $ do
             }
   ExceptT (dispatchEdit transactionId cmd)
 
+-- | Change the free-text description on an existing completed transaction.
+--
+-- Requires Editor+ access to one of the transaction's accounts. The
+-- aggregate-level state guard (Completed) is enforced by the pure handler
+-- and surfaced as 'CannotEditUncompletedTransaction'. The
+-- description field is not subject to the books-close cutoff because
+-- it carries no period-affecting information.
+changeTransactionDescription ::
+  UserId ->
+  TransactionId ->
+  Text ->
+  AppM (Either DomainError TransactionData)
+changeTransactionDescription userId transactionId newDescription = runExceptT $ do
+  lift
+    $ logInfo
+    $ "Changing description on "
+    <> displayShow transactionId
+    <> " for user "
+    <> displayShow userId
+  _transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  let cmd =
+        ChangeTransactionDescriptionTransactionCommand
+          ChangeTransactionDescription
+            { transactionId = transactionId,
+              newDescription = newDescription
+            }
+  ExceptT (dispatchEdit transactionId cmd)
+
+-- | Change the business date ('at') on an existing completed transaction.
+--
+-- Requires Editor+ access. Rejects the edit with
+-- 'CannotEditClosedPeriod' when either the current TX date or the new
+-- target date falls on or before the user's @booksClosedThrough@
+-- cutoff. The aggregate-level state guard (Completed) is enforced by
+-- the pure handler.
+changeTransactionDate ::
+  UserId ->
+  TransactionId ->
+  UTCTime ->
+  AppM (Either DomainError TransactionData)
+changeTransactionDate userId transactionId newAt = runExceptT $ do
+  lift
+    $ logInfo
+    $ "Changing date on "
+    <> displayShow transactionId
+    <> " for user "
+    <> displayShow userId
+  transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  ExceptT (guardBooksClosed userId transaction.date)
+  ExceptT (guardBooksClosed userId newAt)
+  let cmd =
+        ChangeTransactionDateTransactionCommand
+          ChangeTransactionDate
+            { transactionId = transactionId,
+              newAt = newAt
+            }
+  ExceptT (dispatchEdit transactionId cmd)
+
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
 -- -----------------------------------------------------------------------------
+
+-- | Fetch the user's @booksClosedThrough@ cutoff from the configuration
+-- read model. Returns 'Nothing' when the user has never closed books.
+--
+-- A missing user record is treated as \"no cutoff\": the gate is purely
+-- a books-close concern, so it must not invent additional 'NotFound'
+-- rejections for unregistered test fixtures and pre-clone-on-write
+-- users only. A missing 'Configuration' record, by contrast, is a
+-- genuine inconsistency and must propagate to the caller.
+booksClosedThroughFor ::
+  UserId ->
+  AppM (Either DomainError (Maybe UTCTime))
+booksClosedThroughFor userId = do
+  result <- ConfigurationService.getConfigurationForUser userId
+  case result of
+    Right cfg -> pure (Right cfg.booksClosedThrough)
+    Left (NotFound "User" _) -> pure (Right Nothing)
+    Left err -> pure (Left err)
+
+-- | Reject a creation whose business date falls in a closed period.
+-- The cutoff is inclusive: dates equal to the cutoff are closed.
+guardBooksClosed ::
+  UserId ->
+  UTCTime ->
+  AppM (Either DomainError ())
+guardBooksClosed userId attempted = runExceptT $ do
+  cutoff <- ExceptT (booksClosedThroughFor userId)
+  case cutoff of
+    Just c
+      | attempted <= c ->
+          throwE
+            CannotEditClosedPeriod
+              { current = c,
+                attempted = attempted
+              }
+    _ -> pure ()
 
 -- | Verify every id in the set exists in the user's labels dictionary.
 validateLabels ::
@@ -494,8 +597,8 @@ dispatchEdit transactionId cmd = runExceptT $ do
 translateTransactionError ::
   CommandHandlerError TransactionError ->
   DomainError
-translateTransactionError (CommandRejected TxCh.CannotEditLabelsInCurrentState) =
-  CannotEditTransactionLabelsInCurrentState
+translateTransactionError (CommandRejected TxCh.CannotEditUncompletedTransaction) =
+  CannotEditUncompletedTransaction
 translateTransactionError (CommandRejected TxCh.CannotChangeCategoryOnUncategorizedTransaction) =
   CannotChangeCategoryOnUncategorizedTransaction
 translateTransactionError other =

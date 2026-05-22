@@ -24,11 +24,13 @@ module Domain.Configuration.Commands
     SetBankingDefaultIncomeCategory (..),
     SetBankingDefaultExpenseCategory (..),
     SetBankingMccExpenseCategoryMap (..),
+    CloseBooksThrough (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Map.Strict (Map)
+import Data.Time (UTCTime)
 import Domain.Core.Types (CategoryId, CreatedBy, Currency, DictionaryEntryId, DictionaryId, EntryName, MCC)
 import Language.Haskell.TH (Name)
 
@@ -50,7 +52,8 @@ configurationCommands =
     ''RemoveDictionaryEntry,
     ''SetBankingDefaultIncomeCategory,
     ''SetBankingDefaultExpenseCategory,
-    ''SetBankingMccExpenseCategoryMap
+    ''SetBankingMccExpenseCategoryMap,
+    ''CloseBooksThrough
   ]
 
 -- -----------------------------------------------------------------------------
@@ -147,6 +150,20 @@ data SetBankingMccExpenseCategoryMap = SetBankingMccExpenseCategoryMap
   }
   deriving (Show, Eq)
 
+-- | Command to advance the books-closed-through cutoff.
+--
+-- The cutoff is advance-only: the command handler rejects any value at or
+-- before the configuration's current cutoff with
+-- 'Domain.Configuration.CommandHandler.CannotRewindBooksCloseDate'.
+--
+-- If accepted, produces a 'Domain.Configuration.Events.BooksClosedThroughSet'
+-- event.
+newtype CloseBooksThrough = CloseBooksThrough
+  { -- | Proposed new cutoff. Must be strictly greater than any previous cutoff.
+    closedThrough :: UTCTime
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -161,3 +178,4 @@ deriveJSON defaultOptions ''RemoveDictionaryEntry
 deriveJSON defaultOptions ''SetBankingDefaultIncomeCategory
 deriveJSON defaultOptions ''SetBankingDefaultExpenseCategory
 deriveJSON defaultOptions ''SetBankingMccExpenseCategoryMap
+deriveJSON defaultOptions ''CloseBooksThrough

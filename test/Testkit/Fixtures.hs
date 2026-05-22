@@ -18,6 +18,9 @@ module Testkit.Fixtures
   ( registerUser,
     createRegularAccount,
     firstDictionaryEntry,
+    seedDefaultAndRegister,
+    MetadataFixture (..),
+    setupMetadataFixture,
   )
 where
 
@@ -25,6 +28,11 @@ import qualified Application.ReadModels.Configuration as ConfigRM
 import Application.ReadModels.User (UserData (..), getUser)
 import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (AuthResult (..), register)
+import Application.Services.ConfigurationService
+  ( expenseCategoryDictId,
+    incomeCategoryDictId,
+    seedDefaultConfiguration,
+  )
 import qualified Data.Map.Strict as Map
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
@@ -95,3 +103,39 @@ firstDictionaryEntry env uid dictId = do
               case Map.keys dict.entries of
                 (eid : _) -> pure eid
                 [] -> fail $ "firstDictionaryEntry: dictionary " <> show dictId <> " is empty"
+
+-- | Seed the default configuration and register a fresh user. Returns
+-- the new user's id.
+--
+-- Most service-layer specs open their setup with @seedDefaultConfiguration@
+-- followed by @register@; this combinator removes the boilerplate.
+seedDefaultAndRegister :: AppEnv -> Text -> IO UserId
+seedDefaultAndRegister env email = do
+  runAppM env seedDefaultConfiguration
+  registerUser env email
+
+-- | A user with a Regular account and the first income / expense
+-- category dictionary entries. The common starting point for
+-- transaction service-layer specs.
+data MetadataFixture = MetadataFixture
+  { userId :: !UserId,
+    regularAccountId :: !AccountId,
+    incomeCategory :: !DictionaryEntryId,
+    expenseCategory :: !DictionaryEntryId
+  }
+
+-- | Seed the default configuration, register a user, then resolve the
+-- first income / expense category and create a Regular USD wallet.
+setupMetadataFixture :: AppEnv -> Text -> IO MetadataFixture
+setupMetadataFixture env email = do
+  uid <- seedDefaultAndRegister env email
+  incomeCat <- firstDictionaryEntry env uid incomeCategoryDictId
+  expenseCat <- firstDictionaryEntry env uid expenseCategoryDictId
+  accId <- createRegularAccount env uid "Wallet"
+  pure
+    MetadataFixture
+      { userId = uid,
+        regularAccountId = accId,
+        incomeCategory = incomeCat,
+        expenseCategory = expenseCat
+      }

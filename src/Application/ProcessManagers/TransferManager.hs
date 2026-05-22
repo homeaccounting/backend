@@ -55,8 +55,6 @@ where
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Text (Text)
-import Data.Time (UTCTime)
 import Domain.Core.Types (AccountId, Money, TransactionId, mkTransactionIdSafe, unAccountId, unTransactionId)
 import Domain.Models
 import Eventium
@@ -111,12 +109,8 @@ data TransferData = TransferData
     sourceAmount :: Money,
     -- | Amount credited to target account
     targetAmount :: Money,
-    -- | Description of the transfer
-    description :: Text,
     -- | Current phase of the transfer saga
-    phase :: TransferPhase,
-    -- | Business time of the transfer, propagated to debit/credit commands
-    at :: UTCTime
+    phase :: TransferPhase
   }
   deriving (Show, Eq)
 
@@ -161,9 +155,7 @@ handleTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)
                 targetAccount = evt.targetAccountId,
                 sourceAmount = evt.sourceAmount,
                 targetAmount = evt.targetAmount,
-                description = evt.description,
-                phase = AwaitingDebit,
-                at = evt.at
+                phase = AwaitingDebit
               }
         Just td
           | td.phase == AwaitingDebit ->
@@ -212,9 +204,7 @@ reactToTransferEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt
                       ( DebitAccountAccountCommand
                           DebitAccount
                             { amount = evt.sourceAmount,
-                              transactionId = txId,
-                              description = evt.description,
-                              at = evt.at
+                              transactionId = txId
                             }
                       )
                   )
@@ -245,9 +235,7 @@ reactToTransferEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
               ( CreditAccountAccountCommand
                   CreditAccount
                     { amount = td.targetAmount,
-                      transactionId = evt.transactionId,
-                      description = td.description,
-                      at = td.at
+                      transactionId = evt.transactionId
                     }
               )
           )

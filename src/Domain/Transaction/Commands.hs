@@ -29,6 +29,8 @@ module Domain.Transaction.Commands
     FailTransfer (..),
     SetTransactionLabels (..),
     ChangeTransactionCategory (..),
+    ChangeTransactionDescription (..),
+    ChangeTransactionDate (..),
   )
 where
 
@@ -53,7 +55,9 @@ transactionCommands =
     ''CompleteTransfer,
     ''FailTransfer,
     ''SetTransactionLabels,
-    ''ChangeTransactionCategory
+    ''ChangeTransactionCategory,
+    ''ChangeTransactionDescription,
+    ''ChangeTransactionDate
   ]
 
 -- -----------------------------------------------------------------------------
@@ -181,6 +185,38 @@ data ChangeTransactionCategory = ChangeTransactionCategory
   }
   deriving (Show, Eq)
 
+-- | Command to change the free-text description on a completed transaction.
+--
+-- Business Rules:
+--  - Transaction must be in the Completed state (enforced by the pure handler).
+--  - Books-closed enforcement happens at the service layer, not here.
+--
+-- Example:
+-- >>> ChangeTransactionDescription txId "Corrected description"
+data ChangeTransactionDescription = ChangeTransactionDescription
+  { -- | The transaction whose description is being changed.
+    transactionId :: TransactionId,
+    -- | The new description text.
+    newDescription :: Text
+  }
+  deriving (Show, Eq)
+
+-- | Command to change the business date ('at') on a completed transaction.
+--
+-- Business Rules:
+--  - Transaction must be in the Completed state (enforced by the pure handler).
+--  - Books-closed enforcement happens at the service layer, not here.
+--
+-- Example:
+-- >>> ChangeTransactionDate txId someUTCTime
+data ChangeTransactionDate = ChangeTransactionDate
+  { -- | The transaction whose business date is being changed.
+    transactionId :: TransactionId,
+    -- | The new business date / time.
+    newAt :: UTCTime
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -191,3 +227,5 @@ deriveJSON defaultOptions ''CompleteTransfer
 deriveJSON defaultOptions ''FailTransfer
 deriveJSON defaultOptions ''SetTransactionLabels
 deriveJSON defaultOptions ''ChangeTransactionCategory
+deriveJSON defaultOptions ''ChangeTransactionDescription
+deriveJSON defaultOptions ''ChangeTransactionDate

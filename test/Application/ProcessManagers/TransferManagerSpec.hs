@@ -138,9 +138,7 @@ mkAccountDebitedEvent =
     ( AccountDebitedEvent
         AccountDebited
           { amount = unsafeMoney USD 200,
-            transactionId = unsafeTransactionId txUuid,
-            description = "Test transfer",
-            at = sampleAt
+            transactionId = unsafeTransactionId txUuid
           }
     )
 
@@ -154,9 +152,7 @@ mkAccountCreditedEvent =
     ( AccountCreditedEvent
         AccountCredited
           { amount = unsafeMoney USD 200,
-            transactionId = unsafeTransactionId txUuid,
-            description = "Test transfer",
-            at = sampleAt
+            transactionId = unsafeTransactionId txUuid
           }
     )
 
@@ -198,8 +194,6 @@ spec = describe "TransferManager (Saga)" $ do
           td.sourceAccount `shouldBe` unsafeAccountId sourceAcctUuid
           td.targetAccount `shouldBe` unsafeAccountId targetAcctUuid
           td.sourceAmount `shouldBe` unsafeMoney USD 200
-          td.description `shouldBe` "Test transfer"
-          td.at `shouldBe` sampleAt
 
     it "issues DebitAccount effect with compensation to source account" $ do
       let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
@@ -212,8 +206,6 @@ spec = describe "TransferManager (Saga)" $ do
             DebitAccountCommand debit -> do
               debit.amount `shouldBe` unsafeMoney USD 200
               debit.transactionId `shouldBe` unsafeTransactionId txUuid
-              debit.description `shouldBe` "Test transfer"
-              debit.at `shouldBe` sampleAt
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
           -- Verify compensation produces FailTransfer
           let compensationEffects = onFailure (RejectionReason "Insufficient funds")
@@ -291,8 +283,6 @@ spec = describe "TransferManager (Saga)" $ do
             CreditAccountCommand credit -> do
               credit.amount `shouldBe` unsafeMoney USD 200
               credit.transactionId `shouldBe` unsafeTransactionId txUuid
-              credit.description `shouldBe` "Test transfer"
-              credit.at `shouldBe` sampleAt
             other -> expectationFailure $ "Expected CreditAccountCommand, got: " ++ show other
 
           -- Second effect: CompleteTransfer to transaction
@@ -333,25 +323,3 @@ spec = describe "TransferManager (Saga)" $ do
           stateAfterUnrelated = handleTransferEvent stateAfterInit mkUnrelatedEvent
       -- State should remain unchanged (transfer still tracked)
       transferCount stateAfterUnrelated `shouldBe` 1
-
-  describe "`at` Propagation" $ do
-    it "propagates TransferInitiated.at to the issued DebitAccount command" $ do
-      let backdated = UTCTime (fromGregorian 2025 3 15) 0
-          event = mkTransferInitiatedEventAt backdated
-          stateAfterInit = handleTransferEvent emptyTransferManager event
-          effects = reactToTransferEvent stateAfterInit event
-      case effects of
-        [IssueCommandWithCompensation _ (DebitAccountCommand debit) _ _] ->
-          debit.at `shouldBe` backdated
-        _ -> expectationFailure $ "Expected one IssueCommandWithCompensation, got " ++ show (length effects) ++ " effects"
-
-    it "propagates TransferInitiated.at to the issued CreditAccount command via TransferData" $ do
-      let backdated = UTCTime (fromGregorian 2025 3 15) 0
-          initEvent = mkTransferInitiatedEventAt backdated
-          stateAfterInit = handleTransferEvent emptyTransferManager initEvent
-          stateAfterDebit = handleTransferEvent stateAfterInit mkAccountDebitedEvent
-          effects = reactToTransferEvent stateAfterDebit mkAccountDebitedEvent
-      case effects of
-        [IssueCommand _ (CreditAccountCommand credit) _, IssueCommand _ (CompleteTransferCommand _) _] ->
-          credit.at `shouldBe` backdated
-        _ -> expectationFailure $ "Expected 2 IssueCommand effects with credit then complete, got " ++ show (length effects)

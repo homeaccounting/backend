@@ -217,9 +217,7 @@ handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
             [ AccountDebitedAccountEvent
                 AccountDebited
                   { amount = amount,
-                    transactionId = transactionId,
-                    description = description,
-                    at = at
+                    transactionId = transactionId
                   }
             ]
         Just limit ->
@@ -231,9 +229,7 @@ handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
                     [ AccountDebitedAccountEvent
                         AccountDebited
                           { amount = amount,
-                            transactionId = transactionId,
-                            description = description,
-                            at = at
+                            transactionId = transactionId
                           }
                     ]
                 else Left InsufficientFunds
@@ -301,9 +297,7 @@ handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
         [ AccountCreditedAccountEvent
             AccountCredited
               { amount = amount,
-                transactionId = transactionId,
-                description = description,
-                at = at
+                transactionId = transactionId
               }
         ]
 

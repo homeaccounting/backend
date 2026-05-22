@@ -67,16 +67,16 @@ spec = do
                 }
       handleTransactionCommand completedTransfer cmd `shouldSatisfy` isRight
 
-    it "rejected on Pending with CannotEditLabelsInCurrentState" $ do
+    it "rejected on Pending with CannotEditUncompletedTransaction" $ do
       let cmd =
             SetTransactionLabelsTransactionCommand
               SetTransactionLabels
                 { transactionId = txId,
                   labels = Set.empty
                 }
-      handleTransactionCommand pendingIncome cmd `shouldBe` Left CannotEditLabelsInCurrentState
+      handleTransactionCommand pendingIncome cmd `shouldBe` Left CannotEditUncompletedTransaction
 
-    it "rejected on Failed with CannotEditLabelsInCurrentState" $ do
+    it "rejected on Failed with CannotEditUncompletedTransaction" $ do
       let failed = completedIncome & #status .~ Failed "nope"
           cmd =
             SetTransactionLabelsTransactionCommand
@@ -84,7 +84,7 @@ spec = do
                 { transactionId = txId,
                   labels = Set.empty
                 }
-      handleTransactionCommand failed cmd `shouldBe` Left CannotEditLabelsInCurrentState
+      handleTransactionCommand failed cmd `shouldBe` Left CannotEditUncompletedTransaction
 
   describe "ChangeTransactionCategory" $ do
     it "accepted on Income and emits TransactionCategoryChanged" $ do
@@ -117,13 +117,13 @@ spec = do
       handleTransactionCommand completedTransfer cmd
         `shouldBe` Left CannotChangeCategoryOnUncategorizedTransaction
 
-    it "rejected in Pending state with CannotEditLabelsInCurrentState" $ do
+    it "rejected in Pending state with CannotEditUncompletedTransaction" $ do
       let cmd =
             ChangeTransactionCategoryTransactionCommand
               ChangeTransactionCategory
                 { transactionId = txId,
                   newCategory = unsafeDictionaryEntryId (UUID.fromWords 7 0 0 0)
                 }
-      handleTransactionCommand pendingIncome cmd `shouldBe` Left CannotEditLabelsInCurrentState
+      handleTransactionCommand pendingIncome cmd `shouldBe` Left CannotEditUncompletedTransaction
   where
     txId = unsafeTransactionId (UUID.fromWords 100 0 0 0)

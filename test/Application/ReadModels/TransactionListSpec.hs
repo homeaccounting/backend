@@ -11,9 +11,11 @@
 module Application.ReadModels.TransactionListSpec (spec) where
 
 import Application.ReadModels.Transaction
-  ( TransactionReadModel,
+  ( TransactionData (..),
+    TransactionReadModel,
     createTransactionReadModel,
     emptyTransactionQuery,
+    getTransaction,
     handleTransactionEvents,
     listTransactions,
     mkTransactionQuery,
@@ -29,7 +31,11 @@ import Domain.Core.Types
     unTransactionId,
   )
 import Domain.Models (AccountingEvent (..))
-import Domain.Transaction.Events (TransferInitiated (..))
+import Domain.Transaction.Events
+  ( TransactionDateChanged (..),
+    TransactionDescriptionChanged (..),
+    TransferInitiated (..),
+  )
 import Eventium (StreamEvent (..), emptyMetadata)
 import qualified Eventium
 import RIO
@@ -84,6 +90,23 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransferInitiated") inner
+
+-- | Build a single-payload GlobalStreamEvent for an AccountingEvent that targets
+-- an existing transaction stream (description / date edits). The constructor
+-- carries the new value; the stream UUID identifies which TransactionData to mutate.
+mkEditEvent ::
+  TransactionId ->
+  AccountingEvent ->
+  Eventium.SequenceNumber ->
+  Eventium.GlobalStreamEvent AccountingEvent
+mkEditEvent txId payload seqNo =
+  let inner =
+        StreamEvent
+          (unTransactionId txId)
+          1
+          (emptyMetadata "edit")
+          payload
+   in StreamEvent () seqNo (emptyMetadata "edit") inner
 
 seedReadModel ::
   [Eventium.GlobalStreamEvent AccountingEvent] ->
@@ -175,6 +198,39 @@ spec = do
       tvar <- seedReadModel [older, newer]
       results <- listTransactions tvar (Set.singleton acctA) emptyTransactionQuery
       map fst results `shouldBe` [tx 2, tx 1]
+
+  describe "metadata edit folds" $ do
+    it "TransactionDescriptionChanged replaces description on the matching row" $ do
+      let initiated = mkInitiatedEvent (tx 1) acctA acctB (t 2026 1 15) (t 2026 1 15) 0
+          edit =
+            mkEditEvent
+              (tx 1)
+              ( TransactionDescriptionChangedEvent
+                  TransactionDescriptionChanged
+                    { transactionId = tx 1,
+                      newDescription = "updated description"
+                    }
+              )
+              1
+      tvar <- seedReadModel [initiated, edit]
+      mTd <- getTransaction tvar (tx 1)
+      (.description) <$> mTd `shouldBe` Just "updated description"
+
+    it "TransactionDateChanged replaces business date on the matching row" $ do
+      let initiated = mkInitiatedEvent (tx 1) acctA acctB (t 2026 1 15) (t 2026 1 15) 0
+          edit =
+            mkEditEvent
+              (tx 1)
+              ( TransactionDateChangedEvent
+                  TransactionDateChanged
+                    { transactionId = tx 1,
+                      newAt = t 2026 2 20
+                    }
+              )
+              1
+      tvar <- seedReadModel [initiated, edit]
+      mTd <- getTransaction tvar (tx 1)
+      (.date) <$> mTd `shouldBe` Just (t 2026 2 20)
 
   describe "listTransactions / business-time filter (backdated regression guard)" $ do
     it "matches the payload at window, NOT the createdAt window" $ do

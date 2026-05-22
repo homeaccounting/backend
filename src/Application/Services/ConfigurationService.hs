@@ -31,6 +31,7 @@ module Application.Services.ConfigurationService
     setBankingDefaultIncomeCategory,
     setBankingDefaultExpenseCategory,
     setBankingMccExpenseCategoryMap,
+    closeBooksThrough,
     seedDefaultConfiguration,
 
     -- * Well-known Dictionary IDs
@@ -52,17 +53,20 @@ import Application.Services.Internal
     runConfigurationCmd,
     runUserCmd,
   )
-import Control.Monad.Trans.Except (ExceptT (..), runExceptT)
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (ChangeAccountCurrency (..))
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
+import qualified Domain.Configuration.CommandHandler as ConfigCh
 import Domain.Configuration.Commands
   ( AddDictionaryEntry (..),
     ChangeBaseCurrency (..),
     ChangeDefaultCurrency (..),
+    CloseBooksThrough (..),
     CreateConfiguration (..),
     RemoveDictionaryEntry (..),
     RenameDictionaryEntry (..),
@@ -105,6 +109,7 @@ import Domain.Core.Types
   )
 import Domain.User.CommandHandler (UserCommand (..))
 import Domain.User.Commands (AssignConfiguration (..))
+import Eventium (CommandHandlerError (..))
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),
@@ -153,6 +158,7 @@ changeBaseCurrency userId newCurrency = runExceptT $ do
     (unAccountId userData.externalAccountId)
     (ChangeAccountCurrencyAccountCommand ChangeAccountCurrency {newCurrency = newCurrency})
   runConfigurationCmd
+    defaultTranslateConfigurationError
     id
     (unConfigurationId configId)
     (ChangeBaseCurrencyConfigurationCommand ChangeBaseCurrency {baseCurrency = newCurrency})
@@ -164,6 +170,7 @@ changeDefaultCurrency userId newCurrency = runExceptT $ do
   lift $ logInfo $ "Changing default currency to " <> displayShow newCurrency <> " for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
+    defaultTranslateConfigurationError
     id
     (unConfigurationId configId)
     (ChangeDefaultCurrencyConfigurationCommand ChangeDefaultCurrency {defaultCurrency = newCurrency})
@@ -183,7 +190,7 @@ addDictionaryEntry userId dictId entryName = runExceptT $ do
               entryId = entryId,
               name = entryName
             }
-  runConfigurationCmd id (unConfigurationId configId) cmd
+  runConfigurationCmd defaultTranslateConfigurationError id (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry added successfully"
   pure entryId
 
@@ -199,7 +206,7 @@ renameDictionaryEntry userId dictId entryId newName = runExceptT $ do
               entryId = entryId,
               newName = newName
             }
-  runConfigurationCmd id (unConfigurationId configId) cmd
+  runConfigurationCmd defaultTranslateConfigurationError id (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry renamed successfully"
 
 -- | Remove an entry from a dictionary in the user's configuration.
@@ -226,7 +233,7 @@ removeDictionaryEntry userId dictId entryId = runExceptT $ do
             { dictionaryId = dictId,
               entryId = entryId
             }
-  runConfigurationCmd id (unConfigurationId configId) cmd
+  runConfigurationCmd defaultTranslateConfigurationError id (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry removed successfully"
 
 -- | Set the default income category for banking imports in the user's configuration.
@@ -235,6 +242,7 @@ setBankingDefaultIncomeCategory userId categoryId = runExceptT $ do
   lift $ logInfo $ "Setting banking default income category for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
+    defaultTranslateConfigurationError
     id
     (unConfigurationId configId)
     (SetBankingDefaultIncomeCategoryConfigurationCommand SetBankingDefaultIncomeCategory {categoryId = categoryId})
@@ -246,6 +254,7 @@ setBankingDefaultExpenseCategory userId categoryId = runExceptT $ do
   lift $ logInfo $ "Setting banking default expense category for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
+    defaultTranslateConfigurationError
     id
     (unConfigurationId configId)
     (SetBankingDefaultExpenseCategoryConfigurationCommand SetBankingDefaultExpenseCategory {categoryId = categoryId})
@@ -257,10 +266,66 @@ setBankingMccExpenseCategoryMap userId mapping = runExceptT $ do
   lift $ logInfo $ "Setting banking MCC expense category map for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
+    defaultTranslateConfigurationError
     id
     (unConfigurationId configId)
     (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {mapping = mapping})
   lift $ logInfo "Banking MCC expense category map set successfully"
+
+-- | Advance the user's books-close cutoff. Both layers (service edge + aggregate)
+-- enforce the strict-advance rule:
+--
+--   * the service-edge check is a latency-saving short-circuit that returns
+--     a clean error before the configuration is cloned and the command dispatched;
+--   * the aggregate-level check is authoritative under concurrent edits.
+--
+-- Returns the latest 'ConfigurationData' on success.
+closeBooksThrough :: UserId -> UTCTime -> AppM (Either DomainError ConfigurationData)
+closeBooksThrough userId newCutoff = runExceptT $ do
+  lift $ logInfo $ "Closing books through " <> displayShow newCutoff <> " for user " <> displayShow userId
+  -- Service-edge advance-only short-circuit. The aggregate-level check is the
+  -- authoritative defence under concurrent edits; this branch just avoids a
+  -- clone-on-write + dispatch when the read model already shows the request
+  -- would be rejected.
+  cfgBefore <- ExceptT (getConfigurationForUser userId)
+  case cfgBefore.booksClosedThrough of
+    Just current
+      | newCutoff <= current ->
+          throwE
+            CannotRewindBooksCloseDate
+              { current = current,
+                attempted = newCutoff
+              }
+    _ -> pure ()
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  let cmd =
+        CloseBooksThroughConfigurationCommand
+          CloseBooksThrough {closedThrough = newCutoff}
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Books closed through cutoff advanced successfully"
+  ExceptT (getConfigurationForUser userId)
+
+-- | Translate an aggregate-local 'ConfigCh.ConfigurationError' (wrapped in
+-- 'CommandHandlerError') into the public 'DomainError' surface.
+--
+-- Only 'ConfigCh.CannotRewindBooksCloseDate' has a dedicated mapping; every
+-- other failure mode falls through to the generic 'ConfigurationError'
+-- carrier so existing behaviour is preserved.
+translateConfigurationError ::
+  CommandHandlerError ConfigCh.ConfigurationError ->
+  DomainError
+translateConfigurationError (CommandRejected ConfigCh.CannotRewindBooksCloseDate {current = cur, attempted = att}) =
+  CannotRewindBooksCloseDate {current = cur, attempted = att}
+translateConfigurationError other =
+  ConfigurationError (T.pack (show other))
+
+-- | Default translator used by call sites that have no structured-error
+-- payloads to preserve. Stringifies the rejection into the generic
+-- 'ConfigurationError' carrier.
+defaultTranslateConfigurationError ::
+  CommandHandlerError ConfigCh.ConfigurationError ->
+  DomainError
+defaultTranslateConfigurationError err = ConfigurationError (T.pack (show err))
 
 -- | Seed the default system configuration if it does not already exist.
 --
@@ -407,6 +472,7 @@ cloneConfiguration userId sourceConfigId configData = runExceptT $ do
       (mkConfigurationId newConfigUuid)
   let newConfigUuidVal = unConfigurationId newConfigId
   runConfigurationCmd
+    defaultTranslateConfigurationError
     id
     newConfigUuidVal
     ( CreateConfigurationConfigurationCommand
@@ -419,6 +485,9 @@ cloneConfiguration userId sourceConfigId configData = runExceptT $ do
   -- Best-effort: per-entry failures inside the next two helpers are logged
   -- but do not abort the clone. The aggregate-level CreateConfiguration above
   -- and AssignConfiguration below remain short-circuiting.
+  --
+  -- Note: booksClosedThrough is intentionally not propagated. It is a per-user
+  -- bookkeeping decision; clones start from an open ledger.
   lift (copyDictionaries newConfigUuidVal configData.dictionaries)
   lift (copyBanking newConfigUuidVal configData.banking)
   runUserCmd

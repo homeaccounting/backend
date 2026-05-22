@@ -31,11 +31,13 @@ module Domain.Configuration.Events
     BankingDefaultIncomeCategorySet (..),
     BankingDefaultExpenseCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
+    BooksClosedThroughSet (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Map.Strict (Map)
+import Data.Time (UTCTime)
 import Domain.Core.Types (CategoryId, CreatedBy, Currency, DictionaryEntryId, DictionaryId, EntryName, MCC)
 import Language.Haskell.TH (Name)
 
@@ -57,7 +59,8 @@ configurationEvents =
     ''DictionaryEntryRemoved,
     ''BankingDefaultIncomeCategorySet,
     ''BankingDefaultExpenseCategorySet,
-    ''BankingMccExpenseCategoryMapSet
+    ''BankingMccExpenseCategoryMapSet,
+    ''BooksClosedThroughSet
   ]
 
 -- -----------------------------------------------------------------------------
@@ -138,6 +141,17 @@ data BankingMccExpenseCategoryMapSet = BankingMccExpenseCategoryMapSet
   }
   deriving (Show, Eq)
 
+-- | Event emitted when the books-closed-through cutoff is advanced.
+--
+-- The cutoff is advance-only: any attempt to set the cutoff to a value at or
+-- before the current cutoff is rejected by the command handler, so only
+-- advancing events ever reach the projection.
+newtype BooksClosedThroughSet = BooksClosedThroughSet
+  { -- | New books-closed-through cutoff (strictly later than the previous one).
+    closedThrough :: UTCTime
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -152,3 +166,4 @@ deriveJSON defaultOptions ''DictionaryEntryRemoved
 deriveJSON defaultOptions ''BankingDefaultIncomeCategorySet
 deriveJSON defaultOptions ''BankingDefaultExpenseCategorySet
 deriveJSON defaultOptions ''BankingMccExpenseCategoryMapSet
+deriveJSON defaultOptions ''BooksClosedThroughSet

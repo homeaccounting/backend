@@ -624,8 +624,7 @@ currencyMismatchSpec = describe "CurrencyMismatch" $ do
               DebitAccountAccountCommand
                 $ DebitAccount
                   { amount = mockMoneyWith EUR 100,
-                    transactionId = testTransactionId,
-                    description = "Transfer"
+                    transactionId = testTransactionId
                   }
         let result = handleAccountCommand account command
         result `shouldBe` Left CurrencyMismatch
@@ -637,8 +636,7 @@ currencyMismatchSpec = describe "CurrencyMismatch" $ do
               CreditAccountAccountCommand
                 $ CreditAccount
                   { amount = mockMoneyWith EUR 100,
-                    transactionId = testTransactionId,
-                    description = "Transfer"
+                    transactionId = testTransactionId
                   }
         let result = handleAccountCommand account command
         result `shouldBe` Left CurrencyMismatch

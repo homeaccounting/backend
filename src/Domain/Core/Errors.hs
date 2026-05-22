@@ -21,7 +21,15 @@ where
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time (UTCTime)
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import GHC.Generics (Generic)
+
+-- | ISO-8601 rendering for UTCTime values that appear in user-facing
+-- error messages.  Matches the form clients send via Aeson, so the
+-- echoed value round-trips.
+iso8601 :: UTCTime -> Text
+iso8601 = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"
 
 -- -----------------------------------------------------------------------------
 -- Domain Error Types
@@ -75,10 +83,29 @@ data DomainError
       { entryId :: Text,
         usageCount :: Int
       }
-  | -- | Cannot edit labels on a transaction that is not in the Completed state.
-    CannotEditTransactionLabelsInCurrentState
+  | -- | Cannot edit metadata (labels, category, description, business date) on a
+    -- transaction that is not in the Completed state.
+    --
+    -- The name reflects the rejection condition (status /= Completed), not the
+    -- allowed state. The HTTP error code @TRANSACTION_NOT_COMPLETED@ is the
+    -- snake-case form of that same condition.
+    CannotEditUncompletedTransaction
   | -- | Cannot change the category on a transaction with no category (Transfer or Adjustment).
     CannotChangeCategoryOnUncategorizedTransaction
+  | -- | Edit (or backdated creation) would land in a closed period.
+    --   @current@ is the user's @booksClosedThrough@; @attempted@ is the
+    --   business date that triggered the rejection.
+    CannotEditClosedPeriod
+      { current :: UTCTime,
+        attempted :: UTCTime
+      }
+  | -- | 'CloseBooksThrough' would rewind the cutoff (advance-only rule).
+    --   @current@ is the existing cutoff; @attempted@ is the requested
+    --   cutoff that did not strictly advance past it.
+    CannotRewindBooksCloseDate
+      { current :: UTCTime,
+        attempted :: UTCTime
+      }
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -152,7 +179,17 @@ renderDomainError err = case err of
     "Cannot delete label " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
   CategoryInUse eid n ->
     "Cannot delete category " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
-  CannotEditTransactionLabelsInCurrentState ->
-    "Transaction labels can only be changed after the transfer has completed"
+  CannotEditUncompletedTransaction ->
+    "Transaction metadata can only be changed after the transfer has completed"
   CannotChangeCategoryOnUncategorizedTransaction ->
     "Category cannot be set on a Transfer or Adjustment"
+  CannotEditClosedPeriod cur att ->
+    "Cannot edit a transaction in a closed period: books closed through "
+      <> iso8601 cur
+      <> ", attempted "
+      <> iso8601 att
+  CannotRewindBooksCloseDate cur att ->
+    "Books-close date may only advance: current "
+      <> iso8601 cur
+      <> ", attempted "
+      <> iso8601 att

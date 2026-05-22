@@ -11,6 +11,7 @@
 module Application.ReadModels.AccountPropertySpec (spec) where
 
 import Application.ReadModels.Account (balanceAsOf)
+import qualified Data.Map.Strict as Map
 import Data.Time (NominalDiffTime, UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Account.Events
@@ -23,6 +24,7 @@ import Domain.Core.Types
     AccountType (..),
     Currency (..),
     Money,
+    TransactionId,
     UserId,
     defaultCash,
     unAccountId,
@@ -79,6 +81,13 @@ genFlow = Flow <$> arbitrary <*> genPositiveUsdAmount <*> genBusinessDay
 
 -- -----------------------------------------------------------------------------
 -- Event-stream construction
+--
+-- These builders are intentionally local: each one hard-codes shape
+-- specific to this property test (a fixed @"Checking"@ Regular/Cash
+-- account, paired credit/debit legs over a generated @Flow@). If a
+-- second spec needs the same shape, lift them into a @Testkit@ module
+-- at that point — generalising them speculatively would only add
+-- parameters that no one currently sets.
 -- -----------------------------------------------------------------------------
 
 createdEvent :: Money -> AccountingEvent
@@ -92,23 +101,22 @@ createdEvent initial =
         overdraftLimit = Nothing
       }
 
+txIdOf :: Word32 -> TransactionId
+txIdOf w = mockTransactionId (UUID.fromWords w 0 0 0)
+
 flowEvent :: Word32 -> Flow -> AccountingEvent
 flowEvent txWord f
   | f.credit =
       AccountCreditedEvent
         AccountCredited
           { amount = f.amount,
-            transactionId = mockTransactionId (UUID.fromWords txWord 0 0 0),
-            description = "credit",
-            at = f.at
+            transactionId = txIdOf txWord
           }
   | otherwise =
       AccountDebitedEvent
         AccountDebited
           { amount = f.amount,
-            transactionId = mockTransactionId (UUID.fromWords txWord 0 0 0),
-            description = "debit",
-            at = f.at
+            transactionId = txIdOf txWord
           }
 
 -- | Sum the flows whose business date is at or before @D@, signed by direction.
@@ -122,17 +130,24 @@ expectedDelta cutoff =
 -- Harness
 -- -----------------------------------------------------------------------------
 
-seedAndQuery :: AccountId -> [AccountingEvent] -> UTCTime -> IO (Maybe Money)
-seedAndQuery accountId events asOf = do
+seedAndQuery ::
+  AccountId ->
+  [AccountingEvent] ->
+  [(TransactionId, UTCTime)] ->
+  UTCTime ->
+  IO (Maybe Money)
+seedAndQuery accountId events lookupEntries asOf = do
   stores <- createInMemoryEventStores
   let EventStoreWriter stmWrite = stores.inMemoryWriter
       EventStoreReader stmRead = stores.inMemoryReader
       ioReader = EventStoreReader (atomically . stmRead)
+      lookupMap = Map.fromList lookupEntries
+      lookupAt txId = Map.lookup txId lookupMap
   unless (null events)
     $ void
     $ atomically
     $ stmWrite (unAccountId accountId) AnyPosition events
-  balanceAsOf ioReader accountId asOf
+  balanceAsOf ioReader lookupAt accountId asOf
 
 -- -----------------------------------------------------------------------------
 -- Spec
@@ -145,11 +160,13 @@ spec = describe "Application.ReadModels.Account / balanceAsOf (property)" $ do
     $ forAll genPositiveUsdAmount
     $ \initial ->
       forAll (resize 30 (listOf genFlow)) $ \flows -> ioProperty $ do
-        let events =
+        let indexedFlows = zip [(1 :: Word32) ..] flows
+            events =
               createdEvent initial
-                : [flowEvent (fromIntegral i) f | (i, f) <- zip [(1 :: Word32) ..] flows]
+                : [flowEvent i f | (i, f) <- indexedFlows]
+            lookupEntries = [(txIdOf i, f.at) | (i, f) <- indexedFlows]
             farFuture = addUTCTime (366 * 86400) baseDay
-        result <- seedAndQuery acctA events farFuture
+        result <- seedAndQuery acctA events lookupEntries farFuture
         let expected = unsafeMoney USD (unMoney initial + expectedDelta farFuture flows)
         pure $ result === Just expected
 
@@ -161,25 +178,30 @@ spec = describe "Application.ReadModels.Account / balanceAsOf (property)" $ do
         forAll (resize 20 (listOf genPositiveUsdAmount)) $ \creditAmounts -> ioProperty $ do
           let t1 = addUTCTime (180 * 86400) baseDay
               t2 = addUTCTime (270 * 86400) baseDay
-              -- Restrict prefix flows to dates at or before t1.
-              prefixEvents =
-                [ flowEvent (fromIntegral i) (capDate t1 f)
-                | (i, f) <- zip [(1 :: Word32) ..] prefix
+              cappedPrefix = [(i, capDate t1 f) | (i, f) <- zip [(1 :: Word32) ..] prefix]
+              prefixEvents = [flowEvent i f | (i, f) <- cappedPrefix]
+              prefixLookup = [(txIdOf i, f.at) | (i, f) <- cappedPrefix]
+              suffix =
+                [ ( 1000 + i,
+                    addUTCTime (fromIntegral (i * 3600) :: NominalDiffTime) t1,
+                    amt
+                  )
+                | (i, amt) <- zip [(1 :: Word32) ..] creditAmounts
                 ]
               -- Credit-only suffix dated strictly between t1 and t2.
               suffixEvents =
                 [ AccountCreditedEvent
                     AccountCredited
                       { amount = amt,
-                        transactionId = mockTransactionId (UUID.fromWords (1000 + i) 0 0 0),
-                        description = "suffix credit",
-                        at = addUTCTime (fromIntegral (i * 3600) :: NominalDiffTime) t1
+                        transactionId = txIdOf w
                       }
-                | (i, amt) <- zip [(1 :: Word32) ..] creditAmounts
+                | (w, _, amt) <- suffix
                 ]
+              suffixLookup = [(txIdOf w, at_) | (w, at_, _) <- suffix]
               events = createdEvent initial : prefixEvents ++ suffixEvents
-          before <- seedAndQuery acctA events t1
-          after <- seedAndQuery acctA events t2
+              lookupEntries = prefixLookup ++ suffixLookup
+          before <- seedAndQuery acctA events lookupEntries t1
+          after <- seedAndQuery acctA events lookupEntries t2
           pure $ case (before, after) of
             (Just b1, Just b2) -> unMoney b2 >= unMoney b1
             _ -> False

@@ -59,6 +59,8 @@ module Web.Types
     InternalTransferRequest (..),
     SetTransactionLabelsRequest (..),
     ChangeTransactionCategoryRequest (..),
+    ChangeTransactionDescriptionRequest (..),
+    ChangeTransactionDateRequest (..),
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
@@ -436,6 +438,28 @@ data ChangeTransactionCategoryRequest = ChangeTransactionCategoryRequest
 instance ToJSON ChangeTransactionCategoryRequest
 
 instance FromJSON ChangeTransactionCategoryRequest
+
+-- | Body for @PUT \/api\/transactions\/:id\/description@ — replaces the
+-- description on a Completed transaction.
+newtype ChangeTransactionDescriptionRequest = ChangeTransactionDescriptionRequest
+  { description :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ChangeTransactionDescriptionRequest
+
+instance FromJSON ChangeTransactionDescriptionRequest
+
+-- | Body for @PUT \/api\/transactions\/:id\/date@ — replaces the
+-- business date on a Completed transaction.
+newtype ChangeTransactionDateRequest = ChangeTransactionDateRequest
+  { at :: UTCTime
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ChangeTransactionDateRequest
+
+instance FromJSON ChangeTransactionDateRequest
 
 -- -----------------------------------------------------------------------------
 -- Transaction Response DTOs

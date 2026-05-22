@@ -32,11 +32,13 @@ where
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime)
 import Domain.Configuration.Events
   ( BankingDefaultExpenseCategorySet (..),
     BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
+    BooksClosedThroughSet (..),
     ConfigurationCreated (..),
     DefaultCurrencyChanged (..),
     DictionaryEntryAdded (..),
@@ -110,7 +112,10 @@ data Configuration = Configuration
     -- | Who created this configuration
     createdBy :: CreatedBy,
     -- | Whether the configuration has been created (initial event received)
-    isCreated :: Bool
+    isCreated :: Bool,
+    -- | Books-closed-through cutoff. 'Nothing' until 'CloseBooksThrough' has
+    -- been accepted at least once. Advances monotonically.
+    booksClosedThrough :: Maybe UTCTime
   }
   deriving (Show, Eq)
 
@@ -126,7 +131,8 @@ configurationDefault =
       dictionaries = Map.empty,
       banking = emptyBankingConfiguration,
       createdBy = System,
-      isCreated = False
+      isCreated = False,
+      booksClosedThrough = Nothing
     }
 
 -- -----------------------------------------------------------------------------
@@ -173,7 +179,8 @@ handleConfigurationEvent Configuration {..} (BaseCurrencyChangedConfigurationEve
       dictionaries = dictionaries,
       banking = banking,
       createdBy = createdBy,
-      isCreated = isCreated
+      isCreated = isCreated,
+      booksClosedThrough = booksClosedThrough
     }
 handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfigurationEvent evt) =
   Configuration
@@ -182,7 +189,8 @@ handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfiguration
       dictionaries = dictionaries,
       banking = banking,
       createdBy = createdBy,
-      isCreated = isCreated
+      isCreated = isCreated,
+      booksClosedThrough = booksClosedThrough
     }
 handleConfigurationEvent config (DictionaryEntryAddedConfigurationEvent DictionaryEntryAdded {..}) =
   let newEntry = DictionaryEntry {entryId = entryId, name = name}
@@ -219,6 +227,8 @@ handleConfigurationEvent config (BankingDefaultExpenseCategorySetConfigurationEv
   config {banking = config.banking {defaultExpenseCategory = Just evt.categoryId}}
 handleConfigurationEvent config (BankingMccExpenseCategoryMapSetConfigurationEvent evt) =
   config {banking = config.banking {mccExpenseCategoryMap = evt.mapping}}
+handleConfigurationEvent config (BooksClosedThroughSetConfigurationEvent evt) =
+  config {booksClosedThrough = Just evt.closedThrough}
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

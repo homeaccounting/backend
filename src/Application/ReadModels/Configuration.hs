@@ -48,11 +48,13 @@ import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVa
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime)
 import Domain.Configuration.Events
   ( BankingDefaultExpenseCategorySet (..),
     BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
+    BooksClosedThroughSet (..),
     ConfigurationCreated (..),
     DefaultCurrencyChanged (..),
     DictionaryEntryAdded (..),
@@ -93,6 +95,10 @@ data ConfigurationData = ConfigurationData
     dictionaries :: Map DictionaryId DictionaryData,
     -- | Banking-specific configuration
     banking :: BankingConfiguration,
+    -- | Advance-only books-closed-through cutoff. 'Nothing' means no cutoff
+    -- has been set (the books are fully open). Folded from
+    -- 'BooksClosedThroughSet'.
+    booksClosedThrough :: Maybe UTCTime,
     -- | Who created this configuration
     createdBy :: CreatedBy,
     -- | Version number from event stream for optimistic concurrency
@@ -202,6 +208,7 @@ processConfigurationEvent configurations globalEvent =
                     defaultCurrency = evt.defaultCurrency,
                     dictionaries = Map.empty,
                     banking = emptyBankingConfiguration,
+                    booksClosedThrough = Nothing,
                     createdBy = evt.createdBy,
                     version = 1
                   }
@@ -321,6 +328,19 @@ processConfigurationEvent configurations globalEvent =
                 ( \config ->
                     config
                       { banking = config.banking {mccExpenseCategoryMap = evt.mapping},
+                        version = config.version + 1
+                      }
+                )
+                configId
+                configurations
+        BooksClosedThroughSetEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> configurations
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { booksClosedThrough = Just evt.closedThrough,
                         version = config.version + 1
                       }
                 )

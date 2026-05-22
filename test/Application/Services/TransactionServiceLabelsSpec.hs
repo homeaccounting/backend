@@ -258,10 +258,10 @@ spec = describe "TransactionService / labels" $ do
         runAppM env
           $ setTransactionLabels fx.userId txId (Set.singleton fx.labelA)
       case result of
-        Left CannotEditTransactionLabelsInCurrentState -> pure ()
+        Left CannotEditUncompletedTransaction -> pure ()
         other ->
           expectationFailure
-            $ "expected CannotEditTransactionLabelsInCurrentState, got: "
+            $ "expected CannotEditUncompletedTransaction, got: "
             <> show other
 
     it "rejects an unknown label id before dispatching" $ do

@@ -46,6 +46,7 @@ module Application.ReadModels.Account
     getUserRegularAccounts,
     accountExists,
     balanceAsOf,
+    foldBalanceAsOf,
 
     -- * Helper Functions
     accountToMap,
@@ -76,6 +77,7 @@ import Domain.Core.Types
     AccountRole (..),
     AccountType (..),
     Money,
+    TransactionId,
     UserId,
     addMoney,
     mkAccountIdSafe,
@@ -529,44 +531,67 @@ getUserRole uid accessList =
 --
 -- Callers (typically the service layer) are responsible for lifting
 -- 'Nothing' to a domain error such as @NotFound \"Account\" ...@.
+--
+-- The @lookupAt@ parameter resolves a 'TransactionId' to the authoritative
+-- business date currently recorded on the Transaction aggregate (typically
+-- backed by 'Application.ReadModels.Transaction'). It exists so that user
+-- edits to a transaction's date (see
+-- @docs/specs/2026-05-20-editable-transaction-metadata-design.md@ §4)
+-- propagate into historical balance queries: the authoritative @at@ lives
+-- on the TX aggregate. When @lookupAt@ returns 'Nothing' the leg is
+-- skipped entirely; this is purely defensive, as valid event streams
+-- produced by the command handler always have a corresponding TX entry.
 balanceAsOf ::
   (Monad m) =>
   EventStoreReader UUID EventVersion m (VersionedStreamEvent AccountingEvent) ->
+  (TransactionId -> Maybe UTCTime) ->
   AccountId ->
   UTCTime ->
   m (Maybe Money)
-balanceAsOf (EventStoreReader readStream) accountId asOf = do
+balanceAsOf (EventStoreReader readStream) lookupAt accountId asOf = do
   events <- readStream (allEvents (unAccountId accountId))
-  pure (foldBalanceAsOf asOf ((.payload) <$> events))
+  pure (foldBalanceAsOf asOf lookupAt ((.payload) <$> events))
 
 -- | Fold a list of 'AccountingEvent' payloads into a balance as of @D@.
 --
--- Pure helper exposed for testability (kept package-private). Returns
+-- Pure helper exposed for testability. Returns
 -- 'Nothing' when no 'AccountCreated' event is present; otherwise folds
--- 'AccountCredited' / 'AccountDebited' events whose business date is at or
--- before @asOf@. Currency-mismatch errors from 'addMoney' / 'subtractMoney'
--- are silently ignored, mirroring 'handleAccountEvents' — such mismatches
--- cannot arise from valid event streams produced by the command handler.
-foldBalanceAsOf :: UTCTime -> [AccountingEvent] -> Maybe Money
-foldBalanceAsOf asOf events =
+-- 'AccountCredited' / 'AccountDebited' events whose authoritative business
+-- date (resolved via @lookupAt@ from the Transaction aggregate) is at or
+-- before @asOf@. When @lookupAt@ returns 'Nothing' for a leg's
+-- 'TransactionId', the leg is skipped entirely — this is purely defensive,
+-- as valid event streams produced by the command handler always have a
+-- corresponding TX entry in the lookup.
+--
+-- Currency-mismatch errors from 'addMoney' / 'subtractMoney' are silently
+-- ignored, mirroring 'handleAccountEvents' — such mismatches cannot arise
+-- from valid event streams produced by the command handler.
+foldBalanceAsOf ::
+  UTCTime ->
+  (TransactionId -> Maybe UTCTime) ->
+  [AccountingEvent] ->
+  Maybe Money
+foldBalanceAsOf asOf lookupAt events =
   case dropWhile (not . isAccountCreated) events of
     [] -> Nothing
     (AccountCreatedEvent c : rest) ->
-      Just (foldl' (applyAsOf asOf) c.initialBalance rest)
+      Just (foldl' (applyAsOf asOf lookupAt) c.initialBalance rest)
     _ -> Nothing
   where
     isAccountCreated (AccountCreatedEvent _) = True
     isAccountCreated _ = False
 
-    applyAsOf :: UTCTime -> Money -> AccountingEvent -> Money
-    applyAsOf cutoff bal (AccountDebitedEvent e)
-      | e.at <= cutoff =
+    applyAsOf :: UTCTime -> (TransactionId -> Maybe UTCTime) -> Money -> AccountingEvent -> Money
+    applyAsOf cutoff lookup_ bal (AccountDebitedEvent e)
+      | Just effectiveAt <- lookup_ e.transactionId,
+        effectiveAt <= cutoff =
           case subtractMoney bal e.amount of
             Right newBal -> newBal
             Left _ -> bal -- currency mismatch cannot occur in valid streams
-    applyAsOf cutoff bal (AccountCreditedEvent e)
-      | e.at <= cutoff =
+    applyAsOf cutoff lookup_ bal (AccountCreditedEvent e)
+      | Just effectiveAt <- lookup_ e.transactionId,
+        effectiveAt <= cutoff =
           case addMoney bal e.amount of
             Right newBal -> newBal
             Left _ -> bal
-    applyAsOf _ bal _ = bal
+    applyAsOf _ _ bal _ = bal

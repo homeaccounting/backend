@@ -33,6 +33,9 @@ where
 
 import Data.Aeson (encode)
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import Data.Time (UTCTime)
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import Domain.Core.Errors
   ( DomainError (..),
     ValidationError (..),
@@ -40,6 +43,11 @@ import Domain.Core.Errors
 import RIO
 import Servant.Server (ServerError, err400, err404, err409, err422, errBody)
 import Web.Types (ErrorResponse (..), ValidationErrorResponse (..))
+
+-- | Render a UTCTime as ISO-8601 so client-side parsers (and round-trip
+-- with the request body, which uses Aeson's ISO-8601 form) work.
+iso8601 :: UTCTime -> Text
+iso8601 = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"
 
 -- -----------------------------------------------------------------------------
 -- Core Error Mapping
@@ -212,12 +220,12 @@ mapDomainError (CategoryInUse eid n) =
                     ]
             }
     }
-mapDomainError CannotEditTransactionLabelsInCurrentState =
+mapDomainError CannotEditUncompletedTransaction =
   err409
     { errBody =
         encode $
           ErrorResponse
-            { message = "Transaction labels can only be changed after the transfer has completed",
+            { message = "Transaction metadata can only be changed after the transfer has completed",
               code = "TRANSACTION_NOT_COMPLETED",
               details = Nothing
             }
@@ -230,6 +238,36 @@ mapDomainError CannotChangeCategoryOnUncategorizedTransaction =
             { message = "Category cannot be set on a Transfer or Adjustment",
               code = "CATEGORY_NOT_APPLICABLE",
               details = Nothing
+            }
+    }
+mapDomainError (CannotEditClosedPeriod cur att) =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot edit a transaction in a closed period",
+              code = "CANNOT_EDIT_CLOSED_PERIOD",
+              details =
+                Just $
+                  Map.fromList
+                    [ ("current", iso8601 cur),
+                      ("attempted", iso8601 att)
+                    ]
+            }
+    }
+mapDomainError (CannotRewindBooksCloseDate cur att) =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Books-close date may only advance",
+              code = "CANNOT_REWIND_BOOKS_CLOSE",
+              details =
+                Just $
+                  Map.fromList
+                    [ ("current", iso8601 cur),
+                      ("attempted", iso8601 att)
+                    ]
             }
     }
 
