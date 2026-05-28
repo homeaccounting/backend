@@ -21,6 +21,8 @@
 --   PUT    /api/transactions/:id/category      - Replace category
 --   PUT    /api/transactions/:id/description   - Replace description
 --   PUT    /api/transactions/:id/date          - Replace business date
+--   PUT    /api/transactions/:id/amendment     - Amend posting facts (saga)
+--   GET    /api/transactions/:id/history       - Audit history
 --   GET    /api/transactions/:id               - Get transaction status
 --
 -- Handler Responsibilities (HTTP concerns only):
@@ -47,21 +49,28 @@ module Web.API.TransactionAPI
     changeCategoryHandler,
     changeDescriptionHandler,
     changeDateHandler,
+    amendTransferHandler,
+    transactionHistoryHandler,
   )
 where
 
 import Application.ReadModels.Transaction (mkTransactionQuery)
+import Application.Services.TransactionHistoryService (TransactionHistory)
+import qualified Application.Services.TransactionHistoryService as TransactionHistoryService
 import qualified Application.Services.TransactionService as TransactionService
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
+import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (mkAccountId, mkDictionaryEntryId, mkTransactionId, parseCurrency)
+import Domain.Transaction.Commands (AmendTransfer (..))
 import Infrastructure.App (AppM)
 import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
-  ( ChangeTransactionCategoryRequest (..),
+  ( AmendTransactionRequest (..),
+    ChangeTransactionCategoryRequest (..),
     ChangeTransactionDateRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ExpenseRequest (..),
@@ -73,6 +82,7 @@ import Web.Types
     fromTransactionData,
     parseCategoryId,
     parseLabelIds,
+    parseOptionalExchangeRate,
     toDomainMoney,
   )
 import Web.Validation (validateDateNotInFuture, validateField)
@@ -150,6 +160,21 @@ type TransactionAPI =
       :> "date"
       :> ReqBody '[JSON] ChangeTransactionDateRequest
       :> Put '[JSON] TransactionResponse
+    -- PUT /api/transactions/:id/amendment - Amend posting facts on a Completed transaction.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "amendment"
+      :> ReqBody '[JSON] AmendTransactionRequest
+      :> Put '[JSON] TransactionResponse
+    -- GET /api/transactions/:id/history - Audit history (TX-aggregate events).
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "history"
+      :> Get '[JSON] TransactionHistory
     -- GET /api/transactions/:id - Get transaction status (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -176,6 +201,8 @@ transactionServer =
     :<|> changeCategoryHandler
     :<|> changeDescriptionHandler
     :<|> changeDateHandler
+    :<|> amendTransferHandler
+    :<|> transactionHistoryHandler
     :<|> getTransactionHandler
 
 -- -----------------------------------------------------------------------------
@@ -284,6 +311,58 @@ changeDateHandler user rawId req = do
   result <- TransactionService.changeTransactionDate user.userId transactionId req.at
   case result of
     Right td -> pure $ fromTransactionData transactionId td
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/transactions/:id/amendment — replace the
+-- posting facts on a Completed transaction. Synchronous: returns the
+-- post-amendment 'TransactionResponse' once the saga has resolved
+-- ('TransferAmendmentCompleted') or surfaces
+-- 'InsufficientFundsForAmendment' on saga failure.
+--
+-- The transaction's 'transferType' is not amendable — see
+-- 'AmendTransactionRequest'.
+amendTransferHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  AmendTransactionRequest ->
+  AppM TransactionResponse
+amendTransferHandler user rawId req = do
+  transactionId <- validateField "id" $ mkTransactionId rawId
+  newSource <- validateField "sourceAccountId" $ mkAccountId req.sourceAccountId
+  newTarget <- validateField "targetAccountId" $ mkAccountId req.targetAccountId
+  srcCur <- validateField "sourceCurrency" $ parseCurrency req.sourceCurrency
+  tgtCur <- validateField "targetCurrency" $ parseCurrency req.targetCurrency
+  let srcMoney = toDomainMoney srcCur req.sourceAmount
+      tgtMoney = toDomainMoney tgtCur req.targetAmount
+  maybeRate <-
+    validateField "exchangeRate" $ parseOptionalExchangeRate srcCur tgtCur req.exchangeRate
+  let cmd =
+        AmendTransfer
+          { transactionId = transactionId,
+            newSourceAccountId = newSource,
+            newTargetAccountId = newTarget,
+            newSourceAmount = srcMoney,
+            newTargetAmount = tgtMoney,
+            newExchangeRate = maybeRate,
+            amendedBy = user.userId
+          }
+  result <- TransactionService.amendTransfer user.userId transactionId cmd
+  case result of
+    Right td -> pure $ fromTransactionData transactionId td
+    Left err -> throwDomainError err
+
+-- | Handler for GET /api/transactions/:id/history — audit history.
+transactionHistoryHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  AppM TransactionHistory
+transactionHistoryHandler user rawId = do
+  transactionId <- validateField "id" $ mkTransactionId rawId
+  result <- TransactionHistoryService.getTransactionHistory user.userId transactionId
+  case result of
+    Right (Just history) -> pure history
+    Right Nothing ->
+      throwDomainError (NotFound "Transaction" (tshow transactionId))
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions - list transactions visible to the caller.

@@ -65,7 +65,9 @@ import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
     AccountCreated (..),
+    AccountCreditReversed (..),
     AccountCredited (..),
+    AccountDebitReversed (..),
     AccountDebited (..),
     AccountRenamed (..),
     AccountSubtypeSet (..),
@@ -305,6 +307,38 @@ processEvent accounts globalEvent =
                             version = account.version + 1
                           }
                       Left _ -> account -- Currency mismatch: should not happen for valid events
+                )
+                accountId
+                accounts
+        AccountDebitReversedEvent evt ->
+          case mkAccountIdSafe streamUuid of
+            Nothing -> accounts
+            Just accountId ->
+              Map.adjust
+                ( \account ->
+                    case addMoney account.balance evt.amount of
+                      Right newBalance ->
+                        account
+                          { balance = newBalance,
+                            version = account.version + 1
+                          }
+                      Left _ -> account
+                )
+                accountId
+                accounts
+        AccountCreditReversedEvent evt ->
+          case mkAccountIdSafe streamUuid of
+            Nothing -> accounts
+            Just accountId ->
+              Map.adjust
+                ( \account ->
+                    case subtractMoney account.balance evt.amount of
+                      Right newBalance ->
+                        account
+                          { balance = newBalance,
+                            version = account.version + 1
+                          }
+                      Left _ -> account
                 )
                 accountId
                 accounts
@@ -592,6 +626,18 @@ foldBalanceAsOf asOf lookupAt events =
       | Just effectiveAt <- lookup_ e.transactionId,
         effectiveAt <= cutoff =
           case addMoney bal e.amount of
+            Right newBal -> newBal
+            Left _ -> bal
+    applyAsOf cutoff lookup_ bal (AccountDebitReversedEvent e)
+      | Just effectiveAt <- lookup_ e.transactionId,
+        effectiveAt <= cutoff =
+          case addMoney bal e.amount of
+            Right newBal -> newBal
+            Left _ -> bal
+    applyAsOf cutoff lookup_ bal (AccountCreditReversedEvent e)
+      | Just effectiveAt <- lookup_ e.transactionId,
+        effectiveAt <= cutoff =
+          case subtractMoney bal e.amount of
             Right newBal -> newBal
             Left _ -> bal
     applyAsOf _ _ bal _ = bal

@@ -300,6 +300,32 @@ handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
                 transactionId = transactionId
               }
         ]
+-- Handle ReverseAccountDebit command (saga-only, issued by TransferAmendmentManager)
+handleAccountCommand account (ReverseAccountDebitAccountCommand ReverseAccountDebit {..})
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
+  | otherwise =
+      Right
+        [ AccountDebitReversedAccountEvent
+            AccountDebitReversed
+              { amount = amount,
+                transactionId = transactionId,
+                at = at
+              }
+        ]
+-- Handle ReverseAccountCredit command (saga-only, issued by TransferAmendmentManager)
+handleAccountCommand account (ReverseAccountCreditAccountCommand ReverseAccountCredit {..})
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
+  | otherwise =
+      Right
+        [ AccountCreditReversedAccountEvent
+            AccountCreditReversed
+              { amount = amount,
+                transactionId = transactionId,
+                at = at
+              }
+        ]
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

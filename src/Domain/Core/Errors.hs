@@ -106,6 +106,22 @@ data DomainError
       { current :: UTCTime,
         attempted :: UTCTime
       }
+  | -- | Transfer amendment would produce a transfer between the same two
+    -- accounts (source and destination are identical after amendment).
+    CannotAmendToSameAccountPair
+  | -- | Transfer amendment would set the amount to zero.
+    CannotAmendToZeroAmount
+  | -- | Transfer amendment would change the 'AccountType' (Regular vs
+    -- External) of either leg, which would implicitly change the
+    -- transaction's 'transferType'. Recategorising a transaction across
+    -- the internal\/external boundary requires deleting and reposting.
+    CannotAmendAcrossAccountType
+  | -- | The saga rejected the amendment because at least one account has
+    -- insufficient funds.  @reason@ is the human-readable rejection message
+    -- returned by the saga.
+    InsufficientFundsForAmendment
+      { reason :: Text
+      }
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -193,3 +209,11 @@ renderDomainError err = case err of
       <> iso8601 cur
       <> ", attempted "
       <> iso8601 att
+  CannotAmendToSameAccountPair ->
+    "Transfer cannot be amended to the same source and destination account"
+  CannotAmendToZeroAmount ->
+    "Transfer amount cannot be amended to zero"
+  CannotAmendAcrossAccountType ->
+    "Transfer amendment cannot change an account's type (Regular vs External)"
+  InsufficientFundsForAmendment r ->
+    "Insufficient funds for transfer amendment: " <> r

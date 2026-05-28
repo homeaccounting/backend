@@ -57,7 +57,7 @@ import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import GHC.Generics (Generic)
-import Optics (makeFieldLabelsNoPrefix, (&), (.~), (^.))
+import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
 
 -- -----------------------------------------------------------------------------
 -- Transaction Status
@@ -145,7 +145,17 @@ data Transaction = Transaction
     -- | Type of transfer (Income, Expense, Transfer)
     transferType :: TransferType,
     -- | Labels attached to this transaction (may be empty).
-    labels :: Set LabelId
+    labels :: Set LabelId,
+    -- | Count of 'TransferAmendmentCompleted' events folded so far.
+    -- Exposed on the API surface so clients can detect amendments and
+    -- fetch the audit history if interested. Always @0@ on a transaction
+    -- that has never been amended.
+    amendmentCount :: Word,
+    -- | Transient flag: True when a 'TransferAmendmentInitiated' event has
+    -- been applied but a corresponding 'TransferAmendmentCompleted' or
+    -- 'TransferAmendmentFailed' has not yet arrived. Used by the command
+    -- handler to gate 'CompleteTransferAmendment' and 'FailTransferAmendment'.
+    amendmentInProgress :: Bool
   }
   deriving (Show, Eq)
 
@@ -189,7 +199,9 @@ transactionDefault =
       status = Pending,
       initiatedBy = unsafeUserId nil,
       transferType = Income (unsafeDictionaryEntryId nil),
-      labels = Set.empty
+      labels = Set.empty,
+      amendmentCount = 0,
+      amendmentInProgress = False
     }
 
 -- -----------------------------------------------------------------------------
@@ -308,6 +320,34 @@ handleTransactionEvent transaction (TransactionDateChangedTransactionEvent evt) 
   -- Replace the business date. The command handler enforces Completed-only;
   -- the projection itself is permissive.
   transaction & #at .~ evt.newAt
+handleTransactionEvent transaction (TransferAmendmentInitiatedTransactionEvent _evt) =
+  -- Flip the transient saga-in-progress flag on so the command handler
+  -- can gate CompleteTransferAmendment / FailTransferAmendment.
+  -- Canonical posting fields are unchanged until TransferAmendmentCompleted.
+  transaction & #amendmentInProgress .~ True
+handleTransactionEvent transaction (TransferAmendmentCompletedTransactionEvent evt) =
+  -- Replace canonical posting facts with the amended values; bump the
+  -- amendment count; clear the saga-in-progress flag. 'transferType' is
+  -- not amendable — it is a function of the source/target accounts'
+  -- types and is preserved by service-layer validation.
+  transaction
+    & #sourceAccountId
+    .~ evt.newSourceAccountId
+    & #targetAccountId
+    .~ evt.newTargetAccountId
+    & #sourceAmount
+    .~ evt.newSourceAmount
+    & #targetAmount
+    .~ evt.newTargetAmount
+    & #exchangeRate
+    .~ evt.newExchangeRate
+    & #amendmentCount
+    %~ (+ 1)
+    & #amendmentInProgress
+    .~ False
+handleTransactionEvent transaction (TransferAmendmentFailedTransactionEvent _evt) =
+  -- Clear the in-progress flag. No canonical change on failure.
+  transaction & #amendmentInProgress .~ False
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

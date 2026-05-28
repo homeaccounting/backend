@@ -28,6 +28,7 @@ library
       Application.EventDispatch
       Application.LinkCodeStore
       Application.ProcessManagers
+      Application.ProcessManagers.TransferAmendmentManager
       Application.ProcessManagers.TransferManager
       Application.ReadModels
       Application.ReadModels.Account
@@ -44,6 +45,7 @@ library
       Application.Services.ConfigurationService
       Application.Services.ExchangeRatePublisher
       Application.Services.Internal
+      Application.Services.TransactionHistoryService
       Application.Services.TransactionService
       Application.Services.UserService
       Data.Text.Display
@@ -261,10 +263,13 @@ test-suite backend-test
   other-modules:
       Application.LinkCodeStorePropertySpec
       Application.LinkCodeStoreSpec
+      Application.ProcessManagers.TransferAmendmentManagerPropertySpec
+      Application.ProcessManagers.TransferAmendmentManagerSpec
       Application.ProcessManagers.TransferManagerPropertySpec
       Application.ProcessManagers.TransferManagerSpec
       Application.ReadModels.AccountPropertySpec
       Application.ReadModels.AccountSpec
+      Application.ReadModels.AmendmentBalanceSpec
       Application.ReadModels.BalanceAsOfJoinSpec
       Application.ReadModels.ExchangeRatePropertySpec
       Application.ReadModels.ExchangeRateSpec
@@ -282,12 +287,16 @@ test-suite backend-test
       Application.Services.ConfigurationServiceSpec
       Application.Services.ExchangeRatePublisherSpec
       Application.Services.InternalSpec
+      Application.Services.TransactionAmendmentSpec
+      Application.Services.TransactionHistoryServiceSpec
       Application.Services.TransactionMetadataEditSpec
       Application.Services.TransactionServiceLabelsSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
+      Domain.Account.ReversalCommandHandlerSpec
+      Domain.Account.ReversalProjectionPropertySpec
       Domain.Configuration.BooksCloseSpec
       Domain.Configuration.CommandHandlerSpec
       Domain.Configuration.DefaultsSpec
@@ -296,6 +305,8 @@ test-suite backend-test
       Domain.Core.CurrencyNumericSpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
+      Domain.Transaction.AmendmentCommandHandlerSpec
+      Domain.Transaction.AmendmentPropertySpec
       Domain.Transaction.CommandHandlerPropertySpec
       Domain.Transaction.CommandHandlerSpec
       Domain.Transaction.DescriptionAndDatePropertySpec
@@ -319,6 +330,7 @@ test-suite backend-test
       Integration.TransactionCategoryIntegrationSpec
       Integration.TransactionLabelsIntegrationSpec
       Integration.TransactionMetadataEditIntegrationSpec
+      Integration.TransferAmendmentIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.CommandsSpec

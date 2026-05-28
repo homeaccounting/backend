@@ -36,7 +36,7 @@ where
 
 import Application.EventDispatch (ReadModels (..), createReadModels, fromReadModels)
 import Application.LinkCodeStore (newLinkCodeStore)
-import Application.ProcessManagers (transferProcessManager)
+import Application.ProcessManagers (transferAmendmentProcessManager, transferProcessManager)
 import Application.ReadModels.User ()
 import Control.Concurrent.STM (atomically)
 import qualified Data.Set as Set
@@ -188,9 +188,10 @@ mkAppEnv withProcessManager = do
       -- CRITICAL: Read model handlers FIRST, then process manager LAST.
       -- See accountingEventStoreWriter for the depth-first dispatch explanation.
       pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher writer reader)
+      amendPmHandler = processManagerEventHandler transferAmendmentProcessManager globalReader (commandDispatcher writer reader)
       combinedHandler =
         if withProcessManager
-          then mconcat readModelHandlers <> pmHandler
+          then mconcat readModelHandlers <> pmHandler <> amendPmHandler
           else mconcat readModelHandlers
       writer =
         publishingTaggedCodecEventStoreWriter

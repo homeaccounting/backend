@@ -40,11 +40,14 @@ module Domain.Account.Commands
     SetAccountSubtype (..),
     ChangeAccountCurrency (..),
     RenameAccount (..),
+    ReverseAccountDebit (..),
+    ReverseAccountCredit (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import Domain.Core.Types (AccountRole, AccountSubtype, AccountType, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
@@ -66,7 +69,9 @@ accountCommands =
     ''SetOverdraftLimit,
     ''SetAccountSubtype,
     ''ChangeAccountCurrency,
-    ''RenameAccount
+    ''RenameAccount,
+    ''ReverseAccountDebit,
+    ''ReverseAccountCredit
   ]
 
 -- -----------------------------------------------------------------------------
@@ -247,6 +252,37 @@ data RenameAccount = RenameAccount
   }
   deriving (Show, Eq)
 
+-- | Saga-only command: reverse a prior debit on this account.
+--
+-- Issued exclusively by the TransferAmendmentManager process manager.
+-- Not exposed via any HTTP endpoint. Always accepted on an existing
+-- account (no overdraft check, no positive-balance requirement).
+data ReverseAccountDebit = ReverseAccountDebit
+  { -- | Amount to reverse (always positive; mirrors the original debit)
+    amount :: Money,
+    -- | Transaction ID for saga correlation
+    transactionId :: TransactionId,
+    -- | Timestamp at which the reversal is being applied
+    at :: UTCTime
+  }
+  deriving (Show, Eq)
+
+-- | Saga-only command: reverse a prior credit on this account.
+--
+-- Same semantics as 'ReverseAccountDebit' but for the credit leg. May
+-- take the account's balance negative; that negative state is the
+-- truthful representation of money the user spent that was never
+-- legitimately credited.
+data ReverseAccountCredit = ReverseAccountCredit
+  { -- | Amount to reverse (always positive; mirrors the original credit)
+    amount :: Money,
+    -- | Transaction ID for saga correlation
+    transactionId :: TransactionId,
+    -- | Timestamp at which the reversal is being applied
+    at :: UTCTime
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all commands
 deriveJSON defaultOptions ''CreateAccount
 deriveJSON defaultOptions ''ShareAccount
@@ -257,3 +293,5 @@ deriveJSON defaultOptions ''SetOverdraftLimit
 deriveJSON defaultOptions ''SetAccountSubtype
 deriveJSON defaultOptions ''ChangeAccountCurrency
 deriveJSON defaultOptions ''RenameAccount
+deriveJSON defaultOptions ''ReverseAccountDebit
+deriveJSON defaultOptions ''ReverseAccountCredit

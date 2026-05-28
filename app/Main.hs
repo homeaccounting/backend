@@ -84,7 +84,7 @@ import Application.EventDispatch
     fromReadModels,
   )
 import Application.LinkCodeStore (newLinkCodeStore)
-import Application.ProcessManagers (transferProcessManager)
+import Application.ProcessManagers (transferAmendmentProcessManager, transferProcessManager)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
@@ -124,6 +124,7 @@ import Infrastructure.Eventium
     liftVersionedReader,
     replayWith,
     wireProcessManager,
+    wireProcessManagers,
   )
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
@@ -285,7 +286,11 @@ initializeEnvironment logFunc config versionInfo = do
       sqlWriter =
         accountingEventStoreWriter
           eventStoreConfig
-          (wireProcessManager transferProcessManager)
+          ( wireProcessManagers
+              [ wireProcessManager transferProcessManager,
+                wireProcessManager transferAmendmentProcessManager
+              ]
+          )
           (map liftIOEventHandler readModelHandlers)
       sqlReader = accountingVersionedEventStoreReader eventStoreConfig
       sqlGlobalReader = accountingGlobalEventStoreReader eventStoreConfig

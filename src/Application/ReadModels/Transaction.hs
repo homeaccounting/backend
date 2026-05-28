@@ -75,6 +75,9 @@ import Domain.Models
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
+        TransferAmendmentCompletedEvent,
+        TransferAmendmentFailedEvent,
+        TransferAmendmentInitiatedEvent,
         TransferCompletedEvent,
         TransferFailedEvent,
         TransferInitiatedEvent
@@ -85,6 +88,7 @@ import Domain.Transaction.Events
     TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
     TransactionLabelsSet (..),
+    TransferAmendmentCompleted (..),
     TransferFailed (..),
     TransferInitiated (..),
   )
@@ -113,7 +117,10 @@ data TransactionData
     status :: TransactionStatus,
     transferType :: TransferType,
     date :: UTCTime,
-    labels :: Set LabelId
+    labels :: Set LabelId,
+    -- | Count of 'TransferAmendmentCompleted' events folded on this
+    -- transaction. @0@ when never amended.
+    amendmentCount :: Word
   }
   deriving (Show, Eq, Generic)
 
@@ -286,7 +293,8 @@ processEvent transactions globalEvent =
                         status = Pending,
                         transferType = evt.transferType,
                         date = evt.at,
-                        labels = evt.labels
+                        labels = evt.labels,
+                        amendmentCount = 0
                       }
                in Map.insertWith (\_ existing -> existing) transactionId newEntry transactions
         TransferCompletedEvent _evt ->
@@ -347,6 +355,27 @@ processEvent transactions globalEvent =
                 (\transaction -> (transaction :: TransactionData) {date = evt.newAt})
                 transactionId
                 transactions
+        TransferAmendmentInitiatedEvent _evt -> transactions -- saga-internal marker
+        TransferAmendmentCompletedEvent evt ->
+          case mkTransactionIdSafe streamUuid of
+            Nothing -> transactions
+            Just transactionId ->
+              -- transferType is preserved across amendments (service layer
+              -- enforces account-type parity, so transferType cannot change).
+              Map.adjust
+                ( \transaction ->
+                    (transaction :: TransactionData)
+                      { sourceAccountId = evt.newSourceAccountId,
+                        targetAccountId = evt.newTargetAccountId,
+                        sourceAmount = evt.newSourceAmount,
+                        targetAmount = evt.newTargetAmount,
+                        exchangeRate = evt.newExchangeRate,
+                        amendmentCount = transaction.amendmentCount + 1
+                      }
+                )
+                transactionId
+                transactions
+        TransferAmendmentFailedEvent _evt -> transactions -- informational; no canonical change
         _ -> transactions -- Ignore account events
 
 -- -----------------------------------------------------------------------------

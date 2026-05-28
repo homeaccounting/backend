@@ -63,14 +63,10 @@ import Eventium
     Projection (..),
     RejectionReason (..),
     StreamEvent (..),
-    TypeEmbedding (..),
     VersionedStreamEvent,
   )
+import Infrastructure.Eventium (embedWith)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
-
--- | Extract the embedding function from a 'TypeEmbedding'.
-embedWith :: TypeEmbedding a b -> a -> b
-embedWith (TypeEmbedding e _) = e
 
 -- -----------------------------------------------------------------------------
 -- Transfer Manager State

@@ -38,11 +38,14 @@ module Domain.Account.Events
     AccountSubtypeSet (..),
     AccountCurrencyChanged (..),
     AccountRenamed (..),
+    AccountDebitReversed (..),
+    AccountCreditReversed (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import Domain.Core.Types (AccountRole, AccountSubtype, AccountType, Currency, Money, TransactionId, UserId)
 import Language.Haskell.TH (Name)
 
@@ -64,7 +67,9 @@ accountEvents =
     ''OverdraftLimitSet,
     ''AccountSubtypeSet,
     ''AccountCurrencyChanged,
-    ''AccountRenamed
+    ''AccountRenamed,
+    ''AccountDebitReversed,
+    ''AccountCreditReversed
   ]
 
 -- -----------------------------------------------------------------------------
@@ -197,6 +202,52 @@ data AccountRenamed = AccountRenamed
   }
   deriving (Show, Eq)
 
+-- | Event emitted when a prior debit posting is reversed by the TransferAmendmentManager saga.
+--
+-- This is a saga-internal event: it is never triggered directly by a user command.
+-- The TransferAmendmentManager emits it to undo a previous 'AccountDebited' leg
+-- when amending a completed transfer.
+--
+-- Because a reversal must always succeed (refusing a reversal would leave the saga
+-- in an irrecoverable state), the projection applies this event unconditionally —
+-- there is no overdraft check. The balance after applying this event equals the
+-- balance before 'AccountDebited' was applied.
+--
+-- Example:
+-- >>> AccountDebitReversed (Money 200) txId timestamp
+data AccountDebitReversed = AccountDebitReversed
+  { -- | Amount to add back to the account (always positive; mirrors the original debit)
+    amount :: Money,
+    -- | Transaction ID for saga correlation (matches the original AccountDebited)
+    transactionId :: TransactionId,
+    -- | Timestamp at which the reversal was applied
+    at :: UTCTime
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when a prior credit posting is reversed by the TransferAmendmentManager saga.
+--
+-- This is a saga-internal event: it is never triggered directly by a user command.
+-- The TransferAmendmentManager emits it to undo a previous 'AccountCredited' leg
+-- when amending a completed transfer.
+--
+-- Because a reversal must always succeed (refusing a reversal would leave the saga
+-- in an irrecoverable state), the projection applies this event unconditionally —
+-- there is no overdraft check. The balance after applying this event equals the
+-- balance before 'AccountCredited' was applied.
+--
+-- Example:
+-- >>> AccountCreditReversed (Money 200) txId timestamp
+data AccountCreditReversed = AccountCreditReversed
+  { -- | Amount to subtract from the account (always positive; mirrors the original credit)
+    amount :: Money,
+    -- | Transaction ID for saga correlation (matches the original AccountCredited)
+    transactionId :: TransactionId,
+    -- | Timestamp at which the reversal was applied
+    at :: UTCTime
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all events
 deriveJSON defaultOptions ''AccountCreated
 deriveJSON defaultOptions ''AccountAccessGranted
@@ -207,3 +258,5 @@ deriveJSON defaultOptions ''OverdraftLimitSet
 deriveJSON defaultOptions ''AccountSubtypeSet
 deriveJSON defaultOptions ''AccountCurrencyChanged
 deriveJSON defaultOptions ''AccountRenamed
+deriveJSON defaultOptions ''AccountDebitReversed
+deriveJSON defaultOptions ''AccountCreditReversed

@@ -31,6 +31,9 @@ module Domain.Transaction.Commands
     ChangeTransactionCategory (..),
     ChangeTransactionDescription (..),
     ChangeTransactionDate (..),
+    AmendTransfer (..),
+    CompleteTransferAmendment (..),
+    FailTransferAmendment (..),
   )
 where
 
@@ -57,7 +60,10 @@ transactionCommands =
     ''SetTransactionLabels,
     ''ChangeTransactionCategory,
     ''ChangeTransactionDescription,
-    ''ChangeTransactionDate
+    ''ChangeTransactionDate,
+    ''AmendTransfer,
+    ''CompleteTransferAmendment,
+    ''FailTransferAmendment
   ]
 
 -- -----------------------------------------------------------------------------
@@ -217,6 +223,87 @@ data ChangeTransactionDate = ChangeTransactionDate
   }
   deriving (Show, Eq)
 
+-- | Command to amend an existing completed transfer.
+--
+-- This is the user-facing command that triggers the amendment saga. The
+-- service layer computes the diff against current canonical state and
+-- short-circuits if the payload is identical (no events emitted, saga
+-- not started). Every @AmendTransfer@ that reaches the pure handler
+-- therefore represents a genuine amendment.
+--
+-- The 'transferType' (and its embedded category id) is *not* amendable
+-- — it is a function of the source/target accounts' types and is
+-- preserved by construction (the service layer rejects payloads whose
+-- new accounts have a different 'AccountType' from the originals). Use
+-- 'ChangeTransactionCategory' to edit the category in place on
+-- Income / Expense transactions; recategorising across the
+-- internal/external boundary is a delete-and-repost operation.
+--
+-- Business Rules:
+--  - Transaction must be in the Completed state.
+--  - @newSourceAccountId@ and @newTargetAccountId@ must differ.
+--  - @newSourceAmount@ and @newTargetAmount@ must both be non-zero.
+--
+-- Example:
+-- >>> AmendTransfer txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
+data AmendTransfer = AmendTransfer
+  { -- | The transaction being amended.
+    transactionId :: TransactionId,
+    -- | New source account for the transfer.
+    newSourceAccountId :: AccountId,
+    -- | New target account for the transfer.
+    newTargetAccountId :: AccountId,
+    -- | New amount to debit from source account.
+    newSourceAmount :: Money,
+    -- | New amount to credit to target account.
+    newTargetAmount :: Money,
+    -- | New exchange rate (Nothing if same-currency).
+    newExchangeRate :: Maybe ExchangeRate,
+    -- | User who amended the transfer.
+    amendedBy :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-internal command to mark a transfer amendment as completed.
+--
+-- Issued by the @TransferAmendmentManager@ process manager once all leg
+-- events have landed. Accepted iff a @TransferAmendmentInitiated@ is in
+-- progress on the aggregate (tracked via @amendmentInProgress@).
+--
+-- Example:
+-- >>> CompleteTransferAmendment txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
+data CompleteTransferAmendment = CompleteTransferAmendment
+  { -- | The transaction being amended.
+    transactionId :: TransactionId,
+    -- | New source account for the transfer.
+    newSourceAccountId :: AccountId,
+    -- | New target account for the transfer.
+    newTargetAccountId :: AccountId,
+    -- | New amount to debit from source account.
+    newSourceAmount :: Money,
+    -- | New amount to credit to target account.
+    newTargetAmount :: Money,
+    -- | New exchange rate (Nothing if same-currency).
+    newExchangeRate :: Maybe ExchangeRate,
+    -- | User who amended the transfer.
+    amendedBy :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-internal command to mark a transfer amendment as failed.
+--
+-- Issued by the @TransferAmendmentManager@ when the new-source debit is
+-- rejected. Accepted iff a @TransferAmendmentInitiated@ is in progress.
+-- The original transfer is left intact.
+--
+-- Example:
+-- >>> FailTransferAmendment "Insufficient funds in new source account"
+newtype FailTransferAmendment = FailTransferAmendment
+  { -- | Description of why the amendment failed.
+    reason :: Text
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -229,3 +316,6 @@ deriveJSON defaultOptions ''SetTransactionLabels
 deriveJSON defaultOptions ''ChangeTransactionCategory
 deriveJSON defaultOptions ''ChangeTransactionDescription
 deriveJSON defaultOptions ''ChangeTransactionDate
+deriveJSON defaultOptions ''AmendTransfer
+deriveJSON defaultOptions ''CompleteTransferAmendment
+deriveJSON defaultOptions ''FailTransferAmendment

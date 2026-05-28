@@ -270,6 +270,46 @@ mapDomainError (CannotRewindBooksCloseDate cur att) =
                     ]
             }
     }
+mapDomainError CannotAmendToSameAccountPair =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transfer cannot be amended to the same source and destination account",
+              code = "CANNOT_AMEND_TO_SAME_ACCOUNT_PAIR",
+              details = Nothing
+            }
+    }
+mapDomainError CannotAmendToZeroAmount =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transfer amount cannot be amended to zero",
+              code = "CANNOT_AMEND_TO_ZERO_AMOUNT",
+              details = Nothing
+            }
+    }
+mapDomainError CannotAmendAcrossAccountType =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transfer amendment cannot change an account's type (Regular vs External)",
+              code = "CANNOT_AMEND_ACROSS_ACCOUNT_TYPE",
+              details = Nothing
+            }
+    }
+mapDomainError (InsufficientFundsForAmendment r) =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Insufficient funds for transfer amendment",
+              code = "INSUFFICIENT_FUNDS_FOR_AMENDMENT",
+              details = Just $ Map.singleton "reason" r
+            }
+    }
 
 -- -----------------------------------------------------------------------------
 -- Convenience Functions

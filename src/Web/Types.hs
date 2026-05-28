@@ -61,6 +61,7 @@ module Web.Types
     ChangeTransactionCategoryRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ChangeTransactionDateRequest (..),
+    AmendTransactionRequest (..),
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
@@ -88,6 +89,7 @@ module Web.Types
     -- * Category / Label Parsing
     parseCategoryId,
     parseLabelIds,
+    parseOptionalExchangeRate,
 
     -- * Serialization Helpers
     transferTypeToText,
@@ -112,7 +114,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), LabelId, LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -461,6 +463,31 @@ instance ToJSON ChangeTransactionDateRequest
 
 instance FromJSON ChangeTransactionDateRequest
 
+-- | Body for @PUT \/api\/transactions\/:id\/amendment@ — replaces the
+-- posting facts on a Completed transaction. The client supplies the
+-- complete desired end-state; the saga computes the diff.
+--
+-- The transaction's 'transferType' is not amendable — it is a function
+-- of the source / target accounts' 'AccountType' (Regular vs External)
+-- and is preserved by service-layer validation. Recategorising across
+-- the internal\/external boundary is a delete-and-repost operation;
+-- editing the category in place on Income\/Expense uses
+-- @PUT \/api\/transactions\/:id\/category@.
+data AmendTransactionRequest = AmendTransactionRequest
+  { sourceAccountId :: UUID,
+    targetAccountId :: UUID,
+    sourceAmount :: Double,
+    sourceCurrency :: Text,
+    targetAmount :: Double,
+    targetCurrency :: Text,
+    exchangeRate :: Maybe Double
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AmendTransactionRequest
+
+instance FromJSON AmendTransactionRequest
+
 -- -----------------------------------------------------------------------------
 -- Transaction Response DTOs
 -- -----------------------------------------------------------------------------
@@ -517,7 +544,10 @@ data TransactionResponse
     transferType :: Text,
     category :: Maybe Text,
     date :: Text,
-    labels :: [UUID]
+    labels :: [UUID],
+    -- | Count of completed amendments on this transaction. Always @0@
+    -- on a transaction that has never been amended.
+    amendmentCount :: Word
   }
   deriving (Show, Eq, Generic)
 
@@ -943,7 +973,8 @@ fromTransactionData txId TransactionData {..} =
       transferType = transferTypeToText transferType,
       category = transferTypeCategoryText transferType,
       date = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" date,
-      labels = sort [unDictionaryEntryId eid | eid <- Set.toList labels]
+      labels = sort [unDictionaryEntryId eid | eid <- Set.toList labels],
+      amendmentCount = amendmentCount
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -974,7 +1005,8 @@ fromTransaction txId tx =
       transferType = transferTypeToText tx.transferType,
       category = transferTypeCategoryText tx.transferType,
       date = "",
-      labels = sort [unDictionaryEntryId eid | eid <- Set.toList tx.labels]
+      labels = sort [unDictionaryEntryId eid | eid <- Set.toList tx.labels],
+      amendmentCount = tx.amendmentCount
     }
 
 -- | Converts TransactionStatus to Text representation.
@@ -1030,3 +1062,14 @@ parseLabelIds Nothing = Right Set.empty
 parseLabelIds (Just us) =
   Set.fromList
     <$> traverse (first ("Invalid label id: " <>) . mkDictionaryEntryId) us
+
+-- | Parse an optional exchange-rate Double into a domain 'ExchangeRate'
+-- for the (src, tgt) currency pair. 'Nothing' yields 'Nothing'.
+parseOptionalExchangeRate ::
+  Currency ->
+  Currency ->
+  Maybe Double ->
+  Either Text (Maybe ExchangeRate)
+parseOptionalExchangeRate _ _ Nothing = Right Nothing
+parseOptionalExchangeRate src tgt (Just d) =
+  Just <$> mkExchangeRate src tgt (toRational d)

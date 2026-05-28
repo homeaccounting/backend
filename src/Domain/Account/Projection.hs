@@ -53,8 +53,10 @@ import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
     AccountCreated (..),
+    AccountCreditReversed (..),
     AccountCredited (..),
     AccountCurrencyChanged (..),
+    AccountDebitReversed (..),
     AccountDebited (..),
     AccountRenamed (..),
     AccountSubtypeSet (..),
@@ -227,6 +229,8 @@ deriving instance Eq AccountEvent
 --   - AccountAccessRevoked: Remove user from access list
 --   - AccountDebited: Subtract amount from balance (debit succeeded)
 --   - AccountCredited: Add amount to balance (credit succeeded)
+--   - AccountDebitReversed: Add amount back to balance (saga reversal, no overdraft check)
+--   - AccountCreditReversed: Subtract amount from balance (saga reversal, no overdraft check)
 --   - AccountDebitRejected: No state change (informational for the saga)
 handleAccountEvent :: Account -> AccountEvent -> Account
 handleAccountEvent account (AccountCreatedAccountEvent created) =
@@ -270,6 +274,18 @@ handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
   case addMoney (account ^. #balance) amount of
     Right newBalance -> account & #balance .~ newBalance & #hasTransactions .~ True
     Left _ -> account -- Impossible: currency was validated by command handler
+handleAccountEvent account (AccountDebitReversedAccountEvent AccountDebitReversed {..}) =
+  -- Add the reversed amount back to balance. Reversals are unconditional — no overdraft check.
+  -- Emitted by the TransferAmendmentManager saga to undo a prior AccountDebited posting.
+  case addMoney (account ^. #balance) amount of
+    Right newBalance -> account & #balance .~ newBalance & #hasTransactions .~ True
+    Left _ -> account -- Impossible: currency matched at the time of the original debit
+handleAccountEvent account (AccountCreditReversedAccountEvent AccountCreditReversed {..}) =
+  -- Subtract the reversed amount from balance. Reversals are unconditional — no overdraft check.
+  -- Emitted by the TransferAmendmentManager saga to undo a prior AccountCredited posting.
+  case subtractMoney (account ^. #balance) amount of
+    Right newBalance -> account & #balance .~ newBalance & #hasTransactions .~ True
+    Left _ -> account -- Impossible: currency matched at the time of the original credit
 handleAccountEvent account (OverdraftLimitSetAccountEvent OverdraftLimitSet {..}) =
   account & #overdraftLimit .~ overdraftLimit
 handleAccountEvent account (AccountSubtypeSetAccountEvent AccountSubtypeSet {..}) =

@@ -32,8 +32,8 @@ import Application.Services.TransactionService
   )
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))
-import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Core.Types (unsafeMoney)
+import qualified Domain.Core.Types as Core (Currency (..))
 import Infrastructure.App (runAppM)
 import RIO
 import Test.Hspec

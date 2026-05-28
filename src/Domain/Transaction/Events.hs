@@ -31,6 +31,9 @@ module Domain.Transaction.Events
     TransactionCategoryChanged (..),
     TransactionDescriptionChanged (..),
     TransactionDateChanged (..),
+    TransferAmendmentInitiated (..),
+    TransferAmendmentCompleted (..),
+    TransferAmendmentFailed (..),
   )
 where
 
@@ -60,7 +63,10 @@ transactionEvents =
     ''TransactionLabelsSet,
     ''TransactionCategoryChanged,
     ''TransactionDescriptionChanged,
-    ''TransactionDateChanged
+    ''TransactionDateChanged,
+    ''TransferAmendmentInitiated,
+    ''TransferAmendmentCompleted,
+    ''TransferAmendmentFailed
   ]
 
 -- -----------------------------------------------------------------------------
@@ -185,6 +191,63 @@ data TransactionDateChanged = TransactionDateChanged
   }
   deriving (Show, Eq)
 
+-- | Saga-trigger event: the user has submitted an 'AmendTransfer' command
+-- and the domain handler accepted it. The process manager reacts to this event
+-- by computing the minimum diff between the snapshotted old state and the new
+-- payload, then issuing the corresponding leg commands. Carries the full new
+-- payload.
+--
+-- The transaction's 'transferType' is not amendable — it is a function
+-- of the source / target accounts' 'AccountType' and is preserved across
+-- amendments by service-layer validation.
+data TransferAmendmentInitiated = TransferAmendmentInitiated
+  { -- | The transaction being amended.
+    transactionId :: TransactionId,
+    -- | New source account for the transfer.
+    newSourceAccountId :: AccountId,
+    -- | New target account for the transfer.
+    newTargetAccountId :: AccountId,
+    -- | New amount to debit from source account.
+    newSourceAmount :: Money,
+    -- | New amount to credit to target account.
+    newTargetAmount :: Money,
+    -- | New exchange rate (Nothing if same-currency).
+    newExchangeRate :: Maybe ExchangeRate,
+    -- | User who amended the transfer.
+    amendedBy :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-completion event: all leg events have landed. The TX aggregate's
+-- canonical posting facts move to the new values; the projection bumps
+-- @amendmentCount@. Replayed from saga state so the event is self-contained
+-- for read-model rebuilds.
+data TransferAmendmentCompleted = TransferAmendmentCompleted
+  { -- | The transaction being amended.
+    transactionId :: TransactionId,
+    -- | New source account for the transfer.
+    newSourceAccountId :: AccountId,
+    -- | New target account for the transfer.
+    newTargetAccountId :: AccountId,
+    -- | New amount to debit from source account.
+    newSourceAmount :: Money,
+    -- | New amount to credit to target account.
+    newTargetAmount :: Money,
+    -- | New exchange rate (Nothing if same-currency).
+    newExchangeRate :: Maybe ExchangeRate,
+    -- | User who amended the transfer.
+    amendedBy :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-failure event: the only fallible saga step (the new-source debit)
+-- was rejected. No leg events were written; the original transfer is intact.
+newtype TransferAmendmentFailed = TransferAmendmentFailed
+  { -- | Description of why the amendment failed.
+    reason :: Text
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -216,3 +279,6 @@ deriveJSON defaultOptions ''TransactionLabelsSet
 deriveJSON defaultOptions ''TransactionCategoryChanged
 deriveJSON defaultOptions ''TransactionDescriptionChanged
 deriveJSON defaultOptions ''TransactionDateChanged
+deriveJSON defaultOptions ''TransferAmendmentInitiated
+deriveJSON defaultOptions ''TransferAmendmentCompleted
+deriveJSON defaultOptions ''TransferAmendmentFailed

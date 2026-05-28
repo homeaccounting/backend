@@ -68,6 +68,13 @@ data TransactionError
   | -- | ChangeTransactionCategory was issued against a Transfer or Adjustment,
     -- which has no category to change.
     CannotChangeCategoryOnUncategorizedTransaction
+  | -- | AmendTransfer payload referenced the same account on both legs.
+    AmendTransferToSameAccountPair
+  | -- | AmendTransfer payload carried a zero source or target amount.
+    AmendTransferToZeroAmount
+  | -- | A saga-completion or saga-failure command was issued without
+    -- a prior 'TransferAmendmentInitiated' on the stream.
+    NoAmendmentInProgress
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -222,6 +229,57 @@ handleTransactionCommand transaction (ChangeTransactionDateTransactionCommand Ch
               }
         ]
     _ -> Left CannotEditUncompletedTransaction
+-- Handle AmendTransfer command
+handleTransactionCommand transaction (AmendTransferTransactionCommand AmendTransfer {..}) =
+  case transaction ^. #status of
+    Completed ->
+      if unAccountId newSourceAccountId == unAccountId newTargetAccountId
+        then Left AmendTransferToSameAccountPair
+        else
+          if unMoney newSourceAmount == 0 || unMoney newTargetAmount == 0
+            then Left AmendTransferToZeroAmount
+            else
+              Right
+                [ TransferAmendmentInitiatedTransactionEvent
+                    TransferAmendmentInitiated
+                      { transactionId = transactionId,
+                        newSourceAccountId = newSourceAccountId,
+                        newTargetAccountId = newTargetAccountId,
+                        newSourceAmount = newSourceAmount,
+                        newTargetAmount = newTargetAmount,
+                        newExchangeRate = newExchangeRate,
+                        amendedBy = amendedBy
+                      }
+                ]
+    _ -> Left CannotEditUncompletedTransaction
+-- Handle CompleteTransferAmendment command
+handleTransactionCommand transaction (CompleteTransferAmendmentTransactionCommand CompleteTransferAmendment {..}) =
+  if not (transaction ^. #amendmentInProgress)
+    then Left NoAmendmentInProgress
+    else
+      Right
+        [ TransferAmendmentCompletedTransactionEvent
+            TransferAmendmentCompleted
+              { transactionId = transactionId,
+                newSourceAccountId = newSourceAccountId,
+                newTargetAccountId = newTargetAccountId,
+                newSourceAmount = newSourceAmount,
+                newTargetAmount = newTargetAmount,
+                newExchangeRate = newExchangeRate,
+                amendedBy = amendedBy
+              }
+        ]
+-- Handle FailTransferAmendment command
+handleTransactionCommand transaction (FailTransferAmendmentTransactionCommand FailTransferAmendment {..}) =
+  if not (transaction ^. #amendmentInProgress)
+    then Left NoAmendmentInProgress
+    else
+      Right
+        [ TransferAmendmentFailedTransactionEvent
+            TransferAmendmentFailed
+              { reason = reason
+              }
+        ]
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

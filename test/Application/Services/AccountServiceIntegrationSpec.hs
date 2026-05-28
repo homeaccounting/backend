@@ -25,8 +25,6 @@ import Data.Time (UTCTime (..), addUTCTime, fromGregorian, getCurrentTime, utctD
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..), CreditAccount (..))
-import Domain.Transaction.CommandHandler (TransactionCommand (..))
-import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
   ( AccountId,
@@ -47,6 +45,8 @@ import Domain.Core.Types
   )
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
+import Domain.Transaction.CommandHandler (TransactionCommand (..))
+import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)

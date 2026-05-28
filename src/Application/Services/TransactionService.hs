@@ -34,6 +34,7 @@ module Application.Services.TransactionService
     changeTransactionCategory,
     changeTransactionDescription,
     changeTransactionDate,
+    amendTransfer,
 
     -- * Re-exported helpers for sibling services
     resolveAndInitiate,
@@ -86,9 +87,16 @@ import Domain.Core.Types
     unDictionaryEntryId,
     unTransactionId,
   )
+import Domain.Models
+  ( AccountingEvent
+      ( TransferAmendmentCompletedEvent,
+        TransferAmendmentFailedEvent
+      ),
+  )
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
-      ( ChangeTransactionCategoryTransactionCommand,
+      ( AmendTransferTransactionCommand,
+        ChangeTransactionCategoryTransactionCommand,
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
         InitiateTransferTransactionCommand,
@@ -98,18 +106,23 @@ import Domain.Transaction.CommandHandler
   )
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
-  ( ChangeTransactionCategory (..),
+  ( AmendTransfer (..),
+    ChangeTransactionCategory (..),
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
     InitiateTransfer (..),
     SetTransactionLabels (..),
   )
-import Eventium (CommandHandlerError (..))
+import Domain.Transaction.Events
+  ( TransferAmendmentFailed (..),
+  )
+import Eventium (CommandHandlerError (..), EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
     HasExchangeRateReadModel (..),
     HasReadModel (..),
+    eventStoreReaderL,
   )
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
@@ -488,6 +501,61 @@ changeTransactionDate userId transactionId newAt = runExceptT $ do
             }
   ExceptT (dispatchEdit transactionId cmd)
 
+-- | Amend a completed transfer's posting facts.
+--
+-- Orchestration:
+--
+--   1. Load the transaction; require it exists and the caller has Editor+
+--      on either of its current accounts.
+--   2. Books-close gate against the transaction's current business date.
+--   3. Caller has Editor+ on each of the new source / target accounts.
+--   4. 'AccountType' (Regular vs External) preservation on each leg —
+--      this implicitly preserves the transaction's 'transferType', so
+--      amendment never crosses the internal/external boundary. Use
+--      delete-and-repost to recategorise across the boundary.
+--   5. Identity short-circuit (spec §4.3): if the payload exactly matches
+--      current canonical state, return the read-model entry unchanged.
+--   6. Dispatch 'AmendTransfer'. The pure handler rejects same-account
+--      and zero-amount payloads.
+--   7. Read the TX stream to distinguish saga success
+--      ('TransferAmendmentCompleted') from saga failure
+--      ('TransferAmendmentFailed') and surface 'InsufficientFundsForAmendment'.
+amendTransfer ::
+  UserId ->
+  TransactionId ->
+  AmendTransfer ->
+  AppM (Either DomainError TransactionData)
+amendTransfer userId transactionId amendCmd = runExceptT $ do
+  lift
+    $ logInfo
+    $ "Amending transaction "
+    <> displayShow transactionId
+    <> " for user "
+    <> displayShow userId
+  transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  ExceptT (guardBooksClosed userId transaction.date)
+  ExceptT
+    ( ensureEditorOnNewAccounts
+        userId
+        amendCmd.newSourceAccountId
+        amendCmd.newTargetAccountId
+    )
+  ExceptT
+    ( validateAccountTypePreserved
+        transaction.sourceAccountId
+        amendCmd.newSourceAccountId
+        transaction.targetAccountId
+        amendCmd.newTargetAccountId
+    )
+  if isIdentityAmend transaction amendCmd
+    then pure transaction
+    else
+      ExceptT
+        ( dispatchAndAwaitAmendment
+            transactionId
+            (AmendTransferTransactionCommand amendCmd)
+        )
+
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
 -- -----------------------------------------------------------------------------
@@ -592,6 +660,140 @@ dispatchEdit transactionId cmd = runExceptT $ do
   (_, td) <- ExceptT (queryTransactionResult transactionId)
   pure td
 
+-- | True when the amendment payload exactly matches the current canonical
+-- state (per spec §4.3). Compared fields: accounts, amounts, exchange
+-- rate. 'transferType' is preserved by construction (see
+-- 'validateAccountTypePreserved') so it is not compared here.
+isIdentityAmend :: TransactionData -> AmendTransfer -> Bool
+isIdentityAmend td cmd =
+  td.sourceAccountId
+    == cmd.newSourceAccountId
+    && td.targetAccountId
+    == cmd.newTargetAccountId
+    && td.sourceAmount
+    == cmd.newSourceAmount
+    && td.targetAmount
+    == cmd.newTargetAmount
+    && td.exchangeRate
+    == cmd.newExchangeRate
+
+-- | Require Editor+ access on each of the two new accounts.
+ensureEditorOnNewAccounts ::
+  UserId ->
+  AccountId ->
+  AccountId ->
+  AppM (Either DomainError ())
+ensureEditorOnNewAccounts userId newSrc newTgt = runExceptT $ do
+  accountRM <- lift (view accountReadModelL)
+  src <-
+    liftMaybeM
+      (NotFound "Account" (tshow newSrc))
+      (liftIO (AccountRM.getAccount accountRM newSrc))
+  tgt <-
+    liftMaybeM
+      (NotFound "Account" (tshow newTgt))
+      (liftIO (AccountRM.getAccount accountRM newTgt))
+  let toAuthData acc =
+        AccountAuthData
+          { createdBy = acc.createdBy,
+            accountType = acc.accountType,
+            accessList = acc.accessList
+          }
+  guardE
+    (canModifyAccount userId (toAuthData src))
+    (AccountError "User does not have edit access to the new source account")
+  guardE
+    (canModifyAccount userId (toAuthData tgt))
+    (AccountError "User does not have edit access to the new target account")
+
+-- | Require that the amendment preserves each leg's 'AccountType'
+-- (Regular vs External). The transaction's 'transferType' is a function
+-- of the leg-type pair, so preserving the pair preserves the type and
+-- amendment never crosses the internal/external boundary.
+--
+-- (Recategorising across the boundary is a delete-and-repost operation;
+-- editing the category in place on a Completed Income\/Expense remains
+-- available via 'changeTransactionCategory'.)
+validateAccountTypePreserved ::
+  AccountId ->
+  AccountId ->
+  AccountId ->
+  AccountId ->
+  AppM (Either DomainError ())
+validateAccountTypePreserved oldSrc newSrc oldTgt newTgt = runExceptT $ do
+  accountRM <- lift (view accountReadModelL)
+  let fetch aid =
+        liftMaybeM
+          (NotFound "Account" (tshow aid))
+          (liftIO (AccountRM.getAccount accountRM aid))
+  oldS <- fetch oldSrc
+  newS <- fetch newSrc
+  oldT <- fetch oldTgt
+  newT <- fetch newTgt
+  guardE
+    (sameAccountType oldS.accountType newS.accountType)
+    CannotAmendAcrossAccountType
+  guardE
+    (sameAccountType oldT.accountType newT.accountType)
+    CannotAmendAcrossAccountType
+  where
+    sameAccountType :: AccountType -> AccountType -> Bool
+    sameAccountType (Regular _) (Regular _) = True
+    sameAccountType External External = True
+    sameAccountType _ _ = False
+
+-- | Dispatch 'AmendTransfer' and surface the saga's outcome.
+--
+-- Eventium's in-process event bus dispatches synchronously and
+-- depth-first: by the time 'runTransactionCmd' returns, every event the
+-- command emitted has been delivered to every subscribed process
+-- manager, and every command that PM issued has itself completed
+-- (transitively). We therefore read the TX-aggregate's stream to find
+-- the most-recent 'TransferAmendment*' terminator and translate it.
+dispatchAndAwaitAmendment ::
+  TransactionId ->
+  TransactionCommand ->
+  AppM (Either DomainError TransactionData)
+dispatchAndAwaitAmendment txId cmd = runExceptT $ do
+  runTransactionCmd translateTransactionError id (unTransactionId txId) cmd
+  outcome <- ExceptT (readLastAmendmentOutcome txId)
+  case outcome of
+    AmendmentSucceeded -> do
+      (_, td) <- ExceptT (queryTransactionResult txId)
+      pure td
+    AmendmentFailed reason -> throwE (InsufficientFundsForAmendment reason)
+    AmendmentUnknown ->
+      throwE
+        ( TransactionError
+            "Amendment saga did not produce a terminal event"
+        )
+
+-- | Outcome of the saga as observed on the TX stream.
+data AmendmentOutcome
+  = AmendmentSucceeded
+  | AmendmentFailed Text
+  | -- | Should not happen on a valid stream once the saga is wired.
+    AmendmentUnknown
+
+-- | Inspect the TX aggregate's stream and report the most-recent
+-- amendment-terminating event.
+readLastAmendmentOutcome ::
+  TransactionId ->
+  AppM (Either DomainError AmendmentOutcome)
+readLastAmendmentOutcome txId = runExceptT $ do
+  EventStoreReader readStream <- lift (view eventStoreReaderL)
+  events <- liftIO (readStream (allEvents (unTransactionId txId)))
+  pure (lastAmendmentOutcome (map (.payload) events))
+
+-- | Pure helper exposed for testability via the surrounding service code.
+lastAmendmentOutcome :: [AccountingEvent] -> AmendmentOutcome
+lastAmendmentOutcome = foldl' step AmendmentUnknown
+  where
+    step _ (TransferAmendmentCompletedEvent _) = AmendmentSucceeded
+    step _ (TransferAmendmentFailedEvent (TransferAmendmentFailed r)) =
+      AmendmentFailed r
+    step acc _ = acc
+
 -- | Translate an aggregate-local 'TransactionError' (wrapped in
 -- 'CommandHandlerError') into the public 'DomainError' surface.
 translateTransactionError ::
@@ -601,6 +803,12 @@ translateTransactionError (CommandRejected TxCh.CannotEditUncompletedTransaction
   CannotEditUncompletedTransaction
 translateTransactionError (CommandRejected TxCh.CannotChangeCategoryOnUncategorizedTransaction) =
   CannotChangeCategoryOnUncategorizedTransaction
+translateTransactionError (CommandRejected TxCh.AmendTransferToSameAccountPair) =
+  CannotAmendToSameAccountPair
+translateTransactionError (CommandRejected TxCh.AmendTransferToZeroAmount) =
+  CannotAmendToZeroAmount
+translateTransactionError (CommandRejected TxCh.NoAmendmentInProgress) =
+  TransactionError "No amendment in progress"
 translateTransactionError other =
   TransactionError (T.pack (show other))
 

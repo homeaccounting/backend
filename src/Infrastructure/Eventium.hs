@@ -64,6 +64,7 @@ module Infrastructure.Eventium
     -- * Process Manager Wiring
     AccountingProcessManagerFactory,
     wireProcessManager,
+    wireProcessManagers,
 
     -- * Event Handler Bundle
     AccountingReadModelHandler,
@@ -71,6 +72,7 @@ module Infrastructure.Eventium
     replayWith,
 
     -- * Utilities
+    embedWith,
     printEventJSON,
   )
 where
@@ -277,6 +279,31 @@ wireProcessManager ::
   AccountingProcessManagerFactory m
 wireProcessManager pm writer globalReader versionedReader =
   processManagerEventHandler pm globalReader (commandDispatcher writer versionedReader)
+
+-- | Combine multiple process-manager factories into a single one.
+--
+-- Each factory contributes an 'AccountingEventHandler' on the same event
+-- bus; the combined factory delivers every event to every process
+-- manager. Uses the 'EventHandler' Monoid instance under the hood.
+--
+-- Usage:
+--
+-- @
+-- accountingEventStoreWriter
+--   config
+--   ( wireProcessManagers
+--       [ wireProcessManager transferProcessManager,
+--         wireProcessManager transferAmendmentProcessManager
+--       ]
+--   )
+--   handlers
+-- @
+wireProcessManagers ::
+  (MonadIO m) =>
+  [AccountingProcessManagerFactory m] ->
+  AccountingProcessManagerFactory m
+wireProcessManagers factories writer globalReader versionedReader =
+  mconcat [factory writer globalReader versionedReader | factory <- factories]
 
 -- | Build a 'CommandDispatcher' that routes commands to the correct
 -- aggregate handler and reports success/failure via 'CommandDispatchResult'.
