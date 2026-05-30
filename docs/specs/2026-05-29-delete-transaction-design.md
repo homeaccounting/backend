@@ -1,5 +1,5 @@
 ---
-status: draft
+status: completed
 date: 2026-05-29
 issue: homeaccounting/backend#85
 depends_on:
