@@ -75,6 +75,22 @@ data TransactionError
   | -- | A saga-completion or saga-failure command was issued without
     -- a prior 'TransferAmendmentInitiated' on the stream.
     NoAmendmentInProgress
+  | -- | 'CancelTransaction' was issued against a transaction that is already
+    -- in the 'Cancelled' state.
+    TransactionAlreadyCancelled
+  | -- | 'CancelTransaction' was issued while a cancellation saga is already
+    -- in flight (@cancellationInProgress = True@).
+    CancellationAlreadyInProgress
+  | -- | 'CancelTransaction' was issued while an amendment saga is in flight
+    -- (@amendmentInProgress = True@). The amendment must complete or fail
+    -- first.
+    CannotCancelDuringAmendment
+  | -- | 'CompleteTransactionCancellation' was issued when no cancellation is
+    -- in progress (@cancellationInProgress = False@).
+    NoCancellationInProgress
+  | -- | 'AmendTransfer' was issued while a cancellation saga is in flight
+    -- (@cancellationInProgress = True@).
+    CannotAmendDuringCancellation
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -232,25 +248,26 @@ handleTransactionCommand transaction (ChangeTransactionDateTransactionCommand Ch
 -- Handle AmendTransfer command
 handleTransactionCommand transaction (AmendTransferTransactionCommand AmendTransfer {..}) =
   case transaction ^. #status of
-    Completed ->
-      if unAccountId newSourceAccountId == unAccountId newTargetAccountId
-        then Left AmendTransferToSameAccountPair
-        else
-          if unMoney newSourceAmount == 0 || unMoney newTargetAmount == 0
-            then Left AmendTransferToZeroAmount
-            else
-              Right
-                [ TransferAmendmentInitiatedTransactionEvent
-                    TransferAmendmentInitiated
-                      { transactionId = transactionId,
-                        newSourceAccountId = newSourceAccountId,
-                        newTargetAccountId = newTargetAccountId,
-                        newSourceAmount = newSourceAmount,
-                        newTargetAmount = newTargetAmount,
-                        newExchangeRate = newExchangeRate,
-                        amendedBy = amendedBy
-                      }
-                ]
+    Completed
+      | transaction ^. #cancellationInProgress ->
+          Left CannotAmendDuringCancellation
+      | unAccountId newSourceAccountId == unAccountId newTargetAccountId ->
+          Left AmendTransferToSameAccountPair
+      | unMoney newSourceAmount == 0 || unMoney newTargetAmount == 0 ->
+          Left AmendTransferToZeroAmount
+      | otherwise ->
+          Right
+            [ TransferAmendmentInitiatedTransactionEvent
+                TransferAmendmentInitiated
+                  { transactionId = transactionId,
+                    newSourceAccountId = newSourceAccountId,
+                    newTargetAccountId = newTargetAccountId,
+                    newSourceAmount = newSourceAmount,
+                    newTargetAmount = newTargetAmount,
+                    newExchangeRate = newExchangeRate,
+                    amendedBy = amendedBy
+                  }
+            ]
     _ -> Left CannotEditUncompletedTransaction
 -- Handle CompleteTransferAmendment command
 handleTransactionCommand transaction (CompleteTransferAmendmentTransactionCommand CompleteTransferAmendment {..}) =
@@ -278,6 +295,34 @@ handleTransactionCommand transaction (FailTransferAmendmentTransactionCommand Fa
         [ TransferAmendmentFailedTransactionEvent
             TransferAmendmentFailed
               { reason = reason
+              }
+        ]
+-- Handle CancelTransaction command
+handleTransactionCommand transaction (CancelTransactionTransactionCommand CancelTransaction {..}) =
+  case transaction ^. #status of
+    Completed
+      | transaction ^. #amendmentInProgress -> Left CannotCancelDuringAmendment
+      | transaction ^. #cancellationInProgress -> Left CancellationAlreadyInProgress
+      | otherwise ->
+          Right
+            [ TransactionCancellationInitiatedTransactionEvent
+                TransactionCancellationInitiated
+                  { transactionId = transactionId,
+                    cancelledBy = cancelledBy
+                  }
+            ]
+    Cancelled -> Left TransactionAlreadyCancelled
+    _ -> Left CannotEditUncompletedTransaction
+-- Handle CompleteTransactionCancellation command
+handleTransactionCommand transaction (CompleteTransactionCancellationTransactionCommand CompleteTransactionCancellation {..}) =
+  if not (transaction ^. #cancellationInProgress)
+    then Left NoCancellationInProgress
+    else
+      Right
+        [ TransactionCancellationCompletedTransactionEvent
+            TransactionCancellationCompleted
+              { transactionId = transactionId,
+                cancelledBy = cancelledBy
               }
         ]
 

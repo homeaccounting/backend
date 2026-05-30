@@ -9,6 +9,10 @@
 -- Verifies that ConfigurationService.removeDictionaryEntry refuses to
 -- delete a dictionary entry that any transaction still references —
 -- either via the labels set or via the categorised TransferType.
+--
+-- Also verifies the regression: cancelled transactions must NOT count as
+-- "in use", so deletion succeeds when the only referencing transaction has
+-- been cancelled (Task 9 / Task 16 of the cancel-transaction feature).
 module Application.Services.ConfigurationServiceInUseSpec (spec) where
 
 import Application.ReadModels.Configuration
@@ -26,6 +30,10 @@ import Application.Services.ConfigurationService
     removeDictionaryEntry,
     seedDefaultConfiguration,
   )
+import Application.Services.TransactionService
+  ( cancelTransaction,
+    initiateInternalTransfer,
+  )
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
@@ -42,11 +50,12 @@ import Domain.Core.Types
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
 import Domain.Transaction.Commands (InitiateTransfer (..))
-import Infrastructure.App (AppEnv (..))
+import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
 import Test.Hspec
-import Testkit.InMemoryEventStore (createTestAppEnv)
+import Testkit.Fixtures (createRegularAccount)
+import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
 -- Harness helpers
@@ -197,3 +206,50 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     case result of
       Left (CategoryInUse _ n) -> n `shouldBe` 1
       other -> expectationFailure $ "expected CategoryInUse with count 1, got: " <> show other
+
+  -- Regression: Task 9 added 'td.status /= Cancelled' to
+  -- 'findReferencingTransactions'. This test verifies that a label referenced
+  -- only by a cancelled transaction is treated as unused and can be deleted.
+  it "allows deleting a label referenced only by a cancelled transaction" $ do
+    -- Full saga pipeline required: TransferManager + TransactionCancellationManager
+    -- must run synchronously so the Cancelled status is reflected in the read
+    -- model before we attempt deletion.
+    env <- createTestAppEnvWithProcessManager
+    runRIO env seedDefaultConfiguration
+    userId <- registerUser env "cancelled-label-deletion@test.com"
+
+    -- Add a label to the user's dictionary (clone-on-write).
+    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictId (unsafeEntryName "holiday")
+    labelId <- case addLabel of
+      Left err -> fail $ "addDictionaryEntry failed: " <> show err
+      Right eid -> pure eid
+
+    -- Two accounts are required to initiate an internal transfer.
+    src <- createRegularAccount env userId "Source"
+    tgt <- createRegularAccount env userId "Target"
+
+    -- Initiate a transfer that carries the label, then cancel it.
+    txResult <-
+      runAppM env
+        $ initiateInternalTransfer
+          userId
+          src
+          tgt
+          (unsafeMoney Core.USD 50)
+          (Set.singleton labelId)
+          "holiday spending"
+          Nothing
+          Nothing
+    (txId, _td) <- case txResult of
+      Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+      Right r -> pure r
+
+    cancelResult <- runAppM env $ cancelTransaction userId txId
+    case cancelResult of
+      Left err -> fail $ "cancelTransaction failed: " <> show err
+      Right _ -> pure ()
+
+    -- The label must now be deletable because the only referencing transaction
+    -- has been cancelled.
+    result <- runRIO env $ removeDictionaryEntry userId labelsDictId labelId
+    result `shouldSatisfy` isRight

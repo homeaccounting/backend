@@ -84,7 +84,7 @@ import Application.EventDispatch
     fromReadModels,
   )
 import Application.LinkCodeStore (newLinkCodeStore)
-import Application.ProcessManagers (transferAmendmentProcessManager, transferProcessManager)
+import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
@@ -288,7 +288,8 @@ initializeEnvironment logFunc config versionInfo = do
           eventStoreConfig
           ( wireProcessManagers
               [ wireProcessManager transferProcessManager,
-                wireProcessManager transferAmendmentProcessManager
+                wireProcessManager transferAmendmentProcessManager,
+                wireProcessManager transactionCancellationProcessManager
               ]
           )
           (map liftIOEventHandler readModelHandlers)

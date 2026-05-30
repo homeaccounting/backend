@@ -397,7 +397,7 @@ handleTransactions botState telegramId chatId = do
       selected <-
         atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
       let maybeAcctId = fst <$> selected
-      case mkTransactionQuery maybeAcctId (Just fromDate) (Just now) of
+      case mkTransactionQuery maybeAcctId (Just fromDate) (Just now) False of
         Left err -> do
           logError $ "Failed to build transactions query: " <> display err
           sendMsg chatId "Failed to list transactions. Please try again."

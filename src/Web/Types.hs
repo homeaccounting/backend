@@ -1020,10 +1020,14 @@ fromTransaction txId tx =
 --
 -- >>> fromTransactionStatus (Failed "Insufficient funds")
 -- "Failed"
+--
+-- >>> fromTransactionStatus Cancelled
+-- "Cancelled"
 fromTransactionStatus :: TransactionStatus -> Text
 fromTransactionStatus Pending = "Pending"
 fromTransactionStatus Completed = "Completed"
 fromTransactionStatus (Failed _) = "Failed"
+fromTransactionStatus Cancelled = "Cancelled"
 
 -- -----------------------------------------------------------------------------
 -- Transfer Type / Category Serialization

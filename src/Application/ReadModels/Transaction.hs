@@ -39,6 +39,7 @@ module Application.ReadModels.Transaction
     queryAccountId,
     queryFrom,
     queryTo,
+    queryIncludeCancelled,
 
     -- * Read Model Creation
     createTransactionReadModel,
@@ -71,7 +72,9 @@ import Data.Time (UTCTime (..))
 import Domain.Core.Types (AccountId, DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransferType (..), mkTransactionIdSafe)
 import Domain.Models
   ( AccountingEvent
-      ( TransactionCategoryChangedEvent,
+      ( TransactionCancellationCompletedEvent,
+        TransactionCancellationInitiatedEvent,
+        TransactionCategoryChangedEvent,
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
@@ -92,7 +95,7 @@ import Domain.Transaction.Events
     TransferFailed (..),
     TransferInitiated (..),
   )
-import Domain.Transaction.Projection (TransactionStatus (Completed, Failed, Pending))
+import Domain.Transaction.Projection (TransactionStatus (Cancelled, Completed, Failed, Pending))
 import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
 import Infrastructure.Eventium (AccountingReadModelHandler)
@@ -152,7 +155,8 @@ data TransactionReadModel
 data TransactionQuery = TransactionQuery
   { qAccountId :: Maybe AccountId,
     qFrom :: Maybe UTCTime,
-    qTo :: Maybe UTCTime
+    qTo :: Maybe UTCTime,
+    qIncludeCancelled :: Bool
   }
   deriving (Show, Eq)
 
@@ -162,8 +166,9 @@ mkTransactionQuery ::
   Maybe AccountId ->
   Maybe UTCTime ->
   Maybe UTCTime ->
+  Bool ->
   Either Text TransactionQuery
-mkTransactionQuery acct mFrom mTo =
+mkTransactionQuery acct mFrom mTo includeCancelled =
   case (mFrom, mTo) of
     (Just f, Just t)
       | f > t ->
@@ -173,7 +178,8 @@ mkTransactionQuery acct mFrom mTo =
         TransactionQuery
           { qAccountId = acct,
             qFrom = mFrom,
-            qTo = mTo
+            qTo = mTo,
+            qIncludeCancelled = includeCancelled
           }
 
 -- | Query that matches every transaction (all filters unset).
@@ -182,7 +188,8 @@ emptyTransactionQuery =
   TransactionQuery
     { qAccountId = Nothing,
       qFrom = Nothing,
-      qTo = Nothing
+      qTo = Nothing,
+      qIncludeCancelled = False
     }
 
 -- | Account filter, if any.
@@ -196,6 +203,10 @@ queryFrom q = q.qFrom
 -- | Upper bound on the transaction's business timestamp, inclusive.
 queryTo :: TransactionQuery -> Maybe UTCTime
 queryTo q = q.qTo
+
+-- | Whether cancelled transactions should be included in query results.
+queryIncludeCancelled :: TransactionQuery -> Bool
+queryIncludeCancelled q = q.qIncludeCancelled
 
 -- -----------------------------------------------------------------------------
 -- Read Model Creation
@@ -376,6 +387,15 @@ processEvent transactions globalEvent =
                 transactionId
                 transactions
         TransferAmendmentFailedEvent _evt -> transactions -- informational; no canonical change
+        TransactionCancellationInitiatedEvent _evt -> transactions -- saga-internal marker; no canonical change
+        TransactionCancellationCompletedEvent _evt ->
+          case mkTransactionIdSafe streamUuid of
+            Nothing -> transactions
+            Just transactionId ->
+              Map.adjust
+                (\transaction -> (transaction :: TransactionData) {status = Cancelled})
+                transactionId
+                transactions
         _ -> transactions -- Ignore account events
 
 -- -----------------------------------------------------------------------------
@@ -456,6 +476,7 @@ listTransactions readModelTVar visible query = do
         [ (txId, td)
         | (txId, td) <- Map.toList model.transactions,
           isVisible td,
+          isVisibleByStatus td,
           matchesAccount td,
           matchesFrom td,
           matchesTo td
@@ -465,6 +486,9 @@ listTransactions readModelTVar visible query = do
     isVisible td =
       Set.member td.sourceAccountId visible
         || Set.member td.targetAccountId visible
+    isVisibleByStatus td = case td.status of
+      Cancelled -> query.qIncludeCancelled
+      _ -> True
     matchesAccount td = case query.qAccountId of
       Nothing -> True
       Just a -> td.sourceAccountId == a || td.targetAccountId == a
@@ -512,9 +536,11 @@ findReferencingTransactions readModelTVar entryId = do
   pure . length $ filter referencesEntry (Map.elems model.transactions)
   where
     referencesEntry td =
-      Set.member entryId td.labels
-        || case td.transferType of
-          Income cid -> cid == entryId
-          Expense cid -> cid == entryId
-          Transfer -> False
-          Adjustment -> False
+      td.status /= Cancelled
+        && ( Set.member entryId td.labels
+               || case td.transferType of
+                 Income cid -> cid == entryId
+                 Expense cid -> cid == entryId
+                 Transfer -> False
+                 Adjustment -> False
+           )

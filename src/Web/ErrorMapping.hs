@@ -310,6 +310,46 @@ mapDomainError (InsufficientFundsForAmendment r) =
               details = Just $ Map.singleton "reason" r
             }
     }
+mapDomainError TransactionAlreadyCancelled =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transaction is already cancelled",
+              code = "TRANSACTION_ALREADY_CANCELLED",
+              details = Nothing
+            }
+    }
+mapDomainError CancellationAlreadyInProgress =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "A cancellation is already in progress for this transaction",
+              code = "CANCELLATION_ALREADY_IN_PROGRESS",
+              details = Nothing
+            }
+    }
+mapDomainError CannotCancelDuringAmendment =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transaction cannot be cancelled while an amendment is in progress",
+              code = "CANNOT_CANCEL_DURING_AMENDMENT",
+              details = Nothing
+            }
+    }
+mapDomainError CannotAmendDuringCancellation =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transaction cannot be amended while a cancellation is in progress",
+              code = "CANNOT_AMEND_DURING_CANCELLATION",
+              details = Nothing
+            }
+    }
 
 -- -----------------------------------------------------------------------------
 -- Convenience Functions

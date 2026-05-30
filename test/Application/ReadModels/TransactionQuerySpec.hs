@@ -11,6 +11,7 @@ import Application.ReadModels.Transaction
     mkTransactionQuery,
     queryAccountId,
     queryFrom,
+    queryIncludeCancelled,
     queryTo,
   )
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
@@ -32,7 +33,7 @@ jan20 = UTCTime (fromGregorian 2026 1 20) (secondsToDiffTime 0)
 spec :: Spec
 spec = describe "mkTransactionQuery" $ do
   it "accepts no bounds" $ do
-    case mkTransactionQuery Nothing Nothing Nothing of
+    case mkTransactionQuery Nothing Nothing Nothing False of
       Right q -> do
         queryAccountId q `shouldBe` Nothing
         queryFrom q `shouldBe` Nothing
@@ -40,28 +41,28 @@ spec = describe "mkTransactionQuery" $ do
       Left err -> expectationFailure $ "expected Right, got Left " <> show err
 
   it "accepts only-from"
-    $ mkTransactionQuery Nothing (Just jan15) Nothing
+    $ mkTransactionQuery Nothing (Just jan15) Nothing False
     `shouldSatisfy` isRight
 
   it "accepts only-to"
-    $ mkTransactionQuery Nothing Nothing (Just jan20)
+    $ mkTransactionQuery Nothing Nothing (Just jan20) False
     `shouldSatisfy` isRight
 
   it "accepts from == to"
-    $ mkTransactionQuery Nothing (Just jan15) (Just jan15)
+    $ mkTransactionQuery Nothing (Just jan15) (Just jan15) False
     `shouldSatisfy` isRight
 
   it "accepts from < to"
-    $ mkTransactionQuery Nothing (Just jan15) (Just jan20)
+    $ mkTransactionQuery Nothing (Just jan15) (Just jan20) False
     `shouldSatisfy` isRight
 
   it "rejects from > to" $ do
-    case mkTransactionQuery Nothing (Just jan20) (Just jan15) of
+    case mkTransactionQuery Nothing (Just jan20) (Just jan15) False of
       Left _ -> pure ()
       Right _ -> expectationFailure "expected Left for from > to"
 
   it "preserves accountId filter"
-    $ case mkTransactionQuery (Just sampleAccountId) Nothing Nothing of
+    $ case mkTransactionQuery (Just sampleAccountId) Nothing Nothing False of
       Right q -> queryAccountId q `shouldBe` Just sampleAccountId
       Left err -> expectationFailure $ "expected Right, got Left " <> show err
 
@@ -70,3 +71,12 @@ spec = describe "mkTransactionQuery" $ do
     queryAccountId q `shouldBe` Nothing
     queryFrom q `shouldBe` Nothing
     queryTo q `shouldBe` Nothing
+
+  it "qIncludeCancelled = False by default in emptyTransactionQuery"
+    $ queryIncludeCancelled emptyTransactionQuery
+    `shouldBe` False
+
+  it "qIncludeCancelled = True when requested"
+    $ case mkTransactionQuery Nothing Nothing Nothing True of
+      Right q -> queryIncludeCancelled q `shouldBe` True
+      Left err -> expectationFailure $ "expected Right, got Left " <> show err

@@ -34,6 +34,8 @@ module Domain.Transaction.Events
     TransferAmendmentInitiated (..),
     TransferAmendmentCompleted (..),
     TransferAmendmentFailed (..),
+    TransactionCancellationInitiated (..),
+    TransactionCancellationCompleted (..),
   )
 where
 
@@ -66,7 +68,9 @@ transactionEvents =
     ''TransactionDateChanged,
     ''TransferAmendmentInitiated,
     ''TransferAmendmentCompleted,
-    ''TransferAmendmentFailed
+    ''TransferAmendmentFailed,
+    ''TransactionCancellationInitiated,
+    ''TransactionCancellationCompleted
   ]
 
 -- -----------------------------------------------------------------------------
@@ -248,6 +252,36 @@ newtype TransferAmendmentFailed = TransferAmendmentFailed
   }
   deriving (Show, Eq)
 
+-- | Saga-trigger event: the user has submitted a 'CancelTransaction'
+-- command and the domain handler accepted it. The
+-- 'Application.ProcessManagers.TransactionCancellationManager' process
+-- manager reacts to this event by issuing the two reversal commands on
+-- the source and target accounts.
+--
+-- Carries the identity of the user who requested the cancellation for
+-- the audit trail; no posting facts on the payload — those are
+-- snapshotted in the saga state from the prior 'TransferInitiated' /
+-- 'TransferAmendmentCompleted' events.
+data TransactionCancellationInitiated = TransactionCancellationInitiated
+  { -- | The transaction being cancelled.
+    transactionId :: TransactionId,
+    -- | User who requested the cancellation.
+    cancelledBy :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-completion event: all reversal leg events have landed. The TX
+-- aggregate's status transitions to 'Cancelled' and the transient
+-- @cancellationInProgress@ flag is cleared. Replayed from saga state so
+-- the event is self-contained for read-model rebuilds.
+data TransactionCancellationCompleted = TransactionCancellationCompleted
+  { -- | The transaction that was cancelled.
+    transactionId :: TransactionId,
+    -- | User who requested the cancellation (preserved for audit trail).
+    cancelledBy :: UserId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -282,3 +316,5 @@ deriveJSON defaultOptions ''TransactionDateChanged
 deriveJSON defaultOptions ''TransferAmendmentInitiated
 deriveJSON defaultOptions ''TransferAmendmentCompleted
 deriveJSON defaultOptions ''TransferAmendmentFailed
+deriveJSON defaultOptions ''TransactionCancellationInitiated
+deriveJSON defaultOptions ''TransactionCancellationCompleted

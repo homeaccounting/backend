@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.2.7
+version:        0.3.0
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -28,6 +28,8 @@ library
       Application.EventDispatch
       Application.LinkCodeStore
       Application.ProcessManagers
+      Application.ProcessManagers.Snapshots
+      Application.ProcessManagers.TransactionCancellationManager
       Application.ProcessManagers.TransferAmendmentManager
       Application.ProcessManagers.TransferManager
       Application.ReadModels
@@ -263,6 +265,8 @@ test-suite backend-test
   other-modules:
       Application.LinkCodeStorePropertySpec
       Application.LinkCodeStoreSpec
+      Application.ProcessManagers.TransactionCancellationManagerPropertySpec
+      Application.ProcessManagers.TransactionCancellationManagerSpec
       Application.ProcessManagers.TransferAmendmentManagerPropertySpec
       Application.ProcessManagers.TransferAmendmentManagerSpec
       Application.ProcessManagers.TransferManagerPropertySpec
@@ -307,6 +311,8 @@ test-suite backend-test
       Domain.Core.TypesSpec
       Domain.Transaction.AmendmentCommandHandlerSpec
       Domain.Transaction.AmendmentPropertySpec
+      Domain.Transaction.CancellationCommandHandlerSpec
+      Domain.Transaction.CancellationPropertySpec
       Domain.Transaction.CommandHandlerPropertySpec
       Domain.Transaction.CommandHandlerSpec
       Domain.Transaction.DescriptionAndDatePropertySpec
@@ -327,6 +333,7 @@ test-suite backend-test
       Integration.BankImportWorkflowSpec
       Integration.BooksClosePeriodIntegrationSpec
       Integration.ExchangeRatePersistenceSpec
+      Integration.TransactionCancellationIntegrationSpec
       Integration.TransactionCategoryIntegrationSpec
       Integration.TransactionLabelsIntegrationSpec
       Integration.TransactionMetadataEditIntegrationSpec

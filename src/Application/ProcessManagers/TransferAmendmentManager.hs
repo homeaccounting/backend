@@ -47,7 +47,11 @@ module Application.ProcessManagers.TransferAmendmentManager
   )
 where
 
-import Data.Map.Strict (Map)
+import Application.ProcessManagers.Snapshots
+  ( TransferPostings (..),
+    applyTransferAmendmentCompleted,
+    applyTransferInitiated,
+  )
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Domain.Core.Types
@@ -56,7 +60,6 @@ import Domain.Core.Types
     Money,
     TransactionId,
     UserId,
-    mkTransactionIdSafe,
     moneyIsPositive,
     subtractMoney,
     unAccountId,
@@ -104,22 +107,6 @@ data NonFallibleLeg
   | -- | New-target credit. Issued on either target amount-up (same
     -- account) or target-account swap.
     CreditNewTarget AccountId Money TransactionId
-  deriving (Show, Eq)
-
--- -----------------------------------------------------------------------------
--- Snapshots / state records
--- -----------------------------------------------------------------------------
-
--- | Snapshot of the canonical posting facts at the most recently committed
--- state of a transaction. Updated by 'TransferInitiated' and replaced by
--- 'TransferAmendmentCompleted'.
-data TransferPostings = TransferPostings
-  { sourceAccountId :: AccountId,
-    targetAccountId :: AccountId,
-    sourceAmount :: Money,
-    targetAmount :: Money,
-    at :: UTCTime
-  }
   deriving (Show, Eq)
 
 -- | Saga lifecycle for an in-flight amendment.
@@ -268,20 +255,8 @@ handleTransferAmendmentEvent ::
   TransferAmendmentManager ->
   VersionedStreamEvent AccountingEvent ->
   TransferAmendmentManager
-handleTransferAmendmentEvent manager (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)) =
-  case mkTransactionIdSafe txUuid of
-    Nothing -> manager
-    Just txId ->
-      manager
-        & #currentPostings
-        % at txId
-        ?~ TransferPostings
-          { sourceAccountId = evt.sourceAccountId,
-            targetAccountId = evt.targetAccountId,
-            sourceAmount = evt.sourceAmount,
-            targetAmount = evt.targetAmount,
-            at = evt.at
-          }
+handleTransferAmendmentEvent manager e@(StreamEvent _ _ _ (TransferInitiatedEvent _)) =
+  manager & #currentPostings %~ applyTransferInitiated e
 handleTransferAmendmentEvent manager (StreamEvent _ _ _ (TransferAmendmentInitiatedEvent evt)) =
   case manager ^. #currentPostings % at evt.transactionId of
     Nothing -> manager
@@ -315,17 +290,7 @@ handleTransferAmendmentEvent manager (StreamEvent _ _ _ (TransferAmendmentComple
     & #amendments
     %~ Map.delete evt.transactionId
     & #currentPostings
-    % at evt.transactionId
-    %~ fmap
-      ( \p ->
-          TransferPostings
-            { sourceAccountId = evt.newSourceAccountId,
-              targetAccountId = evt.newTargetAccountId,
-              sourceAmount = evt.newSourceAmount,
-              targetAmount = evt.newTargetAmount,
-              at = p.at
-            }
-      )
+    %~ applyTransferAmendmentCompleted evt
 handleTransferAmendmentEvent manager (StreamEvent _ _ _ (TransferAmendmentFailedEvent _)) =
   -- The aggregate id is not in the event payload; the saga clears its
   -- entry when the react function runs (no per-tx context here). In

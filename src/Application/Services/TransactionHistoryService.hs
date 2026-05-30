@@ -41,7 +41,9 @@ import Domain.Core.Types
   )
 import Domain.Models
   ( AccountingEvent
-      ( TransactionCategoryChangedEvent,
+      ( TransactionCancellationCompletedEvent,
+        TransactionCancellationInitiatedEvent,
+        TransactionCategoryChangedEvent,
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
@@ -54,7 +56,9 @@ import Domain.Models
       ),
   )
 import Domain.Transaction.Events
-  ( TransactionCategoryChanged,
+  ( TransactionCancellationCompleted,
+    TransactionCancellationInitiated,
+    TransactionCategoryChanged,
     TransactionDateChanged,
     TransactionDescriptionChanged,
     TransactionLabelsSet,
@@ -107,6 +111,8 @@ data TransactionHistoryEntry
   | HistoryAmendmentInitiated TransferAmendmentInitiated
   | HistoryAmendmentCompleted TransferAmendmentCompleted
   | HistoryAmendmentFailed TransferAmendmentFailed
+  | HistoryCancellationInitiated TransactionCancellationInitiated
+  | HistoryCancellationCompleted TransactionCancellationCompleted
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransactionHistoryEntry
@@ -166,4 +172,6 @@ toHistoryEntry (StreamEvent _ _ _ payload) = case payload of
   TransferAmendmentInitiatedEvent e -> Just (HistoryAmendmentInitiated e)
   TransferAmendmentCompletedEvent e -> Just (HistoryAmendmentCompleted e)
   TransferAmendmentFailedEvent e -> Just (HistoryAmendmentFailed e)
+  TransactionCancellationInitiatedEvent e -> Just (HistoryCancellationInitiated e)
+  TransactionCancellationCompletedEvent e -> Just (HistoryCancellationCompleted e)
   _ -> Nothing

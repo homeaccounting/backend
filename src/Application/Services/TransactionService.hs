@@ -35,6 +35,7 @@ module Application.Services.TransactionService
     changeTransactionDescription,
     changeTransactionDate,
     amendTransfer,
+    cancelTransaction,
 
     -- * Re-exported helpers for sibling services
     resolveAndInitiate,
@@ -89,13 +90,15 @@ import Domain.Core.Types
   )
 import Domain.Models
   ( AccountingEvent
-      ( TransferAmendmentCompletedEvent,
+      ( TransactionCancellationCompletedEvent,
+        TransferAmendmentCompletedEvent,
         TransferAmendmentFailedEvent
       ),
   )
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
       ( AmendTransferTransactionCommand,
+        CancelTransactionTransactionCommand,
         ChangeTransactionCategoryTransactionCommand,
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
@@ -107,6 +110,7 @@ import Domain.Transaction.CommandHandler
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
   ( AmendTransfer (..),
+    CancelTransaction (..),
     ChangeTransactionCategory (..),
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
@@ -556,6 +560,38 @@ amendTransfer userId transactionId amendCmd = runExceptT $ do
             (AmendTransferTransactionCommand amendCmd)
         )
 
+-- | Cancel a completed transaction by its 'TransactionId'.
+--
+-- Orchestrates:
+--
+--   1. Verify caller has Editor+ access to the transaction's accounts.
+--   2. Books-close gate against the transaction's current business date.
+--   3. Dispatch 'CancelTransaction'. The pure handler rejects requests when
+--      the transaction is already cancelled, a cancellation or amendment
+--      saga is already in flight.
+--   4. Read the TX stream to confirm the saga terminated with
+--      'TransactionCancellationCompleted'.
+cancelTransaction ::
+  UserId ->
+  TransactionId ->
+  AppM (Either DomainError TransactionData)
+cancelTransaction userId transactionId = runExceptT $ do
+  lift
+    $ logInfo
+    $ "Cancelling transaction "
+    <> displayShow transactionId
+    <> " for user "
+    <> displayShow userId
+  transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  ExceptT (guardBooksClosed userId transaction.date)
+  ExceptT
+    ( dispatchAndAwaitCancellation
+        transactionId
+        ( CancelTransactionTransactionCommand
+            CancelTransaction {transactionId = transactionId, cancelledBy = userId}
+        )
+    )
+
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
 -- -----------------------------------------------------------------------------
@@ -794,6 +830,53 @@ lastAmendmentOutcome = foldl' step AmendmentUnknown
       AmendmentFailed r
     step acc _ = acc
 
+-- | Dispatch 'CancelTransaction' and surface the saga's outcome.
+--
+-- Mirrors 'dispatchAndAwaitAmendment'. By the time 'runTransactionCmd'
+-- returns the in-process bus has delivered all downstream events; we
+-- therefore inspect the TX stream immediately to find the most-recent
+-- 'TransactionCancellationCompleted' terminator.
+dispatchAndAwaitCancellation ::
+  TransactionId ->
+  TransactionCommand ->
+  AppM (Either DomainError TransactionData)
+dispatchAndAwaitCancellation txId cmd = runExceptT $ do
+  runTransactionCmd translateTransactionError id (unTransactionId txId) cmd
+  outcome <- ExceptT (readLastCancellationOutcome txId)
+  case outcome of
+    CancellationSucceeded -> do
+      (_, td) <- ExceptT (queryTransactionResult txId)
+      pure td
+    CancellationUnknown ->
+      throwE
+        ( TransactionError
+            "Cancellation saga did not produce a terminal event"
+        )
+
+-- | Outcome of the cancellation saga as observed on the TX stream.
+data CancellationOutcome
+  = CancellationSucceeded
+  | -- | Should not happen on a valid stream once the saga is wired.
+    CancellationUnknown
+  deriving (Show, Eq)
+
+-- | Inspect the TX aggregate's stream and report the most-recent
+-- cancellation-terminating event.
+readLastCancellationOutcome ::
+  TransactionId ->
+  AppM (Either DomainError CancellationOutcome)
+readLastCancellationOutcome txId = runExceptT $ do
+  EventStoreReader readStream <- lift (view eventStoreReaderL)
+  events <- liftIO (readStream (allEvents (unTransactionId txId)))
+  pure (lastCancellationOutcome (map (.payload) events))
+
+-- | Pure helper exposed for testability via the surrounding service code.
+lastCancellationOutcome :: [AccountingEvent] -> CancellationOutcome
+lastCancellationOutcome = foldl' step CancellationUnknown
+  where
+    step _ (TransactionCancellationCompletedEvent _) = CancellationSucceeded
+    step acc _ = acc
+
 -- | Translate an aggregate-local 'TransactionError' (wrapped in
 -- 'CommandHandlerError') into the public 'DomainError' surface.
 translateTransactionError ::
@@ -809,6 +892,16 @@ translateTransactionError (CommandRejected TxCh.AmendTransferToZeroAmount) =
   CannotAmendToZeroAmount
 translateTransactionError (CommandRejected TxCh.NoAmendmentInProgress) =
   TransactionError "No amendment in progress"
+translateTransactionError (CommandRejected TxCh.TransactionAlreadyCancelled) =
+  TransactionAlreadyCancelled
+translateTransactionError (CommandRejected TxCh.CancellationAlreadyInProgress) =
+  CancellationAlreadyInProgress
+translateTransactionError (CommandRejected TxCh.CannotCancelDuringAmendment) =
+  CannotCancelDuringAmendment
+translateTransactionError (CommandRejected TxCh.NoCancellationInProgress) =
+  TransactionError "No cancellation in progress"
+translateTransactionError (CommandRejected TxCh.CannotAmendDuringCancellation) =
+  CannotAmendDuringCancellation
 translateTransactionError other =
   TransactionError (T.pack (show other))
 

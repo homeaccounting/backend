@@ -118,6 +118,6 @@ spec = describe "listTransactions / date bounds (property)" $ do
         h.handleEvent events
         q <-
           either (fail . show) pure
-            $ mkTransactionQuery Nothing (Just fromD) (Just toD)
+            $ mkTransactionQuery Nothing (Just fromD) (Just toD) False
         results <- listTransactions tvar (Set.singleton acctA) q
         pure $ all (\(_, td) -> td.date >= fromD && td.date <= toD) results

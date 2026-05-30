@@ -34,6 +34,8 @@ module Domain.Transaction.Commands
     AmendTransfer (..),
     CompleteTransferAmendment (..),
     FailTransferAmendment (..),
+    CancelTransaction (..),
+    CompleteTransactionCancellation (..),
   )
 where
 
@@ -63,7 +65,9 @@ transactionCommands =
     ''ChangeTransactionDate,
     ''AmendTransfer,
     ''CompleteTransferAmendment,
-    ''FailTransferAmendment
+    ''FailTransferAmendment,
+    ''CancelTransaction,
+    ''CompleteTransactionCancellation
   ]
 
 -- -----------------------------------------------------------------------------
@@ -304,6 +308,45 @@ newtype FailTransferAmendment = FailTransferAmendment
   }
   deriving (Show, Eq)
 
+-- | User-facing command to cancel a completed transaction.
+--
+-- Triggers the @TransactionCancellationManager@ saga, which issues reversal
+-- commands on both affected accounts and then emits
+-- 'CompleteTransactionCancellation' on the transaction stream.
+--
+-- Business Rules (enforced by the pure handler):
+--  - Transaction must be in the 'Completed' state.
+--  - No amendment saga may be in progress (@amendmentInProgress = False@).
+--  - No cancellation saga may already be in progress (@cancellationInProgress = False@).
+--
+-- Example:
+-- >>> CancelTransaction txId userId
+data CancelTransaction = CancelTransaction
+  { -- | The transaction being cancelled.
+    transactionId :: TransactionId,
+    -- | User who initiated the cancellation (for audit trail).
+    cancelledBy :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-internal command to mark a transaction cancellation as completed.
+--
+-- Issued by the @TransactionCancellationManager@ once both reversal events
+-- have landed. Accepted iff @cancellationInProgress = True@ on the aggregate.
+-- The @cancelledBy@ field is an audit echo — the saga carries it from the
+-- initiating 'CancelTransaction' so the resulting event is self-contained
+-- for read-model replay.
+--
+-- Example:
+-- >>> CompleteTransactionCancellation txId userId
+data CompleteTransactionCancellation = CompleteTransactionCancellation
+  { -- | The transaction being cancelled.
+    transactionId :: TransactionId,
+    -- | User who initiated the cancellation (echoed from the saga state).
+    cancelledBy :: UserId
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -319,3 +362,5 @@ deriveJSON defaultOptions ''ChangeTransactionDate
 deriveJSON defaultOptions ''AmendTransfer
 deriveJSON defaultOptions ''CompleteTransferAmendment
 deriveJSON defaultOptions ''FailTransferAmendment
+deriveJSON defaultOptions ''CancelTransaction
+deriveJSON defaultOptions ''CompleteTransactionCancellation

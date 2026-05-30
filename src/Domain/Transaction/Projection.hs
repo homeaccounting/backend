@@ -76,7 +76,7 @@ import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
 --
 -- Terminal States: Completed and Failed are final states with no further transitions.
 --
--- Invariant: Once a transaction reaches Completed or Failed, its status cannot change.
+-- Invariant: Once a transaction reaches Completed, Failed, or Cancelled, its status cannot change.
 data TransactionStatus
   = -- | Transaction is in progress
     Pending
@@ -84,6 +84,8 @@ data TransactionStatus
     Completed
   | -- | Transaction failed with a reason
     Failed Text
+  | -- | Transaction was cancelled by the user
+    Cancelled
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransactionStatus
@@ -155,7 +157,11 @@ data Transaction = Transaction
     -- been applied but a corresponding 'TransferAmendmentCompleted' or
     -- 'TransferAmendmentFailed' has not yet arrived. Used by the command
     -- handler to gate 'CompleteTransferAmendment' and 'FailTransferAmendment'.
-    amendmentInProgress :: Bool
+    amendmentInProgress :: Bool,
+    -- | Transient flag: True when a 'TransactionCancellationInitiated' event has
+    -- been applied but a corresponding 'TransactionCancellationCompleted' has not
+    -- yet arrived. Used by the command handler to gate 'CompleteTransactionCancellation'.
+    cancellationInProgress :: Bool
   }
   deriving (Show, Eq)
 
@@ -201,7 +207,8 @@ transactionDefault =
       transferType = Income (unsafeDictionaryEntryId nil),
       labels = Set.empty,
       amendmentCount = 0,
-      amendmentInProgress = False
+      amendmentInProgress = False,
+      cancellationInProgress = False
     }
 
 -- -----------------------------------------------------------------------------
@@ -348,6 +355,19 @@ handleTransactionEvent transaction (TransferAmendmentCompletedTransactionEvent e
 handleTransactionEvent transaction (TransferAmendmentFailedTransactionEvent _evt) =
   -- Clear the in-progress flag. No canonical change on failure.
   transaction & #amendmentInProgress .~ False
+handleTransactionEvent transaction (TransactionCancellationInitiatedTransactionEvent _) =
+  -- Flip the transient saga-in-progress flag on so the command handler
+  -- can gate 'CompleteTransactionCancellation'. Canonical status is
+  -- unchanged until 'TransactionCancellationCompleted'.
+  transaction & #cancellationInProgress .~ True
+handleTransactionEvent transaction (TransactionCancellationCompletedTransactionEvent _) =
+  -- Transition the aggregate to the terminal 'Cancelled' status and
+  -- clear the transient saga-in-progress flag.
+  transaction
+    & #status
+    .~ Cancelled
+    & #cancellationInProgress
+    .~ False
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

@@ -24,6 +24,7 @@
 --   PUT    /api/transactions/:id/amendment     - Amend posting facts (saga)
 --   GET    /api/transactions/:id/history       - Audit history
 --   GET    /api/transactions/:id               - Get transaction status
+--   DELETE /api/transactions/:id               - Cancel a transaction
 --
 -- Handler Responsibilities (HTTP concerns only):
 --   1. Extract data from HTTP request (path params, body, auth)
@@ -51,6 +52,7 @@ module Web.API.TransactionAPI
     changeDateHandler,
     amendTransferHandler,
     transactionHistoryHandler,
+    cancelTransactionHandler,
   )
 where
 
@@ -120,13 +122,14 @@ type TransactionAPI =
       :> "transfer"
       :> ReqBody '[JSON] InternalTransferRequest
       :> Post '[JSON] TransactionResponse
-    -- GET /api/transactions?accountId=&from=&to= - List transactions visible to the caller.
+    -- GET /api/transactions?accountId=&from=&to=&includeCancelled= - List transactions visible to the caller.
     :<|> AuthProtect "jwt"
       :> "api"
       :> "transactions"
       :> QueryParam "accountId" UUID
       :> QueryParam "from" UTCTime
       :> QueryParam "to" UTCTime
+      :> QueryParam "includeCancelled" Bool
       :> Get '[JSON] TransactionListResponse
     -- PUT /api/transactions/:id/labels - Replace the label set on a Completed transaction.
     :<|> AuthProtect "jwt"
@@ -181,6 +184,12 @@ type TransactionAPI =
       :> "transactions"
       :> Capture "id" UUID
       :> Get '[JSON] TransactionResponse
+    -- DELETE /api/transactions/:id - Cancel a transaction
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> DeleteNoContent
 
 -- | Proxy for the TransactionAPI.
 transactionAPI :: Proxy TransactionAPI
@@ -204,6 +213,7 @@ transactionServer =
     :<|> amendTransferHandler
     :<|> transactionHistoryHandler
     :<|> getTransactionHandler
+    :<|> cancelTransactionHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
@@ -368,9 +378,10 @@ transactionHistoryHandler user rawId = do
 -- | Handler for GET /api/transactions - list transactions visible to the caller.
 --
 -- Optional query params:
---   - accountId: restrict to transactions touching this account
---   - from: inclusive lower bound on business timestamp (UTCTime, ISO-8601)
---   - to:   inclusive upper bound on business timestamp (UTCTime, ISO-8601)
+--   - accountId:        restrict to transactions touching this account
+--   - from:             inclusive lower bound on business timestamp (UTCTime, ISO-8601)
+--   - to:               inclusive upper bound on business timestamp (UTCTime, ISO-8601)
+--   - includeCancelled: when true, cancelled transactions are included (default false)
 --
 -- from > to is rejected as a 400 ValidationErr via mkTransactionQuery.
 -- An accountId the caller cannot see produces a 200 empty list (hide existence).
@@ -381,11 +392,13 @@ listTransactionsHandler ::
   Maybe UUID ->
   Maybe UTCTime ->
   Maybe UTCTime ->
+  Maybe Bool ->
   AppM TransactionListResponse
-listTransactionsHandler user maybeAccountUuid maybeFrom maybeTo = do
+listTransactionsHandler user maybeAccountUuid maybeFrom maybeTo maybeIncludeCancelled = do
   let userId = user.userId
+      includeCancelled = fromMaybe False maybeIncludeCancelled
   accountIdDomain <- traverse (validateField "accountId" . mkAccountId) maybeAccountUuid
-  query <- validateField "query" $ mkTransactionQuery accountIdDomain maybeFrom maybeTo
+  query <- validateField "query" $ mkTransactionQuery accountIdDomain maybeFrom maybeTo includeCancelled
   results <- TransactionService.listTransactions userId query
   let responses = map (uncurry fromTransactionData) results
       totalCount = length responses
@@ -397,4 +410,22 @@ getTransactionHandler _user transactionUuid = do
   result <- TransactionService.getTransaction transactionUuid
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
+    Left err -> throwDomainError err
+
+-- | Handler for DELETE /api/transactions/:id - Cancel a transaction.
+--
+-- Returns 204 No Content on success.
+-- Returns 409 Conflict when:
+--   - the transaction is already cancelled ('TransactionAlreadyCancelled')
+--   - a cancellation is already in progress ('CancellationAlreadyInProgress')
+--   - an amendment saga is running ('CannotCancelDuringAmendment')
+cancelTransactionHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  AppM NoContent
+cancelTransactionHandler user rawId = do
+  transactionId <- validateField "id" (mkTransactionId rawId)
+  result <- TransactionService.cancelTransaction user.userId transactionId
+  case result of
+    Right _ -> pure NoContent
     Left err -> throwDomainError err

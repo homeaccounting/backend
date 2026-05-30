@@ -122,6 +122,17 @@ data DomainError
     InsufficientFundsForAmendment
       { reason :: Text
       }
+  | -- | Cancelling a transaction that is already in the Cancelled terminal state.
+    TransactionAlreadyCancelled
+  | -- | A cancellation saga is already in progress on this transaction.
+    -- Reachable via two near-simultaneous DELETE requests.
+    CancellationAlreadyInProgress
+  | -- | 'CancelTransaction' issued while an amendment saga is in flight on the
+    -- same transaction.
+    CannotCancelDuringAmendment
+  | -- | 'AmendTransfer' issued while a cancellation saga is in flight on the
+    -- same transaction.
+    CannotAmendDuringCancellation
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -217,3 +228,11 @@ renderDomainError err = case err of
     "Transfer amendment cannot change an account's type (Regular vs External)"
   InsufficientFundsForAmendment r ->
     "Insufficient funds for transfer amendment: " <> r
+  TransactionAlreadyCancelled ->
+    "Transaction is already cancelled"
+  CancellationAlreadyInProgress ->
+    "A cancellation is already in progress for this transaction"
+  CannotCancelDuringAmendment ->
+    "Transaction cannot be cancelled while an amendment is in progress"
+  CannotAmendDuringCancellation ->
+    "Transaction cannot be amended while a cancellation is in progress"

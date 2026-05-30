@@ -36,7 +36,7 @@ where
 
 import Application.EventDispatch (ReadModels (..), createReadModels, fromReadModels)
 import Application.LinkCodeStore (newLinkCodeStore)
-import Application.ProcessManagers (transferAmendmentProcessManager, transferProcessManager)
+import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
 import Application.ReadModels.User ()
 import Control.Concurrent.STM (atomically)
 import qualified Data.Set as Set
@@ -189,9 +189,10 @@ mkAppEnv withProcessManager = do
       -- See accountingEventStoreWriter for the depth-first dispatch explanation.
       pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher writer reader)
       amendPmHandler = processManagerEventHandler transferAmendmentProcessManager globalReader (commandDispatcher writer reader)
+      cancelPmHandler = processManagerEventHandler transactionCancellationProcessManager globalReader (commandDispatcher writer reader)
       combinedHandler =
         if withProcessManager
-          then mconcat readModelHandlers <> pmHandler <> amendPmHandler
+          then mconcat readModelHandlers <> pmHandler <> amendPmHandler <> cancelPmHandler
           else mconcat readModelHandlers
       writer =
         publishingTaggedCodecEventStoreWriter

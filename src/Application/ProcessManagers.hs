@@ -88,5 +88,6 @@ module Application.ProcessManagers
   )
 where
 
+import Application.ProcessManagers.TransactionCancellationManager as X
 import Application.ProcessManagers.TransferAmendmentManager as X
 import Application.ProcessManagers.TransferManager as X
