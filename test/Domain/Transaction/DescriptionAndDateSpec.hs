@@ -12,9 +12,12 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( TransactionId,
+  ( Allocation (..),
+    Currency (..),
+    TransactionId,
     TransferType (..),
     unsafeDictionaryEntryId,
+    unsafeMoney,
     unsafeTransactionId,
   )
 import Domain.Transaction.CommandHandler
@@ -66,7 +69,7 @@ completedIncome =
     & #status
     .~ Completed
     & #transferType
-    .~ Income (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0))
+    .~ Income (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| [])
     & #description
     .~ "Original"
     & #at
@@ -91,7 +94,7 @@ mkInitiated =
       description = "",
       by = transactionDefault ^. #initiatedBy,
       at = t0,
-      transferType = Income (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)),
+      transferType = Income (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| []),
       externalTransactionId = Nothing,
       labels = Set.empty
     }

@@ -38,7 +38,6 @@ import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     Currency (..),
-    TransferType (..),
     UserId,
     defaultBankAccount,
     defaultConfigurationId,
@@ -60,6 +59,8 @@ import Testkit.Helpers
     mockMoneyWith,
     mockUserId,
     shouldBeRight,
+    singletonExpense,
+    singletonIncome,
   )
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
@@ -276,7 +277,7 @@ spec = describe "BankImportService" $ do
       txData.description `shouldBe` "Test transaction"
       txData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 50)
       -- Default expense category (expense.other) when no MCC
-      txData.transferType `shouldBe` Expense expense.other.entryId
+      txData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
       txData.date `shouldBe` testTime
 
     it "imports an income transaction with correct fields" $ do
@@ -303,7 +304,7 @@ spec = describe "BankImportService" $ do
       txData.description `shouldBe` "Test transaction"
       txData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 100)
       -- Default income category (income.other) when no MCC lookup applies for income
-      txData.transferType `shouldBe` Income income.other.entryId
+      txData.transferType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 100))
       txData.date `shouldBe` testTime
 
   describe "importTransaction cross-currency" $ do
@@ -373,7 +374,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` Expense expense.food.entryId
+      txData.transferType `shouldBe` singletonExpense expense.food.entryId (fromRight' (mkMoney UAH 50))
 
     it "falls back to defaultExpenseCategory when MCC is not in the map" $ do
       -- MCC "9999" is not in the default MCC map → falls back to expense.other
@@ -392,7 +393,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` Expense expense.other.entryId
+      txData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
 
     it "falls back to defaultExpenseCategory when mcc is Nothing" $ do
       -- No MCC on the transaction → uses expense.other
@@ -411,7 +412,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` Expense expense.other.entryId
+      txData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
 
     it "records BankingError in AccountResyncResult.failures when no expense default is configured" $ do
       -- Seed a configuration without defaultExpenseCategory set, then resync
@@ -517,4 +518,4 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` Income income.other.entryId
+      txData.transferType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 200))

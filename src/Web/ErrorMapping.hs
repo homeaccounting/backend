@@ -230,13 +230,63 @@ mapDomainError CannotEditUncompletedTransaction =
               details = Nothing
             }
     }
-mapDomainError CannotChangeCategoryOnUncategorizedTransaction =
+mapDomainError AllocationsDoNotSumToTotal =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Sum of allocation amounts must equal the transaction's categorised total",
+              code = "ALLOCATIONS_DO_NOT_SUM_TO_TOTAL",
+              details = Nothing
+            }
+    }
+mapDomainError AllocationAmountNotPositive =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Each allocation amount must be strictly positive",
+              code = "ALLOCATION_AMOUNT_NOT_POSITIVE",
+              details = Nothing
+            }
+    }
+mapDomainError AllocationCurrencyMismatch =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "All allocations on a transaction must share the categorised currency",
+              code = "ALLOCATION_CURRENCY_MISMATCH",
+              details = Nothing
+            }
+    }
+mapDomainError CannotChangeKindOfCategorisedTransaction =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot change a transaction's kind (Income vs Expense) via allocations edit",
+              code = "CANNOT_CHANGE_KIND_OF_CATEGORISED_TRANSACTION",
+              details = Nothing
+            }
+    }
+mapDomainError CannotSetAllocationsOnUncategorisedTransaction =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Allocations cannot be set on a Transfer or Adjustment",
+              code = "CANNOT_SET_ALLOCATIONS_ON_UNCATEGORISED_TRANSACTION",
+              details = Nothing
+            }
+    }
+mapDomainError TransactionMustBeCompletedForAllocationsEdit =
   err409
     { errBody =
         encode $
           ErrorResponse
-            { message = "Category cannot be set on a Transfer or Adjustment",
-              code = "CATEGORY_NOT_APPLICABLE",
+            { message = "Allocations can only be changed on a Completed transaction",
+              code = "TRANSACTION_MUST_BE_COMPLETED_FOR_ALLOCATIONS_EDIT",
               details = Nothing
             }
     }

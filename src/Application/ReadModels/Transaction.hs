@@ -63,18 +63,19 @@ import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVa
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.List (sortBy)
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..))
-import Domain.Core.Types (AccountId, DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransferType (..), mkTransactionIdSafe)
+import Domain.Core.Types (AccountId, Allocation (..), DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransferType (..), allocationsOf, mkTransactionIdSafe, replaceAllocations)
 import Domain.Models
   ( AccountingEvent
-      ( TransactionCancellationCompletedEvent,
+      ( TransactionAllocationsChangedEvent,
+        TransactionCancellationCompletedEvent,
         TransactionCancellationInitiatedEvent,
-        TransactionCategoryChangedEvent,
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
@@ -87,7 +88,7 @@ import Domain.Models
       ),
   )
 import Domain.Transaction.Events
-  ( TransactionCategoryChanged (..),
+  ( TransactionAllocationsChanged (..),
     TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
     TransactionLabelsSet (..),
@@ -246,7 +247,7 @@ createTransactionReadModel =
 --  - TransferCompleted: Updates status to Completed
 --  - TransferFailed: Updates status to Failed with reason
 --  - TransactionLabelsSet: Replaces the labels set
---  - TransactionCategoryChanged: Replaces the categorised TransferType payload
+--  - TransactionAllocationsChanged: Replaces the categorised TransferType payload
 --  - TransactionDescriptionChanged: Replaces the description
 --  - TransactionDateChanged: Replaces the business date
 --
@@ -334,18 +335,15 @@ processEvent transactions globalEvent =
                 (\transaction -> (transaction :: TransactionData) {labels = evt.labels})
                 transactionId
                 transactions
-        TransactionCategoryChangedEvent evt ->
+        TransactionAllocationsChangedEvent evt ->
           case mkTransactionIdSafe streamUuid of
             Nothing -> transactions
             Just transactionId ->
               Map.adjust
                 ( \transaction ->
                     (transaction :: TransactionData)
-                      { transferType = case transaction.transferType of
-                          Income _ -> Income evt.newCategory
-                          Expense _ -> Expense evt.newCategory
-                          Transfer -> Transfer
-                          Adjustment -> Adjustment
+                      { transferType =
+                          replaceAllocations evt.newAllocations transaction.transferType
                       }
                 )
                 transactionId
@@ -371,18 +369,29 @@ processEvent transactions globalEvent =
           case mkTransactionIdSafe streamUuid of
             Nothing -> transactions
             Just transactionId ->
-              -- transferType is preserved across amendments (service layer
-              -- enforces account-type parity, so transferType cannot change).
+              -- The event carries the post-amendment allocations as a
+              -- handler-computed fact (see the 'CompleteTransferAmendment'
+              -- arm in 'Domain.Transaction.CommandHandler'). The read
+              -- model rebuilds the full 'TransferType' from the existing
+              -- kind via 'replaceAllocations'. Allocations have already
+              -- been rescaled proportionally on amount changes; 'Transfer' /
+              -- 'Adjustment' have 'Nothing' on the event and pass through
+              -- unchanged. A deliberate re-split is done via
+              -- 'SetTransactionAllocations'.
               Map.adjust
                 ( \transaction ->
-                    (transaction :: TransactionData)
-                      { sourceAccountId = evt.newSourceAccountId,
-                        targetAccountId = evt.newTargetAccountId,
-                        sourceAmount = evt.newSourceAmount,
-                        targetAmount = evt.newTargetAmount,
-                        exchangeRate = evt.newExchangeRate,
-                        amendmentCount = transaction.amendmentCount + 1
-                      }
+                    let newTT = case evt.newAllocations of
+                          Just allocs -> replaceAllocations allocs transaction.transferType
+                          Nothing -> transaction.transferType
+                     in (transaction :: TransactionData)
+                          { sourceAccountId = evt.newSourceAccountId,
+                            targetAccountId = evt.newTargetAccountId,
+                            sourceAmount = evt.newSourceAmount,
+                            targetAmount = evt.newTargetAmount,
+                            exchangeRate = evt.newExchangeRate,
+                            transferType = newTT,
+                            amendmentCount = transaction.amendmentCount + 1
+                          }
                 )
                 transactionId
                 transactions
@@ -538,9 +547,9 @@ findReferencingTransactions readModelTVar entryId = do
     referencesEntry td =
       td.status /= Cancelled
         && ( Set.member entryId td.labels
-               || case td.transferType of
-                 Income cid -> cid == entryId
-                 Expense cid -> cid == entryId
-                 Transfer -> False
-                 Adjustment -> False
+               || referencesInAllocations td.transferType
            )
+    referencesInAllocations :: TransferType -> Bool
+    referencesInAllocations tt = case allocationsOf tt of
+      Nothing -> False
+      Just allocs -> any (\(Allocation cid _) -> cid == entryId) (NE.toList allocs)

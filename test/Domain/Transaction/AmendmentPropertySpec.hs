@@ -30,6 +30,8 @@ import Domain.Core.Types
     TransactionId,
     TransferType (..),
     UserId,
+    allocationsOf,
+    kindOf,
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
@@ -56,6 +58,7 @@ import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
 import Testkit.Generators ()
+import Testkit.Helpers (singletonIncome)
 import Prelude (last)
 
 -- -----------------------------------------------------------------------------
@@ -84,7 +87,7 @@ seedTgtAmt :: Money
 seedTgtAmt = unsafeMoney USD 100
 
 seedTransferType :: TransferType
-seedTransferType = Income (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0))
+seedTransferType = singletonIncome (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) seedTgtAmt
 
 -- | Replay the projection from a 'TransferInitiated' + 'TransferCompleted'
 -- seed followed by the given amendment events.
@@ -115,6 +118,11 @@ projectAmendments extra =
 -- -----------------------------------------------------------------------------
 
 -- | Generator for a 'TransferAmendmentCompleted' targeting the fixture 'txId'.
+--
+-- The event carries a handler-computed 'newAllocations'. In real use the
+-- handler rescales the prior allocations against the new categorised
+-- amount; for property purposes we reuse the seed allocations (same kind),
+-- which is what the projection now applies via 'replaceAllocations'.
 genCompleted :: Gen TransferAmendmentCompleted
 genCompleted = do
   newSrc <- arbitrary :: Gen AccountId
@@ -130,6 +138,7 @@ genCompleted = do
         newSourceAmount = newSrcAmt,
         newTargetAmount = newTgtAmt,
         newExchangeRate = newRate,
+        newAllocations = allocationsOf seedTransferType,
         amendedBy = amendedByU
       }
 
@@ -185,8 +194,10 @@ spec = describe "Transaction amendment projection" $ do
               (tx ^. #sourceAmount) === c.newSourceAmount,
               (tx ^. #targetAmount) === c.newTargetAmount,
               (tx ^. #exchangeRate) === c.newExchangeRate,
-              -- 'transferType' is preserved across amendments.
-              (tx ^. #transferType) === seedTransferType,
+              -- 'transferType' kind is preserved across amendments; for
+              -- categorised seeds the allocations are auto-rescaled to
+              -- the new categorised side so the sum stays consistent.
+              kindOf (tx ^. #transferType) === kindOf seedTransferType,
               (tx ^. #amendmentInProgress) === False
             ]
 

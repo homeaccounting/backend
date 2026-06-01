@@ -34,6 +34,7 @@ import Network.Wai.Test (SResponse (..))
 import RIO
 import Test.Hspec
 import Testkit.Fixtures (createRegularAccount)
+import Testkit.Helpers (singletonAllocation)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.TransactionEditFixture
   ( Seed (..),
@@ -68,7 +69,7 @@ seedIncome seed accId amount = do
         seed.seedUserId
         accId
         (unsafeMoney Core.USD (toRational amount))
-        seed.seedCategory
+        (singletonAllocation seed.seedCategory (unsafeMoney Core.USD (toRational amount)))
         Set.empty
         "Seed"
         Nothing

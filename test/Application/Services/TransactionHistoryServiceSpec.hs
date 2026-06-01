@@ -32,6 +32,7 @@ import RIO
 import Test.Hspec
 import Testkit.Fixtures
   ( MetadataFixture (..),
+    incomeAllocs,
     registerUser,
     setupMetadataFixture,
   )
@@ -61,7 +62,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           fx.userId
           fx.regularAccountId
           (unsafeMoney Core.USD 100)
-          fx.incomeCategory
+          (incomeAllocs fx (unsafeMoney Core.USD 100))
           Set.empty
           "Audit-base"
           Nothing
@@ -91,7 +92,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           fx.userId
           fx.regularAccountId
           (unsafeMoney Core.USD 25)
-          fx.incomeCategory
+          (incomeAllocs fx (unsafeMoney Core.USD 25))
           Set.empty
           "With labels"
           Nothing
@@ -120,7 +121,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           owner.userId
           owner.regularAccountId
           (unsafeMoney Core.USD 10)
-          owner.incomeCategory
+          (incomeAllocs owner (unsafeMoney Core.USD 10))
           Set.empty
           "Owner only"
           Nothing

@@ -74,6 +74,7 @@ import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
 import RIO
 import Test.Hspec
+import Testkit.Helpers (singletonExpense, singletonIncome)
 import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
 
 -- | Test DictionaryEntryId for "Salary" income category.
@@ -692,7 +693,7 @@ categorizedTransferSpec =
                 description = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transferType = Income testSalaryCatId,
+                transferType = singletonIncome testSalaryCatId (unsafeMoney USD 3000),
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
@@ -703,7 +704,7 @@ categorizedTransferSpec =
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` Income testSalaryCatId
+          txData.transferType `shouldBe` singletonIncome testSalaryCatId (unsafeMoney USD 3000)
           txData.status `shouldBe` Completed
 
       -- Verify account balances
@@ -767,7 +768,7 @@ categorizedTransferSpec =
                 description = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transferType = Expense testFoodCatId,
+                transferType = singletonExpense testFoodCatId (unsafeMoney USD 150),
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
@@ -778,7 +779,7 @@ categorizedTransferSpec =
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` Expense testFoodCatId
+          txData.transferType `shouldBe` singletonExpense testFoodCatId (unsafeMoney USD 150)
           txData.status `shouldBe` Completed
 
       -- Verify account balances

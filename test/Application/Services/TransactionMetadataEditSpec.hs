@@ -40,6 +40,8 @@ import Test.Hspec
 import Testkit.Fixtures
   ( MetadataFixture (..),
     createRegularAccount,
+    expenseAllocs,
+    incomeAllocs,
     registerUser,
     setupMetadataFixture,
   )
@@ -66,7 +68,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 25))
             Set.empty
             "Original"
             Nothing
@@ -91,7 +93,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             owner.userId
             owner.regularAccountId
             (unsafeMoney Core.USD 25)
-            owner.incomeCategory
+            (incomeAllocs owner (unsafeMoney Core.USD 25))
             Set.empty
             "Owner only"
             Nothing
@@ -148,7 +150,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 25))
             Set.empty
             "Seed"
             Nothing
@@ -173,7 +175,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 25))
             Set.empty
             "Seed"
             (Just originalAt)
@@ -208,7 +210,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 25))
             Set.empty
             "Backdated seed (open period)"
             (Just originalAt)
@@ -279,7 +281,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 10)
-            fx.expenseCategory
+            (expenseAllocs fx (unsafeMoney Core.USD 10))
             Set.empty
             "Backdated"
             (Just backdated)
@@ -307,7 +309,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 25))
             Set.empty
             "Backdated"
             (Just backdated)

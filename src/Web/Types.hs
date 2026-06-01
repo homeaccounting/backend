@@ -58,7 +58,7 @@ module Web.Types
     AdjustBalanceRequest (..),
     InternalTransferRequest (..),
     SetTransactionLabelsRequest (..),
-    ChangeTransactionCategoryRequest (..),
+    SetTransactionAllocationsRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ChangeTransactionDateRequest (..),
     AmendTransactionRequest (..),
@@ -101,9 +101,11 @@ import Application.ReadModels.Account (AccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.=))
 import Data.Bifunctor (first)
+import Data.Foldable (toList)
 import Data.List (sort)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -114,7 +116,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransferType (..), UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), Allocation (..), Allocations, AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransferType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Commands (InitiateTransfer (..))
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
@@ -430,16 +432,21 @@ instance ToJSON SetTransactionLabelsRequest
 
 instance FromJSON SetTransactionLabelsRequest
 
--- | Body for @PUT \/api\/transactions\/:id\/category@ — replaces the
--- category on a Completed Income\/Expense transaction.
-data ChangeTransactionCategoryRequest = ChangeTransactionCategoryRequest
-  { categoryId :: UUID
+-- | Body for @PATCH \/api\/transactions\/:id\/allocations@ — replaces the
+-- allocation set on a Completed Income\/Expense transaction.
+--
+-- The body carries a non-empty list of 'Allocation' objects whose
+-- amounts sum to the transaction's categorised total and which share
+-- the categorised currency. The transaction's kind (Income vs Expense)
+-- is structurally preserved — only the allocation breakdown changes.
+newtype SetTransactionAllocationsRequest = SetTransactionAllocationsRequest
+  { newAllocations :: Allocations
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON ChangeTransactionCategoryRequest
+instance ToJSON SetTransactionAllocationsRequest
 
-instance FromJSON ChangeTransactionCategoryRequest
+instance FromJSON SetTransactionAllocationsRequest
 
 -- | Body for @PUT \/api\/transactions\/:id\/description@ — replaces the
 -- description on a Completed transaction.
@@ -1040,12 +1047,27 @@ transferTypeToText (Expense _) = "expense"
 transferTypeToText Transfer = "transfer"
 transferTypeToText Adjustment = "adjustment"
 
--- | Extract category UUID from TransferType, if present.
+-- | Extract category UUIDs from a 'TransferType' as text.
+--
+-- Returns the list of all allocation category ids for categorised
+-- ('Income' / 'Expense') transfer types, in their original order. For
+-- non-categorised types ('Transfer', 'Adjustment') the list is empty.
+transferTypeAllocationsText :: TransferType -> [Text]
+transferTypeAllocationsText tt = case allocationsOf tt of
+  Nothing -> []
+  Just allocs ->
+    [ T.pack $ UUID.toString $ unDictionaryEntryId a.categoryId
+    | a <- toList allocs
+    ]
+
+-- | First allocation's category UUID for a 'TransferType', if any.
+--
+-- Preserved as a transitional accessor for the legacy single-category
+-- 'TransactionResponse.category' JSON field. The response shape will
+-- be widened to a list in a follow-up; until then we surface the head
+-- of the allocation list for categorised transactions.
 transferTypeCategoryText :: TransferType -> Maybe Text
-transferTypeCategoryText (Income entryId) = Just $ T.pack $ UUID.toString $ unDictionaryEntryId entryId
-transferTypeCategoryText (Expense entryId) = Just $ T.pack $ UUID.toString $ unDictionaryEntryId entryId
-transferTypeCategoryText Transfer = Nothing
-transferTypeCategoryText Adjustment = Nothing
+transferTypeCategoryText tt = listToMaybe (transferTypeAllocationsText tt)
 
 -- -----------------------------------------------------------------------------
 -- Category Parsing

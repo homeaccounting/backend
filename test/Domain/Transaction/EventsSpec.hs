@@ -20,14 +20,13 @@ import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( TransferType (..),
-    unsafeDictionaryEntryId,
+  ( unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
   )
 import Domain.Transaction.Events (TransferInitiated (..))
 import RIO
 import Test.Hspec
-import Testkit.Helpers (mockAccountId, mockMoney, mockUserId)
+import Testkit.Helpers (mockAccountId, mockMoney, mockUserId, singletonIncome)
 
 spec :: Spec
 spec = describe "TransferInitiated JSON" $ do
@@ -64,7 +63,7 @@ sampleEvent =
       description = "legacy test transfer",
       by = mockUserId (uuidFromInt 3),
       at = UTCTime (fromGregorian 2026 4 1) 0,
-      transferType = Income (unsafeDictionaryEntryId (uuidFromInt 4)),
+      transferType = singletonIncome (unsafeDictionaryEntryId (uuidFromInt 4)) (mockMoney 10),
       externalTransactionId = Nothing,
       labels = Set.empty
     }

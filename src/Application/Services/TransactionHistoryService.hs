@@ -41,9 +41,9 @@ import Domain.Core.Types
   )
 import Domain.Models
   ( AccountingEvent
-      ( TransactionCancellationCompletedEvent,
+      ( TransactionAllocationsChangedEvent,
+        TransactionCancellationCompletedEvent,
         TransactionCancellationInitiatedEvent,
-        TransactionCategoryChangedEvent,
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
@@ -56,9 +56,9 @@ import Domain.Models
       ),
   )
 import Domain.Transaction.Events
-  ( TransactionCancellationCompleted,
+  ( TransactionAllocationsChanged,
+    TransactionCancellationCompleted,
     TransactionCancellationInitiated,
-    TransactionCategoryChanged,
     TransactionDateChanged,
     TransactionDescriptionChanged,
     TransactionLabelsSet,
@@ -105,7 +105,7 @@ data TransactionHistoryEntry
   | HistoryCompleted
   | HistoryFailed TransferFailed
   | HistoryLabelsSet TransactionLabelsSet
-  | HistoryCategoryChanged TransactionCategoryChanged
+  | HistoryAllocationsChanged TransactionAllocationsChanged
   | HistoryDescriptionChanged TransactionDescriptionChanged
   | HistoryDateChanged TransactionDateChanged
   | HistoryAmendmentInitiated TransferAmendmentInitiated
@@ -166,7 +166,7 @@ toHistoryEntry (StreamEvent _ _ _ payload) = case payload of
   TransferCompletedEvent _ -> Just HistoryCompleted
   TransferFailedEvent e -> Just (HistoryFailed e)
   TransactionLabelsSetEvent e -> Just (HistoryLabelsSet e)
-  TransactionCategoryChangedEvent e -> Just (HistoryCategoryChanged e)
+  TransactionAllocationsChangedEvent e -> Just (HistoryAllocationsChanged e)
   TransactionDescriptionChangedEvent e -> Just (HistoryDescriptionChanged e)
   TransactionDateChangedEvent e -> Just (HistoryDateChanged e)
   TransferAmendmentInitiatedEvent e -> Just (HistoryAmendmentInitiated e)

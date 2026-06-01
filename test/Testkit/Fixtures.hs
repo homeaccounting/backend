@@ -21,6 +21,8 @@ module Testkit.Fixtures
     seedDefaultAndRegister,
     MetadataFixture (..),
     setupMetadataFixture,
+    incomeAllocs,
+    expenseAllocs,
   )
 where
 
@@ -38,8 +40,11 @@ import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
+    Allocation (..),
+    Allocations,
     DictionaryEntryId,
     DictionaryId,
+    Money,
     UserId,
     defaultCash,
     unsafeMoney,
@@ -123,6 +128,18 @@ data MetadataFixture = MetadataFixture
     incomeCategory :: !DictionaryEntryId,
     expenseCategory :: !DictionaryEntryId
   }
+
+-- | Build a length-1 'NonEmpty' Allocation list from the fixture's
+-- income category at the given amount. Convenience used by service
+-- specs that pre-date the multi-category design and merely need a
+-- valid 'Allocations' to pass to 'initiateIncome'.
+incomeAllocs :: MetadataFixture -> Money -> Allocations
+incomeAllocs fx amt = Allocation fx.incomeCategory amt :| []
+
+-- | Same as 'incomeAllocs' but targeting the fixture's expense
+-- category — for use with 'initiateExpense'.
+expenseAllocs :: MetadataFixture -> Money -> Allocations
+expenseAllocs fx amt = Allocation fx.expenseCategory amt :| []
 
 -- | Seed the default configuration, register a user, then resolve the
 -- first income / expense category and create a Regular USD wallet.

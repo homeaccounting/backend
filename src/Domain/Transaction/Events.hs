@@ -13,7 +13,7 @@
 --   - TransferCompleted: A money transfer completed successfully
 --   - TransferFailed: A money transfer failed (e.g., insufficient funds)
 --   - TransactionLabelsSet: The label set on a completed transaction was replaced
---   - TransactionCategoryChanged: The category on a completed Income/Expense transaction was changed
+--   - TransactionAllocationsChanged: The allocation list on a completed Income/Expense transaction was replaced
 --   - TransactionDescriptionChanged: The free-text description on a completed transaction was edited
 --   - TransactionDateChanged: The business date on a completed transaction was edited
 --
@@ -28,7 +28,7 @@ module Domain.Transaction.Events
     TransferCompleted (..),
     TransferFailed (..),
     TransactionLabelsSet (..),
-    TransactionCategoryChanged (..),
+    TransactionAllocationsChanged (..),
     TransactionDescriptionChanged (..),
     TransactionDateChanged (..),
     TransferAmendmentInitiated (..),
@@ -41,12 +41,13 @@ where
 
 import Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
 import Data.Aeson.TH (defaultOptions, deriveJSON, deriveToJSON)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, CategoryId, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -63,7 +64,7 @@ transactionEvents =
     ''TransferCompleted,
     ''TransferFailed,
     ''TransactionLabelsSet,
-    ''TransactionCategoryChanged,
+    ''TransactionAllocationsChanged,
     ''TransactionDescriptionChanged,
     ''TransactionDateChanged,
     ''TransferAmendmentInitiated,
@@ -154,17 +155,22 @@ data TransactionLabelsSet = TransactionLabelsSet
   }
   deriving (Show, Eq)
 
--- | Event emitted when the category on a completed Income/Expense transaction
--- is changed.
+-- | Event emitted when the allocation list on a completed Income/Expense
+-- transaction is replaced.
 --
 -- Only applicable to transactions whose transferType is Income or Expense;
--- internal transfers have no category and the command handler rejects any
--- attempt to emit this event against them.
-data TransactionCategoryChanged = TransactionCategoryChanged
-  { -- | The transaction whose category changed.
+-- internal transfers have no allocations and the command handler rejects any
+-- attempt to emit this event against them. The event payload carries only
+-- the new allocations — the surrounding kind (Income / Expense) cannot
+-- change on this event, so the projection rebuilds the full 'TransferType'
+-- from existing state via 'replaceAllocations'.
+data TransactionAllocationsChanged = TransactionAllocationsChanged
+  { -- | The transaction whose allocations changed.
     transactionId :: TransactionId,
-    -- | The new category id.
-    newCategory :: CategoryId
+    -- | The new allocation list (non-empty). The kind (Income / Expense)
+    -- is preserved from the existing transaction; only the breakdown
+    -- changes here.
+    newAllocations :: Allocations
   }
   deriving (Show, Eq)
 
@@ -226,6 +232,23 @@ data TransferAmendmentInitiated = TransferAmendmentInitiated
 -- canonical posting facts move to the new values; the projection bumps
 -- @amendmentCount@. Replayed from saga state so the event is self-contained
 -- for read-model rebuilds.
+--
+-- The 'newAllocations' field is **handler-computed**, not user-supplied.
+-- The 'CompleteTransferAmendment' command (and the 'AmendTransfer' command
+-- upstream) deliberately do not accept allocations — amendment is a
+-- posting-facts-only edit. When the categorised amount changes
+-- ('newTargetAmount' for Income, 'newSourceAmount' for Expense), the
+-- command handler rescales the existing allocations proportionally via
+-- 'rescaleAllocations' (exact 'Rational' math) and emits the scaled
+-- result on this event. When the amount is unchanged, the field is the
+-- pre-amendment allocations verbatim. For 'Transfer' / 'Adjustment'
+-- (which have no allocations), the field is 'Nothing'.
+--
+-- Carrying only the post-amendment allocations (not a full 'TransferType')
+-- exploits the fact that amendment cannot change the kind — kind is
+-- structurally preserved by 'AccountType' invariants. Projections
+-- reconstruct the full 'TransferType' from existing state via
+-- 'replaceAllocations'.
 data TransferAmendmentCompleted = TransferAmendmentCompleted
   { -- | The transaction being amended.
     transactionId :: TransactionId,
@@ -239,6 +262,11 @@ data TransferAmendmentCompleted = TransferAmendmentCompleted
     newTargetAmount :: Money,
     -- | New exchange rate (Nothing if same-currency).
     newExchangeRate :: Maybe ExchangeRate,
+    -- | Handler-computed post-amendment allocations. 'Just' for
+    -- categorised existing kinds (Income / Expense) — allocations may
+    -- have been rescaled proportionally on amount change. 'Nothing'
+    -- for 'Transfer' / 'Adjustment' (no allocations to carry).
+    newAllocations :: Maybe Allocations,
     -- | User who amended the transfer.
     amendedBy :: UserId
   }
@@ -310,7 +338,7 @@ instance FromJSON TransferInitiated where
 deriveJSON defaultOptions ''TransferCompleted
 deriveJSON defaultOptions ''TransferFailed
 deriveJSON defaultOptions ''TransactionLabelsSet
-deriveJSON defaultOptions ''TransactionCategoryChanged
+deriveJSON defaultOptions ''TransactionAllocationsChanged
 deriveJSON defaultOptions ''TransactionDescriptionChanged
 deriveJSON defaultOptions ''TransactionDateChanged
 deriveJSON defaultOptions ''TransferAmendmentInitiated

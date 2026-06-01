@@ -47,12 +47,13 @@ where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransferType (..), UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
+import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransferType, UserId, mkAccountId, mkAllocation, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -184,6 +185,25 @@ deriveJSON defaultOptions ''Transaction
 --   - Zero amount (will be set by TransferInitiated)
 --   - Empty description (will be set by TransferInitiated)
 --   - Pending status (initial status)
+-- | Sentinel 'TransferType' used by 'transactionDefault'. Only observed
+-- before the first event is applied; 'TransferInitiated' overwrites the
+-- entire 'transferType' on the aggregate. The placeholder uses a unit
+-- USD amount because the smart constructor rejects zero or negative
+-- magnitudes.
+defaultTransferType :: TransferType
+defaultTransferType =
+  case mkIncome placeholderUnit (NE.singleton placeholderAlloc) of
+    Right tt -> tt
+    Left err -> error ("transactionDefault: mkIncome should never fail: " <> show err)
+  where
+    placeholderUnit = case mkDefaultMoney 1 of
+      Right m -> m
+      Left _ -> error "transactionDefault: mkDefaultMoney 1 should never fail"
+    placeholderAlloc =
+      case mkAllocation (unsafeDictionaryEntryId nil) placeholderUnit of
+        Right a -> a
+        Left err -> error ("transactionDefault: mkAllocation should never fail: " <> show err)
+
 transactionDefault :: Transaction
 transactionDefault =
   Transaction
@@ -204,7 +224,7 @@ transactionDefault =
       at = UTCTime (fromGregorian 1970 1 1) 0,
       status = Pending,
       initiatedBy = unsafeUserId nil,
-      transferType = Income (unsafeDictionaryEntryId nil),
+      transferType = defaultTransferType,
       labels = Set.empty,
       amendmentCount = 0,
       amendmentInProgress = False,
@@ -310,15 +330,12 @@ handleTransactionEvent transaction (TransactionLabelsSetTransactionEvent evt) =
   case transaction ^. #status of
     Completed -> transaction & #labels .~ evt.labels
     _ -> transaction
-handleTransactionEvent transaction (TransactionCategoryChangedTransactionEvent evt) =
-  -- Replace the category embedded in transferType. Unreachable against
-  -- Transfer because the command handler rejects such edits.
-  let newTransferType = case transaction ^. #transferType of
-        Income _ -> Income evt.newCategory
-        Expense _ -> Expense evt.newCategory
-        Transfer -> Transfer
-        Adjustment -> Adjustment
-   in transaction & #transferType .~ newTransferType
+handleTransactionEvent transaction (TransactionAllocationsChangedTransactionEvent evt) =
+  -- The event carries only the new allocations; the kind (Income /
+  -- Expense) is preserved structurally — the command handler rejects
+  -- the command against uncategorised aggregates. 'replaceAllocations'
+  -- rebuilds the full 'TransferType' from the existing kind.
+  transaction & #transferType .~ replaceAllocations evt.newAllocations (transaction ^. #transferType)
 handleTransactionEvent transaction (TransactionDescriptionChangedTransactionEvent evt) =
   -- Replace the description. The command handler enforces Completed-only;
   -- the projection itself is permissive.
@@ -334,24 +351,37 @@ handleTransactionEvent transaction (TransferAmendmentInitiatedTransactionEvent _
   transaction & #amendmentInProgress .~ True
 handleTransactionEvent transaction (TransferAmendmentCompletedTransactionEvent evt) =
   -- Replace canonical posting facts with the amended values; bump the
-  -- amendment count; clear the saga-in-progress flag. 'transferType' is
-  -- not amendable — it is a function of the source/target accounts'
-  -- types and is preserved by service-layer validation.
-  transaction
-    & #sourceAccountId
-    .~ evt.newSourceAccountId
-    & #targetAccountId
-    .~ evt.newTargetAccountId
-    & #sourceAmount
-    .~ evt.newSourceAmount
-    & #targetAmount
-    .~ evt.newTargetAmount
-    & #exchangeRate
-    .~ evt.newExchangeRate
-    & #amendmentCount
-    %~ (+ 1)
-    & #amendmentInProgress
-    .~ False
+  -- amendment count; clear the saga-in-progress flag.
+  --
+  -- The event carries the post-amendment allocations as a
+  -- handler-computed fact (see 'Domain.Transaction.CommandHandler' for
+  -- the 'CompleteTransferAmendment' arm). When the categorised amount
+  -- changed via amendment, the handler has already rescaled allocations
+  -- proportionally; otherwise the value equals the pre-amendment
+  -- allocations. For 'Transfer' / 'Adjustment' the field is 'Nothing'
+  -- and the 'transferType' passes through unchanged. Kind is preserved
+  -- structurally across amendment (a function of source/target
+  -- 'AccountType') so 'replaceAllocations' on the existing kind is safe.
+  let newTT = case evt.newAllocations of
+        Just allocs -> replaceAllocations allocs (transaction ^. #transferType)
+        Nothing -> transaction ^. #transferType
+   in transaction
+        & #sourceAccountId
+        .~ evt.newSourceAccountId
+        & #targetAccountId
+        .~ evt.newTargetAccountId
+        & #sourceAmount
+        .~ evt.newSourceAmount
+        & #targetAmount
+        .~ evt.newTargetAmount
+        & #exchangeRate
+        .~ evt.newExchangeRate
+        & #transferType
+        .~ newTT
+        & #amendmentCount
+        %~ (+ 1)
+        & #amendmentInProgress
+        .~ False
 handleTransactionEvent transaction (TransferAmendmentFailedTransactionEvent _evt) =
   -- Clear the in-progress flag. No canonical change on failure.
   transaction & #amendmentInProgress .~ False

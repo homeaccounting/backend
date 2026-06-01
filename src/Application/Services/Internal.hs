@@ -152,7 +152,7 @@ runConfigurationCmd translate enricher configId cmd = do
 --
 -- Takes an explicit translator so 'TransactionService.translateTransactionError'
 -- (which maps 'CannotEditUncompletedTransaction' and
--- 'CannotChangeCategoryOnUncategorizedTransaction' to dedicated 'DomainError' values)
+-- 'CannotSetAllocationsOnUncategorisedTransaction' to dedicated 'DomainError' values)
 -- stays local to its service.
 runTransactionCmd ::
   (CommandHandlerError TransactionError -> DomainError) ->

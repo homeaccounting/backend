@@ -90,8 +90,23 @@ data DomainError
     -- allowed state. The HTTP error code @TRANSACTION_NOT_COMPLETED@ is the
     -- snake-case form of that same condition.
     CannotEditUncompletedTransaction
-  | -- | Cannot change the category on a transaction with no category (Transfer or Adjustment).
-    CannotChangeCategoryOnUncategorizedTransaction
+  | -- | Smart-constructor / handler rejection: sum of allocation amounts
+    --   does not equal the categorised total.
+    AllocationsDoNotSumToTotal
+  | -- | An allocation's amount is zero or negative.
+    AllocationAmountNotPositive
+  | -- | An allocation's currency differs from the categorised side's currency.
+    AllocationCurrencyMismatch
+  | -- | 'SetTransactionAllocations' or 'AmendTransfer' issued with a
+    --   @newTransferType@ whose kind differs from the existing transaction's.
+    --   Recategorising across the kind boundary is a delete-and-repost
+    --   operation.
+    CannotChangeKindOfCategorisedTransaction
+  | -- | 'SetTransactionAllocations' issued against a Transfer or Adjustment,
+    --   which has no allocations to set.
+    CannotSetAllocationsOnUncategorisedTransaction
+  | -- | 'SetTransactionAllocations' issued against a non-Completed transaction.
+    TransactionMustBeCompletedForAllocationsEdit
   | -- | Edit (or backdated creation) would land in a closed period.
     --   @current@ is the user's @booksClosedThrough@; @attempted@ is the
     --   business date that triggered the rejection.
@@ -208,8 +223,18 @@ renderDomainError err = case err of
     "Cannot delete category " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
   CannotEditUncompletedTransaction ->
     "Transaction metadata can only be changed after the transfer has completed"
-  CannotChangeCategoryOnUncategorizedTransaction ->
-    "Category cannot be set on a Transfer or Adjustment"
+  AllocationsDoNotSumToTotal ->
+    "Sum of allocation amounts must equal the categorised amount"
+  AllocationAmountNotPositive ->
+    "Each allocation amount must be positive"
+  AllocationCurrencyMismatch ->
+    "All allocations must share the categorised currency"
+  CannotChangeKindOfCategorisedTransaction ->
+    "Cannot change Income/Expense/Transfer/Adjustment via allocation edit; delete and repost instead"
+  CannotSetAllocationsOnUncategorisedTransaction ->
+    "Transfer and Adjustment transactions have no allocations to set"
+  TransactionMustBeCompletedForAllocationsEdit ->
+    "Allocations can only be edited on Completed transactions"
   CannotEditClosedPeriod cur att ->
     "Cannot edit a transaction in a closed period: books closed through "
       <> iso8601 cur

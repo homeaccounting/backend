@@ -51,6 +51,7 @@ where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Ratio ((%))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -357,14 +358,83 @@ genEmail = do
 -- Transfer Category Generators
 -- -----------------------------------------------------------------------------
 
--- | Generate a valid TransferType.
+-- -----------------------------------------------------------------------------
+-- Allocation Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a single 'Allocation' with a strictly positive amount in
+-- a random currency. Matches the 'amount > 0' invariant enforced by
+-- the 'TransferType' smart constructors.
+instance Arbitrary Allocation where
+  arbitrary = Allocation <$> arbitrary <*> genPositiveMoney
+
+-- | Generate a list of allocations all sharing the given currency,
+-- partitioning the total amount across them. The last allocation
+-- absorbs the rounding residual so the sum equals 'total' exactly.
+--
+-- Returns 'Nothing' if 'total' is not strictly positive (would
+-- violate the per-allocation positivity invariant).
+genAllocationsSummingTo :: Money -> Gen (Maybe Allocations)
+genAllocationsSummingTo total
+  | not (moneyIsPositive total) = pure Nothing
+  | otherwise = do
+      n <- choose (1, 4 :: Int)
+      cids <- vectorOf n genDictionaryEntryId
+      -- Build n-1 random positive slices, then place the residual on the last.
+      let cur = moneyCurrency total
+          totalRat = unMoney total
+      pure (partitionMoneyExact totalRat cur cids)
+
+-- | Deterministic helper used by 'genAllocationsSummingTo' and by
+-- callers that already chose the category ids and the total.
+--
+-- For 'n' category ids, splits the total into 'n' equal slices (using
+-- the underlying 'Rational'), then bumps the last slice by the rounding
+-- residual. The result is 'Just' iff each resulting slice is strictly
+-- positive. (For 'total > 0' and 'n <= 4' this is always 'Just'.)
+partitionMoneyExact ::
+  Rational ->
+  Currency ->
+  [DictionaryEntryId] ->
+  Maybe Allocations
+partitionMoneyExact _ _ [] = Nothing
+partitionMoneyExact totalRat cur (c : cs)
+  | totalRat <= 0 = Nothing
+  | otherwise =
+      let n = 1 + length cs
+          slice = totalRat / fromIntegral n
+          residual = totalRat - slice * fromIntegral n
+          firstAlloc = Allocation c (unsafeMoney cur (slice + residual))
+          rest = fmap (\ci -> Allocation ci (unsafeMoney cur slice)) cs
+       in if slice > 0
+            then Just (firstAlloc :| rest)
+            else Nothing
+
+-- -----------------------------------------------------------------------------
+-- Transfer Type Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a valid TransferType. Income / Expense are constructed via
+-- their smart constructors with allocations that satisfy the invariants;
+-- generation falls back to Transfer / Adjustment if no positive amount
+-- could be produced.
 genTransferType :: Gen TransferType
 genTransferType =
   oneof
-    [ Income <$> genDictionaryEntryId,
-      Expense <$> genDictionaryEntryId,
-      pure Transfer
+    [ buildCategorised mkIncome,
+      buildCategorised mkExpense,
+      pure Transfer,
+      pure Adjustment
     ]
+  where
+    buildCategorised mk = do
+      total <- genPositiveMoney
+      mAllocs <- genAllocationsSummingTo total
+      case mAllocs of
+        Just allocs -> case mk total allocs of
+          Right tt -> pure tt
+          Left _ -> pure Transfer
+        Nothing -> pure Transfer
 
 instance Arbitrary TransferType where
   arbitrary = genTransferType

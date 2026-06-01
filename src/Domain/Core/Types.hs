@@ -102,6 +102,22 @@ module Domain.Core.Types
 
     -- * Transfer Types
     TransferType (..),
+    TransferKind (..),
+    kindOf,
+    mkIncome,
+    mkExpense,
+    allocationsOf,
+    categorisedAmount,
+    isCategorised,
+    validateAllocations,
+    sumAllocationsUnchecked,
+    allSameCurrency,
+    rescaleAllocations,
+    rescaleTransferType,
+    replaceAllocations,
+    Allocation (..),
+    mkAllocation,
+    Allocations,
 
     -- * OAuth Types
     OAuthProvider (..),
@@ -127,14 +143,17 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Time.Calendar (Day)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import Domain.Core.Errors (DomainError (..), mkValidationError)
 import GHC.Generics (Generic)
 import RIO (Display (..))
 
@@ -918,14 +937,72 @@ instance FromJSON AccountAccess
 -- Transfer Types
 -- -----------------------------------------------------------------------------
 
+-- | A single category slice of a transaction's categorised amount.
+--
+-- An 'Allocation' associates a portion of a transaction's total amount
+-- with a category. Allocations are the building blocks of multi-category
+-- splits: a 1000 UAH grocery purchase that is 200 UAH food and 800 UAH
+-- housekeeping has two Allocations summing to 1000 UAH.
+--
+-- Invariants (enforced by the smart constructors of 'TransferType' that
+-- wrap allocation lists):
+--
+--   * amount > 0 (strict positivity)
+--   * all allocations on one transaction share a 'Currency'
+--   * sum of amounts equals the categorised total of the transaction
+
+{-@
+data Allocation = Allocation
+  { categoryId :: CategoryId
+  , amount     :: {m : Money | (amount m) > 0}
+  }
+@-}
+data Allocation = Allocation
+  { categoryId :: CategoryId,
+    amount :: Money
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON Allocation
+
+instance FromJSON Allocation
+
+-- | Smart constructor for an 'Allocation'.
+--
+-- Enforces the per-allocation invariant @amount > 0@. Currency
+-- consistency and sum-equals-total invariants belong to the enclosing
+-- 'TransferType' and are checked by 'mkIncome' / 'mkExpense'.
+--
+-- >>> import Data.UUID (fromWords)
+-- >>> let c = unsafeDictionaryEntryId (fromWords 1 0 0 0)
+-- >>> let Right m = mkDefaultMoney 10
+-- >>> mkAllocation c m
+-- Right (Allocation {categoryId = ..., amount = Money {amount = 10 % 1, currency = USD}})
+mkAllocation :: CategoryId -> Money -> Either DomainError Allocation
+mkAllocation cid m
+  | unMoney m > 0 = Right (Allocation cid m)
+  | otherwise =
+      Left . ValidationErr $
+        mkValidationError
+          "amount"
+          "Allocation amount must be positive"
+          (T.pack (show (unMoney m)))
+
+-- | A non-empty list of allocations — the categorised side of an
+-- Income/Expense transaction.
+type Allocations = NonEmpty Allocation
+
 -- | Type of transfer operation.
 --
--- Income and Expense carry a CategoryId referencing the user's
--- configured category. Transfer (internal account-to-account) and
--- Adjustment (balance reconciliation) have no category.
+-- 'Income' and 'Expense' carry one or more 'Allocation's whose amounts
+-- sum to the transaction's categorised total. Construct via 'mkIncome'
+-- / 'mkExpense' smart constructors to ensure the invariants hold.
+--
+-- 'Transfer' (internal account-to-account) and 'Adjustment' (balance
+-- reconciliation) have no category side.
 data TransferType
-  = Income CategoryId
-  | Expense CategoryId
+  = Income Allocations
+  | Expense Allocations
   | Transfer
   | Adjustment
   deriving (Show, Eq, Generic)
@@ -933,6 +1010,181 @@ data TransferType
 instance ToJSON TransferType
 
 instance FromJSON TransferType
+
+-- | The kind of a 'TransferType', ignoring its payload. Used by command
+-- handlers to enforce kind-preservation across edits.
+data TransferKind = IncomeKind | ExpenseKind | TransferKind | AdjustmentKind
+  deriving (Show, Eq, Generic)
+
+instance ToJSON TransferKind
+
+instance FromJSON TransferKind
+
+-- | Project a 'TransferType' onto its 'TransferKind' (constructor tag).
+kindOf :: TransferType -> TransferKind
+kindOf (Income _) = IncomeKind
+kindOf (Expense _) = ExpenseKind
+kindOf Transfer = TransferKind
+kindOf Adjustment = AdjustmentKind
+
+-- | The allocations on a categorised 'TransferType', 'Nothing' otherwise.
+allocationsOf :: TransferType -> Maybe Allocations
+allocationsOf (Income xs) = Just xs
+allocationsOf (Expense xs) = Just xs
+allocationsOf Transfer = Nothing
+allocationsOf Adjustment = Nothing
+
+-- | Sum of allocation amounts (= categorised total) where defined.
+--   Uses 'sumAllocationsUnchecked' — safe here because allocations inside
+--   a 'TransferType' have already passed the smart-constructor currency
+--   check at construction time.
+categorisedAmount :: TransferType -> Maybe Money
+categorisedAmount = fmap sumAllocationsUnchecked . allocationsOf
+
+-- | True for Income / Expense; False for Transfer / Adjustment.
+isCategorised :: TransferType -> Bool
+isCategorised = isJust . allocationsOf
+
+-- | Sum of allocation amounts, assuming all share a currency.
+-- The caller must validate currency equality first (see 'validateAllocations').
+-- We fold the underlying 'Rational' so the helper is total — sidestepping
+-- 'addMoney's currency-mismatch 'Either'.
+
+{-@ reflect sumAllocationsUnchecked @-}
+sumAllocationsUnchecked :: Allocations -> Money
+sumAllocationsUnchecked xs =
+  Money
+    (sum (fmap (\a -> a.amount.amount) xs))
+    (NE.head xs).amount.currency
+
+-- | True when every allocation's currency equals the given currency.
+allSameCurrency :: Currency -> Allocations -> Bool
+allSameCurrency c = all (\a -> a.amount.currency == c)
+
+-- | Validate an allocation list against an expected categorised total.
+--
+-- Returns @Right ()@ when:
+--
+--   * every allocation amount is strictly positive
+--   * every allocation shares 'expectedTotal''s currency
+--   * the sum of allocation amounts equals 'expectedTotal'
+validateAllocations ::
+  Money ->
+  Allocations ->
+  Either DomainError ()
+validateAllocations expectedTotal allocs =
+  checkPositive *> checkCurrency *> checkSum
+  where
+    expectedCurrency :: Currency
+    expectedCurrency = expectedTotal.currency
+
+    checkPositive :: Either DomainError ()
+    checkPositive = case NE.filter (\a -> a.amount.amount <= 0) allocs of
+      [] -> Right ()
+      (bad : _) ->
+        Left . ValidationErr $
+          mkValidationError
+            "amount"
+            "Allocation amount must be positive"
+            (T.pack (show bad.amount.amount))
+
+    checkCurrency :: Either DomainError ()
+    checkCurrency =
+      case NE.filter (\a -> a.amount.currency /= expectedCurrency) allocs of
+        [] -> Right ()
+        (bad : _) ->
+          Left . ValidationErr $
+            mkValidationError
+              "currency"
+              "All allocations must share the categorised currency"
+              (T.pack (show bad.amount.currency))
+
+    checkSum :: Either DomainError ()
+    checkSum =
+      let s = sumAllocationsUnchecked allocs
+       in if s == expectedTotal
+            then Right ()
+            else
+              Left . ValidationErr $
+                mkValidationError
+                  "allocations"
+                  "Sum of allocations must equal categorised amount"
+                  (T.pack (show s.amount))
+
+-- | Rescale a non-empty allocation list so its sum equals @newTotal@,
+-- preserving the original ratio. Uses exact 'Rational' arithmetic.
+--
+-- Precondition: the existing allocations sum to @oldTotal@ and
+-- @oldTotal /= 0@. The helper is total — it does not re-check the
+-- precondition — because it is called from projections where the
+-- invariant is known to hold from the smart constructor at
+-- construction time.
+--
+-- The currency of each allocation is preserved (allocations within a
+-- 'TransferType' all share a currency by construction).
+rescaleAllocations ::
+  -- | Old categorised total (sum of existing allocations).
+  Money ->
+  -- | New categorised total.
+  Money ->
+  Allocations ->
+  Allocations
+rescaleAllocations oldTotal newTotal = fmap rescale
+  where
+    factor :: Rational
+    factor = newTotal.amount / oldTotal.amount
+
+    rescale :: Allocation -> Allocation
+    rescale a =
+      Allocation
+        { categoryId = a.categoryId,
+          amount = Money (a.amount.amount * factor) a.amount.currency
+        }
+
+-- | Apply 'rescaleAllocations' to the categorised side of a 'TransferType'.
+-- 'Transfer' and 'Adjustment' pass through unchanged.
+rescaleTransferType :: Money -> Money -> TransferType -> TransferType
+rescaleTransferType oldTotal newTotal tt = case tt of
+  Income xs -> Income (rescaleAllocations oldTotal newTotal xs)
+  Expense xs -> Expense (rescaleAllocations oldTotal newTotal xs)
+  Transfer -> Transfer
+  Adjustment -> Adjustment
+
+-- | Replace the allocations payload of a categorised 'TransferType'.
+--
+-- No-op on 'Transfer' / 'Adjustment' (their structure has no allocations).
+-- The new allocations must already satisfy the smart-constructor
+-- invariants for the surrounding kind (sum-equals-total, currency
+-- consistency, amount > 0); this helper does not re-validate.
+replaceAllocations :: Allocations -> TransferType -> TransferType
+replaceAllocations new tt = case tt of
+  Income _ -> Income new
+  Expense _ -> Expense new
+  Transfer -> Transfer
+  Adjustment -> Adjustment
+
+-- | Construct an Income 'TransferType'.
+--
+-- The categorised amount is the transaction's target-side amount
+-- (the side credited by the income). The allocations must:
+--
+--   * be non-empty (enforced by the 'NonEmpty' type)
+--   * each have @amount > 0@
+--   * all share the same 'Currency' as @categorisedAmount@
+--   * sum to @categorisedAmount@
+mkIncome :: Money -> Allocations -> Either DomainError TransferType
+mkIncome categorisedTotal allocs = do
+  validateAllocations categorisedTotal allocs
+  pure (Income allocs)
+
+-- | Construct an Expense 'TransferType'.
+--
+-- The categorised amount is the transaction's source-side amount
+-- (the side debited by the expense). Same invariants as 'mkIncome'.
+mkExpense :: Money -> Allocations -> Either DomainError TransferType
+mkExpense categorisedTotal allocs = do
+  validateAllocations categorisedTotal allocs
+  pure (Expense allocs)
 
 -- -----------------------------------------------------------------------------
 -- OAuth Types

@@ -4,19 +4,28 @@
 
 -- |
 -- Module      : Domain.Transaction.LabelsAndCategorySpec
--- Description : SetTransactionLabels / ChangeTransactionCategory command-handler rules.
+-- Description : SetTransactionLabels / SetTransactionAllocations command-handler rules.
 module Domain.Transaction.LabelsAndCategorySpec (spec) where
 
 import qualified Data.Set as Set
 import qualified Data.UUID as UUID
-import Domain.Core.Types (TransferType (..), unsafeDictionaryEntryId, unsafeTransactionId)
+import Domain.Core.Types
+  ( Allocation (..),
+    Allocations,
+    Currency (..),
+    DictionaryEntryId,
+    TransferType (..),
+    unsafeDictionaryEntryId,
+    unsafeMoney,
+    unsafeTransactionId,
+  )
 import Domain.Transaction.CommandHandler
   ( TransactionCommand (..),
     TransactionError (..),
     handleTransactionCommand,
   )
 import Domain.Transaction.Commands
-  ( ChangeTransactionCategory (..),
+  ( SetTransactionAllocations (..),
     SetTransactionLabels (..),
   )
 import Domain.Transaction.Projection
@@ -28,13 +37,25 @@ import Optics ((&), (.~))
 import RIO hiding ((&), (.~))
 import Test.Hspec
 
+incomeCat, expenseCat :: DictionaryEntryId
+incomeCat = unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)
+expenseCat = unsafeDictionaryEntryId (UUID.fromWords 2 0 0 0)
+
+-- | Length-1 allocation for an Income, totalling 100 USD.
+incomeAllocs :: Allocations
+incomeAllocs = Allocation incomeCat (unsafeMoney USD 100) :| []
+
+-- | Length-1 allocation for an Expense, totalling 100 USD.
+expenseAllocs :: Allocations
+expenseAllocs = Allocation expenseCat (unsafeMoney USD 100) :| []
+
 completedIncome :: Transaction
 completedIncome =
   transactionDefault
     & #status
     .~ Completed
     & #transferType
-    .~ Income (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0))
+    .~ Income incomeAllocs
 
 completedExpense :: Transaction
 completedExpense =
@@ -42,7 +63,7 @@ completedExpense =
     & #status
     .~ Completed
     & #transferType
-    .~ Expense (unsafeDictionaryEntryId (UUID.fromWords 2 0 0 0))
+    .~ Expense expenseAllocs
 
 completedTransfer :: Transaction
 completedTransfer =
@@ -86,43 +107,61 @@ spec = do
                 }
       handleTransactionCommand failed cmd `shouldBe` Left CannotEditUncompletedTransaction
 
-  describe "ChangeTransactionCategory" $ do
-    it "accepted on Income and emits TransactionCategoryChanged" $ do
-      let newId = unsafeDictionaryEntryId (UUID.fromWords 4 0 0 0)
+  describe "SetTransactionAllocations" $ do
+    it "accepted on Income with same kind + matching sum" $ do
+      let newCat = unsafeDictionaryEntryId (UUID.fromWords 4 0 0 0)
+          newAllocs = Allocation newCat (unsafeMoney USD 100) :| []
           cmd =
-            ChangeTransactionCategoryTransactionCommand
-              ChangeTransactionCategory
+            SetTransactionAllocationsTransactionCommand
+              SetTransactionAllocations
                 { transactionId = txId,
-                  newCategory = newId
+                  newAllocations = newAllocs
                 }
       handleTransactionCommand completedIncome cmd `shouldSatisfy` isRight
 
-    it "accepted on Expense" $ do
-      let newId = unsafeDictionaryEntryId (UUID.fromWords 5 0 0 0)
+    it "accepted on Expense with same kind + matching sum" $ do
+      let newCat = unsafeDictionaryEntryId (UUID.fromWords 5 0 0 0)
+          newAllocs = Allocation newCat (unsafeMoney USD 100) :| []
           cmd =
-            ChangeTransactionCategoryTransactionCommand
-              ChangeTransactionCategory
+            SetTransactionAllocationsTransactionCommand
+              SetTransactionAllocations
                 { transactionId = txId,
-                  newCategory = newId
+                  newAllocations = newAllocs
                 }
       handleTransactionCommand completedExpense cmd `shouldSatisfy` isRight
 
-    it "rejected on internal Transfer with CannotChangeCategoryOnUncategorizedTransaction" $ do
-      let cmd =
-            ChangeTransactionCategoryTransactionCommand
-              ChangeTransactionCategory
+    it "rejected on internal Transfer with CannotSetAllocationsOnUncategorisedTransaction" $ do
+      let newCat = unsafeDictionaryEntryId (UUID.fromWords 6 0 0 0)
+          newAllocs = Allocation newCat (unsafeMoney USD 100) :| []
+          cmd =
+            SetTransactionAllocationsTransactionCommand
+              SetTransactionAllocations
                 { transactionId = txId,
-                  newCategory = unsafeDictionaryEntryId (UUID.fromWords 6 0 0 0)
+                  newAllocations = newAllocs
                 }
       handleTransactionCommand completedTransfer cmd
-        `shouldBe` Left CannotChangeCategoryOnUncategorizedTransaction
+        `shouldBe` Left CannotSetAllocationsOnUncategorisedTransaction
+
+    it "rejected when allocations do not sum to the existing categorised total" $ do
+      let newCat = unsafeDictionaryEntryId (UUID.fromWords 8 0 0 0)
+          newAllocs = Allocation newCat (unsafeMoney USD 50) :| []
+          cmd =
+            SetTransactionAllocationsTransactionCommand
+              SetTransactionAllocations
+                { transactionId = txId,
+                  newAllocations = newAllocs
+                }
+      handleTransactionCommand completedIncome cmd
+        `shouldBe` Left AllocationsDoNotSumToTotal
 
     it "rejected in Pending state with CannotEditUncompletedTransaction" $ do
-      let cmd =
-            ChangeTransactionCategoryTransactionCommand
-              ChangeTransactionCategory
+      let newCat = unsafeDictionaryEntryId (UUID.fromWords 9 0 0 0)
+          newAllocs = Allocation newCat (unsafeMoney USD 100) :| []
+          cmd =
+            SetTransactionAllocationsTransactionCommand
+              SetTransactionAllocations
                 { transactionId = txId,
-                  newCategory = unsafeDictionaryEntryId (UUID.fromWords 7 0 0 0)
+                  newAllocations = newAllocs
                 }
       handleTransactionCommand pendingIncome cmd `shouldBe` Left CannotEditUncompletedTransaction
   where

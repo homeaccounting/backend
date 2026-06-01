@@ -34,10 +34,17 @@ module Testkit.Helpers
     -- * Utility Functions
     fromRight',
     fromLeft',
+
+    -- * Allocation Helpers
+    partitionMoney,
+    singletonAllocation,
+    singletonIncome,
+    singletonExpense,
   )
 where
 
 import qualified Data.ByteString as BS
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.UUID (UUID)
 import Domain.Core.Types
 import RIO
@@ -198,3 +205,64 @@ fromRight' (Left err) = error $ "fromRight' called on Left: " <> show err
 fromLeft' :: (Show b) => Either a b -> a
 fromLeft' (Left err) = err
 fromLeft' (Right val) = error $ "fromLeft' called on Right: " <> show val
+
+-- -----------------------------------------------------------------------------
+-- Allocation Helpers
+-- -----------------------------------------------------------------------------
+
+-- | Partition a 'Money' total into a 'NonEmpty' list of 'Allocation's,
+-- one per supplied 'CategoryId', that sum exactly to 'total' and all
+-- share its 'Currency'.
+--
+-- Splits the total into equal 'Rational' slices; the first allocation
+-- absorbs the rounding residual so the sum is exact. Behaviour is
+-- defined only when 'total' is strictly positive and the category list
+-- is non-empty — both are precondition of any valid 'TransferType'.
+--
+-- 'partitionMoney total (c :| [c1, c2])' produces three allocations
+-- assigned to 'c', 'c1', 'c2'. For non-positive 'total' the function
+-- raises 'error', so callers (typically property generators) must
+-- guard with 'moneyIsPositive' first.
+partitionMoney :: Money -> NonEmpty DictionaryEntryId -> Allocations
+partitionMoney total (c :| cs)
+  | not (moneyIsPositive total) =
+      error "partitionMoney: total must be strictly positive"
+  | otherwise =
+      let cur = moneyCurrency total
+          totalRat = unMoney total
+          n = 1 + length cs
+          slice = totalRat / fromIntegral n
+          residual = totalRat - slice * fromIntegral n
+          firstAlloc = Allocation c (unsafeMoney cur (slice + residual))
+          rest = fmap (\ci -> Allocation ci (unsafeMoney cur slice)) cs
+       in firstAlloc :| rest
+
+-- | Build a degenerate length-1 'NonEmpty Allocation' for a single
+-- category and amount. Useful in tests that pre-date the multi-category
+-- design and merely need any valid categorised 'TransferType'.
+--
+-- The amount is taken as-is — callers are responsible for ensuring it
+-- is strictly positive.
+singletonAllocation :: DictionaryEntryId -> Money -> Allocations
+singletonAllocation c m = Allocation c m :| []
+
+-- | Build an 'Income' 'TransferType' with a single allocation. The
+-- amount supplied IS the categorised total (degenerate length-1
+-- allocation), so the sum invariant is trivially satisfied.
+--
+-- Delegates to 'mkIncome' so test fixtures go through the same
+-- validation surface as production code; the call panics if the
+-- amount is not strictly positive.
+singletonIncome :: DictionaryEntryId -> Money -> TransferType
+singletonIncome c m =
+  case mkIncome m (singletonAllocation c m) of
+    Right tt -> tt
+    Left err -> error ("singletonIncome: " <> show err)
+
+-- | Build an 'Expense' 'TransferType' with a single allocation. Same
+-- semantics as 'singletonIncome'.
+singletonExpense :: DictionaryEntryId -> Money -> TransferType
+singletonExpense c m =
+  case mkExpense m (singletonAllocation c m) of
+    Right tt -> tt
+    Left err -> error ("singletonExpense: " <> show err)

@@ -5,21 +5,22 @@
 
 -- |
 -- Module      : Integration.TransactionCategoryIntegrationSpec
--- Description : End-to-end category-edit flows for transactions.
+-- Description : End-to-end allocation-edit flows for transactions.
 --
--- Walks the spec §6 "category edit" cases through the service layer
--- with in-memory event stores and the transfer process manager enabled:
+-- Walks the allocations-edit cases through the service layer with
+-- in-memory event stores and the transfer process manager enabled:
 --
--- 1.  Create an income categorised as @Salary@; switch the category to
---     a newly-added @Freelance@ entry and verify the read model.
--- 2.  Create an internal transfer; attempt to change its category →
---     'CannotChangeCategoryOnUncategorizedTransaction'.
+-- 1.  Create an income categorised under a starting category; switch
+--     the allocations to a freshly-added category and verify the read
+--     model.
+-- 2.  Create an internal transfer; attempt to set allocations on it →
+--     'CannotSetAllocationsOnUncategorisedTransaction'.
 -- 3.  Create an income and try to switch to a category id that is not
 --     in the income-category dictionary → 'CategoryNotFound'.
 --
 -- Driving through the service layer keeps the integration test focused
 -- on the cross-aggregate flow; the HTTP envelope is covered separately
--- by @Web.API.TransactionCategoryAPISpec@.
+-- by @Web.API.TransactionAllocationsAPISpec@.
 module Integration.TransactionCategoryIntegrationSpec (spec) where
 
 import qualified Application.ReadModels.Configuration as ConfigRM
@@ -39,8 +40,9 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
     DictionaryEntryId,
+    Money,
     TransactionId,
-    TransferType (..),
+    TransferType,
     UserId,
     unEntryName,
     unsafeDictionaryEntryId,
@@ -53,6 +55,7 @@ import RIO
 import qualified RIO.List as List
 import Test.Hspec
 import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
+import Testkit.Helpers (singletonAllocation, singletonIncome)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
@@ -72,9 +75,6 @@ setupHarness email = do
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
   accId <- createRegularAccount env uid "Wallet"
-  -- Use the first seeded income-category entry as the "starting"
-  -- category instead of adding one. Adding a new entry here would
-  -- race with any seed-default entry that happens to share the name.
   startingCategory <- firstDictionaryEntry env uid incomeCategoryDictId
   pure
     Harness
@@ -84,6 +84,9 @@ setupHarness email = do
         harnessSalaryCategory = startingCategory
       }
 
+seedAmount :: Money
+seedAmount = unsafeMoney Core.USD 100
+
 seedIncome :: Harness -> DictionaryEntryId -> IO TransactionId
 seedIncome h categoryId = do
   res <-
@@ -91,8 +94,8 @@ seedIncome h categoryId = do
       $ TransactionService.initiateIncome
         h.harnessUser
         h.harnessAccount
-        (unsafeMoney Core.USD 100)
-        categoryId
+        seedAmount
+        (singletonAllocation categoryId seedAmount)
         Set.empty
         "Paycheck"
         Nothing
@@ -149,9 +152,9 @@ unwrap ctx = \case
 -- -----------------------------------------------------------------------------
 
 spec :: Spec
-spec = describe "Integration / TransactionCategoryEdit" $ do
-  it "switches the category on a Completed Income transaction" $ do
-    h <- setupHarness "category-edit-happy@test.com"
+spec = describe "Integration / TransactionAllocationsEdit" $ do
+  it "switches the category on a Completed Income transaction via setTransactionAllocations" $ do
+    h <- setupHarness "alloc-edit-happy@test.com"
     -- Use a deliberately non-default name to avoid colliding with the
     -- seeded default entries.
     newCategoryId <-
@@ -164,41 +167,47 @@ spec = describe "Integration / TransactionCategoryEdit" $ do
 
     txId <- seedIncome h h.harnessSalaryCategory
     initial <- getTransferType h txId
-    initial `shouldBe` Income h.harnessSalaryCategory
+    initial `shouldBe` singletonIncome h.harnessSalaryCategory seedAmount
 
     result <-
       runAppM h.harnessEnv
-        $ TransactionService.changeTransactionCategory h.harnessUser txId newCategoryId
+        $ TransactionService.setTransactionAllocations
+          h.harnessUser
+          txId
+          (singletonAllocation newCategoryId seedAmount)
     result `shouldSatisfy` isRight
 
     updated <- getTransferType h txId
-    updated `shouldBe` Income newCategoryId
+    updated `shouldBe` singletonIncome newCategoryId seedAmount
 
-  it "refuses to change the category on an internal transfer" $ do
-    h <- setupHarness "category-edit-internal@test.com"
+  it "refuses to set allocations on an internal transfer" $ do
+    h <- setupHarness "alloc-edit-internal@test.com"
     txId <- seedInternalTransfer h
 
     result <-
       runAppM h.harnessEnv
-        $ TransactionService.changeTransactionCategory
+        $ TransactionService.setTransactionAllocations
           h.harnessUser
           txId
-          h.harnessSalaryCategory
+          (singletonAllocation h.harnessSalaryCategory (unsafeMoney Core.USD 10))
     case result of
-      Left CannotChangeCategoryOnUncategorizedTransaction -> pure ()
+      Left CannotSetAllocationsOnUncategorisedTransaction -> pure ()
       other ->
         expectationFailure
-          $ "expected CannotChangeCategoryOnUncategorizedTransaction, got: "
+          $ "expected CannotSetAllocationsOnUncategorisedTransaction, got: "
           <> show other
 
   it "rejects an unknown category id with CategoryNotFound" $ do
-    h <- setupHarness "category-edit-unknown@test.com"
+    h <- setupHarness "alloc-edit-unknown@test.com"
     txId <- seedIncome h h.harnessSalaryCategory
 
     alien <- unsafeDictionaryEntryId <$> UUID4.nextRandom
     result <-
       runAppM h.harnessEnv
-        $ TransactionService.changeTransactionCategory h.harnessUser txId alien
+        $ TransactionService.setTransactionAllocations
+          h.harnessUser
+          txId
+          (singletonAllocation alien seedAmount)
     case result of
       Left (CategoryNotFound _) -> pure ()
       other -> expectationFailure $ "expected CategoryNotFound, got: " <> show other

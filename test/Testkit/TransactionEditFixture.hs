@@ -23,6 +23,8 @@ module Testkit.TransactionEditFixture
     seedToken,
     seedIncomeTransaction,
     seedInternalTransfer,
+    addIncomeCategory,
+    addExpenseCategory,
     authHeaders,
     httpRequest,
     uuidText,
@@ -31,6 +33,7 @@ where
 
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
+    expenseCategoryDictId,
     incomeCategoryDictId,
     labelsDictId,
     seedDefaultConfiguration,
@@ -60,6 +63,7 @@ import qualified Network.Wai as Wai
 import Network.Wai.Test (SRequest (..), SResponse (..), defaultRequest, runSession, setPath, srequest)
 import RIO
 import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
+import Testkit.Helpers (singletonAllocation)
 import Web.Server (buildApplication)
 
 -- | Handles to the pre-seeded state a test needs to build requests.
@@ -103,6 +107,26 @@ addLabel env uid name = do
   res <- runAppM env $ addDictionaryEntry uid labelsDictId (unsafeEntryName name)
   unwrap ("addDictionaryEntry " <> show name) res
 
+-- | Add a fresh income-category entry to the seed user's dictionary and
+-- return its id. Used by specs that need to construct multi-allocation
+-- payloads without colliding with the default-seeded entry.
+addIncomeCategory :: Seed -> Text -> IO DictionaryEntryId
+addIncomeCategory seed name = do
+  res <-
+    runAppM seed.seedEnv
+      $ addDictionaryEntry seed.seedUserId incomeCategoryDictId (unsafeEntryName name)
+  unwrap ("addIncomeCategory " <> show name) res
+
+-- | Add a fresh expense-category entry to the seed user's dictionary
+-- and return its id. Parallel to 'addIncomeCategory' for specs that
+-- exercise the expense side of the allocations endpoint.
+addExpenseCategory :: Seed -> Text -> IO DictionaryEntryId
+addExpenseCategory seed name = do
+  res <-
+    runAppM seed.seedEnv
+      $ addDictionaryEntry seed.seedUserId expenseCategoryDictId (unsafeEntryName name)
+  unwrap ("addExpenseCategory " <> show name) res
+
 unwrap :: String -> Either DomainError a -> IO a
 unwrap ctx = \case
   Left err -> fail $ ctx <> " failed: " <> show err
@@ -130,7 +154,7 @@ seedIncomeTransaction seed labels = do
         seed.seedUserId
         seed.seedAccount
         (unsafeMoney Core.USD 25)
-        seed.seedCategory
+        (singletonAllocation seed.seedCategory (unsafeMoney Core.USD 25))
         labels
         "Seed"
         Nothing

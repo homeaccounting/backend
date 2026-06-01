@@ -26,6 +26,7 @@ module Telegram.Formatting
 where
 
 import Application.ReadModels.Transaction (TransactionData (..))
+import Data.Foldable (toList)
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -34,7 +35,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import Domain.Core.Types
-  ( Currency (..),
+  ( Allocation (..),
+    Currency (..),
     DictionaryEntryId,
     Money,
     TransactionId,
@@ -86,13 +88,19 @@ formatDate = T.pack . formatTime defaultTimeLocale "%Y-%m-%d %H:%M"
 formatTransactionLine :: Map DictionaryEntryId Text -> (TransactionId, TransactionData) -> Text
 formatTransactionLine entryNames (_txId, td) =
   let dateStr = formatDate td.date
-      withCategory kind catId =
-        case Map.lookup catId entryNames of
-          Just name -> kind <> " \xB7 " <> name
-          Nothing -> kind
+      formatAllocation a =
+        let amtText = formatMoney a.amount
+         in case Map.lookup a.categoryId entryNames of
+              Just name -> name <> ": " <> amtText
+              Nothing -> amtText
+      withAllocations kind allocs =
+        let parts = fmap formatAllocation (toList allocs)
+         in case parts of
+              [] -> kind
+              xs -> kind <> " \xB7 " <> T.intercalate ", " xs
       typeLabel = case td.transferType of
-        Income catId -> withCategory "Income" catId
-        Expense catId -> withCategory "Expense" catId
+        Income allocs -> withAllocations "Income" allocs
+        Expense allocs -> withAllocations "Expense" allocs
         Transfer -> "Transfer"
         Adjustment -> "Adjustment"
       amt = formatMoney td.sourceAmount <> " " <> showCurrency (moneyCurrency td.sourceAmount)

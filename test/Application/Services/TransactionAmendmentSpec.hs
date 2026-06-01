@@ -36,6 +36,7 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
     AccountType (..),
+    TransferType (..),
     UserId,
     defaultBankAccount,
     unMoney,
@@ -49,6 +50,8 @@ import Test.Hspec
 import Testkit.Fixtures
   ( MetadataFixture (..),
     createRegularAccount,
+    expenseAllocs,
+    incomeAllocs,
     setupMetadataFixture,
   )
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
@@ -122,7 +125,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 100)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 100))
             Set.empty
             "Seed"
             Nothing
@@ -142,7 +145,7 @@ spec = describe "TransactionService.amendTransfer" $ do
         Left err -> expectationFailure $ "expected Right, got: " <> show err
 
   describe "Happy path — amount only, increasing"
-    $ it "bumps amendmentCount and updates posting facts; preserves transferType"
+    $ it "bumps amendmentCount, updates posting facts, and rescales Income allocations"
     $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "amend-amount-up@test.com"
@@ -152,7 +155,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 100)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 100))
             Set.empty
             "Seed"
             Nothing
@@ -170,7 +173,9 @@ spec = describe "TransactionService.amendTransfer" $ do
           td.sourceAmount `shouldBe` unsafeMoney Core.USD 150
           td.targetAmount `shouldBe` unsafeMoney Core.USD 150
           td.amendmentCount `shouldBe` 1
-          td.transferType `shouldBe` original.transferType
+          -- The categorised side (target for Income) went from 100 -> 150,
+          -- so the single allocation is rescaled proportionally to 150 USD.
+          td.transferType `shouldBe` Income (incomeAllocs fx (unsafeMoney Core.USD 150))
         Left err -> expectationFailure $ "expected Right, got: " <> show err
 
   describe "Pure-handler rejection"
@@ -214,7 +219,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 100)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 100))
             Set.empty
             "Seed"
             Nothing
@@ -250,7 +255,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.expenseCategory
+            (expenseAllocs fx (unsafeMoney Core.USD 25))
             Set.empty
             "Coffee"
             Nothing
@@ -284,7 +289,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 100)
-            fx.incomeCategory
+            (incomeAllocs fx (unsafeMoney Core.USD 100))
             Set.empty
             "Backdated seed"
             (Just originalAt)

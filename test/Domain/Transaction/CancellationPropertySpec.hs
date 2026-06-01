@@ -29,6 +29,7 @@ import Domain.Core.Types
     TransactionId,
     TransferType (..),
     UserId,
+    allocationsOf,
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
@@ -67,6 +68,7 @@ import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
 import Testkit.Generators ()
+import Testkit.Helpers (singletonIncome)
 
 -- -----------------------------------------------------------------------------
 -- Fixtures
@@ -93,7 +95,7 @@ seedTgtAmt :: Money
 seedTgtAmt = unsafeMoney USD 100
 
 seedTransferType :: TransferType
-seedTransferType = Income (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0))
+seedTransferType = singletonIncome (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) seedTgtAmt
 
 seedBy :: UserId
 seedBy = unsafeUserId (UUID.fromWords 2 0 0 0)
@@ -262,6 +264,7 @@ genAmendmentCompletedEvt = do
           newSourceAmount = newSrcAmt,
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
+          newAllocations = allocationsOf seedTransferType,
           amendedBy = uid
         }
 

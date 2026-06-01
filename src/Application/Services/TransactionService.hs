@@ -31,7 +31,7 @@ module Application.Services.TransactionService
     getTransaction,
     listTransactions,
     setTransactionLabels,
-    changeTransactionCategory,
+    setTransactionAllocations,
     changeTransactionDescription,
     changeTransactionDate,
     amendTransfer,
@@ -55,11 +55,12 @@ import Application.Services.Internal
   ( getUserData,
     guardE,
     liftEitherWith,
-    liftMaybe,
     liftMaybeM,
     runTransactionCmd,
   )
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -70,6 +71,8 @@ import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
+    Allocation (..),
+    Allocations,
     CategoryId,
     Currency,
     DictionaryEntryId,
@@ -78,11 +81,15 @@ import Domain.Core.Types
     LabelId,
     Money,
     TransactionId,
+    TransferKind (..),
     TransferType (..),
     UserId,
     convert,
     exchangeRateValue,
+    kindOf,
     mkExchangeRate,
+    mkExpense,
+    mkIncome,
     mkTransactionId,
     moneyCurrency,
     unDictionaryEntryId,
@@ -99,10 +106,10 @@ import Domain.Transaction.CommandHandler
   ( TransactionCommand
       ( AmendTransferTransactionCommand,
         CancelTransactionTransactionCommand,
-        ChangeTransactionCategoryTransactionCommand,
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
         InitiateTransferTransactionCommand,
+        SetTransactionAllocationsTransactionCommand,
         SetTransactionLabelsTransactionCommand
       ),
     TransactionError,
@@ -111,10 +118,10 @@ import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
   ( AmendTransfer (..),
     CancelTransaction (..),
-    ChangeTransactionCategory (..),
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
     InitiateTransfer (..),
+    SetTransactionAllocations (..),
     SetTransactionLabels (..),
   )
 import Domain.Transaction.Events
@@ -222,12 +229,12 @@ initiateIncome ::
   UserId ->
   AccountId ->
   Money ->
-  CategoryId ->
+  Allocations ->
   Set LabelId ->
   Text ->
   Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount categoryEntryId labels description maybeTransferDate =
+initiateIncome userId targetAccountId amount allocations labels description maybeTransferDate =
   runExceptT $ do
     lift $ logInfo "Initiating income transfer..."
     now <- liftIO getCurrentTime
@@ -251,23 +258,27 @@ initiateIncome userId targetAccountId amount categoryEntryId labels description 
         (AccountRM.getAccount accountRM externalAccId)
     let srcCurrency = moneyCurrency sourceData.balance
         tgtCurrency = moneyCurrency targetData.balance
+    -- Validate each allocation references a known income category.
+    ExceptT (validateAllocationsAgainstDictionary userId IncomeKind allocations)
     -- Income: user provides amount in target (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency False Nothing
-          $ \date srcAmt tgtAmt rate ->
-            InitiateTransfer
-              { sourceAccountId = externalAccId,
-                targetAccountId = targetAccountId,
-                sourceAmount = srcAmt,
-                targetAmount = tgtAmt,
-                exchangeRate = rate,
-                description = description,
-                initiatedBy = userId,
-                at = date,
-                transferType = Income categoryEntryId,
-                externalTransactionId = Nothing,
-                labels = labels
-              }
+          $ \date srcAmt tgtAmt rate -> do
+            tt <- mkIncome tgtAmt allocations
+            Right
+              InitiateTransfer
+                { sourceAccountId = externalAccId,
+                  targetAccountId = targetAccountId,
+                  sourceAmount = srcAmt,
+                  targetAmount = tgtAmt,
+                  exchangeRate = rate,
+                  description = description,
+                  initiatedBy = userId,
+                  at = date,
+                  transferType = tt,
+                  externalTransactionId = Nothing,
+                  labels = labels
+                }
       )
 
 -- | Initiate an expense transfer (Regular -> External account).
@@ -279,12 +290,12 @@ initiateExpense ::
   UserId ->
   AccountId ->
   Money ->
-  CategoryId ->
+  Allocations ->
   Set LabelId ->
   Text ->
   Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount categoryEntryId labels description maybeTransferDate =
+initiateExpense userId sourceAccountId amount allocations labels description maybeTransferDate =
   runExceptT $ do
     lift $ logInfo "Initiating expense transfer..."
     now <- liftIO getCurrentTime
@@ -308,23 +319,27 @@ initiateExpense userId sourceAccountId amount categoryEntryId labels description
         (AccountRM.getAccount accountRM externalAccId)
     let srcCurrency = moneyCurrency sourceData.balance
         tgtCurrency = moneyCurrency targetData.balance
+    -- Validate each allocation references a known expense category.
+    ExceptT (validateAllocationsAgainstDictionary userId ExpenseKind allocations)
     -- Expense: user provides amount in source (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True Nothing
-          $ \date srcAmt tgtAmt rate ->
-            InitiateTransfer
-              { sourceAccountId = sourceAccountId,
-                targetAccountId = externalAccId,
-                sourceAmount = srcAmt,
-                targetAmount = tgtAmt,
-                exchangeRate = rate,
-                description = description,
-                initiatedBy = userId,
-                at = date,
-                transferType = Expense categoryEntryId,
-                externalTransactionId = Nothing,
-                labels = labels
-              }
+          $ \date srcAmt tgtAmt rate -> do
+            tt <- mkExpense srcAmt allocations
+            Right
+              InitiateTransfer
+                { sourceAccountId = sourceAccountId,
+                  targetAccountId = externalAccId,
+                  sourceAmount = srcAmt,
+                  targetAmount = tgtAmt,
+                  exchangeRate = rate,
+                  description = description,
+                  initiatedBy = userId,
+                  at = date,
+                  transferType = tt,
+                  externalTransactionId = Nothing,
+                  labels = labels
+                }
       )
 
 -- | Initiate an internal transfer (Regular -> Regular account).
@@ -372,19 +387,20 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount labels de
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate
           $ \date srcAmt tgtAmt rate ->
-            InitiateTransfer
-              { sourceAccountId = sourceAccountId,
-                targetAccountId = targetAccountId,
-                sourceAmount = srcAmt,
-                targetAmount = tgtAmt,
-                exchangeRate = rate,
-                description = description,
-                initiatedBy = userId,
-                at = date,
-                transferType = Transfer,
-                externalTransactionId = Nothing,
-                labels = labels
-              }
+            Right
+              InitiateTransfer
+                { sourceAccountId = sourceAccountId,
+                  targetAccountId = targetAccountId,
+                  sourceAmount = srcAmt,
+                  targetAmount = tgtAmt,
+                  exchangeRate = rate,
+                  description = description,
+                  initiatedBy = userId,
+                  at = date,
+                  transferType = Transfer,
+                  externalTransactionId = Nothing,
+                  labels = labels
+                }
       )
 
 -- | Replace the label set on an existing completed transaction.
@@ -416,34 +432,50 @@ setTransactionLabels userId transactionId labels = runExceptT $ do
             }
   ExceptT (dispatchEdit transactionId cmd)
 
--- | Change the category on an existing completed Income/Expense transaction.
+-- | Replace the allocation list on an existing completed Income/Expense
+-- transaction.
 --
--- Requires Editor+ access. Looks at the current 'TransferType' on the
--- read model to pick the dictionary (income / expense) against which the
--- new category id is validated. Internal transfers have no category and
--- are rejected.
-changeTransactionCategory ::
+-- Requires Editor+ access. Validates that:
+--
+--   * the existing 'TransferType' is Income or Expense — Transfer and
+--     Adjustment have no allocations and are rejected.
+--   * each allocation's category id exists in the dictionary appropriate
+--     to the existing kind (income / expense).
+--
+-- Sum-against-total, currency, and positivity invariants are enforced
+-- by the pure handler. The transaction's kind is structurally preserved
+-- by this signature — only allocations are passed in.
+setTransactionAllocations ::
   UserId ->
   TransactionId ->
-  CategoryId ->
+  Allocations ->
   AppM (Either DomainError TransactionData)
-changeTransactionCategory userId transactionId newCategory = runExceptT $ do
+setTransactionAllocations userId transactionId newAllocations = runExceptT $ do
   lift
     $ logInfo
-    $ "Changing category on "
+    $ "Setting allocations on "
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
   transaction <- ExceptT (ensureEditorAccess userId transactionId)
-  dictId <-
-    liftMaybe CannotChangeCategoryOnUncategorizedTransaction (pickCategoryDict transaction.transferType)
-  known <- ExceptT (categoryExists userId dictId newCategory)
-  guardE known (CategoryNotFound (tshow (unDictionaryEntryId newCategory)))
+  -- Existing TX must be Income/Expense; pick the matching dictionary
+  -- for the existing kind. Uncategorised aggregates are rejected up
+  -- front so we can validate each allocation's category id against
+  -- the right dictionary.
+  case pickCategoryDict transaction.transferType of
+    Nothing -> throwE CannotSetAllocationsOnUncategorisedTransaction
+    Just _ -> pure ()
+  ExceptT
+    ( validateAllocationsAgainstDictionary
+        userId
+        (kindOf transaction.transferType)
+        newAllocations
+    )
   let cmd =
-        ChangeTransactionCategoryTransactionCommand
-          ChangeTransactionCategory
+        SetTransactionAllocationsTransactionCommand
+          SetTransactionAllocations
             { transactionId = transactionId,
-              newCategory = newCategory
+              newAllocations = newAllocations
             }
   ExceptT (dispatchEdit transactionId cmd)
 
@@ -551,6 +583,12 @@ amendTransfer userId transactionId amendCmd = runExceptT $ do
         transaction.targetAccountId
         amendCmd.newTargetAccountId
     )
+  -- Kind is structurally preserved by 'validateAccountTypePreserved'
+  -- (the transferType is a function of source/target 'AccountType').
+  -- Allocations are not on the amendment surface — when the categorised
+  -- amount changes, the projection rescales existing allocations
+  -- proportionally; deliberate re-splits are done via
+  -- 'setTransactionAllocations'.
   if isIdentityAmend transaction amendCmd
     then pure transaction
     else
@@ -884,8 +922,16 @@ translateTransactionError ::
   DomainError
 translateTransactionError (CommandRejected TxCh.CannotEditUncompletedTransaction) =
   CannotEditUncompletedTransaction
-translateTransactionError (CommandRejected TxCh.CannotChangeCategoryOnUncategorizedTransaction) =
-  CannotChangeCategoryOnUncategorizedTransaction
+translateTransactionError (CommandRejected TxCh.CannotSetAllocationsOnUncategorisedTransaction) =
+  CannotSetAllocationsOnUncategorisedTransaction
+translateTransactionError (CommandRejected TxCh.CannotChangeKindOfCategorisedTransaction) =
+  CannotChangeKindOfCategorisedTransaction
+translateTransactionError (CommandRejected TxCh.AllocationsDoNotSumToTotal) =
+  AllocationsDoNotSumToTotal
+translateTransactionError (CommandRejected TxCh.AllocationAmountNotPositive) =
+  AllocationAmountNotPositive
+translateTransactionError (CommandRejected TxCh.AllocationCurrencyMismatch) =
+  AllocationCurrencyMismatch
 translateTransactionError (CommandRejected TxCh.AmendTransferToSameAccountPair) =
   CannotAmendToSameAccountPair
 translateTransactionError (CommandRejected TxCh.AmendTransferToZeroAmount) =
@@ -914,12 +960,36 @@ dictionaryEntryIds dictId cfg =
     Nothing -> Set.empty
 
 -- | Pick the dictionary id matching the current transfer type. Internal
--- transfers have no category and return 'Nothing'.
+-- transfers and adjustments have no category and return 'Nothing'.
 pickCategoryDict :: TransferType -> Maybe DictionaryId
-pickCategoryDict (Income _) = Just ConfigurationService.incomeCategoryDictId
-pickCategoryDict (Expense _) = Just ConfigurationService.expenseCategoryDictId
-pickCategoryDict Transfer = Nothing
-pickCategoryDict Adjustment = Nothing
+pickCategoryDict tt = pickCategoryDictForKind (kindOf tt)
+
+-- | Pick the dictionary id matching a 'TransferKind'.
+pickCategoryDictForKind :: TransferKind -> Maybe DictionaryId
+pickCategoryDictForKind IncomeKind = Just ConfigurationService.incomeCategoryDictId
+pickCategoryDictForKind ExpenseKind = Just ConfigurationService.expenseCategoryDictId
+pickCategoryDictForKind TransferKind = Nothing
+pickCategoryDictForKind AdjustmentKind = Nothing
+
+-- | Verify every allocation's 'categoryId' exists in the dictionary that
+-- matches the supplied 'TransferKind'. The handler enforces sum, currency
+-- and positivity invariants; this only covers the side that depends on
+-- user configuration. Caller is responsible for ensuring the kind is
+-- categorised (Income/Expense); other kinds short-circuit to 'Right ()'.
+validateAllocationsAgainstDictionary ::
+  UserId ->
+  TransferKind ->
+  Allocations ->
+  AppM (Either DomainError ())
+validateAllocationsAgainstDictionary userId kind allocs =
+  case pickCategoryDictForKind kind of
+    Nothing -> pure (Right ())
+    Just dictId -> runExceptT $ do
+      cfg <- ExceptT (ConfigurationService.getConfigurationForUser userId)
+      let known = dictionaryEntryIds dictId cfg
+      case filter (\a -> not (Set.member a.categoryId known)) (NE.toList allocs) of
+        [] -> pure ()
+        (bad : _) -> throwE (CategoryNotFound (tshow (unDictionaryEntryId bad.categoryId)))
 
 -- | Resolve cross-currency amounts and initiate a transfer.
 --
@@ -934,14 +1004,15 @@ resolveAndInitiate ::
   Currency ->
   Bool ->
   Maybe Rational ->
-  (UTCTime -> Money -> Money -> Maybe ExchangeRate -> InitiateTransfer) ->
+  (UTCTime -> Money -> Money -> Maybe ExchangeRate -> Either DomainError InitiateTransfer) ->
   AppM (Either DomainError (TransactionId, TransactionData))
 resolveAndInitiate maybeTransferDate now userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate mkCmd = runExceptT $ do
   let transferDate = fromMaybe now maybeTransferDate
       rateDay = utctDay transferDate
   (srcAmt, tgtAmt, rate) <-
     ExceptT (resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate rateDay)
-  ExceptT (initiateTransfer (mkCmd transferDate srcAmt tgtAmt rate))
+  cmd <- ExceptT (pure (mkCmd transferDate srcAmt tgtAmt rate))
+  ExceptT (initiateTransfer cmd)
 
 -- | Query the read model for a transaction and return the result.
 queryTransactionResult ::

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -40,7 +41,25 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import Domain.Core.Types (TransferType (..), unAccountId, unMoney)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
+import Domain.Core.Types
+  ( Allocation (..),
+    Allocations,
+    Currency,
+    Money,
+    TransferKind (..),
+    TransferType (..),
+    allSameCurrency,
+    allocationsOf,
+    categorisedAmount,
+    kindOf,
+    moneyCurrency,
+    rescaleAllocations,
+    sumAllocationsUnchecked,
+    unAccountId,
+    unMoney,
+  )
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
@@ -65,9 +84,18 @@ data TransactionError
   | -- | An edit command (labels, category, description, business date)
     -- was issued against a transaction whose status is not Completed.
     CannotEditUncompletedTransaction
-  | -- | ChangeTransactionCategory was issued against a Transfer or Adjustment,
-    -- which has no category to change.
-    CannotChangeCategoryOnUncategorizedTransaction
+  | -- | 'SetTransactionAllocations' issued against a Transfer or Adjustment,
+    -- which has no allocations to set.
+    CannotSetAllocationsOnUncategorisedTransaction
+  | -- | 'SetTransactionAllocations' / 'AmendTransfer' issued with a
+    -- @newTransferType@ whose kind differs from the existing transaction's.
+    CannotChangeKindOfCategorisedTransaction
+  | -- | Sum of allocation amounts does not equal the categorised total.
+    AllocationsDoNotSumToTotal
+  | -- | At least one allocation has a non-positive amount.
+    AllocationAmountNotPositive
+  | -- | An allocation's currency differs from the categorised side's.
+    AllocationCurrencyMismatch
   | -- | AmendTransfer payload referenced the same account on both legs.
     AmendTransferToSameAccountPair
   | -- | AmendTransfer payload carried a zero source or target amount.
@@ -157,7 +185,16 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
             else
               if unMoney sourceAmount <= 0 || unMoney targetAmount <= 0
                 then Left TransferAmountNotPositive
-                else
+                else do
+                  -- Categorised-side checks. Smart constructors should have
+                  -- run these, but we re-check defensively at the handler
+                  -- boundary because nothing prevents a caller from
+                  -- assembling a 'TransferType' directly.
+                  case transferType of
+                    Income allocs -> checkAllocationsAgainst targetAmount allocs
+                    Expense allocs -> checkAllocationsAgainst sourceAmount allocs
+                    Transfer -> Right ()
+                    Adjustment -> Right ()
                   Right
                     [ TransferInitiatedTransactionEvent
                         TransferInitiated
@@ -204,22 +241,30 @@ handleTransactionCommand transaction (SetTransactionLabelsTransactionCommand Set
               }
         ]
     _ -> Left CannotEditUncompletedTransaction
--- Handle ChangeTransactionCategory command
-handleTransactionCommand transaction (ChangeTransactionCategoryTransactionCommand ChangeTransactionCategory {..}) =
+-- Handle SetTransactionAllocations command
+--
+-- The command carries only the new allocation list; the surrounding
+-- kind (Income / Expense) is preserved from the existing transaction.
+-- Kind preservation is therefore structural — there is no incoming
+-- kind to compare with — so we only check that the existing
+-- transaction is categorised, then validate the allocations against
+-- the existing categorised total / currency / positivity.
+handleTransactionCommand transaction (SetTransactionAllocationsTransactionCommand SetTransactionAllocations {..}) =
   case transaction ^. #status of
     Completed ->
-      case transaction ^. #transferType of
-        Transfer -> Left CannotChangeCategoryOnUncategorizedTransaction
-        Adjustment -> Left CannotChangeCategoryOnUncategorizedTransaction
-        Income _ -> Right [evt]
-        Expense _ -> Right [evt]
-      where
-        evt =
-          TransactionCategoryChangedTransactionEvent
-            TransactionCategoryChanged
-              { transactionId = transactionId,
-                newCategory = newCategory
-              }
+      case allocationsOf (transaction ^. #transferType) of
+        Nothing ->
+          Left CannotSetAllocationsOnUncategorisedTransaction
+        Just existingAllocs -> do
+          let existingTotal = sumAllocationsUnchecked existingAllocs
+          checkAllocationsAgainst existingTotal newAllocations
+          Right
+            [ TransactionAllocationsChangedTransactionEvent
+                TransactionAllocationsChanged
+                  { transactionId = transactionId,
+                    newAllocations = newAllocations
+                  }
+            ]
     _ -> Left CannotEditUncompletedTransaction
 -- Handle ChangeTransactionDescription command
 handleTransactionCommand transaction (ChangeTransactionDescriptionTransactionCommand ChangeTransactionDescription {..}) =
@@ -270,22 +315,51 @@ handleTransactionCommand transaction (AmendTransferTransactionCommand AmendTrans
             ]
     _ -> Left CannotEditUncompletedTransaction
 -- Handle CompleteTransferAmendment command
+--
+-- The handler computes the post-amendment allocations once and emits
+-- them on the event. Projections apply 'evt.newAllocations' via
+-- 'replaceAllocations' on the existing kind. The command itself is
+-- lean (posting facts only); the scaled allocations are a
+-- handler-computed fact, not a user-amendable input.
+--
+-- For categorised existing kinds (Income / Expense) the field is
+-- 'Just' (rescaled when the categorised amount changed, verbatim
+-- otherwise). For 'Transfer' / 'Adjustment' the field is 'Nothing'.
 handleTransactionCommand transaction (CompleteTransferAmendmentTransactionCommand CompleteTransferAmendment {..}) =
   if not (transaction ^. #amendmentInProgress)
     then Left NoAmendmentInProgress
     else
-      Right
-        [ TransferAmendmentCompletedTransactionEvent
-            TransferAmendmentCompleted
-              { transactionId = transactionId,
-                newSourceAccountId = newSourceAccountId,
-                newTargetAccountId = newTargetAccountId,
-                newSourceAmount = newSourceAmount,
-                newTargetAmount = newTargetAmount,
-                newExchangeRate = newExchangeRate,
-                amendedBy = amendedBy
-              }
-        ]
+      let oldTransferType = transaction ^. #transferType
+          scaledAllocations :: Maybe Allocations
+          scaledAllocations = case (kindOf oldTransferType, allocationsOf oldTransferType) of
+            (IncomeKind, Just oldAllocs) ->
+              -- Income's categorised side = target amount.
+              let oldTotal = sumAllocationsUnchecked oldAllocs
+               in Just $
+                    if oldTotal /= newTargetAmount
+                      then rescaleAllocations oldTotal newTargetAmount oldAllocs
+                      else oldAllocs
+            (ExpenseKind, Just oldAllocs) ->
+              -- Expense's categorised side = source amount.
+              let oldTotal = sumAllocationsUnchecked oldAllocs
+               in Just $
+                    if oldTotal /= newSourceAmount
+                      then rescaleAllocations oldTotal newSourceAmount oldAllocs
+                      else oldAllocs
+            _ -> Nothing
+       in Right
+            [ TransferAmendmentCompletedTransactionEvent
+                TransferAmendmentCompleted
+                  { transactionId = transactionId,
+                    newSourceAccountId = newSourceAccountId,
+                    newTargetAccountId = newTargetAccountId,
+                    newSourceAmount = newSourceAmount,
+                    newTargetAmount = newTargetAmount,
+                    newExchangeRate = newExchangeRate,
+                    newAllocations = scaledAllocations,
+                    amendedBy = amendedBy
+                  }
+            ]
 -- Handle FailTransferAmendment command
 handleTransactionCommand transaction (FailTransferAmendmentTransactionCommand FailTransferAmendment {..}) =
   if not (transaction ^. #amendmentInProgress)
@@ -325,6 +399,40 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
                 cancelledBy = cancelledBy
               }
         ]
+
+-- -----------------------------------------------------------------------------
+-- Allocation invariants (handler-boundary)
+-- -----------------------------------------------------------------------------
+
+-- | Check that an allocation list is consistent with the expected total:
+-- currency equality, sum equality, and per-allocation positivity. Used by
+-- 'InitiateTransfer', 'SetTransactionAllocations', and 'AmendTransfer'
+-- handler arms as a defensive boundary check (the smart constructors in
+-- 'Domain.Core.Types' already enforce these — the re-check covers
+-- direct constructions bypassing them).
+checkAllocationsAgainst :: Money -> Allocations -> Either TransactionError ()
+checkAllocationsAgainst expected allocs =
+  checkCurrency *> checkSum *> checkPositive
+  where
+    expectedCurrency :: Currency
+    expectedCurrency = moneyCurrency expected
+
+    checkCurrency :: Either TransactionError ()
+    checkCurrency =
+      if allSameCurrency expectedCurrency allocs
+        then Right ()
+        else Left AllocationCurrencyMismatch
+
+    checkSum :: Either TransactionError ()
+    checkSum =
+      if sumAllocationsUnchecked allocs == expected
+        then Right ()
+        else Left AllocationsDoNotSumToTotal
+
+    checkPositive :: Either TransactionError ()
+    checkPositive = case NE.filter (\(Allocation _ m) -> unMoney m <= 0) allocs of
+      [] -> Right ()
+      _ -> Left AllocationAmountNotPositive
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

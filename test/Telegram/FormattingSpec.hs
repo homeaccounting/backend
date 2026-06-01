@@ -22,6 +22,7 @@ import Domain.Core.Types
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Telegram.Formatting (formatTransactionLine)
 import Test.Hspec
+import Testkit.Helpers (singletonExpense, singletonIncome)
 
 uuidFromInt :: Int -> UUID.UUID
 uuidFromInt n =
@@ -70,14 +71,22 @@ names =
       (kyivLabel, "kyiv")
     ]
 
+-- | Build an Expense TransferType whose single allocation carries the
+-- sample transaction's amount.
+expenseFor :: CategoryId -> TransferType
+expenseFor c = singletonExpense c (unsafeMoney USD 300)
+
+incomeFor :: CategoryId -> TransferType
+incomeFor c = singletonIncome c (unsafeMoney USD 300)
+
 spec :: Spec
 spec = describe "formatTransactionLine" $ do
   it "annotates Expense rows with the resolved category name" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 5), sampleTxn (Expense foodCat))
+    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 5), sampleTxn (expenseFor foodCat))
     line `shouldSatisfy` T.isInfixOf "Expense \x00B7 Food"
 
   it "annotates Income rows with the resolved category name" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 6), sampleTxn (Income salaryCat))
+    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 6), sampleTxn (incomeFor salaryCat))
     line `shouldSatisfy` T.isInfixOf "Income \x00B7 Salary"
 
   it "leaves Transfer rows unannotated" $ do
@@ -85,32 +94,34 @@ spec = describe "formatTransactionLine" $ do
     line `shouldSatisfy` T.isInfixOf "Transfer"
     line `shouldNotSatisfy` T.isInfixOf "\x00B7"
 
-  it "falls back to the bare type label when the category isn't in the map" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 8), sampleTxn (Expense orphanCat))
-    line `shouldSatisfy` T.isInfixOf "Expense  "
-    line `shouldNotSatisfy` T.isInfixOf "\x00B7"
+  it "renders the amount when the category isn't in the map" $ do
+    -- With allocations, an unresolved category still renders the amount
+    -- after the bullet separator (allocations always emit per-line money).
+    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 8), sampleTxn (expenseFor orphanCat))
+    line `shouldSatisfy` T.isInfixOf "Expense \x00B7"
+    line `shouldNotSatisfy` T.isInfixOf "Expense \x00B7 Food"
 
   it "omits the status marker for Completed rows" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 9), sampleTxn (Expense foodCat))
+    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 9), sampleTxn (expenseFor foodCat))
     line `shouldNotSatisfy` T.isInfixOf "[Completed]"
     line `shouldNotSatisfy` T.isInfixOf "["
 
   it "keeps the status marker for Pending rows" $ do
-    let txn = (sampleTxn (Expense foodCat)) {status = Pending}
+    let txn = (sampleTxn (expenseFor foodCat)) {status = Pending}
     let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 10), txn)
     line `shouldSatisfy` T.isInfixOf "[Pending]"
 
   it "keeps the status marker with reason for Failed rows" $ do
-    let txn = (sampleTxn (Expense foodCat)) {status = Failed "insufficient funds"}
+    let txn = (sampleTxn (expenseFor foodCat)) {status = Failed "insufficient funds"}
     let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 11), txn)
     line `shouldSatisfy` T.isInfixOf "[Failed: insufficient funds]"
 
   it "renders resolved labels as a comma-separated bracketed list" $ do
-    let txn = (sampleTxn (Expense foodCat)) {labels = Set.fromList [lunchLabel, kyivLabel]}
+    let txn = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [lunchLabel, kyivLabel]}
     let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 12), txn)
     line `shouldSatisfy` T.isInfixOf "[kyiv, lunch]"
 
   it "omits unresolved label ids and shows no marker when none resolve" $ do
-    let txn = (sampleTxn (Expense foodCat)) {labels = Set.fromList [orphanLabel]}
+    let txn = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [orphanLabel]}
     let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 13), txn)
     line `shouldNotSatisfy` T.isInfixOf "["

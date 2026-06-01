@@ -13,9 +13,11 @@ import qualified Data.Text as Text
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( TransactionId,
+  ( Currency (..),
+    TransactionId,
     TransferType (..),
     unsafeDictionaryEntryId,
+    unsafeMoney,
     unsafeTransactionId,
   )
 import Domain.Transaction.Events
@@ -35,6 +37,7 @@ import RIO hiding ((^.))
 import Test.Hspec
 import Test.QuickCheck
 import Testkit.Generators ()
+import Testkit.Helpers (singletonIncome)
 import Prelude (last)
 
 -- -----------------------------------------------------------------------------
@@ -56,7 +59,7 @@ seedInitiated =
         description = "seed",
         by = transactionDefault ^. #initiatedBy,
         at = UTCTime (fromGregorian 1970 1 1) 0,
-        transferType = Income (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)),
+        transferType = singletonIncome (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100),
         externalTransactionId = Nothing,
         labels = Set.empty
       }

@@ -471,17 +471,18 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
         userAmountIsSource
         Nothing
         $ \date srcAmt tgtAmt rate ->
-          InitiateTransfer
-            { sourceAccountId = sourceAccId,
-              targetAccountId = targetAccId,
-              sourceAmount = srcAmt,
-              targetAmount = tgtAmt,
-              exchangeRate = rate,
-              description = reason,
-              initiatedBy = userId,
-              at = date,
-              transferType = Adjustment,
-              externalTransactionId = Nothing,
-              labels = mempty
-            }
+          Right
+            InitiateTransfer
+              { sourceAccountId = sourceAccId,
+                targetAccountId = targetAccId,
+                sourceAmount = srcAmt,
+                targetAmount = tgtAmt,
+                exchangeRate = rate,
+                description = reason,
+                initiatedBy = userId,
+                at = date,
+                transferType = Adjustment,
+                externalTransactionId = Nothing,
+                labels = mempty
+              }
     )

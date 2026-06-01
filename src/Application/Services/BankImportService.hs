@@ -41,6 +41,7 @@ import qualified Application.Services.ConfigurationService as ConfigurationServi
 import qualified Application.Services.TransactionService as TransactionService
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Data.Aeson (ToJSON)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime)
@@ -56,6 +57,7 @@ import Domain.Core.Types
     TransferType (..),
     UserId,
     currencyFromNumericCode,
+    mkAllocation,
     mkMoney,
     unEntryName,
   )
@@ -360,19 +362,25 @@ commitImport provider userId userData localAccId tx money = do
       throwE err
     Right ok -> pure ok
   lift $ logCategoryResolution tx direction cfg categoryId resolution
-  let (sourceAccId, targetAccId, transferType) =
-        classifyEndpoints localAccId externalAccId direction categoryId
+  allocation <- case mkAllocation categoryId money of
+    Right a -> pure a
+    Left err -> do
+      lift $ logWarn $ "Allocation construction failed for tx " <> display tx.externalId <> ": " <> displayShow err
+      throwE err
+  let allocations = NE.singleton allocation
+      (sourceAccId, targetAccId, transferType) =
+        classifyEndpoints localAccId externalAccId direction allocations
       cmd = buildTransferCmd userId tx sourceAccId targetAccId money transferType
   (txId, _) <- ExceptT (TransactionService.initiateTransfer cmd)
   lift $ logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
   pure (Just txId)
   where
-    classifyEndpoints localAcc externalAcc dir categoryId =
+    classifyEndpoints localAcc externalAcc dir allocs =
       case dir of
         ClassifiedExpense ->
-          (localAcc, externalAcc, Expense categoryId)
+          (localAcc, externalAcc, Expense allocs)
         ClassifiedIncome ->
-          (externalAcc, localAcc, Income categoryId)
+          (externalAcc, localAcc, Income allocs)
 
     buildTransferCmd uid bankTx sourceAccId targetAccId m transferType =
       InitiateTransfer

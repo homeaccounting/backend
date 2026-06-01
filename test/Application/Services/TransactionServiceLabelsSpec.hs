@@ -11,11 +11,11 @@
 --
 --  * create endpoints validate the user-supplied label set against the
 --    user's @labels@ dictionary;
---  * 'setTransactionLabels' and 'changeTransactionCategory' enforce
+--  * 'setTransactionLabels' and 'setTransactionAllocations' enforce
 --    access, state, and dictionary membership before dispatching the
 --    corresponding aggregate command;
 --  * aggregate-level rejections (non-Completed state, internal-transfer
---    category edit) are translated into the public 'DomainError'
+--    allocations edit) are translated into the public 'DomainError'
 --    surface.
 module Application.Services.TransactionServiceLabelsSpec (spec) where
 
@@ -31,9 +31,9 @@ import Application.Services.ConfigurationService
     seedDefaultConfiguration,
   )
 import Application.Services.TransactionService
-  ( changeTransactionCategory,
-    initiateIncome,
+  ( initiateIncome,
     initiateInternalTransfer,
+    setTransactionAllocations,
     setTransactionLabels,
   )
 import qualified Data.Map.Strict as Map
@@ -45,7 +45,6 @@ import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     DictionaryEntryId,
-    TransferType (..),
     UserId,
     defaultCash,
     unsafeDictionaryEntryId,
@@ -56,6 +55,7 @@ import qualified Domain.Core.Types as Core (Currency (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
+import Testkit.Helpers (singletonAllocation, singletonIncome)
 import Testkit.InMemoryEventStore
   ( createTestAppEnv,
     createTestAppEnvWithProcessManager,
@@ -174,7 +174,7 @@ spec = describe "TransactionService / labels" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 100)
-            fx.incomeCategory
+            (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 100))
             (Set.fromList [fx.labelA, fx.labelB])
             "Paycheck"
             Nothing
@@ -194,7 +194,7 @@ spec = describe "TransactionService / labels" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 50)
-            fx.incomeCategory
+            (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 50))
             (Set.singleton alien)
             "Paycheck"
             Nothing
@@ -213,7 +213,7 @@ spec = describe "TransactionService / labels" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.incomeCategory
+            (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 25))
             (Set.singleton fx.labelA)
             "Initial"
             Nothing
@@ -274,7 +274,7 @@ spec = describe "TransactionService / labels" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 25)
-            fx.incomeCategory
+            (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 25))
             Set.empty
             "Seed"
             Nothing
@@ -300,7 +300,7 @@ spec = describe "TransactionService / labels" $ do
             owner.userId
             owner.regularAccountId
             (unsafeMoney Core.USD 25)
-            owner.incomeCategory
+            (singletonAllocation owner.incomeCategory (unsafeMoney Core.USD 25))
             Set.empty
             "Owner only"
             Nothing
@@ -316,10 +316,10 @@ spec = describe "TransactionService / labels" $ do
         Left (AccountError _) -> pure ()
         other -> expectationFailure $ "expected AccountError, got: " <> show other
 
-  describe "changeTransactionCategory" $ do
+  describe "setTransactionAllocations" $ do
     it "updates the category on a Completed Income transaction" $ do
       env <- createTestAppEnvWithProcessManager
-      fx <- setupFixture env "change-cat-income@test.com"
+      fx <- setupFixture env "set-alloc-income@test.com"
 
       -- A second income-category entry to switch to.
       bonusCategory <-
@@ -332,7 +332,7 @@ spec = describe "TransactionService / labels" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 10)
-            fx.incomeCategory
+            (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 10))
             Set.empty
             "Paycheck"
             Nothing
@@ -342,14 +342,17 @@ spec = describe "TransactionService / labels" $ do
 
       result <-
         runAppM env
-          $ changeTransactionCategory fx.userId txId bonusCategory
+          $ setTransactionAllocations
+            fx.userId
+            txId
+            (singletonAllocation bonusCategory (unsafeMoney Core.USD 10))
       case result of
-        Right td -> td.transferType `shouldBe` Income bonusCategory
+        Right td -> td.transferType `shouldBe` singletonIncome bonusCategory (unsafeMoney Core.USD 10)
         Left err -> expectationFailure $ "expected Right, got: " <> show err
 
-    it "refuses to change the category on an internal transfer" $ do
+    it "refuses to change the allocations on an internal transfer" $ do
       env <- createTestAppEnvWithProcessManager
-      fx <- setupFixture env "change-cat-internal@test.com"
+      fx <- setupFixture env "set-alloc-internal@test.com"
       accB <- createRegularAccount env fx.userId "Other"
 
       create <-
@@ -369,17 +372,20 @@ spec = describe "TransactionService / labels" $ do
 
       result <-
         runAppM env
-          $ changeTransactionCategory fx.userId txId fx.incomeCategory
+          $ setTransactionAllocations
+            fx.userId
+            txId
+            (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 10))
       case result of
-        Left CannotChangeCategoryOnUncategorizedTransaction -> pure ()
+        Left CannotSetAllocationsOnUncategorisedTransaction -> pure ()
         other ->
           expectationFailure
-            $ "expected CannotChangeCategoryOnUncategorizedTransaction, got: "
+            $ "expected CannotSetAllocationsOnUncategorisedTransaction, got: "
             <> show other
 
     it "rejects an unknown category id" $ do
       env <- createTestAppEnvWithProcessManager
-      fx <- setupFixture env "change-cat-unknown@test.com"
+      fx <- setupFixture env "set-alloc-unknown@test.com"
 
       create <-
         runAppM env
@@ -387,7 +393,7 @@ spec = describe "TransactionService / labels" $ do
             fx.userId
             fx.regularAccountId
             (unsafeMoney Core.USD 10)
-            fx.incomeCategory
+            (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 10))
             Set.empty
             "Paycheck"
             Nothing
@@ -398,7 +404,10 @@ spec = describe "TransactionService / labels" $ do
       alien <- unsafeDictionaryEntryId <$> UUID.nextRandom
       result <-
         runAppM env
-          $ changeTransactionCategory fx.userId txId alien
+          $ setTransactionAllocations
+            fx.userId
+            txId
+            (singletonAllocation alien (unsafeMoney Core.USD 10))
       case result of
         Left (CategoryNotFound _) -> pure ()
         other -> expectationFailure $ "expected CategoryNotFound, got: " <> show other

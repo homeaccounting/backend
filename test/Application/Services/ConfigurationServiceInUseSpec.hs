@@ -55,6 +55,7 @@ import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
 import Test.Hspec
 import Testkit.Fixtures (createRegularAccount)
+import Testkit.Helpers (singletonExpense, singletonIncome)
 import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
@@ -141,7 +142,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     _ <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "Spark")
 
     categoryId <- firstEntryId env userId "income-category"
-    seedTransaction env userId (Income categoryId) Set.empty
+    seedTransaction env userId (singletonIncome categoryId (unsafeMoney Core.USD 100)) Set.empty
 
     result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId categoryId
     case result of
@@ -160,8 +161,8 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
 
     -- Two transactions using the same label.
     categoryId <- firstEntryId env userId "expense-category"
-    seedTransaction env userId (Expense categoryId) (Set.singleton labelId)
-    seedTransaction env userId (Expense categoryId) (Set.singleton labelId)
+    seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId)
+    seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId)
 
     result <- runRIO env $ removeDictionaryEntry userId labelsDictId labelId
     case result of
@@ -197,7 +198,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     categoryId <- firstEntryId env userId "income-category"
     -- One real Income reference + several Adjustments that should be invisible
     -- to the category in-use scan.
-    seedTransaction env userId (Income categoryId) Set.empty
+    seedTransaction env userId (singletonIncome categoryId (unsafeMoney Core.USD 100)) Set.empty
     seedTransaction env userId Adjustment Set.empty
     seedTransaction env userId Adjustment Set.empty
     seedTransaction env userId Adjustment Set.empty

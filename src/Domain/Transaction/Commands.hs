@@ -28,7 +28,7 @@ module Domain.Transaction.Commands
     CompleteTransfer (..),
     FailTransfer (..),
     SetTransactionLabels (..),
-    ChangeTransactionCategory (..),
+    SetTransactionAllocations (..),
     ChangeTransactionDescription (..),
     ChangeTransactionDate (..),
     AmendTransfer (..),
@@ -40,10 +40,11 @@ module Domain.Transaction.Commands
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, CategoryId, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -60,7 +61,7 @@ transactionCommands =
     ''CompleteTransfer,
     ''FailTransfer,
     ''SetTransactionLabels,
-    ''ChangeTransactionCategory,
+    ''SetTransactionAllocations,
     ''ChangeTransactionDescription,
     ''ChangeTransactionDate,
     ''AmendTransfer,
@@ -176,22 +177,37 @@ data SetTransactionLabels = SetTransactionLabels
   }
   deriving (Show, Eq)
 
--- | Command to change the category on a completed Income/Expense transaction.
+-- | Command to set the allocation list on a completed Income/Expense transaction.
 --
--- Business Rules:
---  - Transaction must be in the Completed state.
---  - Transaction's transferType must be Income or Expense; internal
---    transfers have no category and the command is rejected.
---  - The new category id must exist in the income or expense dictionary
---    (validated at the service layer, not in the pure handler).
+-- Replaces the old single-category 'ChangeTransactionCategory': a fresh
+-- allocation list is supplied atomically. Single-category edits are the
+-- degenerate length-1 case. The transaction's kind is structurally
+-- preserved by this command's shape — it carries only allocations, not
+-- a full 'TransferType', so there is no incoming kind to conflict with
+-- the existing one.
+--
+-- Business Rules (enforced by the pure handler):
+--  * Transaction must be in the Completed state
+--    ('CannotEditUncompletedTransaction').
+--  * Existing 'transferType' must be Income or Expense
+--    ('CannotSetAllocationsOnUncategorisedTransaction').
+--  * Sum of @newAllocations@ must equal the existing categorised amount
+--    ('AllocationsDoNotSumToTotal').
+--  * Currency consistency: each allocation's currency equals the
+--    existing categorised currency ('AllocationCurrencyMismatch').
+--  * Each amount > 0 ('AllocationAmountNotPositive').
+--  * Service layer validates each 'CategoryId' exists in the user's
+--    dictionary for the matching kind.
 --
 -- Example:
--- >>> ChangeTransactionCategory txId newCategoryId
-data ChangeTransactionCategory = ChangeTransactionCategory
-  { -- | The transaction whose category is being changed.
+-- >>> SetTransactionAllocations txId (allocA :| [allocB])
+data SetTransactionAllocations = SetTransactionAllocations
+  { -- | The transaction whose allocations are being replaced.
     transactionId :: TransactionId,
-    -- | The new category id.
-    newCategory :: CategoryId
+    -- | The new allocation list. Sum must equal the existing categorised
+    -- total; each currency must match the existing categorised currency;
+    -- each amount must be > 0.
+    newAllocations :: Allocations
   }
   deriving (Show, Eq)
 
@@ -235,13 +251,18 @@ data ChangeTransactionDate = ChangeTransactionDate
 -- not started). Every @AmendTransfer@ that reaches the pure handler
 -- therefore represents a genuine amendment.
 --
--- The 'transferType' (and its embedded category id) is *not* amendable
--- — it is a function of the source/target accounts' types and is
--- preserved by construction (the service layer rejects payloads whose
--- new accounts have a different 'AccountType' from the originals). Use
--- 'ChangeTransactionCategory' to edit the category in place on
--- Income / Expense transactions; recategorising across the
--- internal/external boundary is a delete-and-repost operation.
+-- The transaction's *kind* (Income / Expense / Transfer / Adjustment)
+-- is structurally preserved by 'AccountType' invariants — the kind is a
+-- function of the source/target account types, so kind cannot change as
+-- long as account types are preserved on amendment. Only allocations
+-- and amounts may change within a kind. Recategorising across the kind
+-- boundary remains a delete-and-repost operation.
+--
+-- Allocations are NOT carried on this command: when the categorised
+-- amount changes, the projection deterministically rescales existing
+-- allocations by @newAmount / oldAmount@ (exact Rational math). A
+-- deliberate re-split of the categorised total is done via
+-- 'SetTransactionAllocations'.
 --
 -- Business Rules:
 --  - Transaction must be in the Completed state.
@@ -356,7 +377,7 @@ deriveJSON defaultOptions ''InitiateTransfer
 deriveJSON defaultOptions ''CompleteTransfer
 deriveJSON defaultOptions ''FailTransfer
 deriveJSON defaultOptions ''SetTransactionLabels
-deriveJSON defaultOptions ''ChangeTransactionCategory
+deriveJSON defaultOptions ''SetTransactionAllocations
 deriveJSON defaultOptions ''ChangeTransactionDescription
 deriveJSON defaultOptions ''ChangeTransactionDate
 deriveJSON defaultOptions ''AmendTransfer

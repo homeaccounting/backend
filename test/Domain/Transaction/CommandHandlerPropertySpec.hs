@@ -17,7 +17,8 @@
 --   - Validation: Business rules enforcement
 module Domain.Transaction.CommandHandlerPropertySpec (spec) where
 
-import Data.Either (fromRight, isLeft)
+import Data.Either (isLeft)
+import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian)
@@ -26,7 +27,7 @@ import Domain.Transaction
 import Domain.Transaction.CommandHandler
 import Eventium (latestProjection)
 import Optics ((^.))
-import RIO hiding ((^.))
+import RIO hiding (fromMaybe, (^.))
 import Test.Hspec
 import Test.QuickCheck
 import Testkit.Generators (genLabelSet)
@@ -42,6 +43,7 @@ spec = do
   determinismSpec
   stateMachineSpec
   validationSpec
+  allocationsSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -255,3 +257,82 @@ validationSpec = describe "Validation Properties" $ do
                 command = InitiateTransferTransactionCommand $ InitiateTransfer fromId2 toId2 amount2 amount2 Nothing "Second" testUserId mockTime Transfer Nothing Set.empty
                 result = handleTransactionCommand transaction command
              in isLeft result
+
+-- -----------------------------------------------------------------------------
+-- Allocation Invariant Properties
+-- -----------------------------------------------------------------------------
+
+-- | Build a Completed transaction whose 'transferType' is the supplied
+-- 'TransferType'. The source/target amounts are derived from the type's
+-- categorised total when defined (so the existing allocations sum equals
+-- the categorised side), and from a default mock amount otherwise.
+completedTxWithType :: AccountId -> AccountId -> TransferType -> Transaction
+completedTxWithType fromId toId tt =
+  let amt = fromMaybe (mockMoney 100) (categorisedAmount tt)
+   in applyEvents
+        [ TransferInitiatedTransactionEvent
+            $ TransferInitiated
+              { sourceAccountId = fromId,
+                targetAccountId = toId,
+                sourceAmount = amt,
+                targetAmount = amt,
+                exchangeRate = Nothing,
+                description = "Test",
+                by = testUserId,
+                at = mockTime,
+                transferType = tt,
+                externalTransactionId = Nothing,
+                labels = Set.empty
+              },
+          TransferCompletedTransactionEvent TransferCompleted
+        ]
+
+-- | A 'TransferType' that is Income or Expense (i.e. has allocations).
+newtype CategorisedTransferType = CategorisedTransferType {unCategorised :: TransferType}
+  deriving (Show)
+
+instance Arbitrary CategorisedTransferType where
+  arbitrary =
+    CategorisedTransferType
+      <$> ( arbitrary
+              `suchThat` (\tt -> kindOf tt == IncomeKind || kindOf tt == ExpenseKind)
+          )
+
+-- | A 'TransferType' that is uncategorised (Transfer or Adjustment).
+newtype UncategorisedTransferType = UncategorisedTransferType {unUncategorised :: TransferType}
+  deriving (Show)
+
+instance Arbitrary UncategorisedTransferType where
+  arbitrary = UncategorisedTransferType <$> elements [Transfer, Adjustment]
+
+allocationsSpec :: Spec
+allocationsSpec = describe "Allocation invariants" $ do
+  describe "SetTransactionAllocations" $ do
+    it "rejects when issued against an uncategorised transaction"
+      $ property
+      $ \(fromId :: AccountId)
+         (toId :: AccountId)
+         (UncategorisedTransferType existingType)
+         (CategorisedTransferType newType) ->
+          fromId /= toId ==>
+            let tx = completedTxWithType fromId toId existingType
+                txId = mockTransactionId (read "11111111-1111-1111-1111-111111111111")
+                newAllocs = case allocationsOf newType of
+                  Just xs -> xs
+                  Nothing -> error "CategorisedTransferType invariant violated"
+                cmd = SetTransactionAllocations txId newAllocs
+                result = handleTransactionCommand tx (SetTransactionAllocationsTransactionCommand cmd)
+             in result === Left CannotSetAllocationsOnUncategorisedTransaction
+
+-- The earlier "kind preservation" property was removed in the allocations
+-- tightening (2026-05-30): 'SetTransactionAllocations' now carries only
+-- a 'NonEmpty Allocation', so the surrounding kind is structurally
+-- preserved by the command shape — there is no incoming kind that could
+-- mismatch the existing one.
+--
+-- Kind-preservation and sum-against-new-amount tests for 'AmendTransfer'
+-- were removed in the earlier @newTransferType@ rollback: 'AmendTransfer'
+-- no longer carries allocations. Kind preservation is structurally
+-- enforced by 'AccountType' invariants at the service layer, and
+-- proportional rescaling of allocations on categorised-amount change is
+-- exercised by the projection tests.

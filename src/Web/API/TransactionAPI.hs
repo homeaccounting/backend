@@ -18,7 +18,7 @@
 --   POST   /api/transactions/expense           - Record an expense transaction
 --   POST   /api/transactions/transfer          - Initiate an internal transfer
 --   PUT    /api/transactions/:id/labels        - Replace label set
---   PUT    /api/transactions/:id/category      - Replace category
+--   PATCH  /api/transactions/:id/allocations   - Replace allocations
 --   PUT    /api/transactions/:id/description   - Replace description
 --   PUT    /api/transactions/:id/date          - Replace business date
 --   PUT    /api/transactions/:id/amendment     - Amend posting facts (saga)
@@ -47,7 +47,7 @@ module Web.API.TransactionAPI
     listTransactionsHandler,
     getTransactionHandler,
     setLabelsHandler,
-    changeCategoryHandler,
+    setAllocationsHandler,
     changeDescriptionHandler,
     changeDateHandler,
     amendTransferHandler,
@@ -56,14 +56,15 @@ module Web.API.TransactionAPI
   )
 where
 
-import Application.ReadModels.Transaction (mkTransactionQuery)
+import Application.ReadModels.Transaction (TransactionData (..), mkTransactionQuery)
 import Application.Services.TransactionHistoryService (TransactionHistory)
 import qualified Application.Services.TransactionHistoryService as TransactionHistoryService
 import qualified Application.Services.TransactionService as TransactionService
+import qualified Data.List.NonEmpty as NE
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (mkAccountId, mkDictionaryEntryId, mkTransactionId, parseCurrency)
+import Domain.Core.Types (mkAccountId, mkAllocation, mkTransactionId, parseCurrency)
 import Domain.Transaction.Commands (AmendTransfer (..))
 import Infrastructure.App (AppM)
 import RIO
@@ -72,12 +73,12 @@ import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types
   ( AmendTransactionRequest (..),
-    ChangeTransactionCategoryRequest (..),
     ChangeTransactionDateRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ExpenseRequest (..),
     IncomeRequest (..),
     InternalTransferRequest (..),
+    SetTransactionAllocationsRequest (..),
     SetTransactionLabelsRequest (..),
     TransactionListResponse (..),
     TransactionResponse,
@@ -139,14 +140,14 @@ type TransactionAPI =
       :> "labels"
       :> ReqBody '[JSON] SetTransactionLabelsRequest
       :> Put '[JSON] TransactionResponse
-    -- PUT /api/transactions/:id/category - Replace the category on a Completed Income/Expense.
+    -- PATCH /api/transactions/:id/allocations - Replace the allocations on a Completed Income/Expense.
     :<|> AuthProtect "jwt"
       :> "api"
       :> "transactions"
       :> Capture "id" UUID
-      :> "category"
-      :> ReqBody '[JSON] ChangeTransactionCategoryRequest
-      :> Put '[JSON] TransactionResponse
+      :> "allocations"
+      :> ReqBody '[JSON] SetTransactionAllocationsRequest
+      :> Patch '[JSON] TransactionResponse
     -- PUT /api/transactions/:id/description - Replace the description on a Completed transaction.
     :<|> AuthProtect "jwt"
       :> "api"
@@ -207,7 +208,7 @@ transactionServer =
     :<|> transferHandler
     :<|> listTransactionsHandler
     :<|> setLabelsHandler
-    :<|> changeCategoryHandler
+    :<|> setAllocationsHandler
     :<|> changeDescriptionHandler
     :<|> changeDateHandler
     :<|> amendTransferHandler
@@ -228,8 +229,12 @@ incomeHandler user request = do
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
   let money = toDomainMoney cur request.amount
+  allocation <- case mkAllocation categoryEntryId money of
+    Right a -> pure a
+    Left err -> throwDomainError err
+  let allocations = NE.singleton allocation
   labelSet <- validateField "labels" $ parseLabelIds request.labels
-  result <- TransactionService.initiateIncome userId accountId money categoryEntryId labelSet request.description request.date
+  result <- TransactionService.initiateIncome userId accountId money allocations labelSet request.description request.date
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -243,8 +248,12 @@ expenseHandler user request = do
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
   let money = toDomainMoney cur request.amount
+  allocation <- case mkAllocation categoryEntryId money of
+    Right a -> pure a
+    Left err -> throwDomainError err
+  let allocations = NE.singleton allocation
   labelSet <- validateField "labels" $ parseLabelIds request.labels
-  result <- TransactionService.initiateExpense userId accountId money categoryEntryId labelSet request.description request.date
+  result <- TransactionService.initiateExpense userId accountId money allocations labelSet request.description request.date
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -280,17 +289,21 @@ setLabelsHandler user rawId req = do
     Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err
 
--- | Handler for PUT /api/transactions/:id/category — replace the
--- category on an existing Completed Income\/Expense transaction.
-changeCategoryHandler ::
+-- | Handler for PATCH /api/transactions/:id/allocations — replace the
+-- allocations on an existing Completed Income\/Expense transaction.
+--
+-- The body carries only the new allocation list; the transaction's
+-- kind is structurally preserved. The service layer enforces
+-- per-category dictionary membership; the pure handler enforces
+-- sum-against-total, currency, and positivity invariants.
+setAllocationsHandler ::
   AuthenticatedUser ->
   UUID ->
-  ChangeTransactionCategoryRequest ->
+  SetTransactionAllocationsRequest ->
   AppM TransactionResponse
-changeCategoryHandler user rawId req = do
+setAllocationsHandler user rawId req = do
   transactionId <- validateField "id" $ mkTransactionId rawId
-  categoryId <- validateField "categoryId" $ mkDictionaryEntryId req.categoryId
-  result <- TransactionService.changeTransactionCategory user.userId transactionId categoryId
+  result <- TransactionService.setTransactionAllocations user.userId transactionId req.newAllocations
   case result of
     Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err

@@ -60,6 +60,7 @@ import RIO
 import qualified RIO.List as List
 import Test.Hspec
 import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
+import Testkit.Helpers (singletonAllocation)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
@@ -115,7 +116,7 @@ seedExpense h labels = do
         h.harnessUser
         h.harnessAccount
         (unsafeMoney Core.USD 25)
-        h.harnessExpenseCategory
+        (singletonAllocation h.harnessExpenseCategory (unsafeMoney Core.USD 25))
         labels
         "Groceries"
         Nothing

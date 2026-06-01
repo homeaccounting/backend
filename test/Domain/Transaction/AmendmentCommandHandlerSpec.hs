@@ -244,6 +244,7 @@ spec = do
                   transactionId = _,
                   newTargetAmount = _,
                   newExchangeRate = _,
+                  newAllocations = _,
                   amendedBy = _
                 }
             ] -> do

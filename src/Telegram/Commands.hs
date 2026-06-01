@@ -63,6 +63,7 @@ import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTele
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
 import qualified Application.Services.TransactionService as TransactionService
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import Data.Time (addUTCTime, getCurrentTime)
 import qualified Data.UUID as UUID
@@ -78,6 +79,7 @@ import Domain.Core.Types
     TelegramIdentity (..),
     UserId,
     defaultCash,
+    mkAllocation,
     mkDictionaryEntryId,
     mkMoney,
     moneyCurrency,
@@ -547,18 +549,23 @@ handleIncomeDescription botState telegramId chatId cat money description = do
           selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
-            Just (accountId, _name) -> do
-              result <- initiateIncome userId accountId money categoryEntryId Set.empty description Nothing
-              case result of
-                Left err -> do
-                  logError $ "Income failed: " <> displayShow err
-                  sendMsg chatId $ "Income recording failed: " <> tshow err
-                Right (_txId, txData) -> case txData.status of
-                  Failed failureReason -> do
-                    logError $ "Income transfer failed: " <> display failureReason
-                    sendMsg chatId $ "Income recording failed: " <> failureReason
-                  _ ->
-                    sendMsg chatId $ "Income recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
+            Just (accountId, _name) -> case mkAllocation categoryEntryId money of
+              Left allocErr -> do
+                logError $ "Income failed (invalid allocation): " <> displayShow allocErr
+                sendMsg chatId $ "Income recording failed: " <> tshow allocErr
+              Right alloc -> do
+                let allocations = NE.singleton alloc
+                result <- initiateIncome userId accountId money allocations Set.empty description Nothing
+                case result of
+                  Left err -> do
+                    logError $ "Income failed: " <> displayShow err
+                    sendMsg chatId $ "Income recording failed: " <> tshow err
+                  Right (_txId, txData) -> case txData.status of
+                    Failed failureReason -> do
+                      logError $ "Income transfer failed: " <> display failureReason
+                      sendMsg chatId $ "Income recording failed: " <> failureReason
+                    _ ->
+                      sendMsg chatId $ "Income recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
 
 -- -----------------------------------------------------------------------------
 -- Expense Flow Handlers
@@ -615,18 +622,23 @@ handleExpenseDescription botState telegramId chatId cat money description = do
           selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
-            Just (accountId, _name) -> do
-              result <- initiateExpense userId accountId money categoryEntryId Set.empty description Nothing
-              case result of
-                Left err -> do
-                  logError $ "Expense failed: " <> displayShow err
-                  sendMsg chatId $ "Expense recording failed: " <> tshow err
-                Right (_txId, txData) -> case txData.status of
-                  Failed failureReason -> do
-                    logError $ "Expense transfer failed: " <> display failureReason
-                    sendMsg chatId $ "Expense recording failed: " <> failureReason
-                  _ ->
-                    sendMsg chatId $ "Expense recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
+            Just (accountId, _name) -> case mkAllocation categoryEntryId money of
+              Left allocErr -> do
+                logError $ "Expense failed (invalid allocation): " <> displayShow allocErr
+                sendMsg chatId $ "Expense recording failed: " <> tshow allocErr
+              Right alloc -> do
+                let allocations = NE.singleton alloc
+                result <- initiateExpense userId accountId money allocations Set.empty description Nothing
+                case result of
+                  Left err -> do
+                    logError $ "Expense failed: " <> displayShow err
+                    sendMsg chatId $ "Expense recording failed: " <> tshow err
+                  Right (_txId, txData) -> case txData.status of
+                    Failed failureReason -> do
+                      logError $ "Expense transfer failed: " <> display failureReason
+                      sendMsg chatId $ "Expense recording failed: " <> failureReason
+                    _ ->
+                      sendMsg chatId $ "Expense recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
 
 -- -----------------------------------------------------------------------------
 -- Transfer Flow Handlers
