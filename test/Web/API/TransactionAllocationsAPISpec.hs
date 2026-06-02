@@ -49,8 +49,8 @@ import Testkit.TransactionEditFixture
     httpRequest,
     mkSeed,
     seedIncomeTransaction,
-    seedInternalTransfer,
     seedToken,
+    seedTransfer,
     uuidText,
   )
 import Web.Types (ErrorResponse (..), TransactionResponse (..))
@@ -83,7 +83,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       case eitherDecode (simpleBody resp) :: Either String TransactionResponse of
         Left err -> expectationFailure $ "patch decode failed: " <> err
         Right tr -> do
-          tr.transferType `shouldBe` "income"
+          tr.transactionType `shouldBe` "income"
           -- The transitional 'category' field carries the head allocation's
           -- category uuid; the full allocation list will be re-introduced
           -- when the response shape is widened.
@@ -96,7 +96,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       case eitherDecode (simpleBody getResp) :: Either String TransactionResponse of
         Left err -> expectationFailure $ "get decode failed: " <> err
         Right tr -> do
-          tr.transferType `shouldBe` "income"
+          tr.transactionType `shouldBe` "income"
           tr.category `shouldBe` Just (uuidText (unDictionaryEntryId seed.seedCategory))
 
     it "returns 400 ALLOCATIONS_DO_NOT_SUM_TO_TOTAL on a sum mismatch" $ do
@@ -120,7 +120,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
     it "returns 400 CANNOT_SET_ALLOCATIONS_ON_UNCATEGORISED_TRANSACTION on an internal transfer" $ do
       seed <- mkSeed createTestAppEnvWithProcessManager "alloc-on-transfer@test.com"
       token <- seedToken seed
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       let bad =
             Allocation seed.seedCategory (unsafeMoney USD 10) :| []
       let path =

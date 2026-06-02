@@ -40,7 +40,7 @@ import Domain.Core.Types
     DictionaryEntryId,
     Money,
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     moneyCurrency,
     unMoney,
   )
@@ -98,7 +98,7 @@ formatTransactionLine entryNames (_txId, td) =
          in case parts of
               [] -> kind
               xs -> kind <> " \xB7 " <> T.intercalate ", " xs
-      typeLabel = case td.transferType of
+      typeLabel = case td.transactionType of
         Income allocs -> withAllocations "Income" allocs
         Expense allocs -> withAllocations "Expense" allocs
         Transfer -> "Transfer"

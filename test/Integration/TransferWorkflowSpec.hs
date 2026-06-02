@@ -53,7 +53,7 @@ import Domain.Core.Types
     AccountType (..),
     Currency (..),
     DictionaryEntryId,
-    TransferType (..),
+    TransactionType (..),
     defaultCash,
     unsafeAccountId,
     unsafeDictionaryEntryId,
@@ -64,11 +64,11 @@ import Domain.Core.Types
   )
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
-      ( CompleteTransferTransactionCommand,
-        InitiateTransferTransactionCommand
+      ( CompleteTransactionPostingTransactionCommand,
+        InitiateTransactionTransactionCommand
       ),
   )
-import Domain.Transaction.Commands (CompleteTransfer (..), InitiateTransfer (..))
+import Domain.Transaction.Commands (CompleteTransactionPosting (..), InitiateTransaction (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
@@ -169,8 +169,8 @@ setupRegularAccountsWithPM = do
 
 -- | Initiate and complete a transfer between two accounts.
 --
--- Simulates the full transfer workflow by issuing InitiateTransfer
--- followed by CompleteTransfer (mimicking the process manager behavior).
+-- Simulates the full transfer workflow by issuing InitiateTransaction
+-- followed by CompleteTransactionPosting (mimicking the process manager behavior).
 --
 -- Returns the transaction UUID.
 initiateAndCompleteTransfer ::
@@ -190,8 +190,8 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
   -- Step 1: Initiate the transfer
   _ <-
     applyTransactionCommand writer reader id txUuid
-      $ InitiateTransferTransactionCommand
-        InitiateTransfer
+      $ InitiateTransactionTransactionCommand
+        InitiateTransaction
           { sourceAccountId = unsafeAccountId fromUuid,
             targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney USD amt,
@@ -200,15 +200,15 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
             at = mockTime,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
           }
 
-  -- Step 2: Complete the transfer (simulates TransferManager behavior)
+  -- Step 2: Complete the transfer (simulates TransactionPostingManager behavior)
   _ <-
     applyTransactionCommand writer reader id txUuid
-      $ CompleteTransferTransactionCommand CompleteTransfer
+      $ CompleteTransactionPostingTransactionCommand CompleteTransactionPosting
 
   return txUuid
 
@@ -230,8 +230,8 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
 
   _ <-
     applyTransactionCommand writer reader id txUuid
-      $ InitiateTransferTransactionCommand
-        InitiateTransfer
+      $ InitiateTransactionTransactionCommand
+        InitiateTransaction
           { sourceAccountId = unsafeAccountId fromUuid,
             targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney USD amt,
@@ -240,7 +240,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
             at = mockTime,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
           }
@@ -502,10 +502,10 @@ authorizationSpec =
 processManagerDrivenSpec :: Spec
 processManagerDrivenSpec =
   describe "Process Manager Driven (full saga)" $ do
-    it "auto-completes transfer when only InitiateTransfer is issued" $ do
+    it "auto-completes transfer when only InitiateTransaction is issued" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
 
-      -- Only issue InitiateTransfer - the PM should auto-complete
+      -- Only issue InitiateTransaction - the PM should auto-complete
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 200 "PM test transfer"
 
       -- Verify transaction reached Completed status
@@ -683,8 +683,8 @@ categorizedTransferSpec =
       txUuid <- UUID.nextRandom
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransferTransactionCommand
-            InitiateTransfer
+          $ InitiateTransactionTransactionCommand
+            InitiateTransaction
               { sourceAccountId = unsafeAccountId extUuid,
                 targetAccountId = unsafeAccountId regUuid,
                 sourceAmount = unsafeMoney USD 3000,
@@ -693,7 +693,7 @@ categorizedTransferSpec =
                 description = "Monthly salary",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transferType = singletonIncome testSalaryCatId (unsafeMoney USD 3000),
+                transactionType = singletonIncome testSalaryCatId (unsafeMoney USD 3000),
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
@@ -704,7 +704,7 @@ categorizedTransferSpec =
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` singletonIncome testSalaryCatId (unsafeMoney USD 3000)
+          txData.transactionType `shouldBe` singletonIncome testSalaryCatId (unsafeMoney USD 3000)
           txData.status `shouldBe` Completed
 
       -- Verify account balances
@@ -758,8 +758,8 @@ categorizedTransferSpec =
       txUuid <- UUID.nextRandom
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransferTransactionCommand
-            InitiateTransfer
+          $ InitiateTransactionTransactionCommand
+            InitiateTransaction
               { sourceAccountId = unsafeAccountId regUuid,
                 targetAccountId = unsafeAccountId extUuid,
                 sourceAmount = unsafeMoney USD 150,
@@ -768,7 +768,7 @@ categorizedTransferSpec =
                 description = "Grocery shopping",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transferType = singletonExpense testFoodCatId (unsafeMoney USD 150),
+                transactionType = singletonExpense testFoodCatId (unsafeMoney USD 150),
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
@@ -779,7 +779,7 @@ categorizedTransferSpec =
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` singletonExpense testFoodCatId (unsafeMoney USD 150)
+          txData.transactionType `shouldBe` singletonExpense testFoodCatId (unsafeMoney USD 150)
           txData.status `shouldBe` Completed
 
       -- Verify account balances
@@ -805,8 +805,8 @@ categorizedTransferSpec =
           reader = env.eventStoreReader
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransferTransactionCommand
-            InitiateTransfer
+          $ InitiateTransactionTransactionCommand
+            InitiateTransaction
               { sourceAccountId = unsafeAccountId acct1Uuid,
                 targetAccountId = unsafeAccountId acct2Uuid,
                 sourceAmount = unsafeMoney USD 300,
@@ -815,7 +815,7 @@ categorizedTransferSpec =
                 description = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transferType = Transfer,
+                transactionType = Transfer,
                 externalTransactionId = Nothing,
                 labels = Set.empty
               }
@@ -826,7 +826,7 @@ categorizedTransferSpec =
       case maybeTx of
         Nothing -> expectationFailure "Internal transfer not found in read model"
         Just txData -> do
-          txData.transferType `shouldBe` Transfer
+          txData.transactionType `shouldBe` Transfer
           txData.status `shouldBe` Completed
 
     it "completes transfer carrying labels and externalTransactionId end-to-end" $ do
@@ -841,8 +841,8 @@ categorizedTransferSpec =
           expectedLabels = Set.fromList [lbl1, lbl2]
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransferTransactionCommand
-            InitiateTransfer
+          $ InitiateTransactionTransactionCommand
+            InitiateTransaction
               { sourceAccountId = unsafeAccountId acct1Uuid,
                 targetAccountId = unsafeAccountId acct2Uuid,
                 sourceAmount = unsafeMoney USD 150,
@@ -851,7 +851,7 @@ categorizedTransferSpec =
                 description = "Bank-sourced transfer",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transferType = Transfer,
+                transactionType = Transfer,
                 externalTransactionId = Just extTxId,
                 labels = expectedLabels
               }

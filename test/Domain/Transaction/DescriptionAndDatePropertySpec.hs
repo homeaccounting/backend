@@ -15,7 +15,7 @@ import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( Currency (..),
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -23,8 +23,8 @@ import Domain.Core.Types
 import Domain.Transaction.Events
   ( TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
-    TransferCompleted (..),
-    TransferInitiated (..),
+    TransactionPostingCompleted (..),
+    TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Projection
   ( TransactionEvent (..),
@@ -49,8 +49,8 @@ txId = unsafeTransactionId (UUID.fromWords 77 0 0 0)
 
 seedInitiated :: TransactionEvent
 seedInitiated =
-  TransferInitiatedTransactionEvent
-    TransferInitiated
+  TransactionPostingInitiatedTransactionEvent
+    TransactionPostingInitiated
       { sourceAccountId = transactionDefault ^. #sourceAccountId,
         targetAccountId = transactionDefault ^. #targetAccountId,
         sourceAmount = transactionDefault ^. #sourceAmount,
@@ -59,13 +59,13 @@ seedInitiated =
         description = "seed",
         by = transactionDefault ^. #initiatedBy,
         at = UTCTime (fromGregorian 1970 1 1) 0,
-        transferType = singletonIncome (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100),
+        transactionType = singletonIncome (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100),
         externalTransactionId = Nothing,
         labels = Set.empty
       }
 
 completed :: TransactionEvent
-completed = TransferCompletedTransactionEvent TransferCompleted
+completed = TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
 
 -- | QuickCheck-friendly 'UTCTime' built from an arbitrary 'Day' plus a clamped
 -- second-of-day component.

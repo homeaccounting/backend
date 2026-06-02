@@ -3,9 +3,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module      : Domain.Core.TransferTypePropertySpec
--- Description : Property tests for 'TransferType' smart constructors and accessors.
-module Domain.Core.TransferTypePropertySpec (spec) where
+-- Module      : Domain.Core.TransactionTypePropertySpec
+-- Description : Property tests for 'TransactionType' smart constructors and accessors.
+module Domain.Core.TransactionTypePropertySpec (spec) where
 
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
@@ -39,7 +39,7 @@ genValid = do
   pure (total, allocs)
 
 -- | Assert that a 'Left ValidationErr' was produced with the given field name.
-expectValidationField :: Text -> Either DomainError TransferType -> Property
+expectValidationField :: Text -> Either DomainError TransactionType -> Property
 expectValidationField expectedField result = case result of
   Left (ValidationErr ve) ->
     counterexample
@@ -51,7 +51,7 @@ expectValidationField expectedField result = case result of
     counterexample ("expected Left, got Right " <> show tt) (property False)
 
 spec :: Spec
-spec = describe "TransferType" $ do
+spec = describe "TransactionType" $ do
   describe "mkIncome / mkExpense" $ do
     prop "accepts allocations summing to total with consistent currency" $
       forAll genValid $ \(total, allocs) ->
@@ -101,6 +101,6 @@ spec = describe "TransferType" $ do
       kindOf tt `seq` True
 
   describe "allSameCurrency" $ do
-    prop "holds for any TransferType returned by the smart constructors" $
+    prop "holds for any TransactionType returned by the smart constructors" $
       forAll genValid $ \(total, allocs) ->
         allSameCurrency (moneyCurrency total) allocs

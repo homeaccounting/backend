@@ -36,8 +36,8 @@ import Testkit.TransactionEditFixture
     httpRequest,
     mkSeed,
     seedIncomeTransaction,
-    seedInternalTransfer,
     seedToken,
+    seedTransfer,
     uuidText,
   )
 import Web.Types
@@ -118,7 +118,7 @@ spec = describe "Transaction labels HTTP endpoints" $ do
       -- aggregate rejects the edit.
       seed <- mkSeed createTestAppEnv "put-labels-pending@test.com"
       token <- seedToken seed
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
 
       let body =
             encode

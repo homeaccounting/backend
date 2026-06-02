@@ -6,13 +6,13 @@
 -- Description : Read model for bank import deduplication
 --
 -- This module implements a read model that indexes external transaction IDs
--- from TransferInitiated events. It is used by the bank import service to
+-- from TransactionPostingInitiated events. It is used by the bank import service to
 -- detect and prevent duplicate imports of bank transactions.
 --
 -- Key Components:
 --   - BankImportReadModel: Map of external transaction IDs to transaction IDs
 --   - isImported: Check if an external transaction has already been imported
---   - Event handlers: Update the index when TransferInitiated events occur
+--   - Event handlers: Update the index when TransactionPostingInitiated events occur
 --
 -- Design Rationale:
 --   - Enables O(1) deduplication lookups during bank statement import
@@ -32,7 +32,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Domain.Core.Types (ExternalTransactionId, TransactionId, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
-import Domain.Transaction.Events (TransferInitiated (..))
+import Domain.Transaction.Events (TransactionPostingInitiated (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import Infrastructure.Eventium (AccountingReadModelHandler)
 import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
@@ -82,7 +82,7 @@ isImported rmTVar extId = do
 
 -- | Updates the read model with new events from the global event stream.
 --
--- Processes TransferInitiated events that have an externalTransactionId,
+-- Processes TransactionPostingInitiated events that have an externalTransactionId,
 -- indexing the mapping from external ID to internal transaction ID.
 handleBankImportEvents ::
   (MonadIO m) =>
@@ -101,11 +101,11 @@ handleBankImportEvents rmTVar = EventHandler $ \events -> do
 -- | Processes a single event and updates the external transaction ID index.
 --
 -- Two cases matter:
---   * 'TransferInitiatedEvent' with an external transaction id -> record the
+--   * 'TransactionPostingInitiatedEvent' with an external transaction id -> record the
 --     mapping so future imports of the same bank tx are deduplicated.
---   * 'TransferFailedEvent' -> drop any mapping that pointed at the failing
---     stream. The transfer saga emits 'TransferInitiated' before running the
---     debit/credit and 'TransferFailed' when a step (e.g. insufficient
+--   * 'TransactionPostingFailedEvent' -> drop any mapping that pointed at the failing
+--     stream. The transfer saga emits 'TransactionPostingInitiated' before running the
+--     debit/credit and 'TransactionPostingFailed' when a step (e.g. insufficient
 --     funds) aborts the transfer. Without this eviction, a failed bank
 --     import would be permanently marked as imported and could never be
 --     retried, even after the user corrects the underlying issue
@@ -117,14 +117,14 @@ processEvent ::
 processEvent txMap globalEvent =
   let (streamUuid, payload) = unpackGlobalEvent globalEvent
    in case payload of
-        TransferInitiatedEvent evt ->
+        TransactionPostingInitiatedEvent evt ->
           case evt.externalTransactionId of
             Just extId ->
               case mkTransactionIdSafe streamUuid of
                 Just txId -> Map.insert extId txId txMap
                 Nothing -> txMap
             Nothing -> txMap
-        TransferFailedEvent _ ->
+        TransactionPostingFailedEvent _ ->
           case mkTransactionIdSafe streamUuid of
             Just failedTxId -> Map.filter (/= failedTxId) txMap
             Nothing -> txMap

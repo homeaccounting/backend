@@ -50,7 +50,7 @@ module Web.API.TransactionAPI
     setAllocationsHandler,
     changeDescriptionHandler,
     changeDateHandler,
-    amendTransferHandler,
+    amendTransactionHandler,
     transactionHistoryHandler,
     cancelTransactionHandler,
   )
@@ -65,7 +65,7 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (mkAccountId, mkAllocation, mkTransactionId, parseCurrency)
-import Domain.Transaction.Commands (AmendTransfer (..))
+import Domain.Transaction.Commands (AmendTransaction (..))
 import Infrastructure.App (AppM)
 import RIO
 import Servant
@@ -77,11 +77,11 @@ import Web.Types
     ChangeTransactionDescriptionRequest (..),
     ExpenseRequest (..),
     IncomeRequest (..),
-    InternalTransferRequest (..),
     SetTransactionAllocationsRequest (..),
     SetTransactionLabelsRequest (..),
     TransactionListResponse (..),
     TransactionResponse,
+    TransferRequest (..),
     fromTransactionData,
     parseCategoryId,
     parseLabelIds,
@@ -121,7 +121,7 @@ type TransactionAPI =
       :> "api"
       :> "transactions"
       :> "transfer"
-      :> ReqBody '[JSON] InternalTransferRequest
+      :> ReqBody '[JSON] TransferRequest
       :> Post '[JSON] TransactionResponse
     -- GET /api/transactions?accountId=&from=&to=&includeCancelled= - List transactions visible to the caller.
     :<|> AuthProtect "jwt"
@@ -211,7 +211,7 @@ transactionServer =
     :<|> setAllocationsHandler
     :<|> changeDescriptionHandler
     :<|> changeDateHandler
-    :<|> amendTransferHandler
+    :<|> amendTransactionHandler
     :<|> transactionHistoryHandler
     :<|> getTransactionHandler
     :<|> cancelTransactionHandler
@@ -259,7 +259,7 @@ expenseHandler user request = do
     Left err -> throwDomainError err
 
 -- | Handler for POST /api/transactions/transfer - Initiate an internal transfer.
-transferHandler :: AuthenticatedUser -> InternalTransferRequest -> AppM TransactionResponse
+transferHandler :: AuthenticatedUser -> TransferRequest -> AppM TransactionResponse
 transferHandler user request = do
   let userId = user.userId
   validateDateNotInFuture request.date
@@ -269,7 +269,7 @@ transferHandler user request = do
   let money = toDomainMoney cur request.amount
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   let maybeRate = fmap toRational request.exchangeRate
-  result <- TransactionService.initiateInternalTransfer userId fromAccId toAccId money labelSet request.description maybeRate request.date
+  result <- TransactionService.initiateTransfer userId fromAccId toAccId money labelSet request.description maybeRate request.date
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -339,17 +339,17 @@ changeDateHandler user rawId req = do
 -- | Handler for PUT /api/transactions/:id/amendment — replace the
 -- posting facts on a Completed transaction. Synchronous: returns the
 -- post-amendment 'TransactionResponse' once the saga has resolved
--- ('TransferAmendmentCompleted') or surfaces
+-- ('TransactionAmendmentCompleted') or surfaces
 -- 'InsufficientFundsForAmendment' on saga failure.
 --
--- The transaction's 'transferType' is not amendable — see
+-- The transaction's 'transactionType' is not amendable — see
 -- 'AmendTransactionRequest'.
-amendTransferHandler ::
+amendTransactionHandler ::
   AuthenticatedUser ->
   UUID ->
   AmendTransactionRequest ->
   AppM TransactionResponse
-amendTransferHandler user rawId req = do
+amendTransactionHandler user rawId req = do
   transactionId <- validateField "id" $ mkTransactionId rawId
   newSource <- validateField "sourceAccountId" $ mkAccountId req.sourceAccountId
   newTarget <- validateField "targetAccountId" $ mkAccountId req.targetAccountId
@@ -360,7 +360,7 @@ amendTransferHandler user rawId req = do
   maybeRate <-
     validateField "exchangeRate" $ parseOptionalExchangeRate srcCur tgtCur req.exchangeRate
   let cmd =
-        AmendTransfer
+        AmendTransaction
           { transactionId = transactionId,
             newSourceAccountId = newSource,
             newTargetAccountId = newTarget,
@@ -369,7 +369,7 @@ amendTransferHandler user rawId req = do
             newExchangeRate = maybeRate,
             amendedBy = user.userId
           }
-  result <- TransactionService.amendTransfer user.userId transactionId cmd
+  result <- TransactionService.amendTransaction user.userId transactionId cmd
   case result of
     Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err

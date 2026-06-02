@@ -9,9 +9,9 @@
 -- on the current aggregate state and business rules.
 --
 -- Key Commands:
---   - InitiateTransfer: Request to start a money transfer between accounts
---   - CompleteTransfer: Internal command to mark transfer as completed
---   - FailTransfer: Internal command to mark transfer as failed
+--   - InitiateTransaction: Request to start a money transfer between accounts
+--   - CompleteTransactionPosting: Internal command to mark transfer as completed
+--   - FailTransactionPosting: Internal command to mark transfer as failed
 --
 -- Commands are validated by the command handler, which either:
 --   - Accepts the command and produces events representing state changes
@@ -24,16 +24,16 @@ module Domain.Transaction.Commands
     transactionCommands,
 
     -- * Transaction Commands
-    InitiateTransfer (..),
-    CompleteTransfer (..),
-    FailTransfer (..),
+    InitiateTransaction (..),
+    CompleteTransactionPosting (..),
+    FailTransactionPosting (..),
     SetTransactionLabels (..),
     SetTransactionAllocations (..),
     ChangeTransactionDescription (..),
     ChangeTransactionDate (..),
-    AmendTransfer (..),
-    CompleteTransferAmendment (..),
-    FailTransferAmendment (..),
+    AmendTransaction (..),
+    CompleteTransactionAmendment (..),
+    FailTransactionAmendment (..),
     CancelTransaction (..),
     CompleteTransactionCancellation (..),
   )
@@ -44,7 +44,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -57,16 +57,16 @@ import Language.Haskell.TH (Name)
 -- the TransactionCommand sum type and related serialization code.
 transactionCommands :: [Name]
 transactionCommands =
-  [ ''InitiateTransfer,
-    ''CompleteTransfer,
-    ''FailTransfer,
+  [ ''InitiateTransaction,
+    ''CompleteTransactionPosting,
+    ''FailTransactionPosting,
     ''SetTransactionLabels,
     ''SetTransactionAllocations,
     ''ChangeTransactionDescription,
     ''ChangeTransactionDate,
-    ''AmendTransfer,
-    ''CompleteTransferAmendment,
-    ''FailTransferAmendment,
+    ''AmendTransaction,
+    ''CompleteTransactionAmendment,
+    ''FailTransactionAmendment,
     ''CancelTransaction,
     ''CompleteTransactionCancellation
   ]
@@ -80,7 +80,7 @@ transactionCommands =
 -- Represents the intent to transfer money from one account to another.
 -- This is the primary user-facing command that starts the transfer saga.
 --
--- If accepted, produces a TransferInitiated event, which triggers the
+-- If accepted, produces a TransactionPostingInitiated event, which triggers the
 -- process manager to orchestrate the balance updates on both accounts.
 --
 -- Business Rules:
@@ -96,8 +96,8 @@ transactionCommands =
 --   - Regular -> Regular: Internal transfer
 --
 -- Example:
--- >>> InitiateTransfer sourceId targetId (Money 500.0) "Rent payment" userId
-data InitiateTransfer = InitiateTransfer
+-- >>> InitiateTransaction sourceId targetId (Money 500.0) "Rent payment" userId
+data InitiateTransaction = InitiateTransaction
   { -- | Account from which money will be debited
     sourceAccountId :: AccountId,
     -- | Account to which money will be credited
@@ -115,7 +115,7 @@ data InitiateTransfer = InitiateTransfer
     -- | Business time of the transfer (user-supplied or 'now' at the API edge)
     at :: UTCTime,
     -- | Type of transfer (Income, Expense, Transfer)
-    transferType :: TransferType,
+    transactionType :: TransactionType,
     -- | Identifier for this transaction in an external system (e.g., Monobank)
     externalTransactionId :: Maybe ExternalTransactionId,
     -- | Labels to attach to the transfer (may be empty).
@@ -128,15 +128,15 @@ data InitiateTransfer = InitiateTransfer
 -- This is typically an internal command used by the process manager
 -- after both the debit and credit operations have succeeded.
 --
--- If accepted, produces a TransferCompleted event.
+-- If accepted, produces a TransactionPostingCompleted event.
 --
 -- Business Rules:
 --  - Can only be issued for transfers in progress
 --  - Transfer must not already be completed or failed
 --
 -- Example:
--- >>> CompleteTransfer
-data CompleteTransfer = CompleteTransfer
+-- >>> CompleteTransactionPosting
+data CompleteTransactionPosting = CompleteTransactionPosting
   deriving (Show, Eq)
 
 -- | Command to mark a transfer as failed.
@@ -145,7 +145,7 @@ data CompleteTransfer = CompleteTransfer
 -- when the transfer cannot be completed (e.g., insufficient funds,
 -- account not found, or other validation failures).
 --
--- If accepted, produces a TransferFailed event.
+-- If accepted, produces a TransactionPostingFailed event.
 --
 -- Business Rules:
 --  - Can only be issued for transfers in progress
@@ -153,8 +153,8 @@ data CompleteTransfer = CompleteTransfer
 --  - Reason should clearly describe why the transfer failed
 --
 -- Example:
--- >>> FailTransfer "Insufficient funds in source account"
-newtype FailTransfer = FailTransfer
+-- >>> FailTransactionPosting "Insufficient funds in source account"
+newtype FailTransactionPosting = FailTransactionPosting
   { -- | Description of why the transfer failed
     reason :: Text
   }
@@ -183,13 +183,13 @@ data SetTransactionLabels = SetTransactionLabels
 -- allocation list is supplied atomically. Single-category edits are the
 -- degenerate length-1 case. The transaction's kind is structurally
 -- preserved by this command's shape — it carries only allocations, not
--- a full 'TransferType', so there is no incoming kind to conflict with
+-- a full 'TransactionType', so there is no incoming kind to conflict with
 -- the existing one.
 --
 -- Business Rules (enforced by the pure handler):
 --  * Transaction must be in the Completed state
 --    ('CannotEditUncompletedTransaction').
---  * Existing 'transferType' must be Income or Expense
+--  * Existing 'transactionType' must be Income or Expense
 --    ('CannotSetAllocationsOnUncategorisedTransaction').
 --  * Sum of @newAllocations@ must equal the existing categorised amount
 --    ('AllocationsDoNotSumToTotal').
@@ -248,7 +248,7 @@ data ChangeTransactionDate = ChangeTransactionDate
 -- This is the user-facing command that triggers the amendment saga. The
 -- service layer computes the diff against current canonical state and
 -- short-circuits if the payload is identical (no events emitted, saga
--- not started). Every @AmendTransfer@ that reaches the pure handler
+-- not started). Every @AmendTransaction@ that reaches the pure handler
 -- therefore represents a genuine amendment.
 --
 -- The transaction's *kind* (Income / Expense / Transfer / Adjustment)
@@ -270,8 +270,8 @@ data ChangeTransactionDate = ChangeTransactionDate
 --  - @newSourceAmount@ and @newTargetAmount@ must both be non-zero.
 --
 -- Example:
--- >>> AmendTransfer txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
-data AmendTransfer = AmendTransfer
+-- >>> AmendTransaction txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
+data AmendTransaction = AmendTransaction
   { -- | The transaction being amended.
     transactionId :: TransactionId,
     -- | New source account for the transfer.
@@ -291,13 +291,13 @@ data AmendTransfer = AmendTransfer
 
 -- | Saga-internal command to mark a transfer amendment as completed.
 --
--- Issued by the @TransferAmendmentManager@ process manager once all leg
--- events have landed. Accepted iff a @TransferAmendmentInitiated@ is in
+-- Issued by the @TransactionAmendmentManager@ process manager once all leg
+-- events have landed. Accepted iff a @TransactionAmendmentInitiated@ is in
 -- progress on the aggregate (tracked via @amendmentInProgress@).
 --
 -- Example:
--- >>> CompleteTransferAmendment txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
-data CompleteTransferAmendment = CompleteTransferAmendment
+-- >>> CompleteTransactionAmendment txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
+data CompleteTransactionAmendment = CompleteTransactionAmendment
   { -- | The transaction being amended.
     transactionId :: TransactionId,
     -- | New source account for the transfer.
@@ -317,13 +317,13 @@ data CompleteTransferAmendment = CompleteTransferAmendment
 
 -- | Saga-internal command to mark a transfer amendment as failed.
 --
--- Issued by the @TransferAmendmentManager@ when the new-source debit is
--- rejected. Accepted iff a @TransferAmendmentInitiated@ is in progress.
+-- Issued by the @TransactionAmendmentManager@ when the new-source debit is
+-- rejected. Accepted iff a @TransactionAmendmentInitiated@ is in progress.
 -- The original transfer is left intact.
 --
 -- Example:
--- >>> FailTransferAmendment "Insufficient funds in new source account"
-newtype FailTransferAmendment = FailTransferAmendment
+-- >>> FailTransactionAmendment "Insufficient funds in new source account"
+newtype FailTransactionAmendment = FailTransactionAmendment
   { -- | Description of why the amendment failed.
     reason :: Text
   }
@@ -373,15 +373,15 @@ data CompleteTransactionCancellation = CompleteTransactionCancellation
 -- -----------------------------------------------------------------------------
 
 -- Derive JSON instances for all commands (fields already unprefixed)
-deriveJSON defaultOptions ''InitiateTransfer
-deriveJSON defaultOptions ''CompleteTransfer
-deriveJSON defaultOptions ''FailTransfer
+deriveJSON defaultOptions ''InitiateTransaction
+deriveJSON defaultOptions ''CompleteTransactionPosting
+deriveJSON defaultOptions ''FailTransactionPosting
 deriveJSON defaultOptions ''SetTransactionLabels
 deriveJSON defaultOptions ''SetTransactionAllocations
 deriveJSON defaultOptions ''ChangeTransactionDescription
 deriveJSON defaultOptions ''ChangeTransactionDate
-deriveJSON defaultOptions ''AmendTransfer
-deriveJSON defaultOptions ''CompleteTransferAmendment
-deriveJSON defaultOptions ''FailTransferAmendment
+deriveJSON defaultOptions ''AmendTransaction
+deriveJSON defaultOptions ''CompleteTransactionAmendment
+deriveJSON defaultOptions ''FailTransactionAmendment
 deriveJSON defaultOptions ''CancelTransaction
 deriveJSON defaultOptions ''CompleteTransactionCancellation

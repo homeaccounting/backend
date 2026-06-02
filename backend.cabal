@@ -29,9 +29,9 @@ library
       Application.LinkCodeStore
       Application.ProcessManagers
       Application.ProcessManagers.Snapshots
+      Application.ProcessManagers.TransactionAmendmentManager
       Application.ProcessManagers.TransactionCancellationManager
-      Application.ProcessManagers.TransferAmendmentManager
-      Application.ProcessManagers.TransferManager
+      Application.ProcessManagers.TransactionPostingManager
       Application.ReadModels
       Application.ReadModels.Account
       Application.ReadModels.BankImportReadModel
@@ -265,12 +265,12 @@ test-suite backend-test
   other-modules:
       Application.LinkCodeStorePropertySpec
       Application.LinkCodeStoreSpec
+      Application.ProcessManagers.TransactionAmendmentManagerPropertySpec
+      Application.ProcessManagers.TransactionAmendmentManagerSpec
       Application.ProcessManagers.TransactionCancellationManagerPropertySpec
       Application.ProcessManagers.TransactionCancellationManagerSpec
-      Application.ProcessManagers.TransferAmendmentManagerPropertySpec
-      Application.ProcessManagers.TransferAmendmentManagerSpec
-      Application.ProcessManagers.TransferManagerPropertySpec
-      Application.ProcessManagers.TransferManagerSpec
+      Application.ProcessManagers.TransactionPostingManagerPropertySpec
+      Application.ProcessManagers.TransactionPostingManagerSpec
       Application.ReadModels.AccountPropertySpec
       Application.ReadModels.AccountSpec
       Application.ReadModels.AmendmentBalanceSpec
@@ -309,7 +309,7 @@ test-suite backend-test
       Domain.Configuration.ProjectionSpec
       Domain.Core.AllocationPropertySpec
       Domain.Core.CurrencyNumericSpec
-      Domain.Core.TransferTypePropertySpec
+      Domain.Core.TransactionTypePropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
       Domain.Transaction.AllocationsSpec
@@ -337,11 +337,11 @@ test-suite backend-test
       Integration.BankImportWorkflowSpec
       Integration.BooksClosePeriodIntegrationSpec
       Integration.ExchangeRatePersistenceSpec
+      Integration.TransactionAmendmentIntegrationSpec
       Integration.TransactionCancellationIntegrationSpec
       Integration.TransactionCategoryIntegrationSpec
       Integration.TransactionLabelsIntegrationSpec
       Integration.TransactionMetadataEditIntegrationSpec
-      Integration.TransferAmendmentIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.CommandsSpec

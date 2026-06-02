@@ -97,8 +97,8 @@ data DomainError
     AllocationAmountNotPositive
   | -- | An allocation's currency differs from the categorised side's currency.
     AllocationCurrencyMismatch
-  | -- | 'SetTransactionAllocations' or 'AmendTransfer' issued with a
-    --   @newTransferType@ whose kind differs from the existing transaction's.
+  | -- | 'SetTransactionAllocations' or 'AmendTransaction' issued with a
+    --   @newTransactionType@ whose kind differs from the existing transaction's.
     --   Recategorising across the kind boundary is a delete-and-repost
     --   operation.
     CannotChangeKindOfCategorisedTransaction
@@ -128,7 +128,7 @@ data DomainError
     CannotAmendToZeroAmount
   | -- | Transfer amendment would change the 'AccountType' (Regular vs
     -- External) of either leg, which would implicitly change the
-    -- transaction's 'transferType'. Recategorising a transaction across
+    -- transaction's 'transactionType'. Recategorising a transaction across
     -- the internal\/external boundary requires deleting and reposting.
     CannotAmendAcrossAccountType
   | -- | The saga rejected the amendment because at least one account has
@@ -145,7 +145,7 @@ data DomainError
   | -- | 'CancelTransaction' issued while an amendment saga is in flight on the
     -- same transaction.
     CannotCancelDuringAmendment
-  | -- | 'AmendTransfer' issued while a cancellation saga is in flight on the
+  | -- | 'AmendTransaction' issued while a cancellation saga is in flight on the
     -- same transaction.
     CannotAmendDuringCancellation
   deriving (Show, Eq, Generic)

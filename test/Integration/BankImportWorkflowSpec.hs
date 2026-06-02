@@ -43,7 +43,7 @@ import Domain.Core.Types
     AccountType (..),
     Currency (..),
     ExternalTransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     defaultBankAccount,
     defaultConfigurationId,
@@ -189,7 +189,7 @@ setupTestEnv = do
             createdBy = testUserId,
             accountType = Regular defaultBankAccount,
             -- Bank account starts at 0 and the saga debits it for each imported tx.
-            -- Without an overdraft, every transfer would emit TransferFailed
+            -- Without an overdraft, every transfer would emit TransactionPostingFailed
             -- (Insufficient Funds), which the new dedup eviction reclaims --
             -- breaking these dedup-focused tests. Give the account enough
             -- headroom so transfers actually complete and stay deduped.
@@ -256,7 +256,7 @@ spec = describe "Bank Import Workflow" $ do
         expenseData.targetAccountId `shouldBe` externalAccId
         expenseData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 50)
         -- No MCC on tx → falls back to defaultExpenseCategory (expense.other)
-        expenseData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
+        expenseData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
         expenseData.description `shouldBe` "Test transaction"
         expenseData.date `shouldBe` testTime
 
@@ -266,7 +266,7 @@ spec = describe "Bank Import Workflow" $ do
         incomeData.targetAccountId `shouldBe` bankAccId
         incomeData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 100)
         -- Income always uses defaultIncomeCategory (income.other)
-        incomeData.transferType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 100))
+        incomeData.transactionType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 100))
         incomeData.description `shouldBe` "Test transaction"
         incomeData.date `shouldBe` testTime
 
@@ -275,7 +275,7 @@ spec = describe "Bank Import Workflow" $ do
         holdData.sourceAccountId `shouldBe` bankAccId
         holdData.targetAccountId `shouldBe` externalAccId
         holdData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 30)
-        holdData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 30))
+        holdData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 30))
 
         -- Second resync (dedup): same statements should produce no new imports
         result2 <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime

@@ -4,17 +4,17 @@
 
 -- |
 -- Module      : Application.Services.TransactionAmendmentSpec
--- Description : Service-layer tests for 'amendTransfer'.
+-- Description : Service-layer tests for 'amendTransaction'.
 --
--- Covers the orchestration paths in 'amendTransfer':
+-- Covers the orchestration paths in 'amendTransaction':
 --
 --  * Identity short-circuit (spec §4.3): no events, same state.
 --  * Happy path (amount-only): @amendmentCount@ bump and posting-field
---    replacement; @transferType@ is preserved by construction.
+--    replacement; @transactionType@ is preserved by construction.
 --  * Pure-handler rejection surfaced via the service: same-account pair.
 --  * Account-type preservation: cannot flip an Income's Regular target
 --    to an External account; can change the Regular subtype freely
---    (e.g. Cash → Bank) because that doesn't change 'transferType'.
+--    (e.g. Cash → Bank) because that doesn't change 'transactionType'.
 --  * Books-close gate against the TX's current 'at'.
 --  * Source-account swap: balance shifts on both old and new sources.
 module Application.Services.TransactionAmendmentSpec (spec) where
@@ -24,10 +24,10 @@ import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.ConfigurationService (closeBooksThrough)
 import Application.Services.TransactionService
-  ( amendTransfer,
+  ( amendTransaction,
     initiateExpense,
     initiateIncome,
-    initiateInternalTransfer,
+    initiateTransfer,
   )
 import qualified Data.Set as Set
 import Domain.Account.Commands (CreateAccount (..))
@@ -36,14 +36,14 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
     AccountType (..),
-    TransferType (..),
+    TransactionType (..),
     UserId,
     defaultBankAccount,
     unMoney,
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Domain.Transaction.Commands (AmendTransfer (..))
+import Domain.Transaction.Commands (AmendTransaction (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
@@ -96,9 +96,9 @@ amendCmd ::
   Rational ->
   Rational ->
   UserId ->
-  AmendTransfer
+  AmendTransaction
 amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
-  AmendTransfer
+  AmendTransaction
     { transactionId = error "amendCmd: tx id must be overwritten by caller",
       newSourceAccountId = newSrc,
       newTargetAccountId = newTgt,
@@ -113,7 +113,7 @@ amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
 -- -----------------------------------------------------------------------------
 
 spec :: Spec
-spec = describe "TransactionService.amendTransfer" $ do
+spec = describe "TransactionService.amendTransaction" $ do
   describe "Identity short-circuit"
     $ it "returns the current TransactionData unchanged when payload matches"
     $ do
@@ -137,7 +137,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             (amendCmd original.sourceAccountId original.targetAccountId 100 100 fx.userId)
               { transactionId = txId
               }
-      result <- runAppM env (amendTransfer fx.userId txId cmd)
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
       case result of
         Right td -> do
           td.amendmentCount `shouldBe` original.amendmentCount
@@ -167,7 +167,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             (amendCmd original.sourceAccountId original.targetAccountId 150 150 fx.userId)
               { transactionId = txId
               }
-      result <- runAppM env (amendTransfer fx.userId txId cmd)
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
       case result of
         Right td -> do
           td.sourceAmount `shouldBe` unsafeMoney Core.USD 150
@@ -175,7 +175,7 @@ spec = describe "TransactionService.amendTransfer" $ do
           td.amendmentCount `shouldBe` 1
           -- The categorised side (target for Income) went from 100 -> 150,
           -- so the single allocation is rescaled proportionally to 150 USD.
-          td.transferType `shouldBe` Income (incomeAllocs fx (unsafeMoney Core.USD 150))
+          td.transactionType `shouldBe` Income (incomeAllocs fx (unsafeMoney Core.USD 150))
         Left err -> expectationFailure $ "expected Right, got: " <> show err
 
   describe "Pure-handler rejection"
@@ -186,7 +186,7 @@ spec = describe "TransactionService.amendTransfer" $ do
       walletB <- createRegularAccount env fx.userId "WalletB"
       transfer <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             fx.regularAccountId
             walletB
@@ -197,7 +197,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             Nothing
       (txId, _td) <- case transfer of
         Right r -> pure r
-        Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+        Left err -> fail $ "initiateTransfer failed: " <> show err
 
       -- Both legs on walletB: both Regular (passes accountType parity),
       -- but source == target (fails same-account-pair).
@@ -205,7 +205,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             (amendCmd walletB walletB 50 50 fx.userId)
               { transactionId = txId
               }
-      result <- runAppM env (amendTransfer fx.userId txId cmd)
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
       result `shouldBe` Left CannotAmendToSameAccountPair
 
   describe "Account-type preservation"
@@ -238,7 +238,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             (amendCmd original.targetAccountId original.sourceAccountId 100 100 fx.userId)
               { transactionId = txId
               }
-      result <- runAppM env (amendTransfer fx.userId txId cmd)
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
       result `shouldBe` Left CannotAmendAcrossAccountType
 
   describe "Subtype change within the same accountType"
@@ -270,11 +270,11 @@ spec = describe "TransactionService.amendTransfer" $ do
             (amendCmd bankWallet original.targetAccountId 25 25 fx.userId)
               { transactionId = txId
               }
-      result <- runAppM env (amendTransfer fx.userId txId cmd)
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
       case result of
         Right td -> do
           td.sourceAccountId `shouldBe` bankWallet
-          td.transferType `shouldBe` original.transferType
+          td.transactionType `shouldBe` original.transactionType
         Left err -> expectationFailure $ "expected Right, got: " <> show err
 
   describe "Books-close gate"
@@ -304,7 +304,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             (amendCmd original.sourceAccountId original.targetAccountId 200 200 fx.userId)
               { transactionId = txId
               }
-      result <- runAppM env (amendTransfer fx.userId txId cmd)
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
       result
         `shouldBe` Left
           CannotEditClosedPeriod
@@ -322,7 +322,7 @@ spec = describe "TransactionService.amendTransfer" $ do
 
       transfer <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             fx.regularAccountId
             walletB
@@ -333,7 +333,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             Nothing
       (txId, _original) <- case transfer of
         Right r -> pure r
-        Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+        Left err -> fail $ "initiateTransfer failed: " <> show err
 
       walletA_BeforeAmend <- balanceUsd env fx.regularAccountId
       walletC_BeforeAmend <- balanceUsd env walletC
@@ -342,7 +342,7 @@ spec = describe "TransactionService.amendTransfer" $ do
             (amendCmd walletC walletB 50 50 fx.userId)
               { transactionId = txId
               }
-      result <- runAppM env (amendTransfer fx.userId txId cmd)
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
       case result of
         Right td -> do
           td.sourceAccountId `shouldBe` walletC

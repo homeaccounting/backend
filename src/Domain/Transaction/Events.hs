@@ -9,9 +9,9 @@
 -- Events represent immutable facts about state changes that have already occurred.
 --
 -- Key Events:
---   - TransferInitiated: A money transfer between accounts was started
---   - TransferCompleted: A money transfer completed successfully
---   - TransferFailed: A money transfer failed (e.g., insufficient funds)
+--   - TransactionPostingInitiated: A money transfer between accounts was started
+--   - TransactionPostingCompleted: A money transfer completed successfully
+--   - TransactionPostingFailed: A money transfer failed (e.g., insufficient funds)
 --   - TransactionLabelsSet: The label set on a completed transaction was replaced
 --   - TransactionAllocationsChanged: The allocation list on a completed Income/Expense transaction was replaced
 --   - TransactionDescriptionChanged: The free-text description on a completed transaction was edited
@@ -24,16 +24,16 @@ module Domain.Transaction.Events
     transactionEvents,
 
     -- * Transaction Events
-    TransferInitiated (..),
-    TransferCompleted (..),
-    TransferFailed (..),
+    TransactionPostingInitiated (..),
+    TransactionPostingCompleted (..),
+    TransactionPostingFailed (..),
     TransactionLabelsSet (..),
     TransactionAllocationsChanged (..),
     TransactionDescriptionChanged (..),
     TransactionDateChanged (..),
-    TransferAmendmentInitiated (..),
-    TransferAmendmentCompleted (..),
-    TransferAmendmentFailed (..),
+    TransactionAmendmentInitiated (..),
+    TransactionAmendmentCompleted (..),
+    TransactionAmendmentFailed (..),
     TransactionCancellationInitiated (..),
     TransactionCancellationCompleted (..),
   )
@@ -47,7 +47,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransferType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -60,16 +60,16 @@ import Language.Haskell.TH (Name)
 -- the TransactionEvent sum type and related serialization code.
 transactionEvents :: [Name]
 transactionEvents =
-  [ ''TransferInitiated,
-    ''TransferCompleted,
-    ''TransferFailed,
+  [ ''TransactionPostingInitiated,
+    ''TransactionPostingCompleted,
+    ''TransactionPostingFailed,
     ''TransactionLabelsSet,
     ''TransactionAllocationsChanged,
     ''TransactionDescriptionChanged,
     ''TransactionDateChanged,
-    ''TransferAmendmentInitiated,
-    ''TransferAmendmentCompleted,
-    ''TransferAmendmentFailed,
+    ''TransactionAmendmentInitiated,
+    ''TransactionAmendmentCompleted,
+    ''TransactionAmendmentFailed,
     ''TransactionCancellationInitiated,
     ''TransactionCancellationCompleted
   ]
@@ -89,8 +89,8 @@ transactionEvents =
 --   - Regular -> Regular: Internal transfer between accounts
 --
 -- Example:
--- >>> TransferInitiated sourceId targetId (Money 500.0) "Rent payment" userId
-data TransferInitiated = TransferInitiated
+-- >>> TransactionPostingInitiated sourceId targetId (Money 500.0) "Rent payment" userId
+data TransactionPostingInitiated = TransactionPostingInitiated
   { -- | Account from which money will be debited
     sourceAccountId :: AccountId,
     -- | Account to which money will be credited
@@ -108,7 +108,7 @@ data TransferInitiated = TransferInitiated
     -- | Business time of the transfer (user-supplied or 'now' at initiation)
     at :: UTCTime,
     -- | Type of transfer (Income, Expense, Transfer)
-    transferType :: TransferType,
+    transactionType :: TransactionType,
     -- | Identifier for this transaction in an external system (e.g., Monobank)
     externalTransactionId :: Maybe ExternalTransactionId,
     -- | Labels attached to this transfer (may be empty).
@@ -122,8 +122,8 @@ data TransferInitiated = TransferInitiated
 -- the debit and credit operations have succeeded.
 --
 -- Example:
--- >>> TransferCompleted
-data TransferCompleted = TransferCompleted
+-- >>> TransactionPostingCompleted
+data TransactionPostingCompleted = TransactionPostingCompleted
   deriving (Show, Eq)
 
 -- | Event emitted when a money transfer fails.
@@ -132,8 +132,8 @@ data TransferCompleted = TransferCompleted
 -- and compensation logic.
 --
 -- Example:
--- >>> TransferFailed "Insufficient funds in source account"
-newtype TransferFailed = TransferFailed
+-- >>> TransactionPostingFailed "Insufficient funds in source account"
+newtype TransactionPostingFailed = TransactionPostingFailed
   { -- | Description of why the transfer failed
     reason :: Text
   }
@@ -147,7 +147,7 @@ newtype TransferFailed = TransferFailed
 -- at that point in time.
 data TransactionLabelsSet = TransactionLabelsSet
   { -- | The transaction whose labels changed. Carried in the payload for
-    -- symmetry with TransferFailed's reason; the stream key (the aggregate id)
+    -- symmetry with TransactionPostingFailed's reason; the stream key (the aggregate id)
     -- is authoritative.
     transactionId :: TransactionId,
     -- | The new complete label set (may be empty).
@@ -158,11 +158,11 @@ data TransactionLabelsSet = TransactionLabelsSet
 -- | Event emitted when the allocation list on a completed Income/Expense
 -- transaction is replaced.
 --
--- Only applicable to transactions whose transferType is Income or Expense;
+-- Only applicable to transactions whose transactionType is Income or Expense;
 -- internal transfers have no allocations and the command handler rejects any
 -- attempt to emit this event against them. The event payload carries only
 -- the new allocations — the surrounding kind (Income / Expense) cannot
--- change on this event, so the projection rebuilds the full 'TransferType'
+-- change on this event, so the projection rebuilds the full 'TransactionType'
 -- from existing state via 'replaceAllocations'.
 data TransactionAllocationsChanged = TransactionAllocationsChanged
   { -- | The transaction whose allocations changed.
@@ -201,16 +201,16 @@ data TransactionDateChanged = TransactionDateChanged
   }
   deriving (Show, Eq)
 
--- | Saga-trigger event: the user has submitted an 'AmendTransfer' command
+-- | Saga-trigger event: the user has submitted an 'AmendTransaction' command
 -- and the domain handler accepted it. The process manager reacts to this event
 -- by computing the minimum diff between the snapshotted old state and the new
 -- payload, then issuing the corresponding leg commands. Carries the full new
 -- payload.
 --
--- The transaction's 'transferType' is not amendable — it is a function
+-- The transaction's 'transactionType' is not amendable — it is a function
 -- of the source / target accounts' 'AccountType' and is preserved across
 -- amendments by service-layer validation.
-data TransferAmendmentInitiated = TransferAmendmentInitiated
+data TransactionAmendmentInitiated = TransactionAmendmentInitiated
   { -- | The transaction being amended.
     transactionId :: TransactionId,
     -- | New source account for the transfer.
@@ -234,7 +234,7 @@ data TransferAmendmentInitiated = TransferAmendmentInitiated
 -- for read-model rebuilds.
 --
 -- The 'newAllocations' field is **handler-computed**, not user-supplied.
--- The 'CompleteTransferAmendment' command (and the 'AmendTransfer' command
+-- The 'CompleteTransactionAmendment' command (and the 'AmendTransaction' command
 -- upstream) deliberately do not accept allocations — amendment is a
 -- posting-facts-only edit. When the categorised amount changes
 -- ('newTargetAmount' for Income, 'newSourceAmount' for Expense), the
@@ -244,12 +244,12 @@ data TransferAmendmentInitiated = TransferAmendmentInitiated
 -- pre-amendment allocations verbatim. For 'Transfer' / 'Adjustment'
 -- (which have no allocations), the field is 'Nothing'.
 --
--- Carrying only the post-amendment allocations (not a full 'TransferType')
+-- Carrying only the post-amendment allocations (not a full 'TransactionType')
 -- exploits the fact that amendment cannot change the kind — kind is
 -- structurally preserved by 'AccountType' invariants. Projections
--- reconstruct the full 'TransferType' from existing state via
+-- reconstruct the full 'TransactionType' from existing state via
 -- 'replaceAllocations'.
-data TransferAmendmentCompleted = TransferAmendmentCompleted
+data TransactionAmendmentCompleted = TransactionAmendmentCompleted
   { -- | The transaction being amended.
     transactionId :: TransactionId,
     -- | New source account for the transfer.
@@ -274,7 +274,7 @@ data TransferAmendmentCompleted = TransferAmendmentCompleted
 
 -- | Saga-failure event: the only fallible saga step (the new-source debit)
 -- was rejected. No leg events were written; the original transfer is intact.
-newtype TransferAmendmentFailed = TransferAmendmentFailed
+newtype TransactionAmendmentFailed = TransactionAmendmentFailed
   { -- | Description of why the amendment failed.
     reason :: Text
   }
@@ -288,8 +288,8 @@ newtype TransferAmendmentFailed = TransferAmendmentFailed
 --
 -- Carries the identity of the user who requested the cancellation for
 -- the audit trail; no posting facts on the payload — those are
--- snapshotted in the saga state from the prior 'TransferInitiated' /
--- 'TransferAmendmentCompleted' events.
+-- snapshotted in the saga state from the prior 'TransactionPostingInitiated' /
+-- 'TransactionAmendmentCompleted' events.
 data TransactionCancellationInitiated = TransactionCancellationInitiated
   { -- | The transaction being cancelled.
     transactionId :: TransactionId,
@@ -315,14 +315,14 @@ data TransactionCancellationCompleted = TransactionCancellationCompleted
 -- -----------------------------------------------------------------------------
 
 -- Derive JSON instances for all events (fields already unprefixed).
--- TransferInitiated uses a hand-written FromJSON so that previously
+-- TransactionPostingInitiated uses a hand-written FromJSON so that previously
 -- serialised events without a "labels" field still deserialise, defaulting
 -- to an empty set.
-deriveToJSON defaultOptions ''TransferInitiated
+deriveToJSON defaultOptions ''TransactionPostingInitiated
 
-instance FromJSON TransferInitiated where
-  parseJSON = withObject "TransferInitiated" $ \o ->
-    TransferInitiated
+instance FromJSON TransactionPostingInitiated where
+  parseJSON = withObject "TransactionPostingInitiated" $ \o ->
+    TransactionPostingInitiated
       <$> o .: "sourceAccountId"
       <*> o .: "targetAccountId"
       <*> o .: "sourceAmount"
@@ -331,18 +331,18 @@ instance FromJSON TransferInitiated where
       <*> o .: "description"
       <*> o .: "by"
       <*> o .: "at"
-      <*> o .: "transferType"
+      <*> o .: "transactionType"
       <*> o .:? "externalTransactionId" .!= Nothing
       <*> (fromMaybe Set.empty <$> o .:? "labels")
 
-deriveJSON defaultOptions ''TransferCompleted
-deriveJSON defaultOptions ''TransferFailed
+deriveJSON defaultOptions ''TransactionPostingCompleted
+deriveJSON defaultOptions ''TransactionPostingFailed
 deriveJSON defaultOptions ''TransactionLabelsSet
 deriveJSON defaultOptions ''TransactionAllocationsChanged
 deriveJSON defaultOptions ''TransactionDescriptionChanged
 deriveJSON defaultOptions ''TransactionDateChanged
-deriveJSON defaultOptions ''TransferAmendmentInitiated
-deriveJSON defaultOptions ''TransferAmendmentCompleted
-deriveJSON defaultOptions ''TransferAmendmentFailed
+deriveJSON defaultOptions ''TransactionAmendmentInitiated
+deriveJSON defaultOptions ''TransactionAmendmentCompleted
+deriveJSON defaultOptions ''TransactionAmendmentFailed
 deriveJSON defaultOptions ''TransactionCancellationInitiated
 deriveJSON defaultOptions ''TransactionCancellationCompleted

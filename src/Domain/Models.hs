@@ -107,7 +107,7 @@ import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags, ConstructTa
 --
 -- This sum type includes events from:
 --   - Account aggregate (AccountCreated, AccountAccessGranted, AccountAccessRevoked, AccountDebited, AccountCredited)
---   - Transaction aggregate (TransferInitiated, TransferCompleted, TransferFailed)
+--   - Transaction aggregate (TransactionPostingInitiated, TransactionPostingCompleted, TransactionPostingFailed)
 --   - User aggregate (UserRegistered, UserRegisteredViaTelegram, OAuthAccountLinked, etc.)
 --
 -- The unified type enables:
@@ -117,7 +117,7 @@ import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags, ConstructTa
 --
 -- The event names are suffixed with "Event" for clarity in the unified context:
 --   - AccountCreated becomes AccountCreatedEvent
---   - TransferInitiated becomes TransferInitiatedEvent
+--   - TransactionPostingInitiated becomes TransactionPostingInitiatedEvent
 --   - UserRegistered becomes UserRegisteredEvent
 --   - etc.
 --
@@ -144,7 +144,7 @@ deriveJSON (defaultOptions {constructorTagModifier = dropSuffix "Event"}) ''Acco
 --
 -- This sum type includes commands from:
 --   - Account aggregate (CreateAccount, ShareAccount, RevokeAccountAccess)
---   - Transaction aggregate (InitiateTransfer, CompleteTransfer, FailTransfer)
+--   - Transaction aggregate (InitiateTransaction, CompleteTransactionPosting, FailTransactionPosting)
 --   - User aggregate (RegisterUser, RegisterViaTelegram, LinkOAuthAccount, etc.)
 --
 -- The unified type enables:
@@ -154,7 +154,7 @@ deriveJSON (defaultOptions {constructorTagModifier = dropSuffix "Event"}) ''Acco
 --
 -- The command names are suffixed with "Command" for clarity in the unified context:
 --   - CreateAccount becomes CreateAccountCommand
---   - InitiateTransfer becomes InitiateTransferCommand
+--   - InitiateTransaction becomes InitiateTransactionCommand
 --   - RegisterUser becomes RegisterUserCommand
 --   - etc.
 --

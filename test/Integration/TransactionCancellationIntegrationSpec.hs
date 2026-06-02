@@ -41,9 +41,9 @@ import qualified Application.ReadModels.Transaction as ReadModel
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService (closeBooksThrough)
 import Application.Services.TransactionService
-  ( amendTransfer,
+  ( amendTransaction,
     cancelTransaction,
-    initiateInternalTransfer,
+    initiateTransfer,
     listTransactions,
   )
 import qualified Data.Set as Set
@@ -56,7 +56,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Domain.Transaction.Commands (AmendTransfer (..))
+import Domain.Transaction.Commands (AmendTransaction (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
@@ -81,13 +81,13 @@ balanceUsd env aid = do
     Just acc -> pure (unMoney acc.balance)
     Nothing -> fail $ "balanceUsd: account not found: " <> show aid
 
--- | Run 'initiateInternalTransfer' and unwrap the result, failing the
+-- | Run 'initiateTransfer' and unwrap the result, failing the
 -- test on a Left.
 seedTransfer :: AppEnv -> UserId -> AccountId -> AccountId -> Rational -> IO (TransactionId, TransactionData)
 seedTransfer env uid src tgt amt = do
   res <-
     runAppM env
-      $ initiateInternalTransfer
+      $ initiateTransfer
         uid
         src
         tgt
@@ -266,7 +266,7 @@ amendThenCancelSpec =
 
       -- Amend to 250 (different amount on both legs)
       let amendCmd =
-            AmendTransfer
+            AmendTransaction
               { transactionId = txId,
                 newSourceAccountId = td.sourceAccountId,
                 newTargetAccountId = td.targetAccountId,
@@ -275,9 +275,9 @@ amendThenCancelSpec =
                 newExchangeRate = Nothing,
                 amendedBy = uid
               }
-      amendResult <- runAppM env (amendTransfer uid txId amendCmd)
+      amendResult <- runAppM env (amendTransaction uid txId amendCmd)
       case amendResult of
-        Left err -> expectationFailure $ "amendTransfer failed: " <> show err
+        Left err -> expectationFailure $ "amendTransaction failed: " <> show err
         Right _ -> pure ()
 
       -- Cancel — the saga must reverse the AMENDED amounts (250), not the
@@ -309,7 +309,7 @@ booksCloseSpec =
       let txDate = utc 2026 3 15
       res <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             src
             tgt
@@ -319,7 +319,7 @@ booksCloseSpec =
             Nothing
             (Just txDate)
       (txId, _td) <- case res of
-        Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+        Left err -> fail $ "initiateTransfer failed: " <> show err
         Right r -> pure r
 
       -- Close books through a date after the TX

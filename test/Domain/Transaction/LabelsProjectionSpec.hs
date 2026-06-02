@@ -15,7 +15,7 @@ import Domain.Core.Types
     Allocations,
     Currency (..),
     DictionaryEntryId,
-    TransferType (..),
+    TransactionType (..),
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -23,8 +23,8 @@ import Domain.Core.Types
 import Domain.Transaction.Events
   ( TransactionAllocationsChanged (..),
     TransactionLabelsSet (..),
-    TransferCompleted (..),
-    TransferInitiated (..),
+    TransactionPostingCompleted (..),
+    TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Projection
   ( TransactionEvent (..),
@@ -48,11 +48,11 @@ import Prelude (last)
 seedIncomeAllocs :: Allocations
 seedIncomeAllocs = Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| []
 
--- | Default TransferInitiated event shape; callers override individual
+-- | Default TransactionPostingInitiated event shape; callers override individual
 -- fields via record update.
-mkInitiated :: TransferInitiated
+mkInitiated :: TransactionPostingInitiated
 mkInitiated =
-  TransferInitiated
+  TransactionPostingInitiated
     { sourceAccountId = transactionDefault ^. #sourceAccountId,
       targetAccountId = transactionDefault ^. #targetAccountId,
       sourceAmount = unsafeMoney USD 100,
@@ -61,34 +61,34 @@ mkInitiated =
       description = "",
       by = transactionDefault ^. #initiatedBy,
       at = anyTime,
-      transferType = Income seedIncomeAllocs,
+      transactionType = Income seedIncomeAllocs,
       externalTransactionId = Nothing,
       labels = Set.empty
     }
 
 -- | Placeholder business date for projection-fold tests. The labels /
 -- category specs do not exercise date semantics; this value is here
--- only because 'TransferInitiated' carries 'at' as a load-bearing field.
+-- only because 'TransactionPostingInitiated' carries 'at' as a load-bearing field.
 anyTime :: UTCTime
 anyTime = UTCTime (fromGregorian 2026 3 15) (secondsToDiffTime 0)
 
 -- | Seed event for a transaction with the given initial labels.
 seedInitiatedLabels :: [DictionaryEntryId] -> TransactionEvent
 seedInitiatedLabels ls =
-  TransferInitiatedTransactionEvent
+  TransactionPostingInitiatedTransactionEvent
     mkInitiated {labels = Set.fromList ls}
 
--- | Seed event for a transaction with the given initial TransferType.
+-- | Seed event for a transaction with the given initial TransactionType.
 -- For Income/Expense seeds the caller is expected to align the carried
 -- amounts with the allocation sum.
-seedInitiatedWithType :: TransferType -> TransferInitiated
-seedInitiatedWithType tt = mkInitiated {transferType = tt}
+seedInitiatedWithType :: TransactionType -> TransactionPostingInitiated
+seedInitiatedWithType tt = mkInitiated {transactionType = tt}
 
-seedInitiatedEvent :: TransferType -> TransactionEvent
-seedInitiatedEvent = TransferInitiatedTransactionEvent . seedInitiatedWithType
+seedInitiatedEvent :: TransactionType -> TransactionEvent
+seedInitiatedEvent = TransactionPostingInitiatedTransactionEvent . seedInitiatedWithType
 
 completed :: TransactionEvent
-completed = TransferCompletedTransactionEvent TransferCompleted
+completed = TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
 
 -- -----------------------------------------------------------------------------
 -- Spec
@@ -142,7 +142,7 @@ spec = describe "Transaction projection / labels + allocations edits" $ do
                 }
           ]
         projected = latestProjection transactionProjection evts
-    projected ^. #transferType `shouldBe` Income replacement
+    projected ^. #transactionType `shouldBe` Income replacement
 
   it "TransactionAllocationsChanged rewrites an Expense allocation list in place" $ do
     let original = Allocation (unsafeDictionaryEntryId (UUID.fromWords 41 0 0 0)) (unsafeMoney USD 100) :| []
@@ -158,7 +158,7 @@ spec = describe "Transaction projection / labels + allocations edits" $ do
                 }
           ]
         projected = latestProjection transactionProjection evts
-    projected ^. #transferType `shouldBe` Expense replacement
+    projected ^. #transactionType `shouldBe` Expense replacement
 
   describe "Property: last TransactionLabelsSet wins"
     $ it "fold of N label-set events yields the last event's set"
@@ -193,4 +193,4 @@ spec = describe "Transaction projection / labels + allocations edits" $ do
             | c <- cats
             ]
           projected = latestProjection transactionProjection (seed : completed : changeEvents)
-       in projected ^. #transferType === Income (mkAllocs (last cats))
+       in projected ^. #transactionType === Income (mkAllocs (last cats))

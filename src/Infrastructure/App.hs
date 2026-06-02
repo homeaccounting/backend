@@ -586,7 +586,7 @@ runDb action = do
 -- On exit (normal or exception) the 'UserId' is removed.
 --
 -- This closes the TOCTOU window between the bank-import dedup check
--- ('isImported') and the 'TransferInitiated' emit: with the lock held,
+-- ('isImported') and the 'TransactionPostingInitiated' emit: with the lock held,
 -- two concurrent @resync@ calls for the same user are serialized, so
 -- at most one in-flight resync per user per process.
 --

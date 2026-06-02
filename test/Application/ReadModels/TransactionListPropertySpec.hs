@@ -21,11 +21,11 @@ import Domain.Core.Types
   ( AccountId,
     Currency (..),
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     unTransactionId,
   )
 import Domain.Models (AccountingEvent (..))
-import Domain.Transaction.Events (TransferInitiated (..))
+import Domain.Transaction.Events (TransactionPostingInitiated (..))
 import Eventium (StreamEvent (..), emptyMetadata)
 import qualified Eventium
 import RIO
@@ -54,12 +54,12 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
         StreamEvent
           (unTransactionId txId)
           0
-          ( (emptyMetadata "TransferInitiated")
+          ( (emptyMetadata "TransactionPostingInitiated")
               { Eventium.createdAt = Just persistedAt
               }
           )
-          ( TransferInitiatedEvent
-              TransferInitiated
+          ( TransactionPostingInitiatedEvent
+              TransactionPostingInitiated
                 { sourceAccountId = src,
                   targetAccountId = tgt,
                   sourceAmount = mockMoneyWith USD 100,
@@ -68,12 +68,12 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
                   description = "seed",
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = businessAt,
-                  transferType = Transfer,
+                  transactionType = Transfer,
                   externalTransactionId = Nothing,
                   labels = Set.empty
                 }
           )
-   in StreamEvent () seqNo (emptyMetadata "TransferInitiated") inner
+   in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
 
 -- | A random UTC instant inside a fixed 366-day window starting 2026-01-01.
 -- Uses addUTCTime so the day counter is normalised correctly.

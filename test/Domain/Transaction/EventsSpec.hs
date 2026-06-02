@@ -7,7 +7,7 @@
 --
 -- Events emitted before the @externalTransactionId@ field was added
 -- (pre-bank-integration) must still decode from the event store. These
--- tests pin that contract: a 'TransferInitiated' payload without the
+-- tests pin that contract: a 'TransactionPostingInitiated' payload without the
 -- field decodes as 'Nothing', and the round-trip preserves explicit
 -- 'Just' values.
 module Domain.Transaction.EventsSpec (spec) where
@@ -23,38 +23,38 @@ import Domain.Core.Types
   ( unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
   )
-import Domain.Transaction.Events (TransferInitiated (..))
+import Domain.Transaction.Events (TransactionPostingInitiated (..))
 import RIO
 import Test.Hspec
 import Testkit.Helpers (mockAccountId, mockMoney, mockUserId, singletonIncome)
 
 spec :: Spec
-spec = describe "TransferInitiated JSON" $ do
+spec = describe "TransactionPostingInitiated JSON" $ do
   it "decodes legacy payloads without externalTransactionId as Nothing" $ do
     let legacy = stripKey "externalTransactionId" (encode sampleEvent)
-    case eitherDecode legacy :: Either String TransferInitiated of
+    case eitherDecode legacy :: Either String TransactionPostingInitiated of
       Left err -> expectationFailure $ "legacy decode failed: " <> err
       Right decoded -> decoded.externalTransactionId `shouldBe` Nothing
 
-  it "round-trips TransferInitiated with Just externalTransactionId" $ do
+  it "round-trips TransactionPostingInitiated with Just externalTransactionId" $ do
     let evt =
           sampleEvent
             { externalTransactionId =
                 Just (unsafeExternalTransactionId "mono-tx-123")
             }
-    (eitherDecode (encode evt) :: Either String TransferInitiated)
+    (eitherDecode (encode evt) :: Either String TransactionPostingInitiated)
       `shouldBe` Right evt
 
   it "decodes legacy payloads without labels as empty set" $ do
     let legacy = stripKey "labels" (encode sampleEvent)
-    case eitherDecode legacy :: Either String TransferInitiated of
+    case eitherDecode legacy :: Either String TransactionPostingInitiated of
       Left err -> expectationFailure $ "legacy decode failed: " <> err
       Right decoded -> decoded.labels `shouldBe` Set.empty
 
--- | A minimal valid 'TransferInitiated' for serialisation tests.
-sampleEvent :: TransferInitiated
+-- | A minimal valid 'TransactionPostingInitiated' for serialisation tests.
+sampleEvent :: TransactionPostingInitiated
 sampleEvent =
-  TransferInitiated
+  TransactionPostingInitiated
     { sourceAccountId = mockAccountId (uuidFromInt 1),
       targetAccountId = mockAccountId (uuidFromInt 2),
       sourceAmount = mockMoney 10,
@@ -63,7 +63,7 @@ sampleEvent =
       description = "legacy test transfer",
       by = mockUserId (uuidFromInt 3),
       at = UTCTime (fromGregorian 2026 4 1) 0,
-      transferType = singletonIncome (unsafeDictionaryEntryId (uuidFromInt 4)) (mockMoney 10),
+      transactionType = singletonIncome (unsafeDictionaryEntryId (uuidFromInt 4)) (mockMoney 10),
       externalTransactionId = Nothing,
       labels = Set.empty
     }

@@ -16,25 +16,25 @@
 -- Services accept and return domain/application types only. Web-layer
 -- DTO conversion is the responsibility of the API handlers.
 --
--- The actual transfer is coordinated by the 'TransferManager' process manager
--- (saga). This service initiates the transfer by issuing the InitiateTransfer
--- command; the TransferManager then handles the debit/credit/complete/fail flow.
+-- The actual transfer is coordinated by the 'TransactionPostingManager' process manager
+-- (saga). This service initiates the transfer by issuing the InitiateTransaction
+-- command; the TransactionPostingManager then handles the debit/credit/complete/fail flow.
 --
 -- Usage:
 --   Services are called by thin API handlers in @Web.API.TransactionAPI@.
 module Application.Services.TransactionService
   ( -- * Service Functions
-    initiateTransfer,
+    initiateTransaction,
     initiateIncome,
     initiateExpense,
-    initiateInternalTransfer,
+    initiateTransfer,
     getTransaction,
     listTransactions,
     setTransactionLabels,
     setTransactionAllocations,
     changeTransactionDescription,
     changeTransactionDate,
-    amendTransfer,
+    amendTransaction,
     cancelTransaction,
 
     -- * Re-exported helpers for sibling services
@@ -81,8 +81,8 @@ import Domain.Core.Types
     LabelId,
     Money,
     TransactionId,
-    TransferKind (..),
-    TransferType (..),
+    TransactionKind (..),
+    TransactionType (..),
     UserId,
     convert,
     exchangeRateValue,
@@ -97,18 +97,18 @@ import Domain.Core.Types
   )
 import Domain.Models
   ( AccountingEvent
-      ( TransactionCancellationCompletedEvent,
-        TransferAmendmentCompletedEvent,
-        TransferAmendmentFailedEvent
+      ( TransactionAmendmentCompletedEvent,
+        TransactionAmendmentFailedEvent,
+        TransactionCancellationCompletedEvent
       ),
   )
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
-      ( AmendTransferTransactionCommand,
+      ( AmendTransactionTransactionCommand,
         CancelTransactionTransactionCommand,
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
-        InitiateTransferTransactionCommand,
+        InitiateTransactionTransactionCommand,
         SetTransactionAllocationsTransactionCommand,
         SetTransactionLabelsTransactionCommand
       ),
@@ -116,16 +116,16 @@ import Domain.Transaction.CommandHandler
   )
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
-  ( AmendTransfer (..),
+  ( AmendTransaction (..),
     CancelTransaction (..),
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
-    InitiateTransfer (..),
+    InitiateTransaction (..),
     SetTransactionAllocations (..),
     SetTransactionLabels (..),
   )
 import Domain.Transaction.Events
-  ( TransferAmendmentFailed (..),
+  ( TransactionAmendmentFailed (..),
   )
 import Eventium (CommandHandlerError (..), EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App
@@ -146,23 +146,23 @@ import qualified RIO.Text as T
 -- | Initiate a money transfer between accounts.
 --
 -- Accepts a validated domain command. The caller (Web handler) is responsible
--- for converting the HTTP request DTO into an 'InitiateTransfer' command.
+-- for converting the HTTP request DTO into an 'InitiateTransaction' command.
 --
 -- Orchestrates:
 --   1. Generate new transaction ID (UUID)
---   2. Execute InitiateTransfer command via event store
+--   2. Execute InitiateTransaction command via event store
 --   3. Query read model for the created transaction
 --
--- The TransferManager process manager will then:
+-- The TransactionPostingManager process manager will then:
 --   - Debit the source account
 --   - Credit the target account
 --   - Complete or fail the transaction
 --
 -- Returns the TransactionId and TransactionData on success.
-initiateTransfer ::
-  InitiateTransfer ->
+initiateTransaction ::
+  InitiateTransaction ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateTransfer transferCmd = runExceptT $ do
+initiateTransaction transferCmd = runExceptT $ do
   lift $ logInfo "Initiating money transfer..."
   transactionUuid <- liftIO UUID.nextRandom
   transactionId <-
@@ -174,7 +174,7 @@ initiateTransfer transferCmd = runExceptT $ do
     (\_ -> TransactionError "Transfer initiation rejected by domain")
     id
     transactionUuid
-    (InitiateTransferTransactionCommand transferCmd)
+    (InitiateTransactionTransactionCommand transferCmd)
   ExceptT (queryTransactionResult transactionId)
 
 -- | Get a transaction by UUID.
@@ -224,7 +224,7 @@ listTransactions userId query = do
 --
 -- Looks up the user's External account and validates the target is a Regular
 -- account. Resolves cross-currency amounts using ECB rates, then delegates
--- to 'initiateTransfer'.
+-- to 'initiateTransaction'.
 initiateIncome ::
   UserId ->
   AccountId ->
@@ -266,7 +266,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
           $ \date srcAmt tgtAmt rate -> do
             tt <- mkIncome tgtAmt allocations
             Right
-              InitiateTransfer
+              InitiateTransaction
                 { sourceAccountId = externalAccId,
                   targetAccountId = targetAccountId,
                   sourceAmount = srcAmt,
@@ -275,7 +275,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
                   description = description,
                   initiatedBy = userId,
                   at = date,
-                  transferType = tt,
+                  transactionType = tt,
                   externalTransactionId = Nothing,
                   labels = labels
                 }
@@ -285,7 +285,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
 --
 -- Looks up the user's External account and validates the source is a Regular
 -- account. Resolves cross-currency amounts using ECB rates, then delegates
--- to 'initiateTransfer'.
+-- to 'initiateTransaction'.
 initiateExpense ::
   UserId ->
   AccountId ->
@@ -327,7 +327,7 @@ initiateExpense userId sourceAccountId amount allocations labels description may
           $ \date srcAmt tgtAmt rate -> do
             tt <- mkExpense srcAmt allocations
             Right
-              InitiateTransfer
+              InitiateTransaction
                 { sourceAccountId = sourceAccountId,
                   targetAccountId = externalAccId,
                   sourceAmount = srcAmt,
@@ -336,7 +336,7 @@ initiateExpense userId sourceAccountId amount allocations labels description may
                   description = description,
                   initiatedBy = userId,
                   at = date,
-                  transferType = tt,
+                  transactionType = tt,
                   externalTransactionId = Nothing,
                   labels = labels
                 }
@@ -345,8 +345,8 @@ initiateExpense userId sourceAccountId amount allocations labels description may
 -- | Initiate an internal transfer (Regular -> Regular account).
 --
 -- Validates both accounts exist and are Regular, resolves cross-currency
--- amounts, then delegates to 'initiateTransfer'.
-initiateInternalTransfer ::
+-- amounts, then delegates to 'initiateTransaction'.
+initiateTransfer ::
   UserId ->
   AccountId ->
   AccountId ->
@@ -356,7 +356,7 @@ initiateInternalTransfer ::
   Maybe Rational ->
   Maybe UTCTime ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateInternalTransfer userId sourceAccountId targetAccountId amount labels description maybeUserRate maybeTransferDate =
+initiateTransfer userId sourceAccountId targetAccountId amount labels description maybeUserRate maybeTransferDate =
   runExceptT $ do
     lift $ logInfo "Initiating internal transfer..."
     now <- liftIO getCurrentTime
@@ -388,7 +388,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount labels de
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate
           $ \date srcAmt tgtAmt rate ->
             Right
-              InitiateTransfer
+              InitiateTransaction
                 { sourceAccountId = sourceAccountId,
                   targetAccountId = targetAccountId,
                   sourceAmount = srcAmt,
@@ -397,7 +397,7 @@ initiateInternalTransfer userId sourceAccountId targetAccountId amount labels de
                   description = description,
                   initiatedBy = userId,
                   at = date,
-                  transferType = Transfer,
+                  transactionType = Transfer,
                   externalTransactionId = Nothing,
                   labels = labels
                 }
@@ -437,7 +437,7 @@ setTransactionLabels userId transactionId labels = runExceptT $ do
 --
 -- Requires Editor+ access. Validates that:
 --
---   * the existing 'TransferType' is Income or Expense — Transfer and
+--   * the existing 'TransactionType' is Income or Expense — Transfer and
 --     Adjustment have no allocations and are rejected.
 --   * each allocation's category id exists in the dictionary appropriate
 --     to the existing kind (income / expense).
@@ -462,13 +462,13 @@ setTransactionAllocations userId transactionId newAllocations = runExceptT $ do
   -- for the existing kind. Uncategorised aggregates are rejected up
   -- front so we can validate each allocation's category id against
   -- the right dictionary.
-  case pickCategoryDict transaction.transferType of
+  case pickCategoryDict transaction.transactionType of
     Nothing -> throwE CannotSetAllocationsOnUncategorisedTransaction
     Just _ -> pure ()
   ExceptT
     ( validateAllocationsAgainstDictionary
         userId
-        (kindOf transaction.transferType)
+        (kindOf transaction.transactionType)
         newAllocations
     )
   let cmd =
@@ -546,22 +546,22 @@ changeTransactionDate userId transactionId newAt = runExceptT $ do
 --   2. Books-close gate against the transaction's current business date.
 --   3. Caller has Editor+ on each of the new source / target accounts.
 --   4. 'AccountType' (Regular vs External) preservation on each leg —
---      this implicitly preserves the transaction's 'transferType', so
+--      this implicitly preserves the transaction's 'transactionType', so
 --      amendment never crosses the internal/external boundary. Use
 --      delete-and-repost to recategorise across the boundary.
 --   5. Identity short-circuit (spec §4.3): if the payload exactly matches
 --      current canonical state, return the read-model entry unchanged.
---   6. Dispatch 'AmendTransfer'. The pure handler rejects same-account
+--   6. Dispatch 'AmendTransaction'. The pure handler rejects same-account
 --      and zero-amount payloads.
 --   7. Read the TX stream to distinguish saga success
---      ('TransferAmendmentCompleted') from saga failure
---      ('TransferAmendmentFailed') and surface 'InsufficientFundsForAmendment'.
-amendTransfer ::
+--      ('TransactionAmendmentCompleted') from saga failure
+--      ('TransactionAmendmentFailed') and surface 'InsufficientFundsForAmendment'.
+amendTransaction ::
   UserId ->
   TransactionId ->
-  AmendTransfer ->
+  AmendTransaction ->
   AppM (Either DomainError TransactionData)
-amendTransfer userId transactionId amendCmd = runExceptT $ do
+amendTransaction userId transactionId amendCmd = runExceptT $ do
   lift
     $ logInfo
     $ "Amending transaction "
@@ -584,7 +584,7 @@ amendTransfer userId transactionId amendCmd = runExceptT $ do
         amendCmd.newTargetAccountId
     )
   -- Kind is structurally preserved by 'validateAccountTypePreserved'
-  -- (the transferType is a function of source/target 'AccountType').
+  -- (the transactionType is a function of source/target 'AccountType').
   -- Allocations are not on the amendment surface — when the categorised
   -- amount changes, the projection rescales existing allocations
   -- proportionally; deliberate re-splits are done via
@@ -595,7 +595,7 @@ amendTransfer userId transactionId amendCmd = runExceptT $ do
       ExceptT
         ( dispatchAndAwaitAmendment
             transactionId
-            (AmendTransferTransactionCommand amendCmd)
+            (AmendTransactionTransactionCommand amendCmd)
         )
 
 -- | Cancel a completed transaction by its 'TransactionId'.
@@ -736,9 +736,9 @@ dispatchEdit transactionId cmd = runExceptT $ do
 
 -- | True when the amendment payload exactly matches the current canonical
 -- state (per spec §4.3). Compared fields: accounts, amounts, exchange
--- rate. 'transferType' is preserved by construction (see
+-- rate. 'transactionType' is preserved by construction (see
 -- 'validateAccountTypePreserved') so it is not compared here.
-isIdentityAmend :: TransactionData -> AmendTransfer -> Bool
+isIdentityAmend :: TransactionData -> AmendTransaction -> Bool
 isIdentityAmend td cmd =
   td.sourceAccountId
     == cmd.newSourceAccountId
@@ -781,7 +781,7 @@ ensureEditorOnNewAccounts userId newSrc newTgt = runExceptT $ do
     (AccountError "User does not have edit access to the new target account")
 
 -- | Require that the amendment preserves each leg's 'AccountType'
--- (Regular vs External). The transaction's 'transferType' is a function
+-- (Regular vs External). The transaction's 'transactionType' is a function
 -- of the leg-type pair, so preserving the pair preserves the type and
 -- amendment never crosses the internal/external boundary.
 --
@@ -816,7 +816,7 @@ validateAccountTypePreserved oldSrc newSrc oldTgt newTgt = runExceptT $ do
     sameAccountType External External = True
     sameAccountType _ _ = False
 
--- | Dispatch 'AmendTransfer' and surface the saga's outcome.
+-- | Dispatch 'AmendTransaction' and surface the saga's outcome.
 --
 -- Eventium's in-process event bus dispatches synchronously and
 -- depth-first: by the time 'runTransactionCmd' returns, every event the
@@ -863,8 +863,8 @@ readLastAmendmentOutcome txId = runExceptT $ do
 lastAmendmentOutcome :: [AccountingEvent] -> AmendmentOutcome
 lastAmendmentOutcome = foldl' step AmendmentUnknown
   where
-    step _ (TransferAmendmentCompletedEvent _) = AmendmentSucceeded
-    step _ (TransferAmendmentFailedEvent (TransferAmendmentFailed r)) =
+    step _ (TransactionAmendmentCompletedEvent _) = AmendmentSucceeded
+    step _ (TransactionAmendmentFailedEvent (TransactionAmendmentFailed r)) =
       AmendmentFailed r
     step acc _ = acc
 
@@ -961,24 +961,24 @@ dictionaryEntryIds dictId cfg =
 
 -- | Pick the dictionary id matching the current transfer type. Internal
 -- transfers and adjustments have no category and return 'Nothing'.
-pickCategoryDict :: TransferType -> Maybe DictionaryId
+pickCategoryDict :: TransactionType -> Maybe DictionaryId
 pickCategoryDict tt = pickCategoryDictForKind (kindOf tt)
 
--- | Pick the dictionary id matching a 'TransferKind'.
-pickCategoryDictForKind :: TransferKind -> Maybe DictionaryId
+-- | Pick the dictionary id matching a 'TransactionKind'.
+pickCategoryDictForKind :: TransactionKind -> Maybe DictionaryId
 pickCategoryDictForKind IncomeKind = Just ConfigurationService.incomeCategoryDictId
 pickCategoryDictForKind ExpenseKind = Just ConfigurationService.expenseCategoryDictId
 pickCategoryDictForKind TransferKind = Nothing
 pickCategoryDictForKind AdjustmentKind = Nothing
 
 -- | Verify every allocation's 'categoryId' exists in the dictionary that
--- matches the supplied 'TransferKind'. The handler enforces sum, currency
+-- matches the supplied 'TransactionKind'. The handler enforces sum, currency
 -- and positivity invariants; this only covers the side that depends on
 -- user configuration. Caller is responsible for ensuring the kind is
 -- categorised (Income/Expense); other kinds short-circuit to 'Right ()'.
 validateAllocationsAgainstDictionary ::
   UserId ->
-  TransferKind ->
+  TransactionKind ->
   Allocations ->
   AppM (Either DomainError ())
 validateAllocationsAgainstDictionary userId kind allocs =
@@ -994,7 +994,7 @@ validateAllocationsAgainstDictionary userId kind allocs =
 -- | Resolve cross-currency amounts and initiate a transfer.
 --
 -- Computes the rate date from the transfer date, resolves amounts via
--- exchange rates, then delegates to 'initiateTransfer'. The transfer
+-- exchange rates, then delegates to 'initiateTransaction'. The transfer
 -- date is passed into 'mkCmd' so it can be set as the command's @at@.
 resolveAndInitiate ::
   Maybe UTCTime ->
@@ -1004,7 +1004,7 @@ resolveAndInitiate ::
   Currency ->
   Bool ->
   Maybe Rational ->
-  (UTCTime -> Money -> Money -> Maybe ExchangeRate -> Either DomainError InitiateTransfer) ->
+  (UTCTime -> Money -> Money -> Maybe ExchangeRate -> Either DomainError InitiateTransaction) ->
   AppM (Either DomainError (TransactionId, TransactionData))
 resolveAndInitiate maybeTransferDate now userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate mkCmd = runExceptT $ do
   let transferDate = fromMaybe now maybeTransferDate
@@ -1012,7 +1012,7 @@ resolveAndInitiate maybeTransferDate now userAmount srcCurrency tgtCurrency user
   (srcAmt, tgtAmt, rate) <-
     ExceptT (resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate rateDay)
   cmd <- ExceptT (pure (mkCmd transferDate srcAmt tgtAmt rate))
-  ExceptT (initiateTransfer cmd)
+  ExceptT (initiateTransaction cmd)
 
 -- | Query the read model for a transaction and return the result.
 queryTransactionResult ::

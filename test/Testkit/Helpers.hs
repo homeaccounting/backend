@@ -217,7 +217,7 @@ fromLeft' (Right val) = error $ "fromLeft' called on Right: " <> show val
 -- Splits the total into equal 'Rational' slices; the first allocation
 -- absorbs the rounding residual so the sum is exact. Behaviour is
 -- defined only when 'total' is strictly positive and the category list
--- is non-empty — both are precondition of any valid 'TransferType'.
+-- is non-empty — both are precondition of any valid 'TransactionType'.
 --
 -- 'partitionMoney total (c :| [c1, c2])' produces three allocations
 -- assigned to 'c', 'c1', 'c2'. For non-positive 'total' the function
@@ -239,29 +239,29 @@ partitionMoney total (c :| cs)
 
 -- | Build a degenerate length-1 'NonEmpty Allocation' for a single
 -- category and amount. Useful in tests that pre-date the multi-category
--- design and merely need any valid categorised 'TransferType'.
+-- design and merely need any valid categorised 'TransactionType'.
 --
 -- The amount is taken as-is — callers are responsible for ensuring it
 -- is strictly positive.
 singletonAllocation :: DictionaryEntryId -> Money -> Allocations
 singletonAllocation c m = Allocation c m :| []
 
--- | Build an 'Income' 'TransferType' with a single allocation. The
+-- | Build an 'Income' 'TransactionType' with a single allocation. The
 -- amount supplied IS the categorised total (degenerate length-1
 -- allocation), so the sum invariant is trivially satisfied.
 --
 -- Delegates to 'mkIncome' so test fixtures go through the same
 -- validation surface as production code; the call panics if the
 -- amount is not strictly positive.
-singletonIncome :: DictionaryEntryId -> Money -> TransferType
+singletonIncome :: DictionaryEntryId -> Money -> TransactionType
 singletonIncome c m =
   case mkIncome m (singletonAllocation c m) of
     Right tt -> tt
     Left err -> error ("singletonIncome: " <> show err)
 
--- | Build an 'Expense' 'TransferType' with a single allocation. Same
+-- | Build an 'Expense' 'TransactionType' with a single allocation. Same
 -- semantics as 'singletonIncome'.
-singletonExpense :: DictionaryEntryId -> Money -> TransferType
+singletonExpense :: DictionaryEntryId -> Money -> TransactionType
 singletonExpense c m =
   case mkExpense m (singletonAllocation c m) of
     Right tt -> tt

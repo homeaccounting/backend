@@ -10,7 +10,7 @@
 -- >>> import Application.ProcessManagers
 --
 -- This gives you access to:
---   - TransferManager: Coordinates money transfers between accounts
+--   - TransactionPostingManager: Coordinates money transfers between accounts
 --   - transferProcessManager: The main transfer saga
 --
 -- Process Manager Pattern:
@@ -25,18 +25,18 @@
 --
 -- The transfer process manager coordinates money transfers between accounts:
 --
--- 1. Listen for TransferInitiated event (Transaction aggregate)
+-- 1. Listen for TransactionPostingInitiated event (Transaction aggregate)
 -- 2. Issue DebitAccount command (Account aggregate - source)
 -- 3. On success, issue CreditAccount command (Account aggregate - target)
--- 4. Issue CompleteTransfer command (Transaction aggregate)
--- 5. On failure, issue FailTransfer command (Transaction aggregate)
+-- 4. Issue CompleteTransactionPosting command (Transaction aggregate)
+-- 5. On failure, issue FailTransactionPosting command (Transaction aggregate)
 --
 -- Example Flow:
 --
 -- Successful Transfer:
 -- >>> -- User initiates transfer
--- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 100) "Rent")
--- >>> → TransferInitiated event
+-- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 100) "Rent")
+-- >>> → TransactionPostingInitiated event
 -- >>>
 -- >>> -- Process manager receives event
 -- >>> → Issues DebitAccount to source account
@@ -47,22 +47,22 @@
 -- >>> → AccountCredited event
 -- >>>
 -- >>> -- Process manager receives credit success
--- >>> → Issues CompleteTransfer to transaction
--- >>> → TransferCompleted event
+-- >>> → Issues CompleteTransactionPosting to transaction
+-- >>> → TransactionPostingCompleted event
 -- >>> -- Transfer complete!
 --
 -- Failed Transfer:
 -- >>> -- User initiates transfer
--- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 1000) "Payment")
--- >>> → TransferInitiated event
+-- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 1000) "Payment")
+-- >>> → TransactionPostingInitiated event
 -- >>>
 -- >>> -- Process manager receives event
 -- >>> → Issues DebitAccount to source account
 -- >>> → AccountDebitRejected event (insufficient funds)
 -- >>>
 -- >>> -- Process manager receives debit failure
--- >>> → Issues FailTransfer to transaction
--- >>> → TransferFailed event
+-- >>> → Issues FailTransactionPosting to transaction
+-- >>> → TransactionPostingFailed event
 -- >>> -- Transfer failed with compensation
 --
 -- Properties:
@@ -88,6 +88,6 @@ module Application.ProcessManagers
   )
 where
 
+import Application.ProcessManagers.TransactionAmendmentManager as X
 import Application.ProcessManagers.TransactionCancellationManager as X
-import Application.ProcessManagers.TransferAmendmentManager as X
-import Application.ProcessManagers.TransferManager as X
+import Application.ProcessManagers.TransactionPostingManager as X

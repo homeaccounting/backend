@@ -15,7 +15,7 @@
 --   - AccountCredited: Account was credited (balance increased) as part of a transfer
 --
 -- Balance-changing events (AccountDebited, AccountCredited) are internal events
--- produced by DebitAccount/CreditAccount commands issued by the TransferManager
+-- produced by DebitAccount/CreditAccount commands issued by the TransactionPostingManager
 -- process manager. They are not triggered directly by user actions.
 -- Each carries a TransactionId for saga correlation.
 --
@@ -132,7 +132,7 @@ data AccountAccessRevoked = AccountAccessRevoked
 --
 -- Produced by the DebitAccount command handler when the source account has
 -- sufficient funds (or is an External account, which allows negative balance).
--- The TransferManager saga listens for this event to proceed with crediting
+-- The TransactionPostingManager saga listens for this event to proceed with crediting
 -- the target account.
 --
 -- Example:
@@ -148,7 +148,7 @@ data AccountDebited = AccountDebited
 -- | Event emitted when an account is successfully credited as part of a transfer.
 --
 -- Produced by the CreditAccount command handler. Credits always succeed.
--- The TransferManager saga listens for this event to finalize transfer tracking.
+-- The TransactionPostingManager saga listens for this event to finalize transfer tracking.
 --
 -- Example:
 -- >>> AccountCredited (Money 200) txId
@@ -202,10 +202,10 @@ data AccountRenamed = AccountRenamed
   }
   deriving (Show, Eq)
 
--- | Event emitted when a prior debit posting is reversed by the TransferAmendmentManager saga.
+-- | Event emitted when a prior debit posting is reversed by the TransactionAmendmentManager saga.
 --
 -- This is a saga-internal event: it is never triggered directly by a user command.
--- The TransferAmendmentManager emits it to undo a previous 'AccountDebited' leg
+-- The TransactionAmendmentManager emits it to undo a previous 'AccountDebited' leg
 -- when amending a completed transfer.
 --
 -- Because a reversal must always succeed (refusing a reversal would leave the saga
@@ -225,10 +225,10 @@ data AccountDebitReversed = AccountDebitReversed
   }
   deriving (Show, Eq)
 
--- | Event emitted when a prior credit posting is reversed by the TransferAmendmentManager saga.
+-- | Event emitted when a prior credit posting is reversed by the TransactionAmendmentManager saga.
 --
 -- This is a saga-internal event: it is never triggered directly by a user command.
--- The TransferAmendmentManager emits it to undo a previous 'AccountCredited' leg
+-- The TransactionAmendmentManager emits it to undo a previous 'AccountCredited' leg
 -- when amending a completed transfer.
 --
 -- Because a reversal must always succeed (refusing a reversal would leave the saga

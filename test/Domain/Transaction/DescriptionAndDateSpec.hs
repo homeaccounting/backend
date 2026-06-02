@@ -15,7 +15,7 @@ import Domain.Core.Types
   ( Allocation (..),
     Currency (..),
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -32,8 +32,8 @@ import Domain.Transaction.Commands
 import Domain.Transaction.Events
   ( TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
-    TransferCompleted (..),
-    TransferInitiated (..),
+    TransactionPostingCompleted (..),
+    TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Projection
   ( Transaction,
@@ -68,7 +68,7 @@ completedIncome =
   transactionDefault
     & #status
     .~ Completed
-    & #transferType
+    & #transactionType
     .~ Income (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| [])
     & #description
     .~ "Original"
@@ -81,11 +81,11 @@ pendingIncome = completedIncome & #status .~ Pending
 failedIncome :: Transaction
 failedIncome = completedIncome & #status .~ Failed "nope"
 
--- | Default 'TransferInitiated' event shape; callers override specific fields
+-- | Default 'TransactionPostingInitiated' event shape; callers override specific fields
 -- via record update.
-mkInitiated :: TransferInitiated
+mkInitiated :: TransactionPostingInitiated
 mkInitiated =
-  TransferInitiated
+  TransactionPostingInitiated
     { sourceAccountId = transactionDefault ^. #sourceAccountId,
       targetAccountId = transactionDefault ^. #targetAccountId,
       sourceAmount = transactionDefault ^. #sourceAmount,
@@ -94,13 +94,13 @@ mkInitiated =
       description = "",
       by = transactionDefault ^. #initiatedBy,
       at = t0,
-      transferType = Income (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| []),
+      transactionType = Income (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| []),
       externalTransactionId = Nothing,
       labels = Set.empty
     }
 
 completedEvent :: TransactionEvent
-completedEvent = TransferCompletedTransactionEvent TransferCompleted
+completedEvent = TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
 
 -- -----------------------------------------------------------------------------
 -- Spec
@@ -120,7 +120,7 @@ spec = do
 
     it "projection's description updates after the event is folded" $ do
       let evts =
-            [ TransferInitiatedTransactionEvent mkInitiated {description = "Original"},
+            [ TransactionPostingInitiatedTransactionEvent mkInitiated {description = "Original"},
               completedEvent,
               TransactionDescriptionChangedTransactionEvent
                 TransactionDescriptionChanged
@@ -161,7 +161,7 @@ spec = do
 
     it "projection's at updates after the event is folded" $ do
       let evts =
-            [ TransferInitiatedTransactionEvent mkInitiated {at = t1},
+            [ TransactionPostingInitiatedTransactionEvent mkInitiated {at = t1},
               completedEvent,
               TransactionDateChangedTransactionEvent
                 TransactionDateChanged
@@ -190,8 +190,8 @@ spec = do
                 }
       handleTransactionCommand failedIncome cmd `shouldBe` Left CannotEditUncompletedTransaction
 
-  describe "TransferInitiated.at -> projection.at" $ do
-    it "projection's at is set from TransferInitiated.at" $ do
-      let evts = [TransferInitiatedTransactionEvent mkInitiated {at = t1}]
+  describe "TransactionPostingInitiated.at -> projection.at" $ do
+    it "projection's at is set from TransactionPostingInitiated.at" $ do
+      let evts = [TransactionPostingInitiatedTransactionEvent mkInitiated {at = t1}]
           projected = latestProjection transactionProjection evts
       projected ^. #at `shouldBe` t1

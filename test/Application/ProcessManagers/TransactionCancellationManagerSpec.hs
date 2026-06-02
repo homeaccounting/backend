@@ -9,8 +9,8 @@
 --
 -- Covers each row of spec §4.2-§4.4:
 --
---   * 'TransferInitiatedEvent' populates 'currentPostings'
---   * 'TransferAmendmentCompletedEvent' updates the snapshot so a
+--   * 'TransactionPostingInitiatedEvent' populates 'currentPostings'
+--   * 'TransactionAmendmentCompletedEvent' updates the snapshot so a
 --     subsequent cancellation reverses the amended amounts
 --   * 'TransactionCancellationInitiatedEvent' emits exactly two reversal
 --     commands with the snapshot's amounts and @at@
@@ -42,7 +42,7 @@ import Domain.Core.Types
     Currency (..),
     Money,
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     unAccountId,
     unTransactionId,
@@ -57,10 +57,10 @@ import Domain.Models
   )
 import Domain.Transaction.Commands (CompleteTransactionCancellation (..))
 import Domain.Transaction.Events
-  ( TransactionCancellationCompleted (..),
+  ( TransactionAmendmentCompleted (..),
+    TransactionCancellationCompleted (..),
     TransactionCancellationInitiated (..),
-    TransferAmendmentCompleted (..),
-    TransferInitiated (..),
+    TransactionPostingInitiated (..),
   )
 import Eventium (ProcessManagerEffect (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
@@ -107,15 +107,15 @@ m = unsafeMoney USD
 acctUuid :: AccountId -> UUID.UUID
 acctUuid = unAccountId
 
--- | 'TransferInitiated' seed event for a 100 USD transfer from 'src' to 'tgt'.
+-- | 'TransactionPostingInitiated' seed event for a 100 USD transfer from 'src' to 'tgt'.
 seedInitiated :: VersionedStreamEvent AccountingEvent
 seedInitiated =
   StreamEvent
     txUuid
     0
     (emptyMetadata "")
-    ( TransferInitiatedEvent
-        TransferInitiated
+    ( TransactionPostingInitiatedEvent
+        TransactionPostingInitiated
           { sourceAccountId = src,
             targetAccountId = tgt,
             sourceAmount = m 100,
@@ -124,7 +124,7 @@ seedInitiated =
             description = "seed",
             by = userId_,
             at = sampleAt,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
           }
@@ -200,8 +200,8 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
       Map.null (empty_ ^. #cancellations) `shouldBe` True
       Map.null (empty_ ^. #currentPostings) `shouldBe` True
 
-  -- Test case 1: TransferInitiatedEvent populates currentPostings
-  describe "TransferInitiated tracking"
+  -- Test case 1: TransactionPostingInitiatedEvent populates currentPostings
+  describe "TransactionPostingInitiated tracking"
     $ it "records the current postings snapshot"
     $ do
       let st = runProjection [seedInitiated]
@@ -215,8 +215,8 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
           p.targetAmount `shouldBe` m 100
           p.at `shouldBe` sampleAt
 
-  -- Test case 2: TransferAmendmentCompletedEvent updates the snapshot
-  describe "TransferAmendmentCompleted snapshot update" $ do
+  -- Test case 2: TransactionAmendmentCompletedEvent updates the snapshot
+  describe "TransactionAmendmentCompleted snapshot update" $ do
     let amendedSrcUuid = UUID.fromWords 11 0 0 1
         amendedTgtUuid = UUID.fromWords 21 0 0 1
         amendedSrc = unsafeAccountId amendedSrcUuid
@@ -226,8 +226,8 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
             txUuid
             1
             (emptyMetadata "")
-            ( TransferAmendmentCompletedEvent
-                TransferAmendmentCompleted
+            ( TransactionAmendmentCompletedEvent
+                TransactionAmendmentCompleted
                   { transactionId = txId,
                     newSourceAccountId = amendedSrc,
                     newTargetAccountId = amendedTgt,
@@ -418,8 +418,8 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
             tx2Uuid
             0
             (emptyMetadata "")
-            ( TransferInitiatedEvent
-                TransferInitiated
+            ( TransactionPostingInitiatedEvent
+                TransactionPostingInitiated
                   { sourceAccountId = src2,
                     targetAccountId = tgt2,
                     sourceAmount = m 200,
@@ -428,7 +428,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
                     description = "seed2",
                     by = userId_,
                     at = sampleAt,
-                    transferType = Transfer,
+                    transactionType = Transfer,
                     externalTransactionId = Nothing,
                     labels = Set.empty
                   }

@@ -4,24 +4,24 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : Application.ProcessManagers.TransferManagerSpec
+-- Module      : Application.ProcessManagers.TransactionPostingManagerSpec
 -- Description : Unit tests for Transfer Process Manager (Saga)
 --
 -- This module tests the Transfer Process Manager which coordinates money transfers
--- between accounts using the saga pattern. Tests exercise the pure handleTransferEvent
--- and reactToTransferEvent functions directly by constructing StreamEvent values.
+-- between accounts using the saga pattern. Tests exercise the pure handleTransactionPostingEvent
+-- and reactToTransactionPostingEvent functions directly by constructing StreamEvent values.
 --
 -- Test Coverage:
 --   - Initial state: Empty transfers map
---   - TransferInitiated: State tracking + DebitAccount effect (carrying `at`)
---   - AccountDebited: State update + CreditAccount + CompleteTransfer effects
+--   - TransactionPostingInitiated: State tracking + DebitAccount effect (carrying `at`)
+--   - AccountDebited: State update + CreditAccount + CompleteTransactionPosting effects
 --   - AccountCredited: Cleans up transfer tracking
 --   - Idempotency: Duplicate events don't produce duplicate effects
 --   - Unrelated events: No effects produced
---   - `at` propagation: TransferInitiated.at lands on subsequent saga commands
-module Application.ProcessManagers.TransferManagerSpec (spec) where
+--   - `at` propagation: TransactionPostingInitiated.at lands on subsequent saga commands
+module Application.ProcessManagers.TransactionPostingManagerSpec (spec) where
 
-import Application.ProcessManagers.TransferManager
+import Application.ProcessManagers.TransactionPostingManager
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
@@ -33,7 +33,7 @@ import Domain.Account.Events
   )
 import Domain.Core.Types
   ( Currency (..),
-    TransferType (..),
+    TransactionType (..),
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
@@ -45,8 +45,8 @@ import Domain.Models
   ( AccountingCommand (..),
     AccountingEvent (..),
   )
-import Domain.Transaction.Commands (FailTransfer (..))
-import Domain.Transaction.Events (TransferCompleted (..), TransferInitiated (..))
+import Domain.Transaction.Commands (FailTransactionPosting (..))
+import Domain.Transaction.Events (TransactionPostingCompleted (..), TransactionPostingInitiated (..))
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
 import RIO hiding (view, (^.))
@@ -57,8 +57,8 @@ import Test.Hspec
 -- -----------------------------------------------------------------------------
 
 -- | Empty transfer manager for testing.
-emptyTransferManager :: TransferManager
-emptyTransferManager = TransferManager Map.empty
+emptyTransferManager :: TransactionPostingManager
+emptyTransferManager = TransactionPostingManager Map.empty
 
 -- | Fixed business time for deterministic testing.
 sampleAt :: UTCTime
@@ -77,18 +77,18 @@ targetAcctUuid = UUID.fromWords 3 0 0 3
 userUuid :: UUID.UUID
 userUuid = UUID.fromWords 4 0 0 4
 
--- | Construct a VersionedStreamEvent for a TransferInitiated event.
-mkTransferInitiatedEvent :: VersionedStreamEvent AccountingEvent
-mkTransferInitiatedEvent = mkTransferInitiatedEventAt sampleAt
+-- | Construct a VersionedStreamEvent for a TransactionPostingInitiated event.
+mkTransactionPostingInitiatedEvent :: VersionedStreamEvent AccountingEvent
+mkTransactionPostingInitiatedEvent = mkTransactionPostingInitiatedEventAt sampleAt
 
-mkTransferInitiatedEventAt :: UTCTime -> VersionedStreamEvent AccountingEvent
-mkTransferInitiatedEventAt t =
+mkTransactionPostingInitiatedEventAt :: UTCTime -> VersionedStreamEvent AccountingEvent
+mkTransactionPostingInitiatedEventAt t =
   StreamEvent
     txUuid
     0
     (emptyMetadata "")
-    ( TransferInitiatedEvent
-        TransferInitiated
+    ( TransactionPostingInitiatedEvent
+        TransactionPostingInitiated
           { sourceAccountId = unsafeAccountId sourceAcctUuid,
             targetAccountId = unsafeAccountId targetAcctUuid,
             sourceAmount = unsafeMoney USD 200,
@@ -97,23 +97,23 @@ mkTransferInitiatedEventAt t =
             description = "Test transfer",
             by = unsafeUserId userUuid,
             at = t,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
           }
     )
 
--- | Variant of 'mkTransferInitiatedEvent' carrying a non-empty label set
+-- | Variant of 'mkTransactionPostingInitiatedEvent' carrying a non-empty label set
 -- and an externalTransactionId. Exercised to verify the saga is indifferent
 -- to those optional payload fields.
-mkTransferInitiatedEventWithLabelsAndExternalId :: VersionedStreamEvent AccountingEvent
-mkTransferInitiatedEventWithLabelsAndExternalId =
+mkTransactionPostingInitiatedEventWithLabelsAndExternalId :: VersionedStreamEvent AccountingEvent
+mkTransactionPostingInitiatedEventWithLabelsAndExternalId =
   StreamEvent
     txUuid
     0
     (emptyMetadata "")
-    ( TransferInitiatedEvent
-        TransferInitiated
+    ( TransactionPostingInitiatedEvent
+        TransactionPostingInitiated
           { sourceAccountId = unsafeAccountId sourceAcctUuid,
             targetAccountId = unsafeAccountId targetAcctUuid,
             sourceAmount = unsafeMoney USD 200,
@@ -122,7 +122,7 @@ mkTransferInitiatedEventWithLabelsAndExternalId =
             description = "Test transfer",
             by = unsafeUserId userUuid,
             at = sampleAt,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Just (unsafeExternalTransactionId "mono:stmt-42"),
             labels = Set.fromList [unsafeDictionaryEntryId (UUID.fromWords 10 0 0 1), unsafeDictionaryEntryId (UUID.fromWords 10 0 0 2)]
           }
@@ -163,12 +163,12 @@ mkUnrelatedEvent =
     (UUID.fromWords 99 0 0 99)
     0
     (emptyMetadata "")
-    ( TransferCompletedEvent
-        TransferCompleted
+    ( TransactionPostingCompletedEvent
+        TransactionPostingCompleted
     )
 
 -- | Get the number of tracked transfers.
-transferCount :: TransferManager -> Int
+transferCount :: TransactionPostingManager -> Int
 transferCount mgr = Map.size (mgr ^. #transfers)
 
 -- -----------------------------------------------------------------------------
@@ -176,15 +176,15 @@ transferCount mgr = Map.size (mgr ^. #transfers)
 -- -----------------------------------------------------------------------------
 
 spec :: Spec
-spec = describe "TransferManager (Saga)" $ do
+spec = describe "TransactionPostingManager (Saga)" $ do
   describe "Initial State" $ do
     it "starts with empty transfers map" $ do
       let initialState = emptyTransferManager
       Map.null (initialState ^. #transfers) `shouldBe` True
 
-  describe "Transfer Initiation (TransferInitiated)" $ do
+  describe "Transfer Initiation (TransactionPostingInitiated)" $ do
     it "tracks transfer data in state" $ do
-      let state = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
+      let state = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEvent
       transferCount state `shouldBe` 1
       let transfersMap = state ^. #transfers
           txId = unsafeTransactionId txUuid
@@ -196,8 +196,8 @@ spec = describe "TransferManager (Saga)" $ do
           td.sourceAmount `shouldBe` unsafeMoney USD 200
 
     it "issues DebitAccount effect with compensation to source account" $ do
-      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
-          effects = reactToTransferEvent stateAfterInit mkTransferInitiatedEvent
+      let stateAfterInit = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEvent
+          effects = reactToTransactionPostingEvent stateAfterInit mkTransactionPostingInitiatedEvent
       length effects `shouldBe` 1
       case effects of
         [IssueCommandWithCompensation targetId cmd _ onFailure] -> do
@@ -207,22 +207,22 @@ spec = describe "TransferManager (Saga)" $ do
               debit.amount `shouldBe` unsafeMoney USD 200
               debit.transactionId `shouldBe` unsafeTransactionId txUuid
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
-          -- Verify compensation produces FailTransfer
+          -- Verify compensation produces FailTransactionPosting
           let compensationEffects = onFailure (RejectionReason "Insufficient funds")
           length compensationEffects `shouldBe` 1
           case compensationEffects of
             [IssueCommand failTarget failCmd _] -> do
               failTarget `shouldBe` txUuid
               case failCmd of
-                FailTransferCommand (FailTransfer rsn) ->
+                FailTransactionPostingCommand (FailTransactionPosting rsn) ->
                   rsn `shouldBe` "Insufficient funds"
-                other -> expectationFailure $ "Expected FailTransferCommand, got: " ++ show other
+                other -> expectationFailure $ "Expected FailTransactionPostingCommand, got: " ++ show other
             _ -> expectationFailure "Expected exactly 1 compensation effect"
         _ -> expectationFailure "Expected exactly 1 IssueCommandWithCompensation effect"
 
     it "tracks transfers and issues DebitAccount when labels and externalTransactionId are set" $ do
-      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEventWithLabelsAndExternalId
-          effects = reactToTransferEvent stateAfterInit mkTransferInitiatedEventWithLabelsAndExternalId
+      let stateAfterInit = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEventWithLabelsAndExternalId
+          effects = reactToTransactionPostingEvent stateAfterInit mkTransactionPostingInitiatedEventWithLabelsAndExternalId
       transferCount stateAfterInit `shouldBe` 1
       length effects `shouldBe` 1
       case effects of
@@ -235,10 +235,10 @@ spec = describe "TransferManager (Saga)" $ do
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
         _ -> expectationFailure "Expected exactly 1 IssueCommandWithCompensation effect"
 
-    it "is idempotent for duplicate TransferInitiated events" $ do
-      let state1 = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
-          state2 = handleTransferEvent state1 mkTransferInitiatedEvent
-          effects = reactToTransferEvent state2 mkTransferInitiatedEvent
+    it "is idempotent for duplicate TransactionPostingInitiated events" $ do
+      let state1 = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEvent
+          state2 = handleTransactionPostingEvent state1 mkTransactionPostingInitiatedEvent
+          effects = reactToTransactionPostingEvent state2 mkTransactionPostingInitiatedEvent
       -- Second event should produce no effects (already tracked)
       null effects `shouldBe` True
 
@@ -248,8 +248,8 @@ spec = describe "TransferManager (Saga)" $ do
               UUID.nil
               0
               (emptyMetadata "")
-              ( TransferInitiatedEvent
-                  TransferInitiated
+              ( TransactionPostingInitiatedEvent
+                  TransactionPostingInitiated
                     { sourceAccountId = unsafeAccountId sourceAcctUuid,
                       targetAccountId = unsafeAccountId targetAcctUuid,
                       sourceAmount = unsafeMoney USD 100,
@@ -258,21 +258,21 @@ spec = describe "TransferManager (Saga)" $ do
                       description = "Bad",
                       by = unsafeUserId userUuid,
                       at = sampleAt,
-                      transferType = Transfer,
+                      transactionType = Transfer,
                       externalTransactionId = Nothing,
                       labels = Set.empty
                     }
               )
-          state = handleTransferEvent emptyTransferManager badEvent
-          effects = reactToTransferEvent state badEvent
+          state = handleTransactionPostingEvent emptyTransferManager badEvent
+          effects = reactToTransactionPostingEvent state badEvent
       null effects `shouldBe` True
 
   describe "Debit Success (AccountDebited)" $ do
-    it "issues CreditAccount and CompleteTransfer effects" $ do
+    it "issues CreditAccount and CompleteTransactionPosting effects" $ do
       -- First, initiate a transfer to populate tracking
-      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
-          stateAfterDebit = handleTransferEvent stateAfterInit mkAccountDebitedEvent
-          effects = reactToTransferEvent stateAfterDebit mkAccountDebitedEvent
+      let stateAfterInit = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEvent
+          stateAfterDebit = handleTransactionPostingEvent stateAfterInit mkAccountDebitedEvent
+          effects = reactToTransactionPostingEvent stateAfterDebit mkAccountDebitedEvent
       length effects `shouldBe` 2
 
       case effects of
@@ -285,41 +285,41 @@ spec = describe "TransferManager (Saga)" $ do
               credit.transactionId `shouldBe` unsafeTransactionId txUuid
             other -> expectationFailure $ "Expected CreditAccountCommand, got: " ++ show other
 
-          -- Second effect: CompleteTransfer to transaction
+          -- Second effect: CompleteTransactionPosting to transaction
           completeTarget `shouldBe` txUuid
           case completeCmd of
-            CompleteTransferCommand _ -> pure ()
-            other -> expectationFailure $ "Expected CompleteTransferCommand, got: " ++ show other
+            CompleteTransactionPostingCommand _ -> pure ()
+            other -> expectationFailure $ "Expected CompleteTransactionPostingCommand, got: " ++ show other
         _ -> expectationFailure "Expected exactly 2 effects"
 
     it "produces no effects for untracked AccountDebited" $ do
-      -- AccountDebited without prior TransferInitiated should be ignored
-      let state = handleTransferEvent emptyTransferManager mkAccountDebitedEvent
-          effects = reactToTransferEvent state mkAccountDebitedEvent
+      -- AccountDebited without prior TransactionPostingInitiated should be ignored
+      let state = handleTransactionPostingEvent emptyTransferManager mkAccountDebitedEvent
+          effects = reactToTransactionPostingEvent state mkAccountDebitedEvent
       null effects `shouldBe` True
 
   describe "Credit Success (AccountCredited)" $ do
     it "removes transfer from tracking on credit" $ do
-      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
-          stateAfterDebit = handleTransferEvent stateAfterInit mkAccountDebitedEvent
-          stateAfterCredit = handleTransferEvent stateAfterDebit mkAccountCreditedEvent
+      let stateAfterInit = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEvent
+          stateAfterDebit = handleTransactionPostingEvent stateAfterInit mkAccountDebitedEvent
+          stateAfterCredit = handleTransactionPostingEvent stateAfterDebit mkAccountCreditedEvent
       transferCount stateAfterCredit `shouldBe` 0
 
-    it "produces no effects on credit (CompleteTransfer already issued)" $ do
-      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
-          stateAfterDebit = handleTransferEvent stateAfterInit mkAccountDebitedEvent
-          stateAfterCredit = handleTransferEvent stateAfterDebit mkAccountCreditedEvent
-          effects = reactToTransferEvent stateAfterCredit mkAccountCreditedEvent
+    it "produces no effects on credit (CompleteTransactionPosting already issued)" $ do
+      let stateAfterInit = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEvent
+          stateAfterDebit = handleTransactionPostingEvent stateAfterInit mkAccountDebitedEvent
+          stateAfterCredit = handleTransactionPostingEvent stateAfterDebit mkAccountCreditedEvent
+          effects = reactToTransactionPostingEvent stateAfterCredit mkAccountCreditedEvent
       null effects `shouldBe` True
 
   describe "Unrelated Events" $ do
     it "produces no effects for unrelated events" $ do
-      let state = handleTransferEvent emptyTransferManager mkUnrelatedEvent
-          effects = reactToTransferEvent state mkUnrelatedEvent
+      let state = handleTransactionPostingEvent emptyTransferManager mkUnrelatedEvent
+          effects = reactToTransactionPostingEvent state mkUnrelatedEvent
       null effects `shouldBe` True
 
     it "does not change state for unrelated events" $ do
-      let stateAfterInit = handleTransferEvent emptyTransferManager mkTransferInitiatedEvent
-          stateAfterUnrelated = handleTransferEvent stateAfterInit mkUnrelatedEvent
+      let stateAfterInit = handleTransactionPostingEvent emptyTransferManager mkTransactionPostingInitiatedEvent
+          stateAfterUnrelated = handleTransactionPostingEvent stateAfterInit mkUnrelatedEvent
       -- State should remain unchanged (transfer still tracked)
       transferCount stateAfterUnrelated `shouldBe` 1

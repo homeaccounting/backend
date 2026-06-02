@@ -75,8 +75,8 @@ import Testkit.TransactionEditFixture
     authHeaders,
     httpRequest,
     mkSeed,
-    seedInternalTransfer,
     seedToken,
+    seedTransfer,
     uuidText,
   )
 import Web.Server (buildApplication)
@@ -152,14 +152,14 @@ spec = do
     it "returns 204 No Content for a completed transfer the caller owns" $ do
       seed <- mkSeed createTestAppEnvWithProcessManager "delete-happy@test.com"
       token <- seedToken seed
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       let path = encodeUtf8 $ "/api/transactions/" <> uuidText (unTransactionId txId)
       resp <- httpRequest seed.seedApp "DELETE" path (authHeaders token) ""
       simpleStatus resp `shouldBe` status204
 
     it "returns 401 when Authorization header is missing" $ do
       seed <- mkSeed createTestAppEnvWithProcessManager "delete-noauth@test.com"
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       let path = encodeUtf8 $ "/api/transactions/" <> uuidText (unTransactionId txId)
       resp <- httpRequest seed.seedApp "DELETE" path [] ""
       simpleStatus resp `shouldBe` status401
@@ -167,7 +167,7 @@ spec = do
     it "returns 400 when caller has no access to the transaction's accounts" $ do
       -- Seed the transaction under owner's account, then attempt DELETE as outsider.
       seed <- mkSeed createTestAppEnvWithProcessManager "delete-noaccess-owner@test.com"
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       -- Register a second, unrelated user
       outsiderId <- registerUser seed.seedEnv "delete-noaccess-outsider@test.com"
       outsiderToken <- mintToken outsiderId "delete-noaccess-outsider@test.com"
@@ -201,7 +201,7 @@ spec = do
       otherAccId <- createRegularAccount env ownerId "Other"
       txRes <-
         runAppM env
-          $ TransactionService.initiateInternalTransfer
+          $ TransactionService.initiateTransfer
             ownerId
             accId
             otherAccId
@@ -211,7 +211,7 @@ spec = do
             Nothing
             Nothing
       txId <- case txRes of
-        Left err -> expectationFailure ("initiateInternalTransfer failed: " <> show err) >> undefined
+        Left err -> expectationFailure ("initiateTransfer failed: " <> show err) >> undefined
         Right (tid, _) -> pure tid
       viewerToken <- mintToken viewerId "delete-viewer-viewer@test.com"
       let app = buildApplication env
@@ -232,7 +232,7 @@ spec = do
       let txDate = utc 2026 3 15
       txRes <-
         runAppM env
-          $ TransactionService.initiateInternalTransfer
+          $ TransactionService.initiateTransfer
             fx.userId
             src
             tgt
@@ -242,7 +242,7 @@ spec = do
             Nothing
             (Just txDate)
       txId <- case txRes of
-        Left err -> expectationFailure ("initiateInternalTransfer failed: " <> show err) >> undefined
+        Left err -> expectationFailure ("initiateTransfer failed: " <> show err) >> undefined
         Right (tid, _) -> pure tid
       -- Close books past the TX date
       _ <- runAppM env (ConfigurationService.closeBooksThrough fx.userId (utc 2026 3 31))
@@ -267,7 +267,7 @@ spec = do
     it "returns 409 TRANSACTION_ALREADY_CANCELLED when cancelling twice" $ do
       seed <- mkSeed createTestAppEnvWithProcessManager "delete-double-cancel@test.com"
       token <- seedToken seed
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       -- First cancellation via the service layer to put it into Cancelled state
       _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
       -- Second cancellation via HTTP — must be rejected
@@ -295,7 +295,7 @@ spec = do
     it "excludes cancelled transactions by default (no param)" $ do
       seed <- mkSeed createTestAppEnvWithProcessManager "include-cancelled-default@test.com"
       token <- seedToken seed
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       -- Cancel the transaction via the service
       _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
       -- Query without includeCancelled param
@@ -311,7 +311,7 @@ spec = do
     it "includes cancelled transactions with status Cancelled when ?includeCancelled=true" $ do
       seed <- mkSeed createTestAppEnvWithProcessManager "include-cancelled-true@test.com"
       token <- seedToken seed
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
       let path =
             encodeUtf8
@@ -333,7 +333,7 @@ spec = do
     it "excludes cancelled transactions when ?includeCancelled=false (same as default)" $ do
       seed <- mkSeed createTestAppEnvWithProcessManager "include-cancelled-false@test.com"
       token <- seedToken seed
-      txId <- seedInternalTransfer seed
+      txId <- seedTransfer seed
       _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
       let path =
             encodeUtf8

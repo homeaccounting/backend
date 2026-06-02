@@ -3,7 +3,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : Application.ProcessManagers.TransferAmendmentManagerPropertySpec
+-- Module      : Application.ProcessManagers.TransactionAmendmentManagerPropertySpec
 -- Description : Property-based tests for 'diffAmendmentLegs'.
 --
 -- Invariants checked:
@@ -12,9 +12,9 @@
 --   * Net effect on the target account equals (newTgtAmount - oldTgtAmount).
 --   * A two-account swap forces exactly 4 legs (fallible + 3 non-fallible).
 --   * The identity payload (same accounts, same amounts) yields no legs.
-module Application.ProcessManagers.TransferAmendmentManagerPropertySpec (spec) where
+module Application.ProcessManagers.TransactionAmendmentManagerPropertySpec (spec) where
 
-import Application.ProcessManagers.TransferAmendmentManager
+import Application.ProcessManagers.TransactionAmendmentManager
   ( FallibleLeg (..),
     NonFallibleLeg (..),
     TransferPostings (..),
@@ -34,7 +34,7 @@ import Domain.Core.Types
     unsafeTransactionId,
     unsafeUserId,
   )
-import Domain.Transaction.Events (TransferAmendmentInitiated (..))
+import Domain.Transaction.Events (TransactionAmendmentInitiated (..))
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
@@ -75,9 +75,9 @@ postings s t sa ta =
       at = sampleAt
     }
 
-amendment :: AccountId -> AccountId -> Money -> Money -> TransferAmendmentInitiated
+amendment :: AccountId -> AccountId -> Money -> Money -> TransactionAmendmentInitiated
 amendment s t sa ta =
-  TransferAmendmentInitiated
+  TransactionAmendmentInitiated
     { transactionId = txId,
       newSourceAccountId = s,
       newTargetAccountId = t,

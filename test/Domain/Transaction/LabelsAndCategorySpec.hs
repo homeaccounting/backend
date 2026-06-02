@@ -14,7 +14,7 @@ import Domain.Core.Types
     Allocations,
     Currency (..),
     DictionaryEntryId,
-    TransferType (..),
+    TransactionType (..),
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -54,7 +54,7 @@ completedIncome =
   transactionDefault
     & #status
     .~ Completed
-    & #transferType
+    & #transactionType
     .~ Income incomeAllocs
 
 completedExpense :: Transaction
@@ -62,7 +62,7 @@ completedExpense =
   transactionDefault
     & #status
     .~ Completed
-    & #transferType
+    & #transactionType
     .~ Expense expenseAllocs
 
 completedTransfer :: Transaction
@@ -70,7 +70,7 @@ completedTransfer =
   transactionDefault
     & #status
     .~ Completed
-    & #transferType
+    & #transactionType
     .~ Transfer
 
 pendingIncome :: Transaction

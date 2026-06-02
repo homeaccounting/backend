@@ -8,7 +8,7 @@
 --
 -- Exercises the audit-history surface end-to-end against the in-memory
 -- event store. Amendment-event coverage lives in the integration tests
--- (Task 14) because it requires the TransferAmendmentManager saga to be
+-- (Task 14) because it requires the TransactionAmendmentManager saga to be
 -- wired into the test event bus.
 module Application.Services.TransactionHistoryServiceSpec (spec) where
 
@@ -53,7 +53,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
       Left err -> expectationFailure $ "Expected NotFound, got: " <> show err
       Right _ -> expectationFailure "Expected Left NotFound"
 
-  it "returns history with TransferInitiated and TransferCompleted in order" $ do
+  it "returns history with TransactionPostingInitiated and TransactionPostingCompleted in order" $ do
     env <- createTestAppEnvWithProcessManager
     fx <- setupMetadataFixture env "audit-completed@test.com"
     create <-
@@ -75,7 +75,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
       Right (Just hist) -> do
         hist.transactionId `shouldBe` txId
         case hist.entries of
-          (HistoryInitiated _ : HistoryCompleted : _) -> pure ()
+          (HistoryPostingInitiated _ : HistoryPostingCompleted : _) -> pure ()
           other ->
             expectationFailure
               $ "Expected [Initiated, Completed, ...], got entries: "

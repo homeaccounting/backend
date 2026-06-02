@@ -61,8 +61,8 @@ testUserId = mockUserId (read "11111111-1111-1111-1111-111111111111")
 createPendingTransaction :: AccountId -> AccountId -> Money -> Transaction
 createPendingTransaction fromId toId amt =
   applyEvents
-    [ TransferInitiatedTransactionEvent
-        $ TransferInitiated
+    [ TransactionPostingInitiatedTransactionEvent
+        $ TransactionPostingInitiated
           { sourceAccountId = fromId,
             targetAccountId = toId,
             sourceAmount = amt,
@@ -71,7 +71,7 @@ createPendingTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             at = mockTime,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
           }
@@ -84,17 +84,17 @@ createPendingTransaction fromId toId amt =
 determinismSpec :: Spec
 determinismSpec = describe "Determinism Properties" $ do
   describe "When handling commands" $ do
-    it "Then InitiateTransfer produces same events"
+    it "Then InitiateTransaction produces same events"
       $ property
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId mockTime Transfer Nothing Set.empty
+              command = InitiateTransactionTransactionCommand $ InitiateTransaction fromId toId amt amt Nothing rsn testUserId mockTime Transfer Nothing Set.empty
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
 
-    it "Then InitiateTransfer preserves labels and externalTransactionId"
+    it "Then InitiateTransaction preserves labels and externalTransactionId"
       $ property
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) (extRaw :: Text) ->
         fromId /= toId && unMoney amt > 0 && not (T.null extRaw) ==>
@@ -102,30 +102,30 @@ determinismSpec = describe "Determinism Properties" $ do
             $ \labels ->
               let transaction = applyEvents []
                   extTxId = unsafeExternalTransactionId extRaw
-                  command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing rsn testUserId mockTime Transfer (Just extTxId) labels
+                  command = InitiateTransactionTransactionCommand $ InitiateTransaction fromId toId amt amt Nothing rsn testUserId mockTime Transfer (Just extTxId) labels
                in case handleTransactionCommand transaction command of
-                    Right (TransferInitiatedTransactionEvent initiated : _) ->
+                    Right (TransactionPostingInitiatedTransactionEvent initiated : _) ->
                       initiated.labels === labels
                         .&&. initiated.externalTransactionId === Just extTxId
-                    Right _ -> counterexample "Expected TransferInitiated event first" False
+                    Right _ -> counterexample "Expected TransactionPostingInitiated event first" False
                     Left e -> counterexample ("Expected Right, got: " ++ show e) False
 
-    it "Then CompleteTransfer produces same events"
+    it "Then CompleteTransactionPosting produces same events"
       $ property
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let transaction = createPendingTransaction fromId toId amt
-              command = CompleteTransferTransactionCommand CompleteTransfer
+              command = CompleteTransactionPostingTransactionCommand CompleteTransactionPosting
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
 
-    it "Then FailTransfer produces same events"
+    it "Then FailTransactionPosting produces same events"
       $ property
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId ==>
           let transaction = createPendingTransaction fromId toId amt
-              command = FailTransferTransactionCommand $ FailTransfer rsn
+              command = FailTransactionPostingTransactionCommand $ FailTransactionPosting rsn
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
@@ -142,16 +142,16 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty,
-                  TransferCompletedTransactionEvent TransferCompleted
+                [ TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty,
+                  TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
                 ]
               transaction = applyEvents initialEvents
 
               -- Try to complete again
-              result1 = handleTransactionCommand transaction (CompleteTransferTransactionCommand CompleteTransfer)
+              result1 = handleTransactionCommand transaction (CompleteTransactionPostingTransactionCommand CompleteTransactionPosting)
 
               -- Try to fail
-              result2 = handleTransactionCommand transaction (FailTransferTransactionCommand $ FailTransfer "Too late")
+              result2 = handleTransactionCommand transaction (FailTransactionPostingTransactionCommand $ FailTransactionPosting "Too late")
            in isLeft result1 .&&. isLeft result2
 
     it "Then Failed transaction ignores all commands"
@@ -159,16 +159,16 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransferInitiatedTransactionEvent $ TransferInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty,
-                  TransferFailedTransactionEvent $ TransferFailed "Error"
+                [ TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty,
+                  TransactionPostingFailedTransactionEvent $ TransactionPostingFailed "Error"
                 ]
               transaction = applyEvents initialEvents
 
               -- Try to complete
-              result1 = handleTransactionCommand transaction (CompleteTransferTransactionCommand CompleteTransfer)
+              result1 = handleTransactionCommand transaction (CompleteTransactionPostingTransactionCommand CompleteTransactionPosting)
 
               -- Try to fail again
-              result2 = handleTransactionCommand transaction (FailTransferTransactionCommand $ FailTransfer "Another error")
+              result2 = handleTransactionCommand transaction (FailTransactionPostingTransactionCommand $ FailTransactionPosting "Another error")
            in isLeft result1 .&&. isLeft result2
 
   describe "Valid transitions" $ do
@@ -177,9 +177,9 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let transaction = createPendingTransaction fromId toId amt
-              result = handleTransactionCommand transaction (CompleteTransferTransactionCommand CompleteTransfer)
+              result = handleTransactionCommand transaction (CompleteTransactionPostingTransactionCommand CompleteTransactionPosting)
            in case result of
-                Right [TransferCompletedTransactionEvent _] -> property True
+                Right [TransactionPostingCompletedTransactionEvent _] -> property True
                 _ -> property False
 
     it "Then Pending can transition to Failed"
@@ -187,9 +187,9 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId ==>
           let transaction = createPendingTransaction fromId toId amt
-              result = handleTransactionCommand transaction (FailTransferTransactionCommand $ FailTransfer rsn)
+              result = handleTransactionCommand transaction (FailTransactionPostingTransactionCommand $ FailTransactionPosting rsn)
            in case result of
-                Right [TransferFailedTransactionEvent _] -> property True
+                Right [TransactionPostingFailedTransactionEvent _] -> property True
                 _ -> property False
 
   describe "Status tracking" $ do
@@ -213,13 +213,13 @@ stateMachineSpec = describe "State Machine Properties" $ do
 
 validationSpec :: Spec
 validationSpec = describe "Validation Properties" $ do
-  describe "InitiateTransfer validation" $ do
+  describe "InitiateTransaction validation" $ do
     it "Then rejects same source and target"
       $ property
       $ \(accountId :: AccountId) (amt :: Money) ->
         unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer accountId accountId amt amt Nothing "Self-transfer" testUserId mockTime Transfer Nothing Set.empty
+              command = InitiateTransactionTransactionCommand $ InitiateTransaction accountId accountId amt amt Nothing "Self-transfer" testUserId mockTime Transfer Nothing Set.empty
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -228,7 +228,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) ->
         fromId /= toId ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId mockTime Transfer Nothing Set.empty
+              command = InitiateTransactionTransactionCommand $ InitiateTransaction fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId mockTime Transfer Nothing Set.empty
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -237,14 +237,14 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransferTransactionCommand $ InitiateTransfer fromId toId amt amt Nothing "Valid" testUserId mockTime Transfer Nothing Set.empty
+              command = InitiateTransactionTransactionCommand $ InitiateTransaction fromId toId amt amt Nothing "Valid" testUserId mockTime Transfer Nothing Set.empty
               result = handleTransactionCommand transaction command
            in case result of
-                Right [TransferInitiatedTransactionEvent _] -> property True
+                Right [TransactionPostingInitiatedTransactionEvent _] -> property True
                 _ -> property False
 
   describe "Double initialization prevention" $ do
-    it "Then ignores second InitiateTransfer"
+    it "Then ignores second InitiateTransaction"
       $ property
       $ \(fromId1 :: AccountId)
          (toId1 :: AccountId)
@@ -254,7 +254,7 @@ validationSpec = describe "Validation Properties" $ do
          (amount2 :: Money) ->
           fromId1 /= toId1 && fromId2 /= toId2 ==>
             let transaction = createPendingTransaction fromId1 toId1 amount1
-                command = InitiateTransferTransactionCommand $ InitiateTransfer fromId2 toId2 amount2 amount2 Nothing "Second" testUserId mockTime Transfer Nothing Set.empty
+                command = InitiateTransactionTransactionCommand $ InitiateTransaction fromId2 toId2 amount2 amount2 Nothing "Second" testUserId mockTime Transfer Nothing Set.empty
                 result = handleTransactionCommand transaction command
              in isLeft result
 
@@ -262,16 +262,16 @@ validationSpec = describe "Validation Properties" $ do
 -- Allocation Invariant Properties
 -- -----------------------------------------------------------------------------
 
--- | Build a Completed transaction whose 'transferType' is the supplied
--- 'TransferType'. The source/target amounts are derived from the type's
+-- | Build a Completed transaction whose 'transactionType' is the supplied
+-- 'TransactionType'. The source/target amounts are derived from the type's
 -- categorised total when defined (so the existing allocations sum equals
 -- the categorised side), and from a default mock amount otherwise.
-completedTxWithType :: AccountId -> AccountId -> TransferType -> Transaction
+completedTxWithType :: AccountId -> AccountId -> TransactionType -> Transaction
 completedTxWithType fromId toId tt =
   let amt = fromMaybe (mockMoney 100) (categorisedAmount tt)
    in applyEvents
-        [ TransferInitiatedTransactionEvent
-            $ TransferInitiated
+        [ TransactionPostingInitiatedTransactionEvent
+            $ TransactionPostingInitiated
               { sourceAccountId = fromId,
                 targetAccountId = toId,
                 sourceAmount = amt,
@@ -280,30 +280,30 @@ completedTxWithType fromId toId tt =
                 description = "Test",
                 by = testUserId,
                 at = mockTime,
-                transferType = tt,
+                transactionType = tt,
                 externalTransactionId = Nothing,
                 labels = Set.empty
               },
-          TransferCompletedTransactionEvent TransferCompleted
+          TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
         ]
 
--- | A 'TransferType' that is Income or Expense (i.e. has allocations).
-newtype CategorisedTransferType = CategorisedTransferType {unCategorised :: TransferType}
+-- | A 'TransactionType' that is Income or Expense (i.e. has allocations).
+newtype CategorisedTransactionType = CategorisedTransactionType {unCategorised :: TransactionType}
   deriving (Show)
 
-instance Arbitrary CategorisedTransferType where
+instance Arbitrary CategorisedTransactionType where
   arbitrary =
-    CategorisedTransferType
+    CategorisedTransactionType
       <$> ( arbitrary
               `suchThat` (\tt -> kindOf tt == IncomeKind || kindOf tt == ExpenseKind)
           )
 
--- | A 'TransferType' that is uncategorised (Transfer or Adjustment).
-newtype UncategorisedTransferType = UncategorisedTransferType {unUncategorised :: TransferType}
+-- | A 'TransactionType' that is uncategorised (Transfer or Adjustment).
+newtype UncategorisedTransactionType = UncategorisedTransactionType {unUncategorised :: TransactionType}
   deriving (Show)
 
-instance Arbitrary UncategorisedTransferType where
-  arbitrary = UncategorisedTransferType <$> elements [Transfer, Adjustment]
+instance Arbitrary UncategorisedTransactionType where
+  arbitrary = UncategorisedTransactionType <$> elements [Transfer, Adjustment]
 
 allocationsSpec :: Spec
 allocationsSpec = describe "Allocation invariants" $ do
@@ -312,14 +312,14 @@ allocationsSpec = describe "Allocation invariants" $ do
       $ property
       $ \(fromId :: AccountId)
          (toId :: AccountId)
-         (UncategorisedTransferType existingType)
-         (CategorisedTransferType newType) ->
+         (UncategorisedTransactionType existingType)
+         (CategorisedTransactionType newType) ->
           fromId /= toId ==>
             let tx = completedTxWithType fromId toId existingType
                 txId = mockTransactionId (read "11111111-1111-1111-1111-111111111111")
                 newAllocs = case allocationsOf newType of
                   Just xs -> xs
-                  Nothing -> error "CategorisedTransferType invariant violated"
+                  Nothing -> error "CategorisedTransactionType invariant violated"
                 cmd = SetTransactionAllocations txId newAllocs
                 result = handleTransactionCommand tx (SetTransactionAllocationsTransactionCommand cmd)
              in result === Left CannotSetAllocationsOnUncategorisedTransaction
@@ -330,8 +330,8 @@ allocationsSpec = describe "Allocation invariants" $ do
 -- preserved by the command shape — there is no incoming kind that could
 -- mismatch the existing one.
 --
--- Kind-preservation and sum-against-new-amount tests for 'AmendTransfer'
--- were removed in the earlier @newTransferType@ rollback: 'AmendTransfer'
+-- Kind-preservation and sum-against-new-amount tests for 'AmendTransaction'
+-- were removed in the earlier @newTransactionType@ rollback: 'AmendTransaction'
 -- no longer carries allocations. Kind preservation is structurally
 -- enforced by 'AccountType' invariants at the service layer, and
 -- proportional rescaling of allocations on categorised-amount change is

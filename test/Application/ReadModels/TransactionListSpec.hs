@@ -27,7 +27,7 @@ import Domain.Core.Types
   ( AccountId,
     Currency (..),
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     unTransactionId,
   )
 import Domain.Models (AccountingEvent (..))
@@ -35,7 +35,7 @@ import Domain.Transaction.Events
   ( TransactionCancellationCompleted (..),
     TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
-    TransferInitiated (..),
+    TransactionPostingInitiated (..),
   )
 import Eventium (StreamEvent (..), emptyMetadata)
 import qualified Eventium
@@ -62,7 +62,7 @@ mkInitiatedEvent ::
   TransactionId ->
   AccountId -> -- source
   AccountId -> -- target
-  UTCTime -> -- business time (TransferInitiated.at)
+  UTCTime -> -- business time (TransactionPostingInitiated.at)
   UTCTime -> -- persistedAt (createdAt) — kept on outer metadata for completeness
   Eventium.SequenceNumber -> -- global sequence number
   Eventium.GlobalStreamEvent AccountingEvent
@@ -71,12 +71,12 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
         StreamEvent
           (unTransactionId txId)
           0
-          ( (emptyMetadata "TransferInitiated")
+          ( (emptyMetadata "TransactionPostingInitiated")
               { Eventium.createdAt = Just persistedAt
               }
           )
-          ( TransferInitiatedEvent
-              TransferInitiated
+          ( TransactionPostingInitiatedEvent
+              TransactionPostingInitiated
                 { sourceAccountId = src,
                   targetAccountId = tgt,
                   sourceAmount = mockMoneyWith USD 100,
@@ -85,12 +85,12 @@ mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
                   description = "seed",
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = businessAt,
-                  transferType = Transfer,
+                  transactionType = Transfer,
                   externalTransactionId = Nothing,
                   labels = Set.empty
                 }
           )
-   in StreamEvent () seqNo (emptyMetadata "TransferInitiated") inner
+   in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
 
 -- | Build a single-payload GlobalStreamEvent for an AccountingEvent that targets
 -- an existing transaction stream (description / date edits). The constructor

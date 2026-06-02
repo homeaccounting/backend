@@ -9,8 +9,8 @@
 -- >>> import Domain.Transaction
 --
 -- This gives you access to:
---   - Events: TransferInitiated, TransferCompleted, TransferFailed
---   - Commands: InitiateTransfer, CompleteTransfer, FailTransfer
+--   - Events: TransactionPostingInitiated, TransactionPostingCompleted, TransactionPostingFailed
+--   - Commands: InitiateTransaction, CompleteTransactionPosting, FailTransactionPosting
 --   - Projection: Transaction, transactionProjection, TransactionEvent, TransactionStatus
 --   - Command Handler: transactionCommandHandler, TransactionCommand
 --   - Errors: TransactionError, SourceAccountNotFound, TargetAccountNotFound, etc.
@@ -26,25 +26,25 @@
 -- Transaction Lifecycle:
 --
 -- 1. User initiates transfer:
---    >>> let cmd = InitiateTransfer sourceId targetId (Money 500.0) "Rent"
+--    >>> let cmd = InitiateTransaction sourceId targetId (Money 500.0) "Rent"
 --    >>> let events = handleTransactionCommand transactionDefault cmd
---    [TransferInitiatedTransactionEvent (TransferInitiated ...)]
+--    [TransactionPostingInitiatedTransactionEvent (TransactionPostingInitiated ...)]
 --
--- 2. Process manager receives TransferInitiated event and:
+-- 2. Process manager receives TransactionPostingInitiated event and:
 --    - Issues DebitAccount command to source account
 --    - If successful, issues CreditAccount command to target account
---    - If both succeed, issues CompleteTransfer command
---    - If any fails, issues FailTransfer command
+--    - If both succeed, issues CompleteTransactionPosting command
+--    - If any fails, issues FailTransactionPosting command
 --
 -- 3. Transaction reaches terminal state:
---    >>> let completeCmd = CompleteTransfer
+--    >>> let completeCmd = CompleteTransactionPosting
 --    >>> let events = handleTransactionCommand pendingTx completeCmd
---    [TransferCompletedTransactionEvent TransferCompleted]
+--    [TransactionPostingCompletedTransactionEvent TransactionPostingCompleted]
 --
 -- State Machine:
---   [Uninitialized] --InitiateTransfer-→ [Pending]
+--   [Uninitialized] --InitiateTransaction-→ [Pending]
 --                                           ↓
---                   CompleteTransfer ← [Pending] → FailTransfer
+--                   CompleteTransactionPosting ← [Pending] → FailTransactionPosting
 --                         ↓                             ↓
 --                    [Completed]                    [Failed]
 --                    (terminal)                     (terminal)
@@ -59,17 +59,17 @@
 -- Integration with Process Manager:
 --   The Transaction aggregate is designed to work with a saga/process manager
 --   that orchestrates the transfer between accounts. The process manager:
---   - Listens for TransferInitiated events
+--   - Listens for TransactionPostingInitiated events
 --   - Coordinates debit and credit operations on account aggregates
---   - Issues CompleteTransfer or FailTransfer based on outcomes
+--   - Issues CompleteTransactionPosting or FailTransactionPosting based on outcomes
 --   - Handles compensation if needed
 --
 -- Example Transfer Flow:
 --
 -- Successful transfer:
 -- >>> -- User initiates
--- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 100) "Payment")
--- → TransferInitiated event
+-- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 100) "Payment")
+-- → TransactionPostingInitiated event
 --
 -- >>> -- Process manager reacts
 -- >>> issueCommand sourceId (DebitAccount (Money 100) "Transfer out")
@@ -78,21 +78,21 @@
 -- >>> issueCommand targetId (CreditAccount (Money 100) "Transfer in")
 -- → AccountCredited event
 --
--- >>> issueCommand txId CompleteTransfer
--- → TransferCompleted event
+-- >>> issueCommand txId CompleteTransactionPosting
+-- → TransactionPostingCompleted event
 --
 -- Failed transfer:
 -- >>> -- User initiates
--- >>> issueCommand txId (InitiateTransfer sourceId targetId (Money 1000) "Payment")
--- → TransferInitiated event
+-- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 1000) "Payment")
+-- → TransactionPostingInitiated event
 --
 -- >>> -- Process manager reacts
 -- >>> issueCommand sourceId (DebitAccount (Money 1000) "Transfer out")
 -- → AccountDebitRejected event (insufficient funds)
 --
 -- >>> -- Process manager handles failure
--- >>> issueCommand txId (FailTransfer "Insufficient funds in source account")
--- → TransferFailed event
+-- >>> issueCommand txId (FailTransactionPosting "Insufficient funds in source account")
+-- → TransactionPostingFailed event
 module Domain.Transaction
   ( module X,
   )

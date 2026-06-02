@@ -32,7 +32,7 @@ import Application.Services.ConfigurationService
   )
 import Application.Services.TransactionService
   ( initiateIncome,
-    initiateInternalTransfer,
+    initiateTransfer,
     setTransactionAllocations,
     setTransactionLabels,
   )
@@ -241,7 +241,7 @@ spec = describe "TransactionService / labels" $ do
 
       create <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             fx.regularAccountId
             otherAccId
@@ -252,7 +252,7 @@ spec = describe "TransactionService / labels" $ do
             Nothing
       (txId, _) <- case create of
         Right r -> pure r
-        Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+        Left err -> fail $ "initiateTransfer failed: " <> show err
 
       result <-
         runAppM env
@@ -347,7 +347,7 @@ spec = describe "TransactionService / labels" $ do
             txId
             (singletonAllocation bonusCategory (unsafeMoney Core.USD 10))
       case result of
-        Right td -> td.transferType `shouldBe` singletonIncome bonusCategory (unsafeMoney Core.USD 10)
+        Right td -> td.transactionType `shouldBe` singletonIncome bonusCategory (unsafeMoney Core.USD 10)
         Left err -> expectationFailure $ "expected Right, got: " <> show err
 
     it "refuses to change the allocations on an internal transfer" $ do
@@ -357,7 +357,7 @@ spec = describe "TransactionService / labels" $ do
 
       create <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             fx.regularAccountId
             accB
@@ -368,7 +368,7 @@ spec = describe "TransactionService / labels" $ do
             Nothing
       (txId, _) <- case create of
         Right r -> pure r
-        Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+        Left err -> fail $ "initiateTransfer failed: " <> show err
 
       result <-
         runAppM env

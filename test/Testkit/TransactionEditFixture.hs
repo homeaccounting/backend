@@ -22,7 +22,7 @@ module Testkit.TransactionEditFixture
     mkSeed,
     seedToken,
     seedIncomeTransaction,
-    seedInternalTransfer,
+    seedTransfer,
     addIncomeCategory,
     addExpenseCategory,
     authHeaders,
@@ -164,12 +164,12 @@ seedIncomeTransaction seed labels = do
 
 -- | Create a Completed (with process manager) or Pending (without)
 -- internal transfer between the seeded account and a fresh second one.
-seedInternalTransfer :: Seed -> IO TransactionId
-seedInternalTransfer seed = do
+seedTransfer :: Seed -> IO TransactionId
+seedTransfer seed = do
   other <- createRegularAccount seed.seedEnv seed.seedUserId "Other"
   res <-
     runAppM seed.seedEnv
-      $ TransactionService.initiateInternalTransfer
+      $ TransactionService.initiateTransfer
         seed.seedUserId
         seed.seedAccount
         other
@@ -179,7 +179,7 @@ seedInternalTransfer seed = do
         Nothing
         Nothing
   case res of
-    Left err -> fail $ "seedInternalTransfer failed: " <> show err
+    Left err -> fail $ "seedTransfer failed: " <> show err
     Right (txId, _) -> pure txId
 
 -- | @Authorization: Bearer ...@ plus @Content-Type: application/json@.

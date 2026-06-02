@@ -276,13 +276,13 @@ handleAccountEvent account (AccountCreditedAccountEvent AccountCredited {..}) =
     Left _ -> account -- Impossible: currency was validated by command handler
 handleAccountEvent account (AccountDebitReversedAccountEvent AccountDebitReversed {..}) =
   -- Add the reversed amount back to balance. Reversals are unconditional — no overdraft check.
-  -- Emitted by the TransferAmendmentManager saga to undo a prior AccountDebited posting.
+  -- Emitted by the TransactionAmendmentManager saga to undo a prior AccountDebited posting.
   case addMoney (account ^. #balance) amount of
     Right newBalance -> account & #balance .~ newBalance & #hasTransactions .~ True
     Left _ -> account -- Impossible: currency matched at the time of the original debit
 handleAccountEvent account (AccountCreditReversedAccountEvent AccountCreditReversed {..}) =
   -- Subtract the reversed amount from balance. Reversals are unconditional — no overdraft check.
-  -- Emitted by the TransferAmendmentManager saga to undo a prior AccountCredited posting.
+  -- Emitted by the TransactionAmendmentManager saga to undo a prior AccountCredited posting.
   case subtractMoney (account ^. #balance) amount of
     Right newBalance -> account & #balance .~ newBalance & #hasTransactions .~ True
     Left _ -> account -- Impossible: currency matched at the time of the original credit

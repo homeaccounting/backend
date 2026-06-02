@@ -101,8 +101,8 @@ module Domain.Core.Types
     AccountAccess (..),
 
     -- * Transfer Types
-    TransferType (..),
-    TransferKind (..),
+    TransactionType (..),
+    TransactionKind (..),
     kindOf,
     mkIncome,
     mkExpense,
@@ -113,7 +113,7 @@ module Domain.Core.Types
     sumAllocationsUnchecked,
     allSameCurrency,
     rescaleAllocations,
-    rescaleTransferType,
+    rescaleTransactionType,
     replaceAllocations,
     Allocation (..),
     mkAllocation,
@@ -944,7 +944,7 @@ instance FromJSON AccountAccess
 -- splits: a 1000 UAH grocery purchase that is 200 UAH food and 800 UAH
 -- housekeeping has two Allocations summing to 1000 UAH.
 --
--- Invariants (enforced by the smart constructors of 'TransferType' that
+-- Invariants (enforced by the smart constructors of 'TransactionType' that
 -- wrap allocation lists):
 --
 --   * amount > 0 (strict positivity)
@@ -971,7 +971,7 @@ instance FromJSON Allocation
 --
 -- Enforces the per-allocation invariant @amount > 0@. Currency
 -- consistency and sum-equals-total invariants belong to the enclosing
--- 'TransferType' and are checked by 'mkIncome' / 'mkExpense'.
+-- 'TransactionType' and are checked by 'mkIncome' / 'mkExpense'.
 --
 -- >>> import Data.UUID (fromWords)
 -- >>> let c = unsafeDictionaryEntryId (fromWords 1 0 0 0)
@@ -1000,35 +1000,35 @@ type Allocations = NonEmpty Allocation
 --
 -- 'Transfer' (internal account-to-account) and 'Adjustment' (balance
 -- reconciliation) have no category side.
-data TransferType
+data TransactionType
   = Income Allocations
   | Expense Allocations
   | Transfer
   | Adjustment
   deriving (Show, Eq, Generic)
 
-instance ToJSON TransferType
+instance ToJSON TransactionType
 
-instance FromJSON TransferType
+instance FromJSON TransactionType
 
--- | The kind of a 'TransferType', ignoring its payload. Used by command
+-- | The kind of a 'TransactionType', ignoring its payload. Used by command
 -- handlers to enforce kind-preservation across edits.
-data TransferKind = IncomeKind | ExpenseKind | TransferKind | AdjustmentKind
+data TransactionKind = IncomeKind | ExpenseKind | TransferKind | AdjustmentKind
   deriving (Show, Eq, Generic)
 
-instance ToJSON TransferKind
+instance ToJSON TransactionKind
 
-instance FromJSON TransferKind
+instance FromJSON TransactionKind
 
--- | Project a 'TransferType' onto its 'TransferKind' (constructor tag).
-kindOf :: TransferType -> TransferKind
+-- | Project a 'TransactionType' onto its 'TransactionKind' (constructor tag).
+kindOf :: TransactionType -> TransactionKind
 kindOf (Income _) = IncomeKind
 kindOf (Expense _) = ExpenseKind
 kindOf Transfer = TransferKind
 kindOf Adjustment = AdjustmentKind
 
--- | The allocations on a categorised 'TransferType', 'Nothing' otherwise.
-allocationsOf :: TransferType -> Maybe Allocations
+-- | The allocations on a categorised 'TransactionType', 'Nothing' otherwise.
+allocationsOf :: TransactionType -> Maybe Allocations
 allocationsOf (Income xs) = Just xs
 allocationsOf (Expense xs) = Just xs
 allocationsOf Transfer = Nothing
@@ -1036,13 +1036,13 @@ allocationsOf Adjustment = Nothing
 
 -- | Sum of allocation amounts (= categorised total) where defined.
 --   Uses 'sumAllocationsUnchecked' — safe here because allocations inside
---   a 'TransferType' have already passed the smart-constructor currency
+--   a 'TransactionType' have already passed the smart-constructor currency
 --   check at construction time.
-categorisedAmount :: TransferType -> Maybe Money
+categorisedAmount :: TransactionType -> Maybe Money
 categorisedAmount = fmap sumAllocationsUnchecked . allocationsOf
 
 -- | True for Income / Expense; False for Transfer / Adjustment.
-isCategorised :: TransferType -> Bool
+isCategorised :: TransactionType -> Bool
 isCategorised = isJust . allocationsOf
 
 -- | Sum of allocation amounts, assuming all share a currency.
@@ -1121,7 +1121,7 @@ validateAllocations expectedTotal allocs =
 -- construction time.
 --
 -- The currency of each allocation is preserved (allocations within a
--- 'TransferType' all share a currency by construction).
+-- 'TransactionType' all share a currency by construction).
 rescaleAllocations ::
   -- | Old categorised total (sum of existing allocations).
   Money ->
@@ -1141,29 +1141,29 @@ rescaleAllocations oldTotal newTotal = fmap rescale
           amount = Money (a.amount.amount * factor) a.amount.currency
         }
 
--- | Apply 'rescaleAllocations' to the categorised side of a 'TransferType'.
+-- | Apply 'rescaleAllocations' to the categorised side of a 'TransactionType'.
 -- 'Transfer' and 'Adjustment' pass through unchanged.
-rescaleTransferType :: Money -> Money -> TransferType -> TransferType
-rescaleTransferType oldTotal newTotal tt = case tt of
+rescaleTransactionType :: Money -> Money -> TransactionType -> TransactionType
+rescaleTransactionType oldTotal newTotal tt = case tt of
   Income xs -> Income (rescaleAllocations oldTotal newTotal xs)
   Expense xs -> Expense (rescaleAllocations oldTotal newTotal xs)
   Transfer -> Transfer
   Adjustment -> Adjustment
 
--- | Replace the allocations payload of a categorised 'TransferType'.
+-- | Replace the allocations payload of a categorised 'TransactionType'.
 --
 -- No-op on 'Transfer' / 'Adjustment' (their structure has no allocations).
 -- The new allocations must already satisfy the smart-constructor
 -- invariants for the surrounding kind (sum-equals-total, currency
 -- consistency, amount > 0); this helper does not re-validate.
-replaceAllocations :: Allocations -> TransferType -> TransferType
+replaceAllocations :: Allocations -> TransactionType -> TransactionType
 replaceAllocations new tt = case tt of
   Income _ -> Income new
   Expense _ -> Expense new
   Transfer -> Transfer
   Adjustment -> Adjustment
 
--- | Construct an Income 'TransferType'.
+-- | Construct an Income 'TransactionType'.
 --
 -- The categorised amount is the transaction's target-side amount
 -- (the side credited by the income). The allocations must:
@@ -1172,16 +1172,16 @@ replaceAllocations new tt = case tt of
 --   * each have @amount > 0@
 --   * all share the same 'Currency' as @categorisedAmount@
 --   * sum to @categorisedAmount@
-mkIncome :: Money -> Allocations -> Either DomainError TransferType
+mkIncome :: Money -> Allocations -> Either DomainError TransactionType
 mkIncome categorisedTotal allocs = do
   validateAllocations categorisedTotal allocs
   pure (Income allocs)
 
--- | Construct an Expense 'TransferType'.
+-- | Construct an Expense 'TransactionType'.
 --
 -- The categorised amount is the transaction's source-side amount
 -- (the side debited by the expense). Same invariants as 'mkIncome'.
-mkExpense :: Money -> Allocations -> Either DomainError TransferType
+mkExpense :: Money -> Allocations -> Either DomainError TransactionType
 mkExpense categorisedTotal allocs = do
   validateAllocations categorisedTotal allocs
   pure (Expense allocs)

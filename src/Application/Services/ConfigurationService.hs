@@ -213,7 +213,7 @@ renameDictionaryEntry userId dictId entryId newName = runExceptT $ do
 --
 -- Refuses with 'LabelInUse' or 'CategoryInUse' when any transaction still
 -- references the entry (either via its labels set or via the categorised
--- 'TransferType'). The check is performed at the service layer because it
+-- 'TransactionType'). The check is performed at the service layer because it
 -- depends on the transaction read model; the pure configuration command
 -- handler enforces only the aggregate-local "last-entry" rule.
 removeDictionaryEntry :: UserId -> DictionaryId -> DictionaryEntryId -> AppM (Either DomainError ())

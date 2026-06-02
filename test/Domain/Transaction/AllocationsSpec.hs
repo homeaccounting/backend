@@ -6,7 +6,7 @@
 -- Description : Worked examples for the allocations invariants.
 --
 -- The property-based coverage of 'mkIncome' / 'mkExpense' lives in
--- 'Domain.Core.TransferTypePropertySpec'. This spec pins specific
+-- 'Domain.Core.TransactionTypePropertySpec'. This spec pins specific
 -- worked examples drawn from the spec to make the invariants concrete
 -- and the failure modes legible:
 --
@@ -26,7 +26,7 @@ import Domain.Core.Types
   ( Allocation (..),
     Currency (..),
     DictionaryEntryId,
-    TransferType (..),
+    TransactionType (..),
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -64,7 +64,7 @@ completedTransfer =
   transactionDefault
     & #status
     .~ Completed
-    & #transferType
+    & #transactionType
     .~ Transfer
 
 spec :: Spec

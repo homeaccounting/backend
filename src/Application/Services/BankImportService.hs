@@ -10,7 +10,7 @@
 --
 -- This module implements the core orchestration logic for importing bank
 -- transactions into the accounting system. It processes transactions from a
--- 'BankProvider' and creates 'InitiateTransfer' commands.
+-- 'BankProvider' and creates 'InitiateTransaction' commands.
 --
 -- Key Functions:
 --   - resync: Fetch statements for a date range and import each transaction
@@ -54,14 +54,14 @@ import Domain.Core.Types
     MCC,
     Money,
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     currencyFromNumericCode,
     mkAllocation,
     mkMoney,
     unEntryName,
   )
-import Domain.Transaction.Commands (InitiateTransfer (..))
+import Domain.Transaction.Commands (InitiateTransaction (..))
 import Infrastructure.App
   ( AppM,
     HasBankImportReadModel (..),
@@ -286,7 +286,7 @@ logCategoryResolution tx direction cfg categoryId resolution =
 --   5. Take absolute value of major-unit amount
 --   6. Classify transaction (income/expense)
 --   7. Resolve category from user's banking configuration
---   8. Create and execute InitiateTransfer command
+--   8. Create and execute InitiateTransaction command
 importTransaction ::
   BankProvider ->
   UserId ->
@@ -368,10 +368,10 @@ commitImport provider userId userData localAccId tx money = do
       lift $ logWarn $ "Allocation construction failed for tx " <> display tx.externalId <> ": " <> displayShow err
       throwE err
   let allocations = NE.singleton allocation
-      (sourceAccId, targetAccId, transferType) =
+      (sourceAccId, targetAccId, transactionType) =
         classifyEndpoints localAccId externalAccId direction allocations
-      cmd = buildTransferCmd userId tx sourceAccId targetAccId money transferType
-  (txId, _) <- ExceptT (TransactionService.initiateTransfer cmd)
+      cmd = buildTransferCmd userId tx sourceAccId targetAccId money transactionType
+  (txId, _) <- ExceptT (TransactionService.initiateTransaction cmd)
   lift $ logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
   pure (Just txId)
   where
@@ -382,8 +382,8 @@ commitImport provider userId userData localAccId tx money = do
         ClassifiedIncome ->
           (externalAcc, localAcc, Income allocs)
 
-    buildTransferCmd uid bankTx sourceAccId targetAccId m transferType =
-      InitiateTransfer
+    buildTransferCmd uid bankTx sourceAccId targetAccId m transactionType =
+      InitiateTransaction
         { sourceAccountId = sourceAccId,
           targetAccountId = targetAccId,
           sourceAmount = m,
@@ -392,7 +392,7 @@ commitImport provider userId userData localAccId tx money = do
           description = bankTx.description,
           initiatedBy = uid,
           at = bankTx.time,
-          transferType = transferType,
+          transactionType = transactionType,
           externalTransactionId = Just bankTx.externalId,
           labels = Set.empty
         }

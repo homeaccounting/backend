@@ -42,31 +42,31 @@ import Domain.Core.Types
 import Domain.Models
   ( AccountingEvent
       ( TransactionAllocationsChangedEvent,
+        TransactionAmendmentCompletedEvent,
+        TransactionAmendmentFailedEvent,
+        TransactionAmendmentInitiatedEvent,
         TransactionCancellationCompletedEvent,
         TransactionCancellationInitiatedEvent,
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
-        TransferAmendmentCompletedEvent,
-        TransferAmendmentFailedEvent,
-        TransferAmendmentInitiatedEvent,
-        TransferCompletedEvent,
-        TransferFailedEvent,
-        TransferInitiatedEvent
+        TransactionPostingCompletedEvent,
+        TransactionPostingFailedEvent,
+        TransactionPostingInitiatedEvent
       ),
   )
 import Domain.Transaction.Events
   ( TransactionAllocationsChanged,
+    TransactionAmendmentCompleted,
+    TransactionAmendmentFailed,
+    TransactionAmendmentInitiated,
     TransactionCancellationCompleted,
     TransactionCancellationInitiated,
     TransactionDateChanged,
     TransactionDescriptionChanged,
     TransactionLabelsSet,
-    TransferAmendmentCompleted,
-    TransferAmendmentFailed,
-    TransferAmendmentInitiated,
-    TransferFailed,
-    TransferInitiated,
+    TransactionPostingFailed,
+    TransactionPostingInitiated,
   )
 import Eventium (EventStoreReader (..), StreamEvent (..), VersionedStreamEvent, allEvents)
 import GHC.Generics (Generic)
@@ -101,16 +101,16 @@ instance FromJSON TransactionHistory
 -- ('AccountDebited' etc.) are not exposed here — the audit endpoint is
 -- per-transaction; account leg events live on the account streams.
 data TransactionHistoryEntry
-  = HistoryInitiated TransferInitiated
-  | HistoryCompleted
-  | HistoryFailed TransferFailed
+  = HistoryPostingInitiated TransactionPostingInitiated
+  | HistoryPostingCompleted
+  | HistoryPostingFailed TransactionPostingFailed
   | HistoryLabelsSet TransactionLabelsSet
   | HistoryAllocationsChanged TransactionAllocationsChanged
   | HistoryDescriptionChanged TransactionDescriptionChanged
   | HistoryDateChanged TransactionDateChanged
-  | HistoryAmendmentInitiated TransferAmendmentInitiated
-  | HistoryAmendmentCompleted TransferAmendmentCompleted
-  | HistoryAmendmentFailed TransferAmendmentFailed
+  | HistoryAmendmentInitiated TransactionAmendmentInitiated
+  | HistoryAmendmentCompleted TransactionAmendmentCompleted
+  | HistoryAmendmentFailed TransactionAmendmentFailed
   | HistoryCancellationInitiated TransactionCancellationInitiated
   | HistoryCancellationCompleted TransactionCancellationCompleted
   deriving (Show, Eq, Generic)
@@ -162,16 +162,16 @@ getTransactionHistory userId transactionId = runExceptT $ do
 -- on a TX stream in practice).
 toHistoryEntry :: VersionedStreamEvent AccountingEvent -> Maybe TransactionHistoryEntry
 toHistoryEntry (StreamEvent _ _ _ payload) = case payload of
-  TransferInitiatedEvent e -> Just (HistoryInitiated e)
-  TransferCompletedEvent _ -> Just HistoryCompleted
-  TransferFailedEvent e -> Just (HistoryFailed e)
+  TransactionPostingInitiatedEvent e -> Just (HistoryPostingInitiated e)
+  TransactionPostingCompletedEvent _ -> Just HistoryPostingCompleted
+  TransactionPostingFailedEvent e -> Just (HistoryPostingFailed e)
   TransactionLabelsSetEvent e -> Just (HistoryLabelsSet e)
   TransactionAllocationsChangedEvent e -> Just (HistoryAllocationsChanged e)
   TransactionDescriptionChangedEvent e -> Just (HistoryDescriptionChanged e)
   TransactionDateChangedEvent e -> Just (HistoryDateChanged e)
-  TransferAmendmentInitiatedEvent e -> Just (HistoryAmendmentInitiated e)
-  TransferAmendmentCompletedEvent e -> Just (HistoryAmendmentCompleted e)
-  TransferAmendmentFailedEvent e -> Just (HistoryAmendmentFailed e)
+  TransactionAmendmentInitiatedEvent e -> Just (HistoryAmendmentInitiated e)
+  TransactionAmendmentCompletedEvent e -> Just (HistoryAmendmentCompleted e)
+  TransactionAmendmentFailedEvent e -> Just (HistoryAmendmentFailed e)
   TransactionCancellationInitiatedEvent e -> Just (HistoryCancellationInitiated e)
   TransactionCancellationCompletedEvent e -> Just (HistoryCancellationCompleted e)
   _ -> Nothing

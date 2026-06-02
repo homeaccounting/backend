@@ -16,7 +16,7 @@
 --   - CreditAccount: Credit account as part of a transfer (internal, saga only)
 --
 -- User-facing money movement is transfer-only (double-entry). DebitAccount and
--- CreditAccount are internal commands issued exclusively by the TransferManager
+-- CreditAccount are internal commands issued exclusively by the TransactionPostingManager
 -- process manager to coordinate the two sides of a transfer. They are not
 -- exposed via any API endpoint.
 --
@@ -157,8 +157,8 @@ data RevokeAccountAccess = RevokeAccountAccess
 
 -- | Command to debit an account as part of a transfer (internal, saga only).
 --
--- Issued exclusively by the TransferManager process manager after a
--- TransferInitiated event. Not exposed via any API endpoint.
+-- Issued exclusively by the TransactionPostingManager process manager after a
+-- TransactionPostingInitiated event. Not exposed via any API endpoint.
 --
 -- If the account has sufficient funds (or is External), produces AccountDebited.
 -- If the account is Regular and has insufficient funds, produces AccountDebitRejected.
@@ -180,7 +180,7 @@ data DebitAccount = DebitAccount
 
 -- | Command to credit an account as part of a transfer (internal, saga only).
 --
--- Issued exclusively by the TransferManager process manager after a successful
+-- Issued exclusively by the TransactionPostingManager process manager after a successful
 -- debit of the source account. Not exposed via any API endpoint.
 --
 -- Credits always succeed (adding money never fails). Produces AccountCredited.
@@ -254,7 +254,7 @@ data RenameAccount = RenameAccount
 
 -- | Saga-only command: reverse a prior debit on this account.
 --
--- Issued exclusively by the TransferAmendmentManager process manager.
+-- Issued exclusively by the TransactionAmendmentManager process manager.
 -- Not exposed via any HTTP endpoint. Always accepted on an existing
 -- account (no overdraft check, no positive-balance requirement).
 data ReverseAccountDebit = ReverseAccountDebit

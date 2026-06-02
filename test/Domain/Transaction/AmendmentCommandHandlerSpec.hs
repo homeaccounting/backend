@@ -4,14 +4,14 @@
 
 -- |
 -- Module      : Domain.Transaction.AmendmentCommandHandlerSpec
--- Description : Unit tests for AmendTransfer / CompleteTransferAmendment / FailTransferAmendment
+-- Description : Unit tests for AmendTransaction / CompleteTransactionAmendment / FailTransactionAmendment
 --
 -- Covers the pure business-rule enforcement in the command handler for the
 -- three amendment-saga commands:
 --
---   * AmendTransfer    – user-facing command; accepted only on Completed
---   * CompleteTransferAmendment – saga-internal; accepted only when an amendment is in progress
---   * FailTransferAmendment     – saga-internal; accepted only when an amendment is in progress
+--   * AmendTransaction    – user-facing command; accepted only on Completed
+--   * CompleteTransactionAmendment – saga-internal; accepted only when an amendment is in progress
+--   * FailTransactionAmendment     – saga-internal; accepted only when an amendment is in progress
 module Domain.Transaction.AmendmentCommandHandlerSpec (spec) where
 
 import qualified Data.UUID as UUID
@@ -28,14 +28,14 @@ import Domain.Transaction.CommandHandler
     handleTransactionCommand,
   )
 import Domain.Transaction.Commands
-  ( AmendTransfer (..),
-    CompleteTransferAmendment (..),
-    FailTransferAmendment (..),
+  ( AmendTransaction (..),
+    CompleteTransactionAmendment (..),
+    FailTransactionAmendment (..),
   )
 import Domain.Transaction.Events
-  ( TransferAmendmentCompleted (..),
-    TransferAmendmentFailed (..),
-    TransferAmendmentInitiated (..),
+  ( TransactionAmendmentCompleted (..),
+    TransactionAmendmentFailed (..),
+    TransactionAmendmentInitiated (..),
   )
 import Domain.Transaction.Projection
   ( Transaction,
@@ -93,8 +93,8 @@ failedTx = transactionDefault & #status .~ Failed "reason"
 
 -- | A completed transaction with an amendment already in progress.
 --
--- Simulates the state after 'AmendTransfer' was accepted and a
--- 'TransferAmendmentInitiated' event was applied: 'amendmentInProgress = True'.
+-- Simulates the state after 'AmendTransaction' was accepted and a
+-- 'TransactionAmendmentInitiated' event was applied: 'amendmentInProgress = True'.
 completedTxWithAmendmentInProgress :: Transaction
 completedTxWithAmendmentInProgress =
   completedTx & #amendmentInProgress .~ True
@@ -103,11 +103,11 @@ completedTxWithAmendmentInProgress =
 -- Commands
 -- -----------------------------------------------------------------------------
 
--- | Minimal valid 'AmendTransfer' command payload.
+-- | Minimal valid 'AmendTransaction' command payload.
 validAmendCmd :: TransactionCommand
 validAmendCmd =
-  AmendTransferTransactionCommand
-    AmendTransfer
+  AmendTransactionTransactionCommand
+    AmendTransaction
       { transactionId = txId,
         newSourceAccountId = altSrcId,
         newTargetAccountId = altTgtId,
@@ -117,11 +117,11 @@ validAmendCmd =
         amendedBy = amendedBy
       }
 
--- | Valid 'CompleteTransferAmendment' saga command.
+-- | Valid 'CompleteTransactionAmendment' saga command.
 validCompleteAmendCmd :: TransactionCommand
 validCompleteAmendCmd =
-  CompleteTransferAmendmentTransactionCommand
-    CompleteTransferAmendment
+  CompleteTransactionAmendmentTransactionCommand
+    CompleteTransactionAmendment
       { transactionId = txId,
         newSourceAccountId = altSrcId,
         newTargetAccountId = altTgtId,
@@ -131,11 +131,11 @@ validCompleteAmendCmd =
         amendedBy = amendedBy
       }
 
--- | Valid 'FailTransferAmendment' saga command.
+-- | Valid 'FailTransactionAmendment' saga command.
 validFailAmendCmd :: TransactionCommand
 validFailAmendCmd =
-  FailTransferAmendmentTransactionCommand
-    FailTransferAmendment
+  FailTransactionAmendmentTransactionCommand
+    FailTransactionAmendment
       { reason = "Insufficient funds in new source account"
       }
 
@@ -145,13 +145,13 @@ validFailAmendCmd =
 
 spec :: Spec
 spec = do
-  describe "AmendTransfer" $ do
-    it "accepted in Completed state and emits TransferAmendmentInitiated" $ do
+  describe "AmendTransaction" $ do
+    it "accepted in Completed state and emits TransactionAmendmentInitiated" $ do
       let result = handleTransactionCommand completedTx validAmendCmd
       case result of
         Right
-          [ TransferAmendmentInitiatedTransactionEvent
-              TransferAmendmentInitiated
+          [ TransactionAmendmentInitiatedTransactionEvent
+              TransactionAmendmentInitiated
                 { newSourceAccountId = evtSrc,
                   newTargetAccountId = evtTgt,
                   newSourceAmount = evtSrcAmt,
@@ -169,7 +169,7 @@ spec = do
             evtAmendedBy `shouldBe` amendedBy
         Right evts ->
           expectationFailure
-            $ "Expected exactly [TransferAmendmentInitiated], got "
+            $ "Expected exactly [TransactionAmendmentInitiated], got "
             <> show (length evts)
             <> " events"
         Left err -> expectationFailure $ "Expected Right, got Left: " <> show err
@@ -184,8 +184,8 @@ spec = do
 
     it "rejected when newSourceAccountId == newTargetAccountId with AmendTransferToSameAccountPair" $ do
       let sameAccountCmd =
-            AmendTransferTransactionCommand
-              AmendTransfer
+            AmendTransactionTransactionCommand
+              AmendTransaction
                 { transactionId = txId,
                   newSourceAccountId = altSrcId,
                   newTargetAccountId = altSrcId,
@@ -199,8 +199,8 @@ spec = do
 
     it "rejected when newSourceAmount is zero with AmendTransferToZeroAmount" $ do
       let zeroSrcCmd =
-            AmendTransferTransactionCommand
-              AmendTransfer
+            AmendTransactionTransactionCommand
+              AmendTransaction
                 { transactionId = txId,
                   newSourceAccountId = altSrcId,
                   newTargetAccountId = altTgtId,
@@ -214,8 +214,8 @@ spec = do
 
     it "rejected when newTargetAmount is zero with AmendTransferToZeroAmount" $ do
       let zeroTgtCmd =
-            AmendTransferTransactionCommand
-              AmendTransfer
+            AmendTransactionTransactionCommand
+              AmendTransaction
                 { transactionId = txId,
                   newSourceAccountId = altSrcId,
                   newTargetAccountId = altTgtId,
@@ -227,17 +227,17 @@ spec = do
       handleTransactionCommand completedTx zeroTgtCmd
         `shouldBe` Left AmendTransferToZeroAmount
 
-  describe "CompleteTransferAmendment" $ do
+  describe "CompleteTransactionAmendment" $ do
     it "rejected when no amendment is in progress with NoAmendmentInProgress"
       $ handleTransactionCommand completedTx validCompleteAmendCmd
       `shouldBe` Left NoAmendmentInProgress
 
-    it "accepted when amendment is in progress and emits TransferAmendmentCompleted" $ do
+    it "accepted when amendment is in progress and emits TransactionAmendmentCompleted" $ do
       let result = handleTransactionCommand completedTxWithAmendmentInProgress validCompleteAmendCmd
       case result of
         Right
-          [ TransferAmendmentCompletedTransactionEvent
-              TransferAmendmentCompleted
+          [ TransactionAmendmentCompletedTransactionEvent
+              TransactionAmendmentCompleted
                 { newSourceAccountId = evtSrc,
                   newTargetAccountId = evtTgt,
                   newSourceAmount = evtSrcAmt,
@@ -253,24 +253,24 @@ spec = do
             evtSrcAmt `shouldBe` mockMoney 200
         Right evts ->
           expectationFailure
-            $ "Expected exactly [TransferAmendmentCompleted], got "
+            $ "Expected exactly [TransactionAmendmentCompleted], got "
             <> show (length evts)
             <> " events"
         Left err -> expectationFailure $ "Expected Right, got Left: " <> show err
 
-  describe "FailTransferAmendment" $ do
+  describe "FailTransactionAmendment" $ do
     it "rejected when no amendment is in progress with NoAmendmentInProgress"
       $ handleTransactionCommand completedTx validFailAmendCmd
       `shouldBe` Left NoAmendmentInProgress
 
-    it "accepted when amendment is in progress and emits TransferAmendmentFailed" $ do
+    it "accepted when amendment is in progress and emits TransactionAmendmentFailed" $ do
       let result = handleTransactionCommand completedTxWithAmendmentInProgress validFailAmendCmd
       case result of
-        Right [TransferAmendmentFailedTransactionEvent (TransferAmendmentFailed failReason)] ->
+        Right [TransactionAmendmentFailedTransactionEvent (TransactionAmendmentFailed failReason)] ->
           failReason `shouldBe` "Insufficient funds in new source account"
         Right evts ->
           expectationFailure
-            $ "Expected exactly [TransferAmendmentFailed], got "
+            $ "Expected exactly [TransactionAmendmentFailed], got "
             <> show (length evts)
             <> " events"
         Left err -> expectationFailure $ "Expected Right, got Left: " <> show err

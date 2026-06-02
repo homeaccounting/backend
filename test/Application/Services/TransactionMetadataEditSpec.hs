@@ -16,7 +16,7 @@
 --    target date falls on or before the user's @booksClosedThrough@
 --    cutoff.
 --  * Books-close gating on the three creation paths
---    ('initiateIncome' / 'initiateExpense' / 'initiateInternalTransfer'):
+--    ('initiateIncome' / 'initiateExpense' / 'initiateTransfer'):
 --    backdated transactions on or before the cutoff are refused with
 --    'CannotEditClosedPeriod'.
 module Application.Services.TransactionMetadataEditSpec (spec) where
@@ -28,7 +28,7 @@ import Application.Services.TransactionService
     changeTransactionDescription,
     initiateExpense,
     initiateIncome,
-    initiateInternalTransfer,
+    initiateTransfer,
   )
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))
@@ -116,7 +116,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
 
       create <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             fx.regularAccountId
             otherAccId
@@ -127,7 +127,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Nothing
       (txId, _) <- case create of
         Right r -> pure r
-        Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+        Left err -> fail $ "initiateTransfer failed: " <> show err
 
       result <-
         runAppM env
@@ -241,7 +241,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
 
       create <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             fx.regularAccountId
             otherAccId
@@ -252,7 +252,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Nothing
       (txId, _) <- case create of
         Right r -> pure r
-        Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+        Left err -> fail $ "initiateTransfer failed: " <> show err
 
       let newAt = utc 2026 6 1
       result <- runAppM env $ changeTransactionDate fx.userId txId newAt
@@ -320,7 +320,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
               attempted = backdated
             }
 
-    it "rejects backdated initiateInternalTransfer in a closed period" $ do
+    it "rejects backdated initiateTransfer in a closed period" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "create-transfer-closed@test.com"
       otherAccId <- createRegularAccount env fx.userId "Other"
@@ -334,7 +334,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
       let backdated = utc 2026 3 15
       result <-
         runAppM env
-          $ initiateInternalTransfer
+          $ initiateTransfer
             fx.userId
             fx.regularAccountId
             otherAccId

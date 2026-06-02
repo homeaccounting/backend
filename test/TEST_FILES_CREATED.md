@@ -130,9 +130,9 @@ test/
 **Test Count**: ~30 tests
 
 **Coverage**:
-- ✅ InitiateTransfer (validation rules)
-- ✅ CompleteTransfer (only from Pending)
-- ✅ FailTransfer (only from Pending)
+- ✅ InitiateTransaction (validation rules)
+- ✅ CompleteTransactionPosting (only from Pending)
+- ✅ FailTransactionPosting (only from Pending)
 - ✅ State machine (terminal states immutable)
 - ✅ Double initialization prevention
 
@@ -157,8 +157,8 @@ test/
 
 **Coverage**:
 - ✅ Transfer initiation (DebitAccount command)
-- ✅ Successful debit (CreditAccount + CompleteTransfer)
-- ✅ Failed debit (FailTransfer with compensation)
+- ✅ Successful debit (CreditAccount + CompleteTransactionPosting)
+- ✅ Failed debit (FailTransactionPosting with compensation)
 - ✅ State tracking (transfer data)
 - ✅ Idempotency (event replay)
 - ✅ Irrelevant event filtering

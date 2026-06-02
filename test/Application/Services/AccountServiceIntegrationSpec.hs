@@ -31,7 +31,7 @@ import Domain.Core.Types
     AccountType (..),
     Currency (..),
     Money,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     defaultBankAccount,
     mkMoney,
@@ -46,7 +46,7 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
-import Domain.Transaction.Commands (InitiateTransfer (..))
+import Domain.Transaction.Commands (InitiateTransaction (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
@@ -87,7 +87,7 @@ spec = describe "AccountService.adjustAccountBalance" $ do
     "rejects when delta is zero"
     rejectZeroDeltaSpec
   it
-    "rejects when negative delta would exceed overdraft (saga FailTransfer)"
+    "rejects when negative delta would exceed overdraft (saga FailTransactionPosting)"
     rejectOverdraftSpec
   it
     "rejects when caller has Viewer role"
@@ -199,7 +199,7 @@ positiveDeltaSpec = do
   case result of
     Left err -> expectationFailure $ "Expected Right, got Left: " <> show err
     Right (_, txData) -> do
-      txData.transferType `shouldBe` Adjustment
+      txData.transactionType `shouldBe` Adjustment
       txData.description `shouldBe` "Reconcile"
       txData.status `shouldBe` Completed
       txData.sourceAmount `shouldBe` unsafeMoney USD 50
@@ -221,7 +221,7 @@ negativeDeltaSpec = do
   case result of
     Left err -> expectationFailure $ "Expected Right, got Left: " <> show err
     Right (_, txData) -> do
-      txData.transferType `shouldBe` Adjustment
+      txData.transactionType `shouldBe` Adjustment
       txData.status `shouldBe` Completed
       txData.sourceAccountId `shouldBe` accountId
       txData.sourceAmount `shouldBe` unsafeMoney USD 80
@@ -257,7 +257,7 @@ backdateSpec = do
   case result of
     Left err -> expectationFailure $ "Expected Right, got Left: " <> show err
     Right (_, txData) -> do
-      txData.transferType `shouldBe` Adjustment
+      txData.transactionType `shouldBe` Adjustment
       txData.sourceAccountId `shouldBe` externalAccId
       txData.targetAccountId `shouldBe` accountId
       txData.sourceAmount `shouldBe` unsafeMoney USD 100
@@ -328,7 +328,7 @@ rejectOverdraftSpec = do
   -- Start at 100, overdraft 0 (default Regular). Target -50 ⇒ delta -150,
   -- magnitude 150 debited from the Regular account; balance would go to
   -- -50, but with overdraft 0 the debit is rejected and the saga emits
-  -- TransferFailed.
+  -- TransactionPostingFailed.
   (env, userId, accountId) <- setupUserWithAccount USD 100
   result <-
     runAppM env
@@ -336,7 +336,7 @@ rejectOverdraftSpec = do
   case result of
     Left err -> expectationFailure $ "Expected Right with Failed status, got Left: " <> show err
     Right (_, txData) -> do
-      txData.transferType `shouldBe` Adjustment
+      txData.transactionType `shouldBe` Adjustment
       case txData.status of
         Failed reason ->
           T.isInfixOf "Insufficient" reason `shouldBe` True
@@ -396,7 +396,7 @@ crossCurrencySpec = do
   case result of
     Left err -> expectationFailure $ "Expected Right, got Left: " <> show err
     Right (_, txData) -> do
-      txData.transferType `shouldBe` Adjustment
+      txData.transactionType `shouldBe` Adjustment
       txData.status `shouldBe` Completed
       moneyCurrency txData.sourceAmount `shouldBe` USD
       moneyCurrency txData.targetAmount `shouldBe` EUR
@@ -412,7 +412,7 @@ crossCurrencySpec = do
 -- bypassing the transfer saga. Produces an 'AccountCredited' event whose
 -- effective business date is supplied by the Transaction read model
 -- (which 'balanceAsOf' joins against). To make the leg visible to the
--- fold we also seed a matching 'TransferInitiated' event on the TX
+-- fold we also seed a matching 'TransactionPostingInitiated' event on the TX
 -- stream so the TX read model records @atTime@ as the authoritative date.
 creditAccountAt :: AppEnv -> AccountId -> UTCTime -> Money -> IO ()
 creditAccountAt env accountId atTime amt = do
@@ -427,8 +427,8 @@ creditAccountAt env accountId atTime amt = do
       env.eventStoreReader
       id
       txUuid
-      $ InitiateTransferTransactionCommand
-        InitiateTransfer
+      $ InitiateTransactionTransactionCommand
+        InitiateTransaction
           { sourceAccountId = accountId,
             targetAccountId = accountId,
             sourceAmount = amt,
@@ -437,7 +437,7 @@ creditAccountAt env accountId atTime amt = do
             description = "Backdated credit",
             initiatedBy = unsafeUserId (UUID.fromWords 42 0 0 2),
             at = atTime,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = mempty
           }

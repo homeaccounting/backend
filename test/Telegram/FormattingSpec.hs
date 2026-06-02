@@ -13,7 +13,7 @@ import Domain.Core.Types
   ( CategoryId,
     Currency (..),
     LabelId,
-    TransferType (..),
+    TransactionType (..),
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
@@ -29,7 +29,7 @@ uuidFromInt n =
   let s = "00000000-0000-0000-0000-" <> replicate (12 - length (show n)) '0' <> show n
    in fromMaybe (error "bad uuid") (UUID.fromString s)
 
-sampleTxn :: TransferType -> TransactionData
+sampleTxn :: TransactionType -> TransactionData
 sampleTxn tt =
   TransactionData
     { sourceAccountId = unsafeAccountId (uuidFromInt 1),
@@ -39,7 +39,7 @@ sampleTxn tt =
       exchangeRate = Nothing,
       description = "McDonald's",
       status = Completed,
-      transferType = tt,
+      transactionType = tt,
       date = UTCTime (fromGregorian 2026 4 18) (secondsToDiffTime (14 * 3600 + 30 * 60)),
       labels = Set.empty
     }
@@ -71,12 +71,12 @@ names =
       (kyivLabel, "kyiv")
     ]
 
--- | Build an Expense TransferType whose single allocation carries the
+-- | Build an Expense TransactionType whose single allocation carries the
 -- sample transaction's amount.
-expenseFor :: CategoryId -> TransferType
+expenseFor :: CategoryId -> TransactionType
 expenseFor c = singletonExpense c (unsafeMoney USD 300)
 
-incomeFor :: CategoryId -> TransferType
+incomeFor :: CategoryId -> TransactionType
 incomeFor c = singletonIncome c (unsafeMoney USD 300)
 
 spec :: Spec

@@ -16,7 +16,7 @@
 --   3. 'setTransactionAllocations' re-splits the same total across
 --      three categories (300 + 300 + 400);
 --   4. read model again reflects the new three-category shape;
---   5. 'amendTransfer' bumps the categorised amount; the projection
+--   5. 'amendTransaction' bumps the categorised amount; the projection
 --      auto-rescales the three allocations proportionally so the sum
 --      continues to equal the new categorised total.
 --
@@ -46,14 +46,14 @@ import Domain.Core.Types
     DictionaryEntryId,
     Money,
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     allocationsOf,
     sumAllocationsUnchecked,
     unsafeEntryName,
     unsafeMoney,
   )
-import Domain.Transaction.Commands (AmendTransfer (..))
+import Domain.Transaction.Commands (AmendTransaction (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
@@ -106,13 +106,13 @@ addExpense env uid name = do
 unwrap :: String -> Either DomainError a -> IO a
 unwrap ctx = either (\err -> fail $ ctx <> " failed: " <> show err) pure
 
--- | Convenience: pull the current 'TransferType' off the read model.
-getTransferType :: Harness -> TransactionId -> IO TransferType
-getTransferType h txId = do
+-- | Convenience: pull the current 'TransactionType' off the read model.
+getTransactionType :: Harness -> TransactionId -> IO TransactionType
+getTransactionType h txId = do
   mTd <- TxRM.getTransaction h.harnessEnv.transactionReadModel txId
   case mTd of
     Nothing -> fail $ "transaction not found: " <> show txId
-    Just td -> pure td.transferType
+    Just td -> pure td.transactionType
 
 -- | Convenience: pull the 'TransactionData' off the read model.
 getTransaction :: Harness -> TransactionId -> IO TransactionData
@@ -131,11 +131,11 @@ ccy = USD
 money :: Rational -> Money
 money = unsafeMoney ccy
 
--- | Helper: assert the categorised total of the projected TransferType.
-categorisedTotal :: TransferType -> Money
+-- | Helper: assert the categorised total of the projected TransactionType.
+categorisedTotal :: TransactionType -> Money
 categorisedTotal tt = case allocationsOf tt of
   Just xs -> sumAllocationsUnchecked xs
-  Nothing -> error "categorisedTotal: uncategorised TransferType"
+  Nothing -> error "categorisedTotal: uncategorised TransactionType"
 
 -- | Helper: confirm a configuration was actually cloned (sanity check).
 -- Catches the case where 'addExpense' silently mutates the default
@@ -182,7 +182,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
     (txId, _seedTd) <- unwrap "initiateExpense" initResult
 
     -- Step 2: GET reflects the two-allocation Expense.
-    afterCreate <- getTransferType h txId
+    afterCreate <- getTransactionType h txId
     case afterCreate of
       Expense xs -> do
         NE.toList xs `shouldBe` NE.toList allocs1
@@ -202,7 +202,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
     _ <- unwrap "setTransactionAllocations" setResult
 
     -- Step 4: GET reflects the new three-allocation split.
-    afterSet <- getTransferType h txId
+    afterSet <- getTransactionType h txId
     case afterSet of
       Expense xs -> do
         NE.toList xs `shouldBe` NE.toList allocs2
@@ -214,7 +214,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
     td <- getTransaction h txId
     let newTotal = money 2000
         amend =
-          AmendTransfer
+          AmendTransaction
             { transactionId = txId,
               newSourceAccountId = td.sourceAccountId,
               newTargetAccountId = td.targetAccountId,
@@ -225,12 +225,12 @@ spec = describe "Application.Services / allocations round-trip" $ do
             }
     amendResult <-
       runAppM h.harnessEnv
-        $ TransactionService.amendTransfer h.harnessUser txId amend
-    _ <- unwrap "amendTransfer" amendResult
+        $ TransactionService.amendTransaction h.harnessUser txId amend
+    _ <- unwrap "amendTransaction" amendResult
 
     -- Step 6: GET shows allocations rescaled to keep the ratio (3:3:4) but
     -- summing to the new 2000 UAH total.
-    afterAmend <- getTransferType h txId
+    afterAmend <- getTransactionType h txId
     case afterAmend of
       Expense xs -> do
         let expectedRescaled =

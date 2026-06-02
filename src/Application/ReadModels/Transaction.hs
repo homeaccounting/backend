@@ -70,31 +70,31 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..))
-import Domain.Core.Types (AccountId, Allocation (..), DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransferType (..), allocationsOf, mkTransactionIdSafe, replaceAllocations)
+import Domain.Core.Types (AccountId, Allocation (..), DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransactionType (..), allocationsOf, mkTransactionIdSafe, replaceAllocations)
 import Domain.Models
   ( AccountingEvent
       ( TransactionAllocationsChangedEvent,
+        TransactionAmendmentCompletedEvent,
+        TransactionAmendmentFailedEvent,
+        TransactionAmendmentInitiatedEvent,
         TransactionCancellationCompletedEvent,
         TransactionCancellationInitiatedEvent,
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
-        TransferAmendmentCompletedEvent,
-        TransferAmendmentFailedEvent,
-        TransferAmendmentInitiatedEvent,
-        TransferCompletedEvent,
-        TransferFailedEvent,
-        TransferInitiatedEvent
+        TransactionPostingCompletedEvent,
+        TransactionPostingFailedEvent,
+        TransactionPostingInitiatedEvent
       ),
   )
 import Domain.Transaction.Events
   ( TransactionAllocationsChanged (..),
+    TransactionAmendmentCompleted (..),
     TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
     TransactionLabelsSet (..),
-    TransferAmendmentCompleted (..),
-    TransferFailed (..),
-    TransferInitiated (..),
+    TransactionPostingFailed (..),
+    TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Cancelled, Completed, Failed, Pending))
 import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
@@ -119,10 +119,10 @@ data TransactionData
     exchangeRate :: Maybe ExchangeRate,
     description :: Text,
     status :: TransactionStatus,
-    transferType :: TransferType,
+    transactionType :: TransactionType,
     date :: UTCTime,
     labels :: Set LabelId,
-    -- | Count of 'TransferAmendmentCompleted' events folded on this
+    -- | Count of 'TransactionAmendmentCompleted' events folded on this
     -- transaction. @0@ when never amended.
     amendmentCount :: Word
   }
@@ -243,11 +243,11 @@ createTransactionReadModel =
 --  3. Updates the TVar atomically
 --
 -- Events handled:
---  - TransferInitiated: Adds new transaction with Pending status
---  - TransferCompleted: Updates status to Completed
---  - TransferFailed: Updates status to Failed with reason
+--  - TransactionPostingInitiated: Adds new transaction with Pending status
+--  - TransactionPostingCompleted: Updates status to Completed
+--  - TransactionPostingFailed: Updates status to Failed with reason
 --  - TransactionLabelsSet: Replaces the labels set
---  - TransactionAllocationsChanged: Replaces the categorised TransferType payload
+--  - TransactionAllocationsChanged: Replaces the categorised TransactionType payload
 --  - TransactionDescriptionChanged: Replaces the description
 --  - TransactionDateChanged: Replaces the business date
 --
@@ -286,13 +286,13 @@ processEvent transactions globalEvent =
       streamUuid = versionedEvent.key
       payload = versionedEvent.payload
    in case payload of
-        TransferInitiatedEvent evt ->
+        TransactionPostingInitiatedEvent evt ->
           case mkTransactionIdSafe streamUuid of
             Nothing -> transactions
             Just transactionId ->
               -- Use insertWith to avoid overwriting terminal states (Completed/Failed).
-              -- In depth-first event bus dispatch, TransferCompleted/TransferFailed
-              -- may be processed before TransferInitiated for the same transaction.
+              -- In depth-first event bus dispatch, TransactionPostingCompleted/TransactionPostingFailed
+              -- may be processed before TransactionPostingInitiated for the same transaction.
               -- The merge function keeps the existing entry if one already exists.
               let newEntry =
                     TransactionData
@@ -303,13 +303,13 @@ processEvent transactions globalEvent =
                         exchangeRate = evt.exchangeRate,
                         description = evt.description,
                         status = Pending,
-                        transferType = evt.transferType,
+                        transactionType = evt.transactionType,
                         date = evt.at,
                         labels = evt.labels,
                         amendmentCount = 0
                       }
                in Map.insertWith (\_ existing -> existing) transactionId newEntry transactions
-        TransferCompletedEvent _evt ->
+        TransactionPostingCompletedEvent _evt ->
           case mkTransactionIdSafe streamUuid of
             Nothing -> transactions
             Just transactionId ->
@@ -317,7 +317,7 @@ processEvent transactions globalEvent =
                 (\transaction -> transaction {status = Completed})
                 transactionId
                 transactions
-        TransferFailedEvent evt ->
+        TransactionPostingFailedEvent evt ->
           case mkTransactionIdSafe streamUuid of
             Nothing -> transactions
             Just transactionId ->
@@ -342,8 +342,8 @@ processEvent transactions globalEvent =
               Map.adjust
                 ( \transaction ->
                     (transaction :: TransactionData)
-                      { transferType =
-                          replaceAllocations evt.newAllocations transaction.transferType
+                      { transactionType =
+                          replaceAllocations evt.newAllocations transaction.transactionType
                       }
                 )
                 transactionId
@@ -364,15 +364,15 @@ processEvent transactions globalEvent =
                 (\transaction -> (transaction :: TransactionData) {date = evt.newAt})
                 transactionId
                 transactions
-        TransferAmendmentInitiatedEvent _evt -> transactions -- saga-internal marker
-        TransferAmendmentCompletedEvent evt ->
+        TransactionAmendmentInitiatedEvent _evt -> transactions -- saga-internal marker
+        TransactionAmendmentCompletedEvent evt ->
           case mkTransactionIdSafe streamUuid of
             Nothing -> transactions
             Just transactionId ->
               -- The event carries the post-amendment allocations as a
-              -- handler-computed fact (see the 'CompleteTransferAmendment'
+              -- handler-computed fact (see the 'CompleteTransactionAmendment'
               -- arm in 'Domain.Transaction.CommandHandler'). The read
-              -- model rebuilds the full 'TransferType' from the existing
+              -- model rebuilds the full 'TransactionType' from the existing
               -- kind via 'replaceAllocations'. Allocations have already
               -- been rescaled proportionally on amount changes; 'Transfer' /
               -- 'Adjustment' have 'Nothing' on the event and pass through
@@ -381,21 +381,21 @@ processEvent transactions globalEvent =
               Map.adjust
                 ( \transaction ->
                     let newTT = case evt.newAllocations of
-                          Just allocs -> replaceAllocations allocs transaction.transferType
-                          Nothing -> transaction.transferType
+                          Just allocs -> replaceAllocations allocs transaction.transactionType
+                          Nothing -> transaction.transactionType
                      in (transaction :: TransactionData)
                           { sourceAccountId = evt.newSourceAccountId,
                             targetAccountId = evt.newTargetAccountId,
                             sourceAmount = evt.newSourceAmount,
                             targetAmount = evt.newTargetAmount,
                             exchangeRate = evt.newExchangeRate,
-                            transferType = newTT,
+                            transactionType = newTT,
                             amendmentCount = transaction.amendmentCount + 1
                           }
                 )
                 transactionId
                 transactions
-        TransferAmendmentFailedEvent _evt -> transactions -- informational; no canonical change
+        TransactionAmendmentFailedEvent _evt -> transactions -- informational; no canonical change
         TransactionCancellationInitiatedEvent _evt -> transactions -- saga-internal marker; no canonical change
         TransactionCancellationCompletedEvent _evt ->
           case mkTransactionIdSafe streamUuid of
@@ -471,7 +471,7 @@ transactionExists readModelTVar transactionId = do
 --     source or target. An accountId outside the visible set therefore
 --     naturally produces zero matches.
 --  3. Apply inclusive from/to bounds to 'TransactionData.date', which is
---     the transaction's business timestamp ('TransferInitiated.at').
+--     the transaction's business timestamp ('TransactionPostingInitiated.at').
 --  4. Sort by date descending; ties are broken by TransactionId.
 listTransactions ::
   (MonadIO m) =>
@@ -529,7 +529,7 @@ transactionToMap = getAllTransactions
 
 -- | Count transactions that reference the given dictionary entry id, either
 -- as a label (via 'TransactionData.labels') or as the categorised
--- 'TransferType' (Income / Expense).
+-- 'TransactionType' (Income / Expense).
 --
 -- Powers the service-layer in-use check that blocks deletion of a
 -- dictionary entry while any transaction still references it. Performs a
@@ -547,9 +547,9 @@ findReferencingTransactions readModelTVar entryId = do
     referencesEntry td =
       td.status /= Cancelled
         && ( Set.member entryId td.labels
-               || referencesInAllocations td.transferType
+               || referencesInAllocations td.transactionType
            )
-    referencesInAllocations :: TransferType -> Bool
+    referencesInAllocations :: TransactionType -> Bool
     referencesInAllocations tt = case allocationsOf tt of
       Nothing -> False
       Just allocs -> any (\(Allocation cid _) -> cid == entryId) (NE.toList allocs)

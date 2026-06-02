@@ -8,7 +8,7 @@
 --
 -- Verifies that ConfigurationService.removeDictionaryEntry refuses to
 -- delete a dictionary entry that any transaction still references —
--- either via the labels set or via the categorised TransferType.
+-- either via the labels set or via the categorised TransactionType.
 --
 -- Also verifies the regression: cancelled transactions must NOT count as
 -- "in use", so deletion succeeds when the only referencing transaction has
@@ -32,7 +32,7 @@ import Application.Services.ConfigurationService
   )
 import Application.Services.TransactionService
   ( cancelTransaction,
-    initiateInternalTransfer,
+    initiateTransfer,
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -41,7 +41,7 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( DictionaryEntryId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     unsafeAccountId,
     unsafeEntryName,
@@ -49,7 +49,7 @@ import Domain.Core.Types
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
-import Domain.Transaction.Commands (InitiateTransfer (..))
+import Domain.Transaction.Commands (InitiateTransaction (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
@@ -93,14 +93,14 @@ firstEntryId env userId dictName = do
     toDictId "labels" = labelsDictId
     toDictId other = error $ "unknown dict: " <> show other
 
--- | Write a TransferInitiated event through the in-memory event store.
+-- | Write a TransactionPostingInitiated event through the in-memory event store.
 -- Uses fresh random UUIDs for source / target accounts — the in-use
 -- check only needs the category / labels to be visible on the read
 -- model, not for the accounts to be real.
 seedTransaction ::
   AppEnv ->
   UserId ->
-  TransferType ->
+  TransactionType ->
   Set DictionaryEntryId ->
   IO ()
 seedTransaction env userId tt labels = do
@@ -108,8 +108,8 @@ seedTransaction env userId tt labels = do
   srcUuid <- UUID.nextRandom
   tgtUuid <- UUID.nextRandom
   let cmd =
-        InitiateTransferTransactionCommand
-          InitiateTransfer
+        InitiateTransactionTransactionCommand
+          InitiateTransaction
             { sourceAccountId = unsafeAccountId srcUuid,
               targetAccountId = unsafeAccountId tgtUuid,
               sourceAmount = unsafeMoney Core.USD 100,
@@ -118,7 +118,7 @@ seedTransaction env userId tt labels = do
               description = "seed for in-use check",
               initiatedBy = userId,
               at = UTCTime (fromGregorian 2026 4 1) 0,
-              transferType = tt,
+              transactionType = tt,
               externalTransactionId = Nothing,
               labels = labels
             }
@@ -184,7 +184,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
 
   -- \| An Adjustment carries no category, so it must never contribute to the
   -- category in-use count. This locks the report-exclusion contract for
-  -- 'TransferType = Adjustment' end-to-end: the in-use guard powers
+  -- 'TransactionType = Adjustment' end-to-end: the in-use guard powers
   -- category-deletion enforcement, which is the same code path any future
   -- income/expense aggregator would walk through.
   it "Adjustment transactions do not count towards CategoryInUse" $ do
@@ -212,7 +212,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
   -- 'findReferencingTransactions'. This test verifies that a label referenced
   -- only by a cancelled transaction is treated as unused and can be deleted.
   it "allows deleting a label referenced only by a cancelled transaction" $ do
-    -- Full saga pipeline required: TransferManager + TransactionCancellationManager
+    -- Full saga pipeline required: TransactionPostingManager + TransactionCancellationManager
     -- must run synchronously so the Cancelled status is reflected in the read
     -- model before we attempt deletion.
     env <- createTestAppEnvWithProcessManager
@@ -232,7 +232,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     -- Initiate a transfer that carries the label, then cancel it.
     txResult <-
       runAppM env
-        $ initiateInternalTransfer
+        $ initiateTransfer
           userId
           src
           tgt
@@ -242,7 +242,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
           Nothing
           Nothing
     (txId, _td) <- case txResult of
-      Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+      Left err -> fail $ "initiateTransfer failed: " <> show err
       Right r -> pure r
 
     cancelResult <- runAppM env $ cancelTransaction userId txId

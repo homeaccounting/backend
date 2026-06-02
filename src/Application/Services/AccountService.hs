@@ -73,7 +73,7 @@ import Domain.Core.Types
     AccountType (..),
     Money (..),
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     mkAccountId,
     mkUserId,
@@ -82,7 +82,7 @@ import Domain.Core.Types
     negateMoney,
     subtractMoney,
   )
-import Domain.Transaction.Commands (InitiateTransfer (..))
+import Domain.Transaction.Commands (InitiateTransaction (..))
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),
@@ -340,7 +340,7 @@ setAccountSubtype requestingUserId accountUuid newType = runExceptT $ do
 --  * Resulting delta is non-zero.
 --
 -- Post-saga failures (e.g. overdraft on a debit leg) surface through the
--- existing 'TransferManager' path: the returned 'TransactionData' carries
+-- existing 'TransactionPostingManager' path: the returned 'TransactionData' carries
 -- a 'Failed' status with the saga's reason.
 adjustAccountBalance ::
   UserId ->
@@ -472,7 +472,7 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
         Nothing
         $ \date srcAmt tgtAmt rate ->
           Right
-            InitiateTransfer
+            InitiateTransaction
               { sourceAccountId = sourceAccId,
                 targetAccountId = targetAccId,
                 sourceAmount = srcAmt,
@@ -481,7 +481,7 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
                 description = reason,
                 initiatedBy = userId,
                 at = date,
-                transferType = Adjustment,
+                transactionType = Adjustment,
                 externalTransactionId = Nothing,
                 labels = mempty
               }

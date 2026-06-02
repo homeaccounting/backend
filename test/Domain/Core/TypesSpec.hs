@@ -34,7 +34,7 @@ spec = do
   accountIdSpec
   transactionIdSpec
   externalTransactionIdSpec
-  transferTypeSpec
+  transactionTypeSpec
 
 -- -----------------------------------------------------------------------------
 -- Money Tests
@@ -225,11 +225,11 @@ externalTransactionIdSpec = describe "ExternalTransactionId" $ do
     `shouldSatisfy` isRight
 
 -- -----------------------------------------------------------------------------
--- TransferType Tests
+-- TransactionType Tests
 -- -----------------------------------------------------------------------------
 
-transferTypeSpec :: Spec
-transferTypeSpec = describe "TransferType JSON" $ do
+transactionTypeSpec :: Spec
+transactionTypeSpec = describe "TransactionType JSON" $ do
   it "round-trips Adjustment via Aeson Generic encoding" $ do
     let encoded = Aeson.encode Adjustment
     Aeson.decode encoded `shouldBe` Just Adjustment

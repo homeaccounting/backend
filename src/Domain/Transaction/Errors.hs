@@ -11,7 +11,7 @@
 -- Error Types:
 --   - SourceAccountNotFound: Source account does not exist
 --   - TargetAccountNotFound: Target account does not exist
---   - TransferFailed: Transfer could not be completed
+--   - TransactionPostingFailed: Transfer could not be completed
 --   - InvalidTransferAmount: Transfer amount is invalid (zero or negative)
 --   - SameSourceAndTarget: Source and target accounts are identical
 --   - TransactionNotFound: Transaction does not exist
@@ -19,7 +19,7 @@
 --   - TransactionAlreadyFailed: Attempt to modify failed transaction
 --
 -- These errors are used at the API layer to provide meaningful feedback
--- to clients. The command handler itself uses events (like TransferFailed)
+-- to clients. The command handler itself uses events (like TransactionPostingFailed)
 -- to represent business rule violations within the event stream.
 --
 -- Usage Context:
@@ -34,7 +34,7 @@ module Domain.Transaction.Errors
     -- * Error Constructors
     mkSourceAccountNotFound,
     mkTargetAccountNotFound,
-    mkTransferFailed,
+    mkTransactionPostingFailed,
     mkInvalidTransferAmount,
     mkSameSourceAndTarget,
     mkTransactionNotFound,
@@ -59,7 +59,7 @@ import GHC.Generics (Generic)
 -- provide meaningful error responses to clients.
 --
 -- Note: Within the event sourcing domain, business rule violations are
--- represented as events (e.g., TransferFailed). These error types
+-- represented as events (e.g., TransactionPostingFailed). These error types
 -- are for the query side and API responses.
 data TransactionError
   = -- | Source account not found
@@ -77,7 +77,7 @@ data TransactionError
         targetAccountNotFoundAccountId :: AccountId
       }
   | -- | Transfer failed with a reason
-    TransferFailed
+    TransactionPostingFailed
       { -- | The transaction ID that failed
         transferFailedTransactionId :: TransactionId,
         -- | The reason for the failure
@@ -140,7 +140,7 @@ instance FromJSON TransactionError
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransfer command references a non-existent source account
+--  - An InitiateTransaction command references a non-existent source account
 --  - The process manager cannot find the source account
 --  - API validation discovers the source account doesn't exist
 mkSourceAccountNotFound ::
@@ -168,7 +168,7 @@ mkSourceAccountNotFound transactionId accountId =
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransfer command references a non-existent target account
+--  - An InitiateTransaction command references a non-existent target account
 --  - The process manager cannot find the target account
 --  - API validation discovers the target account doesn't exist
 mkTargetAccountNotFound ::
@@ -183,14 +183,14 @@ mkTargetAccountNotFound transactionId accountId =
       targetAccountNotFoundAccountId = accountId
     }
 
--- | Create a TransferFailed error.
+-- | Create a TransactionPostingFailed error.
 --
 -- This error indicates that a transfer could not be completed for some reason
 -- (e.g., insufficient funds, validation failure, system error).
 --
 -- Example:
--- >>> mkTransferFailed transactionId "Insufficient funds in source account"
--- TransferFailed { transferFailedTransactionId = transactionId
+-- >>> mkTransactionPostingFailed transactionId "Insufficient funds in source account"
+-- TransactionPostingFailed { transferFailedTransactionId = transactionId
 --                , transferFailedReason = "Insufficient funds in source account"
 --                }
 --
@@ -200,14 +200,14 @@ mkTargetAccountNotFound transactionId accountId =
 --  - A credit operation fails due to validation errors
 --  - The process manager encounters an error during saga execution
 --  - Any step in the transfer process fails
-mkTransferFailed ::
+mkTransactionPostingFailed ::
   -- | Transaction ID that failed
   TransactionId ->
   -- | Reason for the failure
   Text ->
   TransactionError
-mkTransferFailed transactionId reason =
-  TransferFailed
+mkTransactionPostingFailed transactionId reason =
+  TransactionPostingFailed
     { transferFailedTransactionId = transactionId,
       transferFailedReason = reason
     }
@@ -226,8 +226,8 @@ mkTransferFailed transactionId reason =
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransfer command has zero amount
---  - An InitiateTransfer command has negative amount (shouldn't happen with Money type)
+--  - An InitiateTransaction command has zero amount
+--  - An InitiateTransaction command has negative amount (shouldn't happen with Money type)
 --  - API validation detects invalid amount
 --  - Amount exceeds system limits (if any)
 mkInvalidTransferAmount ::
@@ -258,7 +258,7 @@ mkInvalidTransferAmount transactionId amount reason =
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransfer command has the same account for source and target
+--  - An InitiateTransaction command has the same account for source and target
 --  - API validation detects identical source and target
 --  - Pre-validation before sending command
 mkSameSourceAndTarget ::
@@ -307,7 +307,7 @@ mkTransactionNotFound transactionId =
 --
 -- Usage:
 -- This error should be created when:
---  - A CompleteTransfer command targets an already completed transaction
+--  - A CompleteTransactionPosting command targets an already completed transaction
 --  - An API request attempts to modify a completed transaction
 --  - The process manager tries to complete a completed transaction
 mkTransactionAlreadyCompleted ::
@@ -332,8 +332,8 @@ mkTransactionAlreadyCompleted transactionId =
 --
 -- Usage:
 -- This error should be created when:
---  - A CompleteTransfer command targets an already failed transaction
---  - A FailTransfer command targets an already failed transaction
+--  - A CompleteTransactionPosting command targets an already failed transaction
+--  - A FailTransactionPosting command targets an already failed transaction
 --  - An API request attempts to modify a failed transaction
 --  - The process manager tries to modify a failed transaction
 mkTransactionAlreadyFailed ::

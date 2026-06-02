@@ -42,7 +42,7 @@ import Domain.Core.Types
     DictionaryEntryId,
     Money,
     TransactionId,
-    TransferType,
+    TransactionType,
     UserId,
     unEntryName,
     unsafeDictionaryEntryId,
@@ -103,12 +103,12 @@ seedIncome h categoryId = do
     Left err -> fail $ "initiateIncome failed: " <> show err
     Right (txId, _) -> pure txId
 
-seedInternalTransfer :: Harness -> IO TransactionId
-seedInternalTransfer h = do
+seedTransfer :: Harness -> IO TransactionId
+seedTransfer h = do
   other <- createRegularAccount h.harnessEnv h.harnessUser "Other"
   res <-
     runAppM h.harnessEnv
-      $ TransactionService.initiateInternalTransfer
+      $ TransactionService.initiateTransfer
         h.harnessUser
         h.harnessAccount
         other
@@ -118,15 +118,15 @@ seedInternalTransfer h = do
         Nothing
         Nothing
   case res of
-    Left err -> fail $ "initiateInternalTransfer failed: " <> show err
+    Left err -> fail $ "initiateTransfer failed: " <> show err
     Right (txId, _) -> pure txId
 
-getTransferType :: Harness -> TransactionId -> IO TransferType
-getTransferType h txId = do
+getTransactionType :: Harness -> TransactionId -> IO TransactionType
+getTransactionType h txId = do
   mTd <- TxRM.getTransaction h.harnessEnv.transactionReadModel txId
   case mTd of
     Nothing -> fail $ "transaction not found: " <> show txId
-    Just td -> pure td.transferType
+    Just td -> pure td.transactionType
 
 incomeCategoryNames :: Harness -> IO [Text]
 incomeCategoryNames h = do
@@ -166,7 +166,7 @@ spec = describe "Integration / TransactionAllocationsEdit" $ do
     List.sort (filter (== "Test-Freelance") names) `shouldBe` ["Test-Freelance"]
 
     txId <- seedIncome h h.harnessSalaryCategory
-    initial <- getTransferType h txId
+    initial <- getTransactionType h txId
     initial `shouldBe` singletonIncome h.harnessSalaryCategory seedAmount
 
     result <-
@@ -177,12 +177,12 @@ spec = describe "Integration / TransactionAllocationsEdit" $ do
           (singletonAllocation newCategoryId seedAmount)
     result `shouldSatisfy` isRight
 
-    updated <- getTransferType h txId
+    updated <- getTransactionType h txId
     updated `shouldBe` singletonIncome newCategoryId seedAmount
 
   it "refuses to set allocations on an internal transfer" $ do
     h <- setupHarness "alloc-edit-internal@test.com"
-    txId <- seedInternalTransfer h
+    txId <- seedTransfer h
 
     result <-
       runAppM h.harnessEnv

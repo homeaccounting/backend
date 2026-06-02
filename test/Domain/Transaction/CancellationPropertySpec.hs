@@ -27,7 +27,7 @@ import Domain.Core.Types
     ExchangeRate,
     Money,
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     allocationsOf,
     unsafeAccountId,
@@ -45,14 +45,14 @@ import Domain.Transaction.Commands
     CompleteTransactionCancellation (..),
   )
 import Domain.Transaction.Events
-  ( TransactionCancellationCompleted (..),
+  ( TransactionAmendmentCompleted (..),
+    TransactionAmendmentFailed (..),
+    TransactionAmendmentInitiated (..),
+    TransactionCancellationCompleted (..),
     TransactionCancellationInitiated (..),
-    TransferAmendmentCompleted (..),
-    TransferAmendmentFailed (..),
-    TransferAmendmentInitiated (..),
-    TransferCompleted (..),
-    TransferFailed (..),
-    TransferInitiated (..),
+    TransactionPostingCompleted (..),
+    TransactionPostingFailed (..),
+    TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Projection
   ( Transaction,
@@ -94,8 +94,8 @@ seedSrcAmt = unsafeMoney USD 100
 seedTgtAmt :: Money
 seedTgtAmt = unsafeMoney USD 100
 
-seedTransferType :: TransferType
-seedTransferType = singletonIncome (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) seedTgtAmt
+seedTransactionType :: TransactionType
+seedTransactionType = singletonIncome (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) seedTgtAmt
 
 seedBy :: UserId
 seedBy = unsafeUserId (UUID.fromWords 2 0 0 0)
@@ -116,16 +116,16 @@ completedBase =
     & #cancellationInProgress
     .~ False
 
--- | A completed transaction built by folding 'TransferInitiated' +
--- 'TransferCompleted' through the projection — matching 'completedBase' in
+-- | A completed transaction built by folding 'TransactionPostingInitiated' +
+-- 'TransactionPostingCompleted' through the projection — matching 'completedBase' in
 -- the fields the cancellation handler actually inspects (status, both flags).
 -- Used to verify that the handler result is path-independent.
 completedViaProjection :: Transaction
 completedViaProjection =
   latestProjection
     transactionProjection
-    [ TransferInitiatedTransactionEvent
-        TransferInitiated
+    [ TransactionPostingInitiatedTransactionEvent
+        TransactionPostingInitiated
           { sourceAccountId = seedSrc,
             targetAccountId = seedTgt,
             sourceAmount = seedSrcAmt,
@@ -134,11 +134,11 @@ completedViaProjection =
             description = "seed",
             by = seedBy,
             at = transactionDefault ^. #at,
-            transferType = seedTransferType,
+            transactionType = seedTransactionType,
             externalTransactionId = Nothing,
             labels = Set.empty
           },
-      TransferCompletedTransactionEvent TransferCompleted
+      TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
     ]
 
 -- | Apply a list of events on top of an existing 'Transaction' state.
@@ -222,7 +222,7 @@ instance Show AnyCancellationCommand where
 instance Arbitrary AnyCancellationCommand where
   arbitrary = AnyCancellationCommand <$> genAnyCancellationCommand
 
--- | Generator for a 'TransferAmendmentInitiated' event with arbitrary
+-- | Generator for a 'TransactionAmendmentInitiated' event with arbitrary
 -- posting fields, so we exercise the full range of projection arms in the
 -- monotonicity property.
 genAmendmentInitiatedEvt :: Gen TransactionEvent
@@ -234,8 +234,8 @@ genAmendmentInitiatedEvt = do
   newRate <- oneof [pure Nothing, Just <$> (arbitrary :: Gen ExchangeRate)]
   uid <- arbitrary :: Gen UserId
   pure
-    $ TransferAmendmentInitiatedTransactionEvent
-      TransferAmendmentInitiated
+    $ TransactionAmendmentInitiatedTransactionEvent
+      TransactionAmendmentInitiated
         { transactionId = txId,
           newSourceAccountId = newSrc,
           newTargetAccountId = newTgt,
@@ -245,7 +245,7 @@ genAmendmentInitiatedEvt = do
           amendedBy = uid
         }
 
--- | Generator for a 'TransferAmendmentCompleted' event with arbitrary
+-- | Generator for a 'TransactionAmendmentCompleted' event with arbitrary
 -- posting fields, mirroring 'genAmendmentInitiatedEvt'.
 genAmendmentCompletedEvt :: Gen TransactionEvent
 genAmendmentCompletedEvt = do
@@ -256,15 +256,15 @@ genAmendmentCompletedEvt = do
   newRate <- oneof [pure Nothing, Just <$> (arbitrary :: Gen ExchangeRate)]
   uid <- arbitrary :: Gen UserId
   pure
-    $ TransferAmendmentCompletedTransactionEvent
-      TransferAmendmentCompleted
+    $ TransactionAmendmentCompletedTransactionEvent
+      TransactionAmendmentCompleted
         { transactionId = txId,
           newSourceAccountId = newSrc,
           newTargetAccountId = newTgt,
           newSourceAmount = newSrcAmt,
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
-          newAllocations = allocationsOf seedTransferType,
+          newAllocations = allocationsOf seedTransactionType,
           amendedBy = uid
         }
 
@@ -283,10 +283,10 @@ instance Arbitrary AnyTransactionEvent where
           -- Amendment saga events — exercise the amendment projection arms.
           genAmendmentInitiatedEvt,
           genAmendmentCompletedEvt,
-          pure (TransferAmendmentFailedTransactionEvent (TransferAmendmentFailed "reason")),
+          pure (TransactionAmendmentFailedTransactionEvent (TransactionAmendmentFailed "reason")),
           -- Core transfer events.
-          pure (TransferCompletedTransactionEvent TransferCompleted),
-          pure (TransferFailedTransactionEvent (TransferFailed "reason"))
+          pure (TransactionPostingCompletedTransactionEvent TransactionPostingCompleted),
+          pure (TransactionPostingFailedTransactionEvent (TransactionPostingFailed "reason"))
         ]
 
 -- -----------------------------------------------------------------------------
@@ -301,7 +301,7 @@ spec = describe "Transaction cancellation handler and projection" $ do
       -- inspects (status = Completed, both saga flags False) must produce the
       -- same handler result regardless of how they were constructed.
       --   tx1 — built via record-update (direct fixture)
-      --   tx2 — built by folding TransferInitiated + TransferCompleted through
+      --   tx2 — built by folding TransactionPostingInitiated + TransactionPostingCompleted through
       --          the projection
       -- If the handler ever accidentally branches on a field it should ignore
       -- (e.g. description, at, initiatedBy), QuickCheck will find a counter-

@@ -4,8 +4,8 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : Application.ProcessManagers.TransferAmendmentManagerSpec
--- Description : Unit tests for the TransferAmendmentManager saga.
+-- Module      : Application.ProcessManagers.TransactionAmendmentManagerSpec
+-- Description : Unit tests for the TransactionAmendmentManager saga.
 --
 -- Covers each row of spec §4.2's diff table plus the failure path:
 --
@@ -16,10 +16,10 @@
 --   * Target-account swap (Reverse-old-target + Credit-new-target)
 --   * Source-account swap (Debit-new-source + Reverse-old-source)
 --   * Both accounts swap (full 4-leg ordering)
---   * Failure path: new-source debit rejection → 'FailTransferAmendment'
-module Application.ProcessManagers.TransferAmendmentManagerSpec (spec) where
+--   * Failure path: new-source debit rejection → 'FailTransactionAmendment'
+module Application.ProcessManagers.TransactionAmendmentManagerSpec (spec) where
 
-import Application.ProcessManagers.TransferAmendmentManager
+import Application.ProcessManagers.TransactionAmendmentManager
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
@@ -38,7 +38,7 @@ import Domain.Core.Types
     Currency (..),
     Money,
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     unAccountId,
     unsafeAccountId,
@@ -50,8 +50,8 @@ import Domain.Models
   ( AccountingCommand (..),
     AccountingEvent (..),
   )
-import Domain.Transaction.Commands (FailTransferAmendment (..))
-import Domain.Transaction.Events (TransferAmendmentInitiated (..), TransferInitiated (..))
+import Domain.Transaction.Commands (FailTransactionAmendment (..))
+import Domain.Transaction.Events (TransactionAmendmentInitiated (..), TransactionPostingInitiated (..))
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
 import RIO hiding (view, (^.))
@@ -61,8 +61,8 @@ import Test.Hspec
 -- Fixtures
 -- -----------------------------------------------------------------------------
 
-empty_ :: TransferAmendmentManager
-empty_ = TransferAmendmentManager Map.empty Map.empty
+empty_ :: TransactionAmendmentManager
+empty_ = TransactionAmendmentManager Map.empty Map.empty
 
 sampleAt :: UTCTime
 sampleAt = UTCTime (fromGregorian 2026 4 1) 0
@@ -91,7 +91,7 @@ userId_ = unsafeUserId (UUID.fromWords 4 0 0 4)
 m :: Rational -> Money
 m = unsafeMoney USD
 
--- | TransferInitiated seed event for a 100 USD same-currency transfer
+-- | TransactionPostingInitiated seed event for a 100 USD same-currency transfer
 -- from 'oldSrc' to 'oldTgt'.
 seedInitiated :: VersionedStreamEvent AccountingEvent
 seedInitiated =
@@ -99,8 +99,8 @@ seedInitiated =
     txUuid
     0
     (emptyMetadata "")
-    ( TransferInitiatedEvent
-        TransferInitiated
+    ( TransactionPostingInitiatedEvent
+        TransactionPostingInitiated
           { sourceAccountId = oldSrc,
             targetAccountId = oldTgt,
             sourceAmount = m 100,
@@ -109,7 +109,7 @@ seedInitiated =
             description = "seed",
             by = userId_,
             at = sampleAt,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
           }
@@ -121,8 +121,8 @@ mkAmendInitiated newSrcA newTgtA newSrcAmt newTgtAmt =
     txUuid
     1
     (emptyMetadata "")
-    ( TransferAmendmentInitiatedEvent
-        TransferAmendmentInitiated
+    ( TransactionAmendmentInitiatedEvent
+        TransactionAmendmentInitiated
           { transactionId = txId,
             newSourceAccountId = newSrcA,
             newTargetAccountId = newTgtA,
@@ -148,18 +148,18 @@ mkAccountDebited acct amt =
     )
 
 -- | Run the projection through the given events from the seed state.
-runProjection :: [VersionedStreamEvent AccountingEvent] -> TransferAmendmentManager
-runProjection = foldl' handleTransferAmendmentEvent empty_
+runProjection :: [VersionedStreamEvent AccountingEvent] -> TransactionAmendmentManager
+runProjection = foldl' handleTransactionAmendmentEvent empty_
 
 spec :: Spec
-spec = describe "TransferAmendmentManager (Saga)" $ do
+spec = describe "TransactionAmendmentManager (Saga)" $ do
   describe "initial state"
     $ it "starts with empty maps"
     $ do
       Map.null (empty_ ^. #amendments) `shouldBe` True
       Map.null (empty_ ^. #currentPostings) `shouldBe` True
 
-  describe "TransferInitiated tracking"
+  describe "TransactionPostingInitiated tracking"
     $ it "records the current postings snapshot"
     $ do
       let st = runProjection [seedInitiated]
@@ -170,7 +170,7 @@ spec = describe "TransferAmendmentManager (Saga)" $ do
     $ do
       let amend = mkAmendInitiated oldSrc oldTgt (m 150) (m 150)
           st = runProjection [seedInitiated, amend]
-          effects = reactToTransferAmendmentEvent st amend
+          effects = reactToTransactionAmendmentEvent st amend
       length effects `shouldBe` 1
       case effects of
         [IssueCommandWithCompensation acctUuid_ (DebitAccountCommand debit) _ _] -> do
@@ -181,27 +181,27 @@ spec = describe "TransferAmendmentManager (Saga)" $ do
 
       -- After AccountDebited fires the rest: credit Δ on target + complete.
       let debited = mkAccountDebited oldSrc (m 50)
-          st2 = handleTransferAmendmentEvent st debited
-          rest = reactToTransferAmendmentEvent st2 debited
+          st2 = handleTransactionAmendmentEvent st debited
+          rest = reactToTransactionAmendmentEvent st2 debited
       length rest `shouldBe` 2
       case rest of
-        [IssueCommand tgtUuid (CreditAccountCommand credit) _, IssueCommand txTarget (CompleteTransferAmendmentCommand _) _] -> do
+        [IssueCommand tgtUuid (CreditAccountCommand credit) _, IssueCommand txTarget (CompleteTransactionAmendmentCommand _) _] -> do
           tgtUuid `shouldBe` acctUuid oldTgt
           credit.amount `shouldBe` m 50
           txTarget `shouldBe` txUuid
-        _ -> expectationFailure "Expected [CreditAccount Δ, CompleteTransferAmendment]"
+        _ -> expectationFailure "Expected [CreditAccount Δ, CompleteTransactionAmendment]"
 
   describe "Amount-only, source/target smaller"
     $ it "issues ReverseAccountDebit + ReverseAccountCredit + Complete immediately"
     $ do
       let amend = mkAmendInitiated oldSrc oldTgt (m 60) (m 60)
           st = runProjection [seedInitiated, amend]
-          effects = reactToTransferAmendmentEvent st amend
+          effects = reactToTransactionAmendmentEvent st amend
       length effects `shouldBe` 3
       case effects of
         [ IssueCommand a1 (ReverseAccountCreditCommand rc) _,
           IssueCommand a2 (ReverseAccountDebitCommand rd) _,
-          IssueCommand txT (CompleteTransferAmendmentCommand _) _
+          IssueCommand txT (CompleteTransactionAmendmentCommand _) _
           ] -> do
             a1 `shouldBe` acctUuid oldTgt
             rc.amount `shouldBe` m 40 -- target delta
@@ -215,12 +215,12 @@ spec = describe "TransferAmendmentManager (Saga)" $ do
     $ do
       let amend = mkAmendInitiated oldSrc newTgt (m 100) (m 100)
           st = runProjection [seedInitiated, amend]
-          effects = reactToTransferAmendmentEvent st amend
+          effects = reactToTransactionAmendmentEvent st amend
       length effects `shouldBe` 3
       case effects of
         [ IssueCommand a1 (ReverseAccountCreditCommand rc) _,
           IssueCommand a2 (CreditAccountCommand cr) _,
-          IssueCommand _ (CompleteTransferAmendmentCommand _) _
+          IssueCommand _ (CompleteTransactionAmendmentCommand _) _
           ] -> do
             a1 `shouldBe` acctUuid oldTgt
             rc.amount `shouldBe` m 100
@@ -233,7 +233,7 @@ spec = describe "TransferAmendmentManager (Saga)" $ do
     $ do
       let amend = mkAmendInitiated newSrc oldTgt (m 100) (m 100)
           st = runProjection [seedInitiated, amend]
-          effects = reactToTransferAmendmentEvent st amend
+          effects = reactToTransactionAmendmentEvent st amend
       length effects `shouldBe` 1
       case effects of
         [IssueCommandWithCompensation au (DebitAccountCommand d) _ _] -> do
@@ -242,11 +242,11 @@ spec = describe "TransferAmendmentManager (Saga)" $ do
         _ -> expectationFailure "Expected DebitNewSource (fallible) only"
 
       let debited = mkAccountDebited newSrc (m 100)
-          st2 = handleTransferAmendmentEvent st debited
-          rest = reactToTransferAmendmentEvent st2 debited
+          st2 = handleTransactionAmendmentEvent st debited
+          rest = reactToTransactionAmendmentEvent st2 debited
       length rest `shouldBe` 2
       case rest of
-        [IssueCommand a (ReverseAccountDebitCommand rd) _, IssueCommand _ (CompleteTransferAmendmentCommand _) _] -> do
+        [IssueCommand a (ReverseAccountDebitCommand rd) _, IssueCommand _ (CompleteTransactionAmendmentCommand _) _] -> do
           a `shouldBe` acctUuid oldSrc
           rd.amount `shouldBe` m 100
         _ -> expectationFailure "Expected [ReverseDebit old, Complete]"
@@ -256,18 +256,18 @@ spec = describe "TransferAmendmentManager (Saga)" $ do
     $ do
       let amend = mkAmendInitiated newSrc newTgt (m 100) (m 100)
           st = runProjection [seedInitiated, amend]
-          effects = reactToTransferAmendmentEvent st amend
+          effects = reactToTransactionAmendmentEvent st amend
       length effects `shouldBe` 1
 
       let debited = mkAccountDebited newSrc (m 100)
-          st2 = handleTransferAmendmentEvent st debited
-          rest = reactToTransferAmendmentEvent st2 debited
+          st2 = handleTransactionAmendmentEvent st debited
+          rest = reactToTransactionAmendmentEvent st2 debited
       length rest `shouldBe` 4
       case rest of
         [ IssueCommand a1 (ReverseAccountCreditCommand rc) _,
           IssueCommand a2 (ReverseAccountDebitCommand rd) _,
           IssueCommand a3 (CreditAccountCommand cr) _,
-          IssueCommand _ (CompleteTransferAmendmentCommand _) _
+          IssueCommand _ (CompleteTransactionAmendmentCommand _) _
           ] -> do
             a1 `shouldBe` acctUuid oldTgt
             rc.amount `shouldBe` m 100
@@ -278,18 +278,18 @@ spec = describe "TransferAmendmentManager (Saga)" $ do
         _ -> expectationFailure "Expected 4-leg ordering"
 
   describe "Failure path"
-    $ it "compensation on new-source debit rejection issues FailTransferAmendment"
+    $ it "compensation on new-source debit rejection issues FailTransactionAmendment"
     $ do
       let amend = mkAmendInitiated newSrc oldTgt (m 100) (m 100)
           st = runProjection [seedInitiated, amend]
-          effects = reactToTransferAmendmentEvent st amend
+          effects = reactToTransactionAmendmentEvent st amend
       case effects of
         [IssueCommandWithCompensation _ _ _ onFail] -> do
           let comp = onFail (RejectionReason "Insufficient funds")
           length comp `shouldBe` 1
           case comp of
-            [IssueCommand txT (FailTransferAmendmentCommand (FailTransferAmendment r)) _] -> do
+            [IssueCommand txT (FailTransactionAmendmentCommand (FailTransactionAmendment r)) _] -> do
               txT `shouldBe` txUuid
               r `shouldBe` "Insufficient funds"
-            _ -> expectationFailure "Expected one FailTransferAmendment effect"
+            _ -> expectationFailure "Expected one FailTransactionAmendment effect"
         _ -> expectationFailure "Expected IssueCommandWithCompensation"

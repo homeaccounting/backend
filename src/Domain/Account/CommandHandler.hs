@@ -29,7 +29,7 @@
 --   - SetOverdraftLimit: Only Owner can set, currency must match account
 --
 -- DebitAccount and CreditAccount are internal commands issued exclusively by the
--- TransferManager process manager. They are not exposed via any API endpoint.
+-- TransactionPostingManager process manager. They are not exposed via any API endpoint.
 --
 -- All validation is pure and deterministic - same command + state = same events.
 module Domain.Account.CommandHandler
@@ -206,7 +206,7 @@ handleAccountCommand account (RevokeAccountAccessAccountCommand RevokeAccountAcc
                 by = revokedBy
               }
         ]
--- Handle DebitAccount command (internal, issued by TransferManager saga)
+-- Handle DebitAccount command (internal, issued by TransactionPostingManager saga)
 handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
   | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
@@ -288,7 +288,7 @@ handleAccountCommand account (RenameAccountAccountCommand RenameAccount {..})
                 by = renamedBy
               }
         ]
--- Handle CreditAccount command (internal, issued by TransferManager saga)
+-- Handle CreditAccount command (internal, issued by TransactionPostingManager saga)
 handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
   | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
@@ -300,7 +300,7 @@ handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
                 transactionId = transactionId
               }
         ]
--- Handle ReverseAccountDebit command (saga-only, issued by TransferAmendmentManager)
+-- Handle ReverseAccountDebit command (saga-only, issued by TransactionAmendmentManager)
 handleAccountCommand account (ReverseAccountDebitAccountCommand ReverseAccountDebit {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
   | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
@@ -313,7 +313,7 @@ handleAccountCommand account (ReverseAccountDebitAccountCommand ReverseAccountDe
                 at = at
               }
         ]
--- Handle ReverseAccountCredit command (saga-only, issued by TransferAmendmentManager)
+-- Handle ReverseAccountCredit command (saga-only, issued by TransactionAmendmentManager)
 handleAccountCommand account (ReverseAccountCreditAccountCommand ReverseAccountCredit {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
   | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch

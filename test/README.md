@@ -40,7 +40,7 @@ Unit tests verify specific behaviors using the Arrange-Act-Assert (AAA) pattern:
 - **Domain.Core.TypesSpec**: Tests smart constructors, validation, and arithmetic operations
 - **Domain.Account.CommandHandlerSpec**: Tests account command handling and business rules
 - **Domain.Transaction.CommandHandlerSpec**: Tests transaction state machine and validation
-- **Application.ProcessManagers.TransferManagerSpec**: Tests saga coordination logic
+- **Application.ProcessManagers.TransactionPostingManagerSpec**: Tests saga coordination logic
 
 **Example:**
 ```haskell
@@ -65,7 +65,7 @@ Property-based tests verify mathematical properties and invariants using QuickCh
 - **Domain.Core.TypesPropertySpec**: Tests arithmetic laws (commutativity, associativity, identity)
 - **Domain.Account.CommandHandlerPropertySpec**: Tests aggregate invariants
 - **Domain.Transaction.CommandHandlerPropertySpec**: Tests state machine properties
-- **Application.ProcessManagers.TransferManagerPropertySpec**: Tests saga invariants
+- **Application.ProcessManagers.TransactionPostingManagerPropertySpec**: Tests saga invariants
 
 **Example:**
 ```haskell

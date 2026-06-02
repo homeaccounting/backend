@@ -41,7 +41,7 @@ import Domain.Core.Types
   ( AccountId,
     Money,
     TransactionId,
-    TransferType (..),
+    TransactionType (..),
     UserId,
     unAccountId,
     unMoney,
@@ -54,7 +54,7 @@ import Domain.Models
 import Domain.Transaction.Events
   ( TransactionCancellationCompleted (..),
     TransactionCancellationInitiated (..),
-    TransferInitiated (..),
+    TransactionPostingInitiated (..),
   )
 import Eventium (ProcessManagerEffect (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
@@ -96,8 +96,8 @@ genTransferPostings = do
         }
     )
 
--- | Build a TransferInitiated versioned stream event from a postings snapshot.
-mkTransferInitiatedFor ::
+-- | Build a TransactionPostingInitiated versioned stream event from a postings snapshot.
+mkTransactionPostingInitiatedFor ::
   UUID.UUID ->
   AccountId ->
   AccountId ->
@@ -106,13 +106,13 @@ mkTransferInitiatedFor ::
   UTCTime ->
   UserId ->
   VersionedStreamEvent AccountingEvent
-mkTransferInitiatedFor txUuid src tgt srcAmt tgtAmt at_ by_ =
+mkTransactionPostingInitiatedFor txUuid src tgt srcAmt tgtAmt at_ by_ =
   StreamEvent
     txUuid
     0
     (emptyMetadata "")
-    ( TransferInitiatedEvent
-        TransferInitiated
+    ( TransactionPostingInitiatedEvent
+        TransactionPostingInitiated
           { sourceAccountId = src,
             targetAccountId = tgt,
             sourceAmount = srcAmt,
@@ -121,7 +121,7 @@ mkTransferInitiatedFor txUuid src tgt srcAmt tgtAmt at_ by_ =
             description = "property test",
             by = by_,
             at = at_,
-            transferType = Transfer,
+            transactionType = Transfer,
             externalTransactionId = Nothing,
             labels = Set.empty
           }
@@ -251,7 +251,7 @@ spec = describe "TransactionCancellationManager Properties" $ do
       forAll genUserId $ \userId_ ->
         forAll genTransactionId $ \txId ->
           let txUuid = unTransactionId txId
-              transferEvent = mkTransferInitiatedFor txUuid src tgt postings.sourceAmount postings.targetAmount postings.at userId_
+              transferEvent = mkTransactionPostingInitiatedFor txUuid src tgt postings.sourceAmount postings.targetAmount postings.at userId_
               cancellationEvent = mkCancellationInitiatedFor txUuid txId userId_
               st = runProjection [transferEvent, cancellationEvent]
               effects = reactToTransactionCancellationEvent st cancellationEvent
@@ -281,7 +281,7 @@ spec = describe "TransactionCancellationManager Properties" $ do
       forAll genUserId $ \userId_ ->
         forAll genTransactionId $ \txId ->
           let txUuid = unTransactionId txId
-              transferEvent = mkTransferInitiatedFor txUuid src tgt postings.sourceAmount postings.targetAmount postings.at userId_
+              transferEvent = mkTransactionPostingInitiatedFor txUuid src tgt postings.sourceAmount postings.targetAmount postings.at userId_
               cancelInitEvent = mkCancellationInitiatedFor txUuid txId userId_
               debitRevEvent = mkDebitReversedFor (unAccountId src) txId postings.sourceAmount postings.at
               creditRevEvent = mkCreditReversedFor (unAccountId tgt) txId postings.targetAmount postings.at
@@ -329,11 +329,11 @@ spec = describe "TransactionCancellationManager Properties" $ do
                     txUuid2 = unTransactionId txId2
 
                     -- TX1 events
-                    transfer1 = mkTransferInitiatedFor txUuid1 src1 tgt1 postings1.sourceAmount postings1.targetAmount postings1.at userId1
+                    transfer1 = mkTransactionPostingInitiatedFor txUuid1 src1 tgt1 postings1.sourceAmount postings1.targetAmount postings1.at userId1
                     cancelInit1 = mkCancellationInitiatedFor txUuid1 txId1 userId1
 
                     -- TX2 events
-                    transfer2 = mkTransferInitiatedFor txUuid2 src2 tgt2 postings2.sourceAmount postings2.targetAmount postings2.at userId2
+                    transfer2 = mkTransactionPostingInitiatedFor txUuid2 src2 tgt2 postings2.sourceAmount postings2.targetAmount postings2.at userId2
                     cancelInit2 = mkCancellationInitiatedFor txUuid2 txId2 userId2
                     debitRev2 = mkDebitReversedFor (unAccountId src2) txId2 postings2.sourceAmount postings2.at
 

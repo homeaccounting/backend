@@ -153,13 +153,13 @@ createTestAppEnv = mkAppEnv False
 
 -- | Create a test 'AppEnv' with the Transfer Process Manager enabled.
 --
--- Like 'createTestAppEnv', but also wires the TransferManager event handler
--- into the synchronous event bus. When a 'TransferInitiated' event is written,
+-- Like 'createTestAppEnv', but also wires the TransactionPostingManager event handler
+-- into the synchronous event bus. When a 'TransactionPostingInitiated' event is written,
 -- the process manager will automatically:
 --
 --  1. Issue 'DebitAccount' to the source account
---  2. On 'AccountDebited', issue 'CreditAccount' + 'CompleteTransfer'
---  3. On debit failure, the command dispatcher issues 'FailTransfer'
+--  2. On 'AccountDebited', issue 'CreditAccount' + 'CompleteTransactionPosting'
+--  3. On debit failure, the command dispatcher issues 'FailTransactionPosting'
 --
 -- Use this for integration tests that need end-to-end saga behavior.
 createTestAppEnvWithProcessManager :: IO AppEnv

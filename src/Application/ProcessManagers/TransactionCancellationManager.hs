@@ -7,7 +7,7 @@
 -- Module      : Application.ProcessManagers.TransactionCancellationManager
 -- Description : Process manager (saga) for cancelling completed transfers.
 --
--- Sibling of 'TransferAmendmentManager'. When a
+-- Sibling of 'TransactionAmendmentManager'. When a
 -- 'TransactionCancellationInitiated' event arrives, this saga reads the
 -- snapshotted posting facts from @currentPostings@ and immediately issues
 -- two guaranteed-success reversal commands:
@@ -21,7 +21,7 @@
 -- 'AccountCreditReversed' events (in any order) before issuing
 -- 'CompleteTransactionCancellation' on the TX stream.
 --
--- Unlike 'TransferAmendmentManager', there is no fallible leg and
+-- Unlike 'TransactionAmendmentManager', there is no fallible leg and
 -- therefore no compensation path. All effects use 'IssueCommand'.
 --
 -- Saga state is tracked per-transaction in two maps:
@@ -32,7 +32,7 @@
 --
 --   * @currentPostings@ — the current canonical posting snapshot used to
 --     derive reversal amounts and the @at@ timestamp. Updated by
---     'TransferInitiated' and 'TransferAmendmentCompleted' so that a
+--     'TransactionPostingInitiated' and 'TransactionAmendmentCompleted' so that a
 --     cancellation following an amendment reverses the amended facts.
 module Application.ProcessManagers.TransactionCancellationManager
   ( -- * Types
@@ -55,8 +55,8 @@ where
 
 import Application.ProcessManagers.Snapshots
   ( TransferPostings (..),
-    applyTransferAmendmentCompleted,
-    applyTransferInitiated,
+    applyTransactionAmendmentCompleted,
+    applyTransactionPostingInitiated,
   )
 import qualified Data.Map.Strict as Map
 import Domain.Account.Events (AccountCreditReversed (..), AccountDebitReversed (..))
@@ -120,10 +120,10 @@ handleTransactionCancellationEvent ::
   TransactionCancellationManager ->
   VersionedStreamEvent AccountingEvent ->
   TransactionCancellationManager
-handleTransactionCancellationEvent manager e@(StreamEvent _ _ _ (TransferInitiatedEvent _)) =
-  manager & #currentPostings %~ applyTransferInitiated e
-handleTransactionCancellationEvent manager (StreamEvent _ _ _ (TransferAmendmentCompletedEvent evt)) =
-  manager & #currentPostings %~ applyTransferAmendmentCompleted evt
+handleTransactionCancellationEvent manager e@(StreamEvent _ _ _ (TransactionPostingInitiatedEvent _)) =
+  manager & #currentPostings %~ applyTransactionPostingInitiated e
+handleTransactionCancellationEvent manager (StreamEvent _ _ _ (TransactionAmendmentCompletedEvent evt)) =
+  manager & #currentPostings %~ applyTransactionAmendmentCompleted evt
 handleTransactionCancellationEvent manager (StreamEvent _ _ _ (TransactionCancellationInitiatedEvent evt)) =
   case manager ^. #currentPostings % at evt.transactionId of
     Nothing -> manager

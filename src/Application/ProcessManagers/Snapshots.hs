@@ -3,18 +3,18 @@
 
 -- | Shared snapshot types and fold helpers used by transfer-amendment and
 -- transaction-cancellation process managers. Both managers fold
--- TransferInitiated and TransferAmendmentCompleted events identically
+-- TransactionPostingInitiated and TransactionAmendmentCompleted events identically
 -- into their own currentPostings maps.
 module Application.ProcessManagers.Snapshots
   ( TransferPostings (..),
-    applyTransferInitiated,
-    applyTransferAmendmentCompleted,
+    applyTransactionPostingInitiated,
+    applyTransactionAmendmentCompleted,
   )
 where
 
 import Data.Time (UTCTime)
 import Domain.Core.Types (AccountId, Money, TransactionId, mkTransactionIdSafe)
-import Domain.Models (AccountingEvent (..), TransferAmendmentCompleted (..), TransferInitiated (..))
+import Domain.Models (AccountingEvent (..), TransactionAmendmentCompleted (..), TransactionPostingInitiated (..))
 import Eventium (StreamEvent (..), VersionedStreamEvent)
 import Optics (at, makeFieldLabelsNoPrefix, (%~), (&), (?~))
 import RIO hiding ((%~), (&), (.~), (^.))
@@ -32,14 +32,14 @@ data TransferPostings = TransferPostings
 
 makeFieldLabelsNoPrefix ''TransferPostings
 
--- | Fold a 'TransferInitiated' event into a postings map: inserts a fresh
+-- | Fold a 'TransactionPostingInitiated' event into a postings map: inserts a fresh
 -- snapshot keyed by transactionId. The TX UUID is decoded via
 -- 'mkTransactionIdSafe'; an undecodable UUID leaves the map untouched.
-applyTransferInitiated ::
+applyTransactionPostingInitiated ::
   VersionedStreamEvent AccountingEvent ->
   Map TransactionId TransferPostings ->
   Map TransactionId TransferPostings
-applyTransferInitiated (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)) m =
+applyTransactionPostingInitiated (StreamEvent txUuid _ _ (TransactionPostingInitiatedEvent evt)) m =
   case mkTransactionIdSafe txUuid of
     Nothing -> m
     Just txId ->
@@ -52,16 +52,16 @@ applyTransferInitiated (StreamEvent txUuid _ _ (TransferInitiatedEvent evt)) m =
             targetAmount = evt.targetAmount,
             at = evt.at
           }
-applyTransferInitiated _ m = m
+applyTransactionPostingInitiated _ m = m
 
--- | Fold a 'TransferAmendmentCompleted' event into a postings map: updates
+-- | Fold a 'TransactionAmendmentCompleted' event into a postings map: updates
 -- the entry for this transactionId (if present) with the amended source/
 -- target accounts and amounts. The original @at@ is preserved.
-applyTransferAmendmentCompleted ::
-  TransferAmendmentCompleted ->
+applyTransactionAmendmentCompleted ::
+  TransactionAmendmentCompleted ->
   Map TransactionId TransferPostings ->
   Map TransactionId TransferPostings
-applyTransferAmendmentCompleted evt m =
+applyTransactionAmendmentCompleted evt m =
   m
     & at evt.transactionId
     %~ fmap

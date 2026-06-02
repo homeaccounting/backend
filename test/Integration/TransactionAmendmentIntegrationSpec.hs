@@ -3,15 +3,15 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : Integration.TransferAmendmentIntegrationSpec
+-- Module      : Integration.TransactionAmendmentIntegrationSpec
 -- Description : End-to-end HTTP coverage of the amendment + audit endpoints.
 --
 -- Drives @PUT \/api\/transactions\/:id\/amendment@ and
 -- @GET \/api\/transactions\/:id\/history@ through the full HTTP stack
--- on a per-test seeded in-memory app with the TransferAmendmentManager
+-- on a per-test seeded in-memory app with the TransactionAmendmentManager
 -- saga wired in. Covers the core amendment shapes from
 -- @docs\/specs\/2026-05-20-transfer-amendment-saga-design.md@ §7.
-module Integration.TransferAmendmentIntegrationSpec (spec) where
+module Integration.TransactionAmendmentIntegrationSpec (spec) where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
@@ -82,7 +82,7 @@ seedTransfer :: Seed -> AccountId -> AccountId -> Double -> IO (TransactionId, T
 seedTransfer seed src tgt amount = do
   res <-
     runAppM seed.seedEnv
-      $ TransactionService.initiateInternalTransfer
+      $ TransactionService.initiateTransfer
         seed.seedUserId
         src
         tgt
@@ -95,7 +95,7 @@ seedTransfer seed src tgt amount = do
     Left err -> fail $ "seedTransfer failed: " <> show err
     Right r -> pure r
 
--- | JSON body for the amendment endpoint. 'transferType' / category
+-- | JSON body for the amendment endpoint. 'transactionType' / category
 -- are intentionally not in the payload — see 'AmendTransactionRequest'.
 amendBody ::
   AccountId ->

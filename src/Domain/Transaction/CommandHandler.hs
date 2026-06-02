@@ -21,9 +21,9 @@
 --   - transactionCommandHandler: CommandHandler for eventium integration
 --
 -- Business Rules Enforced:
---   - InitiateTransfer: Source and target must be different, amount must be positive
---   - CompleteTransfer: Can only complete transactions in Pending status
---   - FailTransfer: Can only fail transactions in Pending status
+--   - InitiateTransaction: Source and target must be different, amount must be positive
+--   - CompleteTransactionPosting: Can only complete transactions in Pending status
+--   - FailTransactionPosting: Can only fail transactions in Pending status
 --
 -- All validation is pure and deterministic - same command + state → same events.
 module Domain.Transaction.CommandHandler
@@ -48,8 +48,8 @@ import Domain.Core.Types
     Allocations,
     Currency,
     Money,
-    TransferKind (..),
-    TransferType (..),
+    TransactionKind (..),
+    TransactionType (..),
     allSameCurrency,
     allocationsOf,
     categorisedAmount,
@@ -87,8 +87,8 @@ data TransactionError
   | -- | 'SetTransactionAllocations' issued against a Transfer or Adjustment,
     -- which has no allocations to set.
     CannotSetAllocationsOnUncategorisedTransaction
-  | -- | 'SetTransactionAllocations' / 'AmendTransfer' issued with a
-    -- @newTransferType@ whose kind differs from the existing transaction's.
+  | -- | 'SetTransactionAllocations' / 'AmendTransaction' issued with a
+    -- @newTransactionType@ whose kind differs from the existing transaction's.
     CannotChangeKindOfCategorisedTransaction
   | -- | Sum of allocation amounts does not equal the categorised total.
     AllocationsDoNotSumToTotal
@@ -96,12 +96,12 @@ data TransactionError
     AllocationAmountNotPositive
   | -- | An allocation's currency differs from the categorised side's.
     AllocationCurrencyMismatch
-  | -- | AmendTransfer payload referenced the same account on both legs.
+  | -- | AmendTransaction payload referenced the same account on both legs.
     AmendTransferToSameAccountPair
-  | -- | AmendTransfer payload carried a zero source or target amount.
+  | -- | AmendTransaction payload carried a zero source or target amount.
     AmendTransferToZeroAmount
   | -- | A saga-completion or saga-failure command was issued without
-    -- a prior 'TransferAmendmentInitiated' on the stream.
+    -- a prior 'TransactionAmendmentInitiated' on the stream.
     NoAmendmentInProgress
   | -- | 'CancelTransaction' was issued against a transaction that is already
     -- in the 'Cancelled' state.
@@ -116,7 +116,7 @@ data TransactionError
   | -- | 'CompleteTransactionCancellation' was issued when no cancellation is
     -- in progress (@cancellationInProgress = False@).
     NoCancellationInProgress
-  | -- | 'AmendTransfer' was issued while a cancellation saga is in flight
+  | -- | 'AmendTransaction' was issued while a cancellation saga is in flight
     -- (@cancellationInProgress = True@).
     CannotAmendDuringCancellation
   deriving (Show, Eq)
@@ -129,9 +129,9 @@ data TransactionError
 --
 -- This Template Haskell splice creates:
 --  data TransactionCommand
---    = InitiateTransferTransactionCommand InitiateTransfer
---    | CompleteTransferTransactionCommand CompleteTransfer
---    | FailTransferTransactionCommand FailTransfer
+--    = InitiateTransactionTransactionCommand InitiateTransaction
+--    | CompleteTransactionPostingTransactionCommand CompleteTransactionPosting
+--    | FailTransactionPostingTransactionCommand FailTransactionPosting
 --
 -- Each variant wraps one of the individual command types defined in
 -- Domain.Transaction.Commands.
@@ -153,16 +153,16 @@ constructSumType
 -- the current aggregate state. It is pure and deterministic.
 --
 -- Command Handling:
---  - InitiateTransfer: Validates accounts differ, amount positive, emits TransferInitiated
---  - CompleteTransfer: Validates status is Pending, emits TransferCompleted
---  - FailTransfer: Validates status is Pending, emits TransferFailed
+--  - InitiateTransaction: Validates accounts differ, amount positive, emits TransactionPostingInitiated
+--  - CompleteTransactionPosting: Validates status is Pending, emits TransactionPostingCompleted
+--  - FailTransactionPosting: Validates status is Pending, emits TransactionPostingFailed
 --
 -- Business Rules:
---  1. InitiateTransfer can only be first command (status must not be set)
+--  1. InitiateTransaction can only be first command (status must not be set)
 --  2. Source and target accounts must be different
 --  3. Transfer amount must be positive
---  4. CompleteTransfer only works on Pending transactions
---  5. FailTransfer only works on Pending transactions
+--  4. CompleteTransactionPosting only works on Pending transactions
+--  5. FailTransactionPosting only works on Pending transactions
 --  6. Terminal states (Completed/Failed) cannot be modified
 --
 -- Returns:
@@ -175,8 +175,8 @@ constructSumType
 -- State Machine Enforcement:
 --  Only Pending transactions can transition to Completed or Failed.
 handleTransactionCommand :: Transaction -> TransactionCommand -> Either TransactionError [TransactionEvent]
--- Handle InitiateTransfer command
-handleTransactionCommand transaction (InitiateTransferTransactionCommand InitiateTransfer {..}) =
+-- Handle InitiateTransaction command
+handleTransactionCommand transaction (InitiateTransactionTransactionCommand InitiateTransaction {..}) =
   case transaction ^. #status of
     Pending
       | unMoney transaction.sourceAmount == 0 ->
@@ -189,15 +189,15 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
                   -- Categorised-side checks. Smart constructors should have
                   -- run these, but we re-check defensively at the handler
                   -- boundary because nothing prevents a caller from
-                  -- assembling a 'TransferType' directly.
-                  case transferType of
+                  -- assembling a 'TransactionType' directly.
+                  case transactionType of
                     Income allocs -> checkAllocationsAgainst targetAmount allocs
                     Expense allocs -> checkAllocationsAgainst sourceAmount allocs
                     Transfer -> Right ()
                     Adjustment -> Right ()
                   Right
-                    [ TransferInitiatedTransactionEvent
-                        TransferInitiated
+                    [ TransactionPostingInitiatedTransactionEvent
+                        TransactionPostingInitiated
                           { sourceAccountId = sourceAccountId,
                             targetAccountId = targetAccountId,
                             sourceAmount = sourceAmount,
@@ -206,25 +206,25 @@ handleTransactionCommand transaction (InitiateTransferTransactionCommand Initiat
                             description = description,
                             by = initiatedBy,
                             at = at,
-                            transferType = transferType,
+                            transactionType = transactionType,
                             externalTransactionId = externalTransactionId,
                             labels = labels
                           }
                     ]
       | otherwise -> Left TransactionAlreadyInitiated
     _ -> Left TransactionAlreadyInitiated
--- Handle CompleteTransfer command
-handleTransactionCommand transaction (CompleteTransferTransactionCommand CompleteTransfer) =
+-- Handle CompleteTransactionPosting command
+handleTransactionCommand transaction (CompleteTransactionPostingTransactionCommand CompleteTransactionPosting) =
   case transaction ^. #status of
-    Pending -> Right [TransferCompletedTransactionEvent TransferCompleted]
+    Pending -> Right [TransactionPostingCompletedTransactionEvent TransactionPostingCompleted]
     _ -> Left TransactionNotPending
--- Handle FailTransfer command
-handleTransactionCommand transaction (FailTransferTransactionCommand FailTransfer {..}) =
+-- Handle FailTransactionPosting command
+handleTransactionCommand transaction (FailTransactionPostingTransactionCommand FailTransactionPosting {..}) =
   case transaction ^. #status of
     Pending ->
       Right
-        [ TransferFailedTransactionEvent
-            TransferFailed
+        [ TransactionPostingFailedTransactionEvent
+            TransactionPostingFailed
               { reason = reason
               }
         ]
@@ -252,7 +252,7 @@ handleTransactionCommand transaction (SetTransactionLabelsTransactionCommand Set
 handleTransactionCommand transaction (SetTransactionAllocationsTransactionCommand SetTransactionAllocations {..}) =
   case transaction ^. #status of
     Completed ->
-      case allocationsOf (transaction ^. #transferType) of
+      case allocationsOf (transaction ^. #transactionType) of
         Nothing ->
           Left CannotSetAllocationsOnUncategorisedTransaction
         Just existingAllocs -> do
@@ -290,8 +290,8 @@ handleTransactionCommand transaction (ChangeTransactionDateTransactionCommand Ch
               }
         ]
     _ -> Left CannotEditUncompletedTransaction
--- Handle AmendTransfer command
-handleTransactionCommand transaction (AmendTransferTransactionCommand AmendTransfer {..}) =
+-- Handle AmendTransaction command
+handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTransaction {..}) =
   case transaction ^. #status of
     Completed
       | transaction ^. #cancellationInProgress ->
@@ -302,8 +302,8 @@ handleTransactionCommand transaction (AmendTransferTransactionCommand AmendTrans
           Left AmendTransferToZeroAmount
       | otherwise ->
           Right
-            [ TransferAmendmentInitiatedTransactionEvent
-                TransferAmendmentInitiated
+            [ TransactionAmendmentInitiatedTransactionEvent
+                TransactionAmendmentInitiated
                   { transactionId = transactionId,
                     newSourceAccountId = newSourceAccountId,
                     newTargetAccountId = newTargetAccountId,
@@ -314,7 +314,7 @@ handleTransactionCommand transaction (AmendTransferTransactionCommand AmendTrans
                   }
             ]
     _ -> Left CannotEditUncompletedTransaction
--- Handle CompleteTransferAmendment command
+-- Handle CompleteTransactionAmendment command
 --
 -- The handler computes the post-amendment allocations once and emits
 -- them on the event. Projections apply 'evt.newAllocations' via
@@ -325,13 +325,13 @@ handleTransactionCommand transaction (AmendTransferTransactionCommand AmendTrans
 -- For categorised existing kinds (Income / Expense) the field is
 -- 'Just' (rescaled when the categorised amount changed, verbatim
 -- otherwise). For 'Transfer' / 'Adjustment' the field is 'Nothing'.
-handleTransactionCommand transaction (CompleteTransferAmendmentTransactionCommand CompleteTransferAmendment {..}) =
+handleTransactionCommand transaction (CompleteTransactionAmendmentTransactionCommand CompleteTransactionAmendment {..}) =
   if not (transaction ^. #amendmentInProgress)
     then Left NoAmendmentInProgress
     else
-      let oldTransferType = transaction ^. #transferType
+      let oldTransactionType = transaction ^. #transactionType
           scaledAllocations :: Maybe Allocations
-          scaledAllocations = case (kindOf oldTransferType, allocationsOf oldTransferType) of
+          scaledAllocations = case (kindOf oldTransactionType, allocationsOf oldTransactionType) of
             (IncomeKind, Just oldAllocs) ->
               -- Income's categorised side = target amount.
               let oldTotal = sumAllocationsUnchecked oldAllocs
@@ -348,8 +348,8 @@ handleTransactionCommand transaction (CompleteTransferAmendmentTransactionComman
                       else oldAllocs
             _ -> Nothing
        in Right
-            [ TransferAmendmentCompletedTransactionEvent
-                TransferAmendmentCompleted
+            [ TransactionAmendmentCompletedTransactionEvent
+                TransactionAmendmentCompleted
                   { transactionId = transactionId,
                     newSourceAccountId = newSourceAccountId,
                     newTargetAccountId = newTargetAccountId,
@@ -360,14 +360,14 @@ handleTransactionCommand transaction (CompleteTransferAmendmentTransactionComman
                     amendedBy = amendedBy
                   }
             ]
--- Handle FailTransferAmendment command
-handleTransactionCommand transaction (FailTransferAmendmentTransactionCommand FailTransferAmendment {..}) =
+-- Handle FailTransactionAmendment command
+handleTransactionCommand transaction (FailTransactionAmendmentTransactionCommand FailTransactionAmendment {..}) =
   if not (transaction ^. #amendmentInProgress)
     then Left NoAmendmentInProgress
     else
       Right
-        [ TransferAmendmentFailedTransactionEvent
-            TransferAmendmentFailed
+        [ TransactionAmendmentFailedTransactionEvent
+            TransactionAmendmentFailed
               { reason = reason
               }
         ]
@@ -406,7 +406,7 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
 
 -- | Check that an allocation list is consistent with the expected total:
 -- currency equality, sum equality, and per-allocation positivity. Used by
--- 'InitiateTransfer', 'SetTransactionAllocations', and 'AmendTransfer'
+-- 'InitiateTransaction', 'SetTransactionAllocations', and 'AmendTransaction'
 -- handler arms as a defensive boundary check (the smart constructors in
 -- 'Domain.Core.Types' already enforce these — the re-check covers
 -- direct constructions bypassing them).
@@ -464,7 +464,7 @@ checkAllocationsAgainst expected allocs =
 --  - State Machine: Enforces valid status transitions
 --
 -- Usage in Process Manager:
---  The process manager will use this command handler to issue CompleteTransfer
---  and FailTransfer commands based on the outcome of account operations.
+--  The process manager will use this command handler to issue CompleteTransactionPosting
+--  and FailTransactionPosting commands based on the outcome of account operations.
 transactionCommandHandler :: CommandHandler Transaction TransactionEvent TransactionCommand TransactionError
 transactionCommandHandler = CommandHandler handleTransactionCommand transactionProjection

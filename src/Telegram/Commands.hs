@@ -61,7 +61,7 @@ import Application.ReadModels.User
 import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTelegramLinkCode)
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
-import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateInternalTransfer)
+import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateTransfer)
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
@@ -702,7 +702,7 @@ handleTransferDescription botState telegramId chatId srcId tgtId money descripti
   case maybeUserId of
     Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
     Just userId -> do
-      result <- initiateInternalTransfer userId srcId tgtId money Set.empty description Nothing Nothing
+      result <- initiateTransfer userId srcId tgtId money Set.empty description Nothing Nothing
       case result of
         Left err -> do
           logError $ "Transfer failed: " <> displayShow err

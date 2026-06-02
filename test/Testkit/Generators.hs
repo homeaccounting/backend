@@ -39,7 +39,7 @@ module Testkit.Generators
     genPasswordHash,
     genEmail,
     genNonEmptyText,
-    genTransferType,
+    genTransactionType,
     genExchangeRate,
     genPositiveRational,
 
@@ -364,7 +364,7 @@ genEmail = do
 
 -- | Generate a single 'Allocation' with a strictly positive amount in
 -- a random currency. Matches the 'amount > 0' invariant enforced by
--- the 'TransferType' smart constructors.
+-- the 'TransactionType' smart constructors.
 instance Arbitrary Allocation where
   arbitrary = Allocation <$> arbitrary <*> genPositiveMoney
 
@@ -414,12 +414,12 @@ partitionMoneyExact totalRat cur (c : cs)
 -- Transfer Type Generators
 -- -----------------------------------------------------------------------------
 
--- | Generate a valid TransferType. Income / Expense are constructed via
+-- | Generate a valid TransactionType. Income / Expense are constructed via
 -- their smart constructors with allocations that satisfy the invariants;
 -- generation falls back to Transfer / Adjustment if no positive amount
 -- could be produced.
-genTransferType :: Gen TransferType
-genTransferType =
+genTransactionType :: Gen TransactionType
+genTransactionType =
   oneof
     [ buildCategorised mkIncome,
       buildCategorised mkExpense,
@@ -436,8 +436,8 @@ genTransferType =
           Left _ -> pure Transfer
         Nothing -> pure Transfer
 
-instance Arbitrary TransferType where
-  arbitrary = genTransferType
+instance Arbitrary TransactionType where
+  arbitrary = genTransactionType
 
 -- -----------------------------------------------------------------------------
 -- Exchange Rate Generators

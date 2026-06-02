@@ -171,7 +171,7 @@ setupTestEnv = do
     -- Create bank account. Give it a generous overdraft so the imported
     -- transfers clear: bank imports debit the BankAccount from a zero
     -- initial balance; without room to overdraw, every expense saga would
-    -- emit TransferFailed, which the dedup read model now evicts (so the
+    -- emit TransactionPostingFailed, which the dedup read model now evicts (so the
     -- same tx could be re-imported). The overdraft keeps the test focused
     -- on dedup semantics rather than balance accounting.
     bankResult <-
@@ -277,7 +277,7 @@ spec = describe "BankImportService" $ do
       txData.description `shouldBe` "Test transaction"
       txData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 50)
       -- Default expense category (expense.other) when no MCC
-      txData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
+      txData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
       txData.date `shouldBe` testTime
 
     it "imports an income transaction with correct fields" $ do
@@ -304,13 +304,13 @@ spec = describe "BankImportService" $ do
       txData.description `shouldBe` "Test transaction"
       txData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 100)
       -- Default income category (income.other) when no MCC lookup applies for income
-      txData.transferType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 100))
+      txData.transactionType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 100))
       txData.date `shouldBe` testTime
 
   describe "importTransaction cross-currency" $ do
     it "same currency: exchangeRate is Nothing" $ do
       -- Local UAH account; Mono tx where adapter set originalAmount = Nothing
-      -- (amount == operationAmount). Expect emitted TransferInitiated to have
+      -- (amount == operationAmount). Expect emitted TransactionPostingInitiated to have
       -- exchangeRate = Nothing and sourceAmount == targetAmount.
       (env, bankAccId) <- setupTestEnv
       let accountLink :: [(BankAccountId, AccountId)]
@@ -334,7 +334,7 @@ spec = describe "BankImportService" $ do
     it "different currency: exchangeRate is still Nothing in Phase 1" $ do
       -- Local UAH account; Mono tx with amount = 1000 (UAH major units) and
       -- originalAmount = Just 25 (foreign currency major units). Expect the
-      -- emitted TransferInitiated to have exchangeRate = Nothing and
+      -- emitted TransactionPostingInitiated to have exchangeRate = Nothing and
       -- sourceAmount == targetAmount (both in account currency). Verify the
       -- import succeeds (rate is logged, not persisted).
       (env, bankAccId) <- setupTestEnv
@@ -374,7 +374,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` singletonExpense expense.food.entryId (fromRight' (mkMoney UAH 50))
+      txData.transactionType `shouldBe` singletonExpense expense.food.entryId (fromRight' (mkMoney UAH 50))
 
     it "falls back to defaultExpenseCategory when MCC is not in the map" $ do
       -- MCC "9999" is not in the default MCC map → falls back to expense.other
@@ -393,7 +393,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
+      txData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
 
     it "falls back to defaultExpenseCategory when mcc is Nothing" $ do
       -- No MCC on the transaction → uses expense.other
@@ -412,7 +412,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
+      txData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
 
     it "records BankingError in AccountResyncResult.failures when no expense default is configured" $ do
       -- Seed a configuration without defaultExpenseCategory set, then resync
@@ -518,4 +518,4 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transferType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 200))
+      txData.transactionType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 200))

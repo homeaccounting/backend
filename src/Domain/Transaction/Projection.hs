@@ -53,7 +53,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransferType, UserId, mkAccountId, mkAllocation, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
+import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransactionType, UserId, mkAccountId, mkAllocation, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -72,8 +72,8 @@ import Optics (makeFieldLabelsNoPrefix, (%~), (&), (.~), (^.))
 --  - Failed: Transfer failed and cannot be completed
 --
 -- State Transitions:
---  Pending → Completed (via TransferCompleted event)
---  Pending → Failed (via TransferFailed event)
+--  Pending → Completed (via TransactionPostingCompleted event)
+--  Pending → Failed (via TransactionPostingFailed event)
 --
 -- Terminal States: Completed and Failed are final states with no further transitions.
 --
@@ -118,8 +118,8 @@ instance FromJSON TransactionStatus
 --   - State can only be modified through event handlers
 --
 -- State Machine:
---   Pending -[TransferCompleted]-> Completed
---   Pending -[TransferFailed]-> Failed
+--   Pending -[TransactionPostingCompleted]-> Completed
+--   Pending -[TransactionPostingFailed]-> Failed
 --
 -- Example:
 -- >>> let tx = Transaction sourceId targetId (Money 500.0) (Money 500.0) Nothing "Rent" Pending userId
@@ -139,25 +139,25 @@ data Transaction = Transaction
     -- | Description of the transfer
     description :: Text,
     -- | Business date / time of the transfer, replayed from
-    -- 'TransferInitiated' and mutated by 'TransactionDateChanged'.
+    -- 'TransactionPostingInitiated' and mutated by 'TransactionDateChanged'.
     at :: UTCTime,
     -- | Current status of the transaction
     status :: TransactionStatus,
     -- | User who initiated the transfer
     initiatedBy :: UserId,
     -- | Type of transfer (Income, Expense, Transfer)
-    transferType :: TransferType,
+    transactionType :: TransactionType,
     -- | Labels attached to this transaction (may be empty).
     labels :: Set LabelId,
-    -- | Count of 'TransferAmendmentCompleted' events folded so far.
+    -- | Count of 'TransactionAmendmentCompleted' events folded so far.
     -- Exposed on the API surface so clients can detect amendments and
     -- fetch the audit history if interested. Always @0@ on a transaction
     -- that has never been amended.
     amendmentCount :: Word,
-    -- | Transient flag: True when a 'TransferAmendmentInitiated' event has
-    -- been applied but a corresponding 'TransferAmendmentCompleted' or
-    -- 'TransferAmendmentFailed' has not yet arrived. Used by the command
-    -- handler to gate 'CompleteTransferAmendment' and 'FailTransferAmendment'.
+    -- | Transient flag: True when a 'TransactionAmendmentInitiated' event has
+    -- been applied but a corresponding 'TransactionAmendmentCompleted' or
+    -- 'TransactionAmendmentFailed' has not yet arrived. Used by the command
+    -- handler to gate 'CompleteTransactionAmendment' and 'FailTransactionAmendment'.
     amendmentInProgress :: Bool,
     -- | Transient flag: True when a 'TransactionCancellationInitiated' event has
     -- been applied but a corresponding 'TransactionCancellationCompleted' has not
@@ -174,24 +174,24 @@ deriveJSON defaultOptions ''Transaction
 
 -- | Default initial state for a Transaction aggregate.
 --
--- This represents an uninitialized transaction before the TransferInitiated event
+-- This represents an uninitialized transaction before the TransactionPostingInitiated event
 -- has been applied. It serves as the seed for the projection.
 --
 -- Note: In practice, this state should never be observed directly, as the
--- first event in any transaction stream should be TransferInitiated.
+-- first event in any transaction stream should be TransactionPostingInitiated.
 --
 -- We use dummy values that will be overwritten by the first event:
---   - Empty UUIDs for account IDs and user ID (will be set by TransferInitiated)
---   - Zero amount (will be set by TransferInitiated)
---   - Empty description (will be set by TransferInitiated)
+--   - Empty UUIDs for account IDs and user ID (will be set by TransactionPostingInitiated)
+--   - Zero amount (will be set by TransactionPostingInitiated)
+--   - Empty description (will be set by TransactionPostingInitiated)
 --   - Pending status (initial status)
--- | Sentinel 'TransferType' used by 'transactionDefault'. Only observed
--- before the first event is applied; 'TransferInitiated' overwrites the
--- entire 'transferType' on the aggregate. The placeholder uses a unit
+-- | Sentinel 'TransactionType' used by 'transactionDefault'. Only observed
+-- before the first event is applied; 'TransactionPostingInitiated' overwrites the
+-- entire 'transactionType' on the aggregate. The placeholder uses a unit
 -- USD amount because the smart constructor rejects zero or negative
 -- magnitudes.
-defaultTransferType :: TransferType
-defaultTransferType =
+defaultTransactionType :: TransactionType
+defaultTransactionType =
   case mkIncome placeholderUnit (NE.singleton placeholderAlloc) of
     Right tt -> tt
     Left err -> error ("transactionDefault: mkIncome should never fail: " <> show err)
@@ -224,7 +224,7 @@ transactionDefault =
       at = UTCTime (fromGregorian 1970 1 1) 0,
       status = Pending,
       initiatedBy = unsafeUserId nil,
-      transferType = defaultTransferType,
+      transactionType = defaultTransactionType,
       labels = Set.empty,
       amendmentCount = 0,
       amendmentInProgress = False,
@@ -239,9 +239,9 @@ transactionDefault =
 --
 -- This Template Haskell splice creates:
 --  data TransactionEvent
---    = TransferInitiatedTransactionEvent TransferInitiated
---    | TransferCompletedTransactionEvent TransferCompleted
---    | TransferFailedTransactionEvent TransferFailed
+--    = TransactionPostingInitiatedTransactionEvent TransactionPostingInitiated
+--    | TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
+--    | TransactionPostingFailedTransactionEvent TransactionPostingFailed
 --
 -- Each variant wraps one of the individual event types defined in
 -- Domain.Transaction.Events.
@@ -266,14 +266,14 @@ deriving instance Eq TransactionEvent
 -- to the same state always produces the same result.
 --
 -- Event Handling:
---  - TransferInitiated: Initialize transaction with accounts, amount, description, and Pending status
---  - TransferCompleted: Update status to Completed (terminal state)
---  - TransferFailed: Update status to Failed with reason (terminal state)
+--  - TransactionPostingInitiated: Initialize transaction with accounts, amount, description, and Pending status
+--  - TransactionPostingCompleted: Update status to Completed (terminal state)
+--  - TransactionPostingFailed: Update status to Failed with reason (terminal state)
 --
 -- State Transition Rules:
---  - TransferInitiated can only be applied to default/uninitialized state
---  - TransferCompleted can only be applied to Pending transactions
---  - TransferFailed can only be applied to Pending transactions
+--  - TransactionPostingInitiated can only be applied to default/uninitialized state
+--  - TransactionPostingCompleted can only be applied to Pending transactions
+--  - TransactionPostingFailed can only be applied to Pending transactions
 --  - No events can modify Completed or Failed transactions (idempotent)
 --
 -- Mathematical Property:
@@ -286,7 +286,7 @@ deriving instance Eq TransactionEvent
 -- represent invalid state transitions (e.g., completing an already completed
 -- transaction). In such cases, the state remains unchanged (idempotent).
 handleTransactionEvent :: Transaction -> TransactionEvent -> Transaction
-handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
+handleTransactionEvent transaction (TransactionPostingInitiatedTransactionEvent evt) =
   -- Initialize a new transaction with transfer details
   transaction
     & #sourceAccountId
@@ -307,17 +307,17 @@ handleTransactionEvent transaction (TransferInitiatedTransactionEvent evt) =
     .~ Pending
     & #initiatedBy
     .~ evt.by
-    & #transferType
-    .~ evt.transferType
+    & #transactionType
+    .~ evt.transactionType
     & #labels
     .~ evt.labels
-handleTransactionEvent transaction (TransferCompletedTransactionEvent TransferCompleted) =
+handleTransactionEvent transaction (TransactionPostingCompletedTransactionEvent TransactionPostingCompleted) =
   -- Mark transaction as completed
   -- Only update if currently Pending (idempotent for other states)
   case transaction ^. #status of
     Pending -> transaction & #status .~ Completed
     _ -> transaction -- Already in terminal state, no change
-handleTransactionEvent transaction (TransferFailedTransactionEvent evt) =
+handleTransactionEvent transaction (TransactionPostingFailedTransactionEvent evt) =
   -- Mark transaction as failed with reason
   -- Only update if currently Pending (idempotent for other states)
   case transaction ^. #status of
@@ -334,8 +334,8 @@ handleTransactionEvent transaction (TransactionAllocationsChangedTransactionEven
   -- The event carries only the new allocations; the kind (Income /
   -- Expense) is preserved structurally — the command handler rejects
   -- the command against uncategorised aggregates. 'replaceAllocations'
-  -- rebuilds the full 'TransferType' from the existing kind.
-  transaction & #transferType .~ replaceAllocations evt.newAllocations (transaction ^. #transferType)
+  -- rebuilds the full 'TransactionType' from the existing kind.
+  transaction & #transactionType .~ replaceAllocations evt.newAllocations (transaction ^. #transactionType)
 handleTransactionEvent transaction (TransactionDescriptionChangedTransactionEvent evt) =
   -- Replace the description. The command handler enforces Completed-only;
   -- the projection itself is permissive.
@@ -344,27 +344,27 @@ handleTransactionEvent transaction (TransactionDateChangedTransactionEvent evt) 
   -- Replace the business date. The command handler enforces Completed-only;
   -- the projection itself is permissive.
   transaction & #at .~ evt.newAt
-handleTransactionEvent transaction (TransferAmendmentInitiatedTransactionEvent _evt) =
+handleTransactionEvent transaction (TransactionAmendmentInitiatedTransactionEvent _evt) =
   -- Flip the transient saga-in-progress flag on so the command handler
-  -- can gate CompleteTransferAmendment / FailTransferAmendment.
-  -- Canonical posting fields are unchanged until TransferAmendmentCompleted.
+  -- can gate CompleteTransactionAmendment / FailTransactionAmendment.
+  -- Canonical posting fields are unchanged until TransactionAmendmentCompleted.
   transaction & #amendmentInProgress .~ True
-handleTransactionEvent transaction (TransferAmendmentCompletedTransactionEvent evt) =
+handleTransactionEvent transaction (TransactionAmendmentCompletedTransactionEvent evt) =
   -- Replace canonical posting facts with the amended values; bump the
   -- amendment count; clear the saga-in-progress flag.
   --
   -- The event carries the post-amendment allocations as a
   -- handler-computed fact (see 'Domain.Transaction.CommandHandler' for
-  -- the 'CompleteTransferAmendment' arm). When the categorised amount
+  -- the 'CompleteTransactionAmendment' arm). When the categorised amount
   -- changed via amendment, the handler has already rescaled allocations
   -- proportionally; otherwise the value equals the pre-amendment
   -- allocations. For 'Transfer' / 'Adjustment' the field is 'Nothing'
-  -- and the 'transferType' passes through unchanged. Kind is preserved
+  -- and the 'transactionType' passes through unchanged. Kind is preserved
   -- structurally across amendment (a function of source/target
   -- 'AccountType') so 'replaceAllocations' on the existing kind is safe.
   let newTT = case evt.newAllocations of
-        Just allocs -> replaceAllocations allocs (transaction ^. #transferType)
-        Nothing -> transaction ^. #transferType
+        Just allocs -> replaceAllocations allocs (transaction ^. #transactionType)
+        Nothing -> transaction ^. #transactionType
    in transaction
         & #sourceAccountId
         .~ evt.newSourceAccountId
@@ -376,13 +376,13 @@ handleTransactionEvent transaction (TransferAmendmentCompletedTransactionEvent e
         .~ evt.newTargetAmount
         & #exchangeRate
         .~ evt.newExchangeRate
-        & #transferType
+        & #transactionType
         .~ newTT
         & #amendmentCount
         %~ (+ 1)
         & #amendmentInProgress
         .~ False
-handleTransactionEvent transaction (TransferAmendmentFailedTransactionEvent _evt) =
+handleTransactionEvent transaction (TransactionAmendmentFailedTransactionEvent _evt) =
   -- Clear the in-progress flag. No canonical change on failure.
   transaction & #amendmentInProgress .~ False
 handleTransactionEvent transaction (TransactionCancellationInitiatedTransactionEvent _) =
@@ -416,7 +416,7 @@ handleTransactionEvent transaction (TransactionCancellationCompletedTransactionE
 --  - Track transaction lifecycle
 --
 -- Usage with eventium:
--- >>> let events = [TransferInitiatedTransactionEvent (TransferInitiated sourceId targetId (Money 500.0) "Rent")]
+-- >>> let events = [TransactionPostingInitiatedTransactionEvent (TransactionPostingInitiated sourceId targetId (Money 500.0) "Rent")]
 -- >>> latestProjection transactionProjection events
 -- Transaction {sourceAccountId = sourceId, ..., status = Pending}
 --
