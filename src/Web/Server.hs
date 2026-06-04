@@ -382,7 +382,7 @@ corsMiddleware = cors (const $ Just policy)
     policy =
       simpleCorsResourcePolicy
         { corsOrigins = Nothing, -- Allow all origins (for development)
-          corsMethods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+          corsMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
           corsRequestHeaders = ["Content-Type", "Authorization"],
           corsExposedHeaders = Just ["Content-Type"],
           corsMaxAge = Just 3600, -- Cache preflight for 1 hour
