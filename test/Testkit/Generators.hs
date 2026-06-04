@@ -42,6 +42,9 @@ module Testkit.Generators
     genTransactionType,
     genExchangeRate,
     genPositiveRational,
+    genAllocationsSummingTo,
+    partitionMoneyExact,
+    genIdentityAmendInputs,
 
     -- * Arbitrary Instances
   )
@@ -49,6 +52,7 @@ where
 
 -- Instances are exported automatically
 
+import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.List.NonEmpty (NonEmpty (..))
@@ -56,10 +60,13 @@ import Data.Ratio ((%))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Time (UTCTime (..))
 import Data.Time.Calendar (Day, addDays, fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
+import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Projection (TransactionStatus (..))
 import RIO
 import Test.QuickCheck
 
@@ -468,3 +475,48 @@ instance Arbitrary ExchangeRate where
 instance Arbitrary Day where
   arbitrary = fromGregorian <$> choose (2000, 2030) <*> choose (1, 12) <*> choose (1, 28)
   shrink day = [addDays (-1) day, addDays 1 day]
+
+-- -----------------------------------------------------------------------------
+-- Cross-kind Amendment Generators
+-- -----------------------------------------------------------------------------
+
+-- | Generate a '(TransactionData, AmendTransaction)' pair where every field
+-- compared by 'isIdentityAmend' is copied from 'TransactionData' verbatim,
+-- so the predicate is guaranteed to return 'True'.
+genIdentityAmendInputs :: Gen (TransactionData, AmendTransaction)
+genIdentityAmendInputs = do
+  srcId <- genAccountId
+  tgtId <- genAccountId
+  srcAmt <- genPositiveMoney
+  tgtAmt <- genPositiveMoney
+  mRate <- oneof [pure Nothing, Just <$> genExchangeRate]
+  tt <- genTransactionType
+  txId <- genTransactionId
+  uid <- genUserId
+  let td =
+        TransactionData
+          { sourceAccountId = srcId,
+            targetAccountId = tgtId,
+            sourceAmount = srcAmt,
+            targetAmount = tgtAmt,
+            exchangeRate = mRate,
+            description = "identity-seed",
+            status = Completed,
+            transactionType = tt,
+            date = UTCTime (fromGregorian 2024 1 1) 0,
+            labels = Set.empty,
+            amendmentCount = 0
+          }
+      cmd =
+        AmendTransaction
+          { transactionId = txId,
+            newSourceAccountId = srcId,
+            newTargetAccountId = tgtId,
+            newSourceAmount = srcAmt,
+            newTargetAmount = tgtAmt,
+            newExchangeRate = mRate,
+            newAllocations = Nothing,
+            newTransactionType = tt,
+            amendedBy = uid
+          }
+  pure (td, cmd)

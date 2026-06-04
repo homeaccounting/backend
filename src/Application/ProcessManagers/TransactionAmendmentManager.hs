@@ -59,6 +59,7 @@ import Domain.Core.Types
     ExchangeRate,
     Money,
     TransactionId,
+    TransactionType,
     UserId,
     moneyIsPositive,
     subtractMoney,
@@ -132,6 +133,10 @@ data TransactionAmendmentPhase
 -- | Per-amendment tracking. Captures the saga phase plus the full new
 -- payload so the react function can issue the completion command
 -- without re-deriving it from snapshots.
+--
+-- 'newTransactionType' carries the synthesised kind ⊕ allocations value
+-- from 'TransactionAmendmentInitiated', echoed onto
+-- 'CompleteTransactionAmendment' at finalize.
 data TransactionAmendmentData = TransactionAmendmentData
   { -- | The transaction being amended.
     transactionId :: TransactionId,
@@ -141,6 +146,8 @@ data TransactionAmendmentData = TransactionAmendmentData
     newSourceAmount :: Money,
     newTargetAmount :: Money,
     newExchangeRate :: Maybe ExchangeRate,
+    -- | Synthesised full new 'TransactionType' (kind ⊕ allocations).
+    newTransactionType :: TransactionType,
     amendedBy :: UserId,
     -- | Snapshot of the @at@ business timestamp used on every reversal leg.
     at :: UTCTime,
@@ -272,6 +279,7 @@ handleTransactionAmendmentEvent manager (StreamEvent _ _ _ (TransactionAmendment
                 newSourceAmount = evt.newSourceAmount,
                 newTargetAmount = evt.newTargetAmount,
                 newExchangeRate = evt.newExchangeRate,
+                newTransactionType = evt.newTransactionType,
                 amendedBy = evt.amendedBy,
                 at = postings.at,
                 phase = initialPhase mDebit rest
@@ -380,6 +388,7 @@ completeEffect amend =
                 newSourceAmount = amend.newSourceAmount,
                 newTargetAmount = amend.newTargetAmount,
                 newExchangeRate = amend.newExchangeRate,
+                newTransactionType = amend.newTransactionType,
                 amendedBy = amend.amendedBy
               }
         )

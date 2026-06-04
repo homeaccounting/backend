@@ -18,26 +18,45 @@
 --     on the canonical posting fields.
 --   * The transient @amendmentInProgress@ flag flips on 'Initiated' and
 --     clears on 'Completed' / 'Failed'.
+--
+-- Also verifies cross-kind amendment handler invariants (Task 7):
+--
+--   * (1) Handler emits 'TransactionAmendmentInitiated' with 'newTransactionType'
+--     equal to the command's 'newTransactionType'.
+--   * (2) Allocation sum equals the relevant leg amount.
+--   * (3) Every allocation shares the relevant leg's currency.
 module Domain.Transaction.AmendmentPropertySpec (spec) where
 
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
+    Allocation (..),
+    Allocations,
     Currency (..),
     ExchangeRate,
     Money,
     TransactionId,
     TransactionType (..),
     UserId,
-    allocationsOf,
     kindOf,
+    mkExpense,
+    mkIncome,
+    moneyCurrency,
+    sumAllocationsUnchecked,
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
     unsafeUserId,
   )
+import Domain.Transaction.CommandHandler
+  ( TransactionCommand (..),
+    TransactionError,
+    handleTransactionCommand,
+  )
+import Domain.Transaction.Commands (AmendTransaction (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
     TransactionAmendmentFailed (..),
@@ -57,7 +76,14 @@ import RIO hiding ((^.))
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
-import Testkit.Generators ()
+import Testkit.Generators
+  ( genAccountId,
+    genAllocationsSummingTo,
+    genCurrency,
+    genPositiveMoneyIn,
+    genTransactionId,
+    genUserId,
+  )
 import Testkit.Helpers (singletonIncome)
 import Prelude (last)
 
@@ -138,7 +164,7 @@ genCompleted = do
         newSourceAmount = newSrcAmt,
         newTargetAmount = newTgtAmt,
         newExchangeRate = newRate,
-        newAllocations = allocationsOf seedTransactionType,
+        newTransactionType = seedTransactionType,
         amendedBy = amendedByU
       }
 
@@ -161,6 +187,7 @@ toInitiated c =
       newSourceAmount = c.newSourceAmount,
       newTargetAmount = c.newTargetAmount,
       newExchangeRate = c.newExchangeRate,
+      newTransactionType = c.newTransactionType,
       amendedBy = c.amendedBy
     }
 
@@ -236,3 +263,105 @@ spec = describe "Transaction amendment projection" $ do
               (tx ^. #amendmentInProgress) === False,
               (tx ^. #amendmentCount) === 0
             ]
+
+  describe "AmendTransaction — cross-kind handler properties" $ do
+    prop "(1) handler emits Initiated event with newTransactionType verbatim"
+      $ forAll genCrossKindAmendInputs
+      $ \(seed, cmd) ->
+        case handleTransactionCommand seed (AmendTransactionTransactionCommand cmd) of
+          Right [TransactionAmendmentInitiatedTransactionEvent evt] ->
+            evt.newTransactionType === cmd.newTransactionType
+          Right other ->
+            counterexample ("handler emitted unexpected event shape: " <> show other) False
+          Left e ->
+            counterexample ("handler rejected valid input: " <> show e) False
+
+    prop "(2) allocation sum equals relevant leg amount"
+      $ forAll genCrossKindAmendInputs
+      $ \(_seed, cmd) ->
+        case cmd.newTransactionType of
+          Income allocs -> sumAllocationsUnchecked allocs === cmd.newTargetAmount
+          Expense allocs -> sumAllocationsUnchecked allocs === cmd.newSourceAmount
+          _ -> property True
+
+    prop "(3) allocation currency matches relevant leg"
+      $ forAll genCrossKindAmendInputs
+      $ \(_seed, cmd) ->
+        case cmd.newTransactionType of
+          Income allocs ->
+            property
+              $ all
+                (\(Allocation _cid m) -> moneyCurrency m == moneyCurrency cmd.newTargetAmount)
+                (NE.toList allocs)
+          Expense allocs ->
+            property
+              $ all
+                (\(Allocation _cid m) -> moneyCurrency m == moneyCurrency cmd.newSourceAmount)
+                (NE.toList allocs)
+          _ -> property True
+
+-- -----------------------------------------------------------------------------
+-- Cross-kind generator (handler-level)
+-- -----------------------------------------------------------------------------
+
+-- | Generate a '(Transaction, AmendTransaction)' pair the pure handler will
+-- accept. The 'Transaction' seed is a 'Completed' transaction projected from
+-- the fixed fixture events (same as 'projectAmendments []'). The command has:
+--
+--  * 'newSourceAccountId /= newTargetAccountId'
+--  * 'newSourceAmount > 0', 'newTargetAmount > 0'
+--  * 'newTransactionType' internally consistent: Income allocations sum to
+--    'newTargetAmount', Expense to 'newSourceAmount', Transfer is bare.
+genCrossKindAmendInputs :: Gen (Transaction, AmendTransaction)
+genCrossKindAmendInputs = do
+  txId <- genTransactionId
+  newSrc <- genAccountId `suchThat` (/= seedTgt)
+  newTgt <- genAccountId `suchThat` (\a -> a /= newSrc && a /= seedSrc)
+  cur <- genCurrency
+  newSrcAmt <- genPositiveMoneyIn cur
+  newTgtAmt <- genPositiveMoneyIn cur
+  uid <- genUserId
+  newTT <- genConsistentTransactionType newSrcAmt newTgtAmt
+  let seed = projectAmendments []
+      cmd =
+        AmendTransaction
+          { transactionId = txId,
+            newSourceAccountId = newSrc,
+            newTargetAccountId = newTgt,
+            newSourceAmount = newSrcAmt,
+            newTargetAmount = newTgtAmt,
+            newExchangeRate = Nothing,
+            newAllocations = Nothing,
+            newTransactionType = newTT,
+            amendedBy = uid
+          }
+  pure (seed, cmd)
+
+-- | Generate a 'TransactionType' consistent with the given leg amounts.
+--
+-- The generated type is always handler-acceptable:
+--  - 'Income allocs': allocations sum to 'tgtAmt' (same currency).
+--  - 'Expense allocs': allocations sum to 'srcAmt' (same currency).
+--  - 'Transfer': no allocations.
+genConsistentTransactionType :: Money -> Money -> Gen TransactionType
+genConsistentTransactionType srcAmt tgtAmt =
+  oneof [buildIncome, buildExpense, pure Transfer]
+  where
+    -- 'discard' on a bad allocation generation makes QuickCheck retry the
+    -- generator rather than silently falling back to 'Transfer'. The
+    -- previous fallback hid Income/Expense allocation failures by
+    -- collapsing them onto the trivially-true Transfer branch.
+    buildIncome = do
+      mAllocs <- genAllocationsSummingTo tgtAmt
+      case mAllocs of
+        Just allocs -> case mkIncome tgtAmt allocs of
+          Right tt -> pure tt
+          Left _ -> discard
+        Nothing -> discard
+    buildExpense = do
+      mAllocs <- genAllocationsSummingTo srcAmt
+      case mAllocs of
+        Just allocs -> case mkExpense srcAmt allocs of
+          Right tt -> pure tt
+          Left _ -> discard
+        Nothing -> discard

@@ -39,6 +39,9 @@ module Application.Services.TransactionService
 
     -- * Re-exported helpers for sibling services
     resolveAndInitiate,
+
+    -- * Pure predicates (exposed for testing)
+    isIdentityAmend,
   )
 where
 
@@ -48,11 +51,10 @@ import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryD
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), TransactionQuery)
 import qualified Application.ReadModels.Transaction as ReadModel
-import Application.ReadModels.User (UserData (..))
 import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Application.Services.Internal
-  ( getUserData,
+  ( getUserExternalAccountId,
     guardE,
     liftEitherWith,
     liftMaybeM,
@@ -84,7 +86,9 @@ import Domain.Core.Types
     TransactionKind (..),
     TransactionType (..),
     UserId,
+    allocationsOf,
     convert,
+    deriveTransactionKind,
     exchangeRateValue,
     kindOf,
     mkExchangeRate,
@@ -92,6 +96,8 @@ import Domain.Core.Types
     mkIncome,
     mkTransactionId,
     moneyCurrency,
+    rescaleAllocations,
+    sumAllocationsUnchecked,
     unDictionaryEntryId,
     unTransactionId,
   )
@@ -240,8 +246,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
-    userData <- getUserData userId
-    let externalAccId = userData.externalAccountId
+    externalAccId <- getUserExternalAccountId userId
     accountRM <- lift (view accountReadModelL)
     targetData <-
       liftMaybeM
@@ -301,8 +306,7 @@ initiateExpense userId sourceAccountId amount allocations labels description may
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
-    userData <- getUserData userId
-    let externalAccId = userData.externalAccountId
+    externalAccId <- getUserExternalAccountId userId
     accountRM <- lift (view accountReadModelL)
     sourceData <-
       liftMaybeM
@@ -570,32 +574,32 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
     <> displayShow userId
   transaction <- ExceptT (ensureEditorAccess userId transactionId)
   ExceptT (guardBooksClosed userId transaction.date)
-  ExceptT
-    ( ensureEditorOnNewAccounts
-        userId
-        amendCmd.newSourceAccountId
-        amendCmd.newTargetAccountId
-    )
-  ExceptT
-    ( validateAccountTypePreserved
-        transaction.sourceAccountId
-        amendCmd.newSourceAccountId
-        transaction.targetAccountId
-        amendCmd.newTargetAccountId
-    )
-  -- Kind is structurally preserved by 'validateAccountTypePreserved'
-  -- (the transactionType is a function of source/target 'AccountType').
-  -- Allocations are not on the amendment surface — when the categorised
-  -- amount changes, the projection rescales existing allocations
-  -- proportionally; deliberate re-splits are done via
-  -- 'setTransactionAllocations'.
-  if isIdentityAmend transaction amendCmd
+  (newSrcAcc, newTgtAcc) <-
+    ExceptT
+      ( ensureEditorOnNewAccounts
+          userId
+          amendCmd.newSourceAccountId
+          amendCmd.newTargetAccountId
+      )
+  let derivedKind =
+        deriveTransactionKind newSrcAcc.accountType newTgtAcc.accountType
+      existingTT = transaction.transactionType
+  newTT <-
+    ExceptT
+      ( synthesiseAmendmentTransactionType
+          userId
+          derivedKind
+          existingTT
+          amendCmd
+      )
+  let dispatched = amendCmd {newTransactionType = newTT}
+  if isIdentityAmend transaction dispatched
     then pure transaction
     else
       ExceptT
         ( dispatchAndAwaitAmendment
             transactionId
-            (AmendTransactionTransactionCommand amendCmd)
+            (AmendTransactionTransactionCommand dispatched)
         )
 
 -- | Cancel a completed transaction by its 'TransactionId'.
@@ -734,10 +738,9 @@ dispatchEdit transactionId cmd = runExceptT $ do
   (_, td) <- ExceptT (queryTransactionResult transactionId)
   pure td
 
--- | True when the amendment payload exactly matches the current canonical
--- state (per spec §4.3). Compared fields: accounts, amounts, exchange
--- rate. 'transactionType' is preserved by construction (see
--- 'validateAccountTypePreserved') so it is not compared here.
+-- | True when the amendment payload exactly matches the current
+-- canonical state (per spec §4.3). Compared fields: accounts, amounts,
+-- exchange rate, and transactionType (deep equality, including allocations).
 isIdentityAmend :: TransactionData -> AmendTransaction -> Bool
 isIdentityAmend td cmd =
   td.sourceAccountId
@@ -750,13 +753,70 @@ isIdentityAmend td cmd =
     == cmd.newTargetAmount
     && td.exchangeRate
     == cmd.newExchangeRate
+    && td.transactionType
+    == cmd.newTransactionType
 
--- | Require Editor+ access on each of the two new accounts.
+-- | Synthesise the full new 'TransactionType' for an 'AmendTransaction'
+-- from the derived kind, the existing transaction's type, and the
+-- caller-supplied 'newAllocations'.
+--
+-- Per the spec §"Service layer" truth table:
+--
+--   * 'Just allocs' + Income / Expense kind: validate categories and
+--     build 'Income allocs' / 'Expense allocs'.
+--   * 'Just _' + Transfer kind: reject 'AllocationsNotAllowedForTransferKind'.
+--   * 'Nothing' + Income / Expense kind, same kind as existing: rescale
+--     existing allocations against the new categorised amount.
+--   * 'Nothing' + Income / Expense kind, kind changed: reject
+--     'AllocationsRequiredForCategorisedKind'.
+--   * 'Nothing' + Transfer kind: 'Transfer'.
+--   * Anything + AdjustmentKind: defensive reject
+--     'CannotAmendToAdjustmentKind' (unreachable via deriveTransactionKind).
+synthesiseAmendmentTransactionType ::
+  UserId ->
+  TransactionKind ->
+  TransactionType ->
+  AmendTransaction ->
+  AppM (Either DomainError TransactionType)
+synthesiseAmendmentTransactionType userId derivedKind existingTT cmd = runExceptT $ do
+  case (cmd.newAllocations, derivedKind) of
+    (Just allocs, IncomeKind) -> do
+      ExceptT (validateAllocationsAgainstDictionary userId IncomeKind allocs)
+      pure (Income allocs)
+    (Just allocs, ExpenseKind) -> do
+      ExceptT (validateAllocationsAgainstDictionary userId ExpenseKind allocs)
+      pure (Expense allocs)
+    (Just _, TransferKind) -> throwE AllocationsNotAllowedForTransferKind
+    (Just _, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
+    (Nothing, IncomeKind)
+      | kindOf existingTT == IncomeKind,
+        Just oldAllocs <- allocationsOf existingTT ->
+          let oldTotal = sumAllocationsUnchecked oldAllocs
+              rescaled =
+                if oldTotal /= cmd.newTargetAmount
+                  then rescaleAllocations oldTotal cmd.newTargetAmount oldAllocs
+                  else oldAllocs
+           in pure (Income rescaled)
+      | otherwise -> throwE AllocationsRequiredForCategorisedKind
+    (Nothing, ExpenseKind)
+      | kindOf existingTT == ExpenseKind,
+        Just oldAllocs <- allocationsOf existingTT ->
+          let oldTotal = sumAllocationsUnchecked oldAllocs
+              rescaled =
+                if oldTotal /= cmd.newSourceAmount
+                  then rescaleAllocations oldTotal cmd.newSourceAmount oldAllocs
+                  else oldAllocs
+           in pure (Expense rescaled)
+      | otherwise -> throwE AllocationsRequiredForCategorisedKind
+    (Nothing, TransferKind) -> pure Transfer
+    (Nothing, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
+
+-- | Require Editor+ access on each of the two new accounts, returning the resolved data.
 ensureEditorOnNewAccounts ::
   UserId ->
   AccountId ->
   AccountId ->
-  AppM (Either DomainError ())
+  AppM (Either DomainError (AccountData, AccountData))
 ensureEditorOnNewAccounts userId newSrc newTgt = runExceptT $ do
   accountRM <- lift (view accountReadModelL)
   src <-
@@ -779,42 +839,7 @@ ensureEditorOnNewAccounts userId newSrc newTgt = runExceptT $ do
   guardE
     (canModifyAccount userId (toAuthData tgt))
     (AccountError "User does not have edit access to the new target account")
-
--- | Require that the amendment preserves each leg's 'AccountType'
--- (Regular vs External). The transaction's 'transactionType' is a function
--- of the leg-type pair, so preserving the pair preserves the type and
--- amendment never crosses the internal/external boundary.
---
--- (Recategorising across the boundary is a delete-and-repost operation;
--- editing the category in place on a Completed Income\/Expense remains
--- available via 'changeTransactionCategory'.)
-validateAccountTypePreserved ::
-  AccountId ->
-  AccountId ->
-  AccountId ->
-  AccountId ->
-  AppM (Either DomainError ())
-validateAccountTypePreserved oldSrc newSrc oldTgt newTgt = runExceptT $ do
-  accountRM <- lift (view accountReadModelL)
-  let fetch aid =
-        liftMaybeM
-          (NotFound "Account" (tshow aid))
-          (liftIO (AccountRM.getAccount accountRM aid))
-  oldS <- fetch oldSrc
-  newS <- fetch newSrc
-  oldT <- fetch oldTgt
-  newT <- fetch newTgt
-  guardE
-    (sameAccountType oldS.accountType newS.accountType)
-    CannotAmendAcrossAccountType
-  guardE
-    (sameAccountType oldT.accountType newT.accountType)
-    CannotAmendAcrossAccountType
-  where
-    sameAccountType :: AccountType -> AccountType -> Bool
-    sameAccountType (Regular _) (Regular _) = True
-    sameAccountType External External = True
-    sameAccountType _ _ = False
+  pure (src, tgt)
 
 -- | Dispatch 'AmendTransaction' and surface the saga's outcome.
 --
@@ -948,6 +973,8 @@ translateTransactionError (CommandRejected TxCh.NoCancellationInProgress) =
   TransactionError "No cancellation in progress"
 translateTransactionError (CommandRejected TxCh.CannotAmendDuringCancellation) =
   CannotAmendDuringCancellation
+translateTransactionError (CommandRejected TxCh.CannotAmendToAdjustmentKind) =
+  CannotAmendToAdjustmentKind
 translateTransactionError other =
   TransactionError (T.pack (show other))
 

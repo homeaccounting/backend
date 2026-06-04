@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -24,6 +25,7 @@ module Application.Services.Internal
 
     -- * Read-model helpers
     getUserData,
+    getUserExternalAccountId,
 
     -- * Aggregate command runners
     runAccountCmd,
@@ -33,14 +35,14 @@ module Application.Services.Internal
   )
 where
 
-import Application.ReadModels.User (UserData, getUser)
+import Application.ReadModels.User (UserData (..), getUser)
 import Control.Monad.Trans.Except (ExceptT (..), throwE)
 import Data.UUID (UUID)
 import Domain.Account.CommandHandler (AccountCommand)
 import Domain.Configuration.CommandHandler (ConfigurationCommand)
 import qualified Domain.Configuration.CommandHandler as ConfigCh
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (UserId)
+import Domain.Core.Types (AccountId, UserId)
 import Domain.Transaction.CommandHandler (TransactionCommand, TransactionError)
 import Domain.User.CommandHandler (UserCommand)
 import Eventium (CommandHandlerError, MetadataEnricher)
@@ -62,6 +64,11 @@ getUserData :: UserId -> ExceptT DomainError AppM UserData
 getUserData userId = do
   userRM <- lift (view userReadModelL)
   liftMaybeM (NotFound "User" (tshow userId)) (getUser userRM userId)
+
+-- | Resolve the user's auto-created External account id. Throws 'NotFound'
+-- if the user is missing from the read model.
+getUserExternalAccountId :: UserId -> ExceptT DomainError AppM AccountId
+getUserExternalAccountId userId = (.externalAccountId) <$> getUserData userId
 
 -- -----------------------------------------------------------------------------
 -- Pure Lifters

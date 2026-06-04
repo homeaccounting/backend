@@ -369,29 +369,17 @@ processEvent transactions globalEvent =
           case mkTransactionIdSafe streamUuid of
             Nothing -> transactions
             Just transactionId ->
-              -- The event carries the post-amendment allocations as a
-              -- handler-computed fact (see the 'CompleteTransactionAmendment'
-              -- arm in 'Domain.Transaction.CommandHandler'). The read
-              -- model rebuilds the full 'TransactionType' from the existing
-              -- kind via 'replaceAllocations'. Allocations have already
-              -- been rescaled proportionally on amount changes; 'Transfer' /
-              -- 'Adjustment' have 'Nothing' on the event and pass through
-              -- unchanged. A deliberate re-split is done via
-              -- 'SetTransactionAllocations'.
               Map.adjust
                 ( \transaction ->
-                    let newTT = case evt.newAllocations of
-                          Just allocs -> replaceAllocations allocs transaction.transactionType
-                          Nothing -> transaction.transactionType
-                     in (transaction :: TransactionData)
-                          { sourceAccountId = evt.newSourceAccountId,
-                            targetAccountId = evt.newTargetAccountId,
-                            sourceAmount = evt.newSourceAmount,
-                            targetAmount = evt.newTargetAmount,
-                            exchangeRate = evt.newExchangeRate,
-                            transactionType = newTT,
-                            amendmentCount = transaction.amendmentCount + 1
-                          }
+                    (transaction :: TransactionData)
+                      { sourceAccountId = evt.newSourceAccountId,
+                        targetAccountId = evt.newTargetAccountId,
+                        sourceAmount = evt.newSourceAmount,
+                        targetAmount = evt.newTargetAmount,
+                        exchangeRate = evt.newExchangeRate,
+                        transactionType = evt.newTransactionType,
+                        amendmentCount = transaction.amendmentCount + 1
+                      }
                 )
                 transactionId
                 transactions

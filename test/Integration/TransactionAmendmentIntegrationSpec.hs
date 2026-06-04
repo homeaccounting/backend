@@ -23,6 +23,7 @@ import Domain.Core.Types
   ( AccountId,
     TransactionId,
     unAccountId,
+    unDictionaryEntryId,
     unMoney,
     unTransactionId,
     unsafeMoney,
@@ -33,7 +34,7 @@ import Network.HTTP.Types (Status, status200, status409)
 import Network.Wai.Test (SResponse (..))
 import RIO
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount)
+import Testkit.Fixtures (createRegularAccount, userExternalAccountId)
 import Testkit.Helpers (singletonAllocation)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.TransactionEditFixture
@@ -146,20 +147,10 @@ spec = describe "Integration / TransferAmendment" $ do
   it "PUT /:id/amendment — same-account-pair payload returns 409" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "amend-same@test.com"
     token <- seedToken seed
-    (txId, td) <- seedIncome seed seed.seedAccount 100
-    let body = amendBody td.targetAccountId td.targetAccountId 50 50
-    resp <-
-      httpRequest seed.seedApp "PUT" (txPathBy txId <> "/amendment") (authHeaders token) body
-    shouldHaveStatus resp status409
-
-  it "PUT /:id/amendment — flipping the Income's Regular target to its External source returns 409" $ do
-    seed <- mkSeed createTestAppEnvWithProcessManager "amend-account-type@test.com"
-    token <- seedToken seed
-    (txId, td) <- seedIncome seed seed.seedAccount 100
-    -- Swap source and target so the new "target" is the External
-    -- counterpart (originally the source). Should reject as account-type
-    -- change.
-    let body = amendBody td.targetAccountId td.sourceAccountId 100 100
+    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    (txId, _td) <- seedTransfer seed seed.seedAccount walletB 50
+    -- Both legs set to walletB — same-account-pair guard fires.
+    let body = amendBody walletB walletB 50 50
     resp <-
       httpRequest seed.seedApp "PUT" (txPathBy txId <> "/amendment") (authHeaders token) body
     shouldHaveStatus resp status409
@@ -202,3 +193,70 @@ spec = describe "Integration / TransferAmendment" $ do
     case eitherDecode (simpleBody histResp) :: Either String Value of
       Right _ -> pure ()
       Left err -> expectationFailure $ "expected JSON body, got: " <> err
+
+  it "PUT /:id/amendment with newAllocations=null and Income → Transfer kind change" $ do
+    seed <- mkSeed createTestAppEnvWithProcessManager "amend-income-to-transfer@test.com"
+    token <- seedToken seed
+    -- Seed a second Regular account; the income → transfer amendment
+    -- requires both legs to be Regular accounts.
+    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    (txId, _) <- seedIncome seed seed.seedAccount 100
+    -- Amend: Income (External → seedAccount) → Transfer (seedAccount → walletB).
+    -- Both accounts are Regular so derivedKind = TransferKind.
+    -- newAllocations = null (Nothing) is correct for Transfer.
+    let body =
+          encode
+            $ object
+              [ "sourceAccountId" .= uuidText (unAccountId seed.seedAccount),
+                "targetAccountId" .= uuidText (unAccountId walletB),
+                "sourceAmount" .= (100 :: Double),
+                "sourceCurrency" .= ("USD" :: Text),
+                "targetAmount" .= (100 :: Double),
+                "targetCurrency" .= ("USD" :: Text),
+                "exchangeRate" .= (Nothing :: Maybe Double),
+                "newAllocations" .= (Nothing :: Maybe ())
+              ]
+    resp <-
+      httpRequest seed.seedApp "PUT" (txPathBy txId <> "/amendment") (authHeaders token) body
+    shouldHaveStatus resp status200
+    tr <- decodeTx resp
+    tr.transactionType `shouldBe` "transfer"
+
+  it "PUT /:id/amendment with newAllocations supplied performs Transfer → Income kind change" $ do
+    seed <- mkSeed createTestAppEnvWithProcessManager "amend-transfer-to-income@test.com"
+    token <- seedToken seed
+    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    -- Seed a Transfer (seedAccount → walletB).
+    (txId, _) <- seedTransfer seed seed.seedAccount walletB 100
+    -- Resolve the user's External account to use as new source (Income leg).
+    externalAccId <- userExternalAccountId seed.seedEnv seed.seedUserId
+    -- Build amendment: new source = External, new target = seedAccount → Income kind.
+    -- Provide newAllocations with one income-category entry.
+    -- Allocation JSON: { "categoryId": <uuid>, "amount": { "amount": <n>, "currency": <c> } }
+    let allocJson =
+          [ object
+              [ "categoryId" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                "amount"
+                  .= object
+                    [ "amount" .= (100 :: Double),
+                      "currency" .= ("USD" :: Text)
+                    ]
+              ]
+          ]
+        body =
+          encode
+            $ object
+              [ "sourceAccountId" .= uuidText (unAccountId externalAccId),
+                "targetAccountId" .= uuidText (unAccountId seed.seedAccount),
+                "sourceAmount" .= (100 :: Double),
+                "sourceCurrency" .= ("USD" :: Text),
+                "targetAmount" .= (100 :: Double),
+                "targetCurrency" .= ("USD" :: Text),
+                "exchangeRate" .= (Nothing :: Maybe Double),
+                "newAllocations" .= allocJson
+              ]
+    resp <-
+      httpRequest seed.seedApp "PUT" (txPathBy txId <> "/amendment") (authHeaders token) body
+    shouldHaveStatus resp status200
+    tr <- decodeTx resp
+    tr.transactionType `shouldBe` "income"

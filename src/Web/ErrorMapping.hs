@@ -340,13 +340,33 @@ mapDomainError CannotAmendToZeroAmount =
               details = Nothing
             }
     }
-mapDomainError CannotAmendAcrossAccountType =
-  err409
+mapDomainError AllocationsRequiredForCategorisedKind =
+  err400
     { errBody =
         encode $
           ErrorResponse
-            { message = "Transfer amendment cannot change an account's type (Regular vs External)",
-              code = "CANNOT_AMEND_ACROSS_ACCOUNT_TYPE",
+            { message = "Allocations are required when amending into an Income or Expense kind",
+              code = "AMENDMENT_ALLOCATIONS_REQUIRED",
+              details = Nothing
+            }
+    }
+mapDomainError AllocationsNotAllowedForTransferKind =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Allocations cannot be supplied when amending into a Transfer kind",
+              code = "AMENDMENT_ALLOCATIONS_NOT_ALLOWED",
+              details = Nothing
+            }
+    }
+mapDomainError CannotAmendToAdjustmentKind =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cross-kind amendment into Adjustment is not supported",
+              code = "AMENDMENT_KIND_ADJUSTMENT",
               details = Nothing
             }
     }

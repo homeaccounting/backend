@@ -40,10 +40,9 @@ import Application.ReadModels.Account (AccountData (..), balanceAsOf)
 import qualified Application.ReadModels.Account as ReadModel
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
-import Application.ReadModels.User (UserData (..))
 import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Application.Services.Internal
-  ( getUserData,
+  ( getUserExternalAccountId,
     guardE,
     liftEitherWith,
     liftMaybe,
@@ -406,8 +405,7 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
     )
 
   -- 4. Look up the caller's External account.
-  userData <- getUserData userId
-  let externalAccId = userData.externalAccountId
+  externalAccId <- getUserExternalAccountId userId
   externalAccount <-
     liftMaybeM
       (NotFound "Account" (tshow externalAccId))

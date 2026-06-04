@@ -27,6 +27,7 @@ import Domain.Core.Types
     Currency (..),
     Money,
     TransactionId,
+    TransactionType (..),
     UserId,
     unMoney,
     unsafeAccountId,
@@ -84,6 +85,7 @@ amendment s t sa ta =
       newSourceAmount = sa,
       newTargetAmount = ta,
       newExchangeRate = Nothing,
+      newTransactionType = Transfer,
       amendedBy = userId_
     }
 

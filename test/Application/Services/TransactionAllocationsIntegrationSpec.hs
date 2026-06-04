@@ -221,6 +221,8 @@ spec = describe "Application.Services / allocations round-trip" $ do
               newSourceAmount = newTotal,
               newTargetAmount = newTotal,
               newExchangeRate = Nothing,
+              newAllocations = Nothing,
+              newTransactionType = Transfer,
               amendedBy = h.harnessUser
             }
     amendResult <-

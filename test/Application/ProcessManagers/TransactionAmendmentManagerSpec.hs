@@ -56,6 +56,7 @@ import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (.
 import Optics ((^.))
 import RIO hiding (view, (^.))
 import Test.Hspec
+import Testkit.Helpers (mockDictionaryEntryId, singletonIncome)
 
 -- -----------------------------------------------------------------------------
 -- Fixtures
@@ -115,6 +116,34 @@ seedInitiated =
           }
     )
 
+-- | Category UUID used in 'seedIncomeInitiated'.
+incomeCatUuid :: UUID.UUID
+incomeCatUuid = UUID.fromWords 99 0 0 1
+
+-- | TransactionPostingInitiated seed event for a 100 USD Income transaction
+-- from 'oldSrc' (External) to 'oldTgt' (Regular).
+seedIncomeInitiated :: VersionedStreamEvent AccountingEvent
+seedIncomeInitiated =
+  StreamEvent
+    txUuid
+    0
+    (emptyMetadata "")
+    ( TransactionPostingInitiatedEvent
+        TransactionPostingInitiated
+          { sourceAccountId = oldSrc,
+            targetAccountId = oldTgt,
+            sourceAmount = m 100,
+            targetAmount = m 100,
+            exchangeRate = Nothing,
+            description = "income-seed",
+            by = userId_,
+            at = sampleAt,
+            transactionType = singletonIncome (mockDictionaryEntryId incomeCatUuid) (m 100),
+            externalTransactionId = Nothing,
+            labels = Set.empty
+          }
+    )
+
 mkAmendInitiated :: AccountId -> AccountId -> Money -> Money -> VersionedStreamEvent AccountingEvent
 mkAmendInitiated newSrcA newTgtA newSrcAmt newTgtAmt =
   StreamEvent
@@ -129,6 +158,28 @@ mkAmendInitiated newSrcA newTgtA newSrcAmt newTgtAmt =
             newSourceAmount = newSrcAmt,
             newTargetAmount = newTgtAmt,
             newExchangeRate = Nothing,
+            newTransactionType = Transfer,
+            amendedBy = userId_
+          }
+    )
+
+-- | Like 'mkAmendInitiated' but allows specifying the post-amendment
+-- 'TransactionType', for cross-kind amendment tests.
+mkAmendInitiatedKind :: AccountId -> AccountId -> Money -> Money -> TransactionType -> VersionedStreamEvent AccountingEvent
+mkAmendInitiatedKind newSrcA newTgtA newSrcAmt newTgtAmt kind =
+  StreamEvent
+    txUuid
+    1
+    (emptyMetadata "")
+    ( TransactionAmendmentInitiatedEvent
+        TransactionAmendmentInitiated
+          { transactionId = txId,
+            newSourceAccountId = newSrcA,
+            newTargetAccountId = newTgtA,
+            newSourceAmount = newSrcAmt,
+            newTargetAmount = newTgtAmt,
+            newExchangeRate = Nothing,
+            newTransactionType = kind,
             amendedBy = userId_
           }
     )
@@ -293,3 +344,31 @@ spec = describe "TransactionAmendmentManager (Saga)" $ do
               r `shouldBe` "Insufficient funds"
             _ -> expectationFailure "Expected one FailTransactionAmendment effect"
         _ -> expectationFailure "Expected IssueCommandWithCompensation"
+
+  describe "Cross-kind amendment: Income → Transfer (source endpoint swap)"
+    $ it "diffAmendmentLegs is account-type-agnostic: External→Regular source swap produces DebitNewSource + ReverseOldSource"
+    $ do
+      -- Income posting: oldSrc (External) → oldTgt (Regular), 100 USD.
+      -- Amendment: swap source to newSrc (Regular), kind becomes Transfer.
+      -- Expected: DebitNewSource(newSrc) fallible leg + ReverseOldSource(oldSrc) non-fallible tail.
+      let amend = mkAmendInitiatedKind newSrc oldTgt (m 100) (m 100) Transfer
+          st = runProjection [seedIncomeInitiated, amend]
+          effects = reactToTransactionAmendmentEvent st amend
+      length effects `shouldBe` 1
+      case effects of
+        [IssueCommandWithCompensation au (DebitAccountCommand d) _ _] -> do
+          au `shouldBe` acctUuid newSrc
+          d.amount `shouldBe` m 100
+          d.transactionId `shouldBe` txId
+        _ -> expectationFailure "Expected IssueCommandWithCompensation(DebitNewSource newSrc)"
+
+      -- After AccountDebited fires: ReverseOldSource(oldSrc) + Complete.
+      let debited = mkAccountDebited newSrc (m 100)
+          st2 = handleTransactionAmendmentEvent st debited
+          rest = reactToTransactionAmendmentEvent st2 debited
+      length rest `shouldBe` 2
+      case rest of
+        [IssueCommand a (ReverseAccountDebitCommand rd) _, IssueCommand _ (CompleteTransactionAmendmentCommand _) _] -> do
+          a `shouldBe` acctUuid oldSrc
+          rd.amount `shouldBe` m 100
+        _ -> expectationFailure "Expected [ReverseDebit oldSrc, CompleteTransactionAmendment]"

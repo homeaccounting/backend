@@ -234,7 +234,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
                     newSourceAmount = m 150,
                     newTargetAmount = m 140,
                     newExchangeRate = Nothing,
-                    newAllocations = Nothing,
+                    newTransactionType = Transfer,
                     amendedBy = userId_
                   }
             )

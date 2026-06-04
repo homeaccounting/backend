@@ -104,6 +104,7 @@ module Domain.Core.Types
     TransactionType (..),
     TransactionKind (..),
     kindOf,
+    deriveTransactionKind,
     mkIncome,
     mkExpense,
     allocationsOf,
@@ -1026,6 +1027,24 @@ kindOf (Income _) = IncomeKind
 kindOf (Expense _) = ExpenseKind
 kindOf Transfer = TransferKind
 kindOf Adjustment = AdjustmentKind
+
+-- | Derive the 'TransactionKind' from the account types of the two endpoints.
+--
+-- The mapping reflects the financial semantics of money flowing between
+-- account kinds:
+--
+-- * @Regular → External@: money leaves the user's assets → 'ExpenseKind'
+-- * @External → Regular@: money enters the user's assets → 'IncomeKind'
+-- * @Regular → Regular@: money moves between user's own accounts → 'TransferKind'
+-- * @External → External@: structurally unreachable for valid inputs (the
+--   service layer rejects @source == target@, and every user has exactly one
+--   External account). The branch is kept exhaustive to satisfy the
+--   no-partial-functions rule; the result is irrelevant.
+deriveTransactionKind :: AccountType -> AccountType -> TransactionKind
+deriveTransactionKind (Regular _) External = ExpenseKind
+deriveTransactionKind External (Regular _) = IncomeKind
+deriveTransactionKind (Regular _) (Regular _) = TransferKind
+deriveTransactionKind External External = TransferKind -- DEAD: unreachable; value irrelevant
 
 -- | The allocations on a categorised 'TransactionType', 'Nothing' otherwise.
 allocationsOf :: TransactionType -> Maybe Allocations

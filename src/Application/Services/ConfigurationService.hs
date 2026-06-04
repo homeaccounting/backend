@@ -46,6 +46,7 @@ import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..))
 import Application.Services.Internal
   ( getUserData,
+    getUserExternalAccountId,
     guardE,
     liftEitherWith,
     liftMaybeM,
@@ -151,11 +152,11 @@ getConfigurationForUser userId = runExceptT $ do
 changeBaseCurrency :: UserId -> Currency -> AppM (Either DomainError ())
 changeBaseCurrency userId newCurrency = runExceptT $ do
   lift $ logInfo $ "Changing base currency to " <> displayShow newCurrency <> " for user " <> displayShow userId
-  userData <- getUserData userId
+  externalAccId <- getUserExternalAccountId userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runAccountCmd
     id
-    (unAccountId userData.externalAccountId)
+    (unAccountId externalAccId)
     (ChangeAccountCurrencyAccountCommand ChangeAccountCurrency {newCurrency = newCurrency})
   runConfigurationCmd
     defaultTranslateConfigurationError

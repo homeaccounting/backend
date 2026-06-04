@@ -64,7 +64,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (mkAccountId, mkAllocation, mkTransactionId, parseCurrency)
+import Domain.Core.Types (TransactionType (..), mkAccountId, mkAllocation, mkTransactionId, parseCurrency)
 import Domain.Transaction.Commands (AmendTransaction (..))
 import Infrastructure.App (AppM)
 import RIO
@@ -342,8 +342,8 @@ changeDateHandler user rawId req = do
 -- ('TransactionAmendmentCompleted') or surfaces
 -- 'InsufficientFundsForAmendment' on saga failure.
 --
--- The transaction's 'transactionType' is not amendable — see
--- 'AmendTransactionRequest'.
+-- Cross-kind amendment is supported via 'AmendTransactionRequest.newAllocations';
+-- see 'AmendTransactionRequest' for field semantics.
 amendTransactionHandler ::
   AuthenticatedUser ->
   UUID ->
@@ -367,6 +367,11 @@ amendTransactionHandler user rawId req = do
             newSourceAmount = srcMoney,
             newTargetAmount = tgtMoney,
             newExchangeRate = maybeRate,
+            newAllocations = req.newAllocations,
+            -- Placeholder; overwritten by synthesiseAmendmentTransactionType
+            -- in TransactionService.amendTransaction before dispatch. The
+            -- DTO does not expose this field; it's service-internal.
+            newTransactionType = Transfer,
             amendedBy = user.userId
           }
   result <- TransactionService.amendTransaction user.userId transactionId cmd

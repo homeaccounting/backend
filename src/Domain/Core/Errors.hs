@@ -126,11 +126,18 @@ data DomainError
     CannotAmendToSameAccountPair
   | -- | Transfer amendment would set the amount to zero.
     CannotAmendToZeroAmount
-  | -- | Transfer amendment would change the 'AccountType' (Regular vs
-    -- External) of either leg, which would implicitly change the
-    -- transaction's 'transactionType'. Recategorising a transaction across
-    -- the internal\/external boundary requires deleting and reposting.
-    CannotAmendAcrossAccountType
+  | -- | 'AmendTransaction' supplied 'newAllocations = Nothing' for a kind
+    --   change into Income or Expense. Caller must supply the new
+    --   allocations covering the new categorised total.
+    AllocationsRequiredForCategorisedKind
+  | -- | 'AmendTransaction' supplied allocations but the derived new kind
+    --   is Transfer. Transfer carries no allocations.
+    AllocationsNotAllowedForTransferKind
+  | -- | The synthesised 'newTransactionType' is 'Adjustment'. Reachable
+    --   only via a service-layer programming bug (the service rejects
+    --   @source == target@ before deriving the kind), so this is a
+    --   defensive guard rather than a user-facing validation error.
+    CannotAmendToAdjustmentKind
   | -- | The saga rejected the amendment because at least one account has
     -- insufficient funds.  @reason@ is the human-readable rejection message
     -- returned by the saga.
@@ -249,8 +256,12 @@ renderDomainError err = case err of
     "Transfer cannot be amended to the same source and destination account"
   CannotAmendToZeroAmount ->
     "Transfer amount cannot be amended to zero"
-  CannotAmendAcrossAccountType ->
-    "Transfer amendment cannot change an account's type (Regular vs External)"
+  AllocationsRequiredForCategorisedKind ->
+    "Allocations are required when amending into an Income or Expense kind"
+  AllocationsNotAllowedForTransferKind ->
+    "Allocations cannot be supplied when amending into a Transfer kind"
+  CannotAmendToAdjustmentKind ->
+    "Cross-kind amendment into Adjustment is not supported; use AdjustAccountBalance"
   InsufficientFundsForAmendment r ->
     "Insufficient funds for transfer amendment: " <> r
   TransactionAlreadyCancelled ->

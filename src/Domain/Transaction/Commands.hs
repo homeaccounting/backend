@@ -40,7 +40,6 @@ module Domain.Transaction.Commands
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
-import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
@@ -243,48 +242,63 @@ data ChangeTransactionDate = ChangeTransactionDate
   }
   deriving (Show, Eq)
 
--- | Command to amend an existing completed transfer.
+-- | User-facing command to amend an existing completed transaction.
 --
--- This is the user-facing command that triggers the amendment saga. The
--- service layer computes the diff against current canonical state and
--- short-circuits if the payload is identical (no events emitted, saga
--- not started). Every @AmendTransaction@ that reaches the pure handler
--- therefore represents a genuine amendment.
+-- Triggers the amendment saga. The service layer computes the diff
+-- against current canonical state and short-circuits if the payload
+-- is identical (no events emitted, saga not started).
 --
--- The transaction's *kind* (Income / Expense / Transfer / Adjustment)
--- is structurally preserved by 'AccountType' invariants — the kind is a
--- function of the source/target account types, so kind cannot change as
--- long as account types are preserved on amendment. Only allocations
--- and amounts may change within a kind. Recategorising across the kind
--- boundary remains a delete-and-repost operation.
+-- Cross-kind amendment is supported: the new kind (Income / Expense /
+-- Transfer) is structurally derived from the (newSource, newTarget)
+-- 'AccountType' pair at the service layer via 'deriveTransactionKind'.
+-- 'Adjustment' is out of scope (single-account; use
+-- 'AdjustAccountBalance' or delete-and-repost).
 --
--- Allocations are NOT carried on this command: when the categorised
--- amount changes, the projection deterministically rescales existing
--- allocations by @newAmount / oldAmount@ (exact Rational math). A
--- deliberate re-split of the categorised total is done via
--- 'SetTransactionAllocations'.
+-- @newAllocations@ semantics:
 --
--- Business Rules:
---  - Transaction must be in the Completed state.
---  - @newSourceAccountId@ and @newTargetAccountId@ must differ.
---  - @newSourceAmount@ and @newTargetAmount@ must both be non-zero.
+--   * 'Nothing', kind unchanged (Income\/Expense): service rescales
+--     existing allocations against the new categorised amount.
+--   * 'Nothing', kind changing into Income\/Expense: rejected with
+--     'AllocationsRequiredForCategorisedKind'.
+--   * 'Nothing', kind = Transfer: pure 'Transfer'.
+--   * 'Just allocs', kind = Income\/Expense: 'Income allocs' or
+--     'Expense allocs'. Each 'categoryId' is validated against the
+--     matching dictionary.
+--   * 'Just _', kind = Transfer: rejected with
+--     'AllocationsNotAllowedForTransferKind'.
 --
--- Example:
--- >>> AmendTransaction txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
+-- @newTransactionType@ is the **service-internal** field carrying the
+-- synthesised full 'TransactionType' (kind ⊕ allocations). The web
+-- handler initialises it to 'Transfer' as a placeholder; the service
+-- layer always overwrites it via 'synthesiseAmendmentTransactionType'
+-- before calling 'runTransactionCmd'. The handler trusts this field
+-- as the canonical post-amendment shape. Commands are not persisted
+-- by Eventium (only events are), so the placeholder never reaches
+-- durable storage.
+--
+-- Business Rules (handler-enforced):
+--   - Transaction must be in the 'Completed' state.
+--   - @newSourceAccountId@ /= @newTargetAccountId@.
+--   - @newSourceAmount@ and @newTargetAmount@ are both non-zero.
+--   - 'newTransactionType' must not be 'Adjustment'
+--     ('CannotAmendToAdjustmentKind').
+--   - For Income, sum of allocations equals @newTargetAmount@ and
+--     all allocation currencies match @newTargetAmount@'s currency.
+--   - For Expense, same against @newSourceAmount@.
 data AmendTransaction = AmendTransaction
-  { -- | The transaction being amended.
-    transactionId :: TransactionId,
-    -- | New source account for the transfer.
+  { transactionId :: TransactionId,
     newSourceAccountId :: AccountId,
-    -- | New target account for the transfer.
     newTargetAccountId :: AccountId,
-    -- | New amount to debit from source account.
     newSourceAmount :: Money,
-    -- | New amount to credit to target account.
     newTargetAmount :: Money,
-    -- | New exchange rate (Nothing if same-currency).
     newExchangeRate :: Maybe ExchangeRate,
-    -- | User who amended the transfer.
+    -- | Optional new allocation list. See module-level documentation
+    -- on the truth table.
+    newAllocations :: Maybe Allocations,
+    -- | Service-internal: full new 'TransactionType' (kind ⊕
+    -- allocations). Web handler initialises to 'Transfer'; the
+    -- service layer always overwrites before dispatch.
+    newTransactionType :: TransactionType,
     amendedBy :: UserId
   }
   deriving (Show, Eq)
@@ -293,10 +307,9 @@ data AmendTransaction = AmendTransaction
 --
 -- Issued by the @TransactionAmendmentManager@ process manager once all leg
 -- events have landed. Accepted iff a @TransactionAmendmentInitiated@ is in
--- progress on the aggregate (tracked via @amendmentInProgress@).
---
--- Example:
--- >>> CompleteTransactionAmendment txId newSrc newTgt newSrcAmt newTgtAmt Nothing userId
+-- progress on the aggregate (tracked via @amendmentInProgress@). Carries the
+-- full new 'TransactionType' so the resulting 'TransactionAmendmentCompleted'
+-- event is self-contained for projection / read-model rebuilds.
 data CompleteTransactionAmendment = CompleteTransactionAmendment
   { -- | The transaction being amended.
     transactionId :: TransactionId,
@@ -310,6 +323,8 @@ data CompleteTransactionAmendment = CompleteTransactionAmendment
     newTargetAmount :: Money,
     -- | New exchange rate (Nothing if same-currency).
     newExchangeRate :: Maybe ExchangeRate,
+    -- | Full new 'TransactionType' synthesised by the service layer.
+    newTransactionType :: TransactionType,
     -- | User who amended the transfer.
     amendedBy :: UserId
   }

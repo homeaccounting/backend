@@ -41,7 +41,6 @@ where
 
 import Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
 import Data.Aeson.TH (defaultOptions, deriveJSON, deriveToJSON)
-import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -201,15 +200,15 @@ data TransactionDateChanged = TransactionDateChanged
   }
   deriving (Show, Eq)
 
--- | Saga-trigger event: the user has submitted an 'AmendTransaction' command
--- and the domain handler accepted it. The process manager reacts to this event
--- by computing the minimum diff between the snapshotted old state and the new
--- payload, then issuing the corresponding leg commands. Carries the full new
--- payload.
+-- | Saga-trigger event: the user has submitted an 'AmendTransaction'
+-- command and the domain handler accepted it. The process manager
+-- reacts by computing the minimum leg diff between the snapshotted
+-- old state and the new payload, then issuing the corresponding leg
+-- commands.
 --
--- The transaction's 'transactionType' is not amendable — it is a function
--- of the source / target accounts' 'AccountType' and is preserved across
--- amendments by service-layer validation.
+-- Carries the synthesised 'newTransactionType' (kind ⊕ allocations)
+-- so the saga can echo it onto 'CompleteTransactionAmendment' at
+-- finalize without re-deriving from state.
 data TransactionAmendmentInitiated = TransactionAmendmentInitiated
   { -- | The transaction being amended.
     transactionId :: TransactionId,
@@ -223,32 +222,23 @@ data TransactionAmendmentInitiated = TransactionAmendmentInitiated
     newTargetAmount :: Money,
     -- | New exchange rate (Nothing if same-currency).
     newExchangeRate :: Maybe ExchangeRate,
+    -- | Synthesised full new 'TransactionType' (kind ⊕ allocations).
+    newTransactionType :: TransactionType,
     -- | User who amended the transfer.
     amendedBy :: UserId
   }
   deriving (Show, Eq)
 
--- | Saga-completion event: all leg events have landed. The TX aggregate's
--- canonical posting facts move to the new values; the projection bumps
--- @amendmentCount@. Replayed from saga state so the event is self-contained
--- for read-model rebuilds.
+-- | Saga-completion event: all leg events have landed. The TX
+-- aggregate's canonical posting facts and 'transactionType' move to
+-- the new values; the projection bumps 'amendmentCount'. Replayed
+-- from saga state so the event is self-contained for read-model
+-- rebuilds.
 --
--- The 'newAllocations' field is **handler-computed**, not user-supplied.
--- The 'CompleteTransactionAmendment' command (and the 'AmendTransaction' command
--- upstream) deliberately do not accept allocations — amendment is a
--- posting-facts-only edit. When the categorised amount changes
--- ('newTargetAmount' for Income, 'newSourceAmount' for Expense), the
--- command handler rescales the existing allocations proportionally via
--- 'rescaleAllocations' (exact 'Rational' math) and emits the scaled
--- result on this event. When the amount is unchanged, the field is the
--- pre-amendment allocations verbatim. For 'Transfer' / 'Adjustment'
--- (which have no allocations), the field is 'Nothing'.
---
--- Carrying only the post-amendment allocations (not a full 'TransactionType')
--- exploits the fact that amendment cannot change the kind — kind is
--- structurally preserved by 'AccountType' invariants. Projections
--- reconstruct the full 'TransactionType' from existing state via
--- 'replaceAllocations'.
+-- 'newTransactionType' is the full kind ⊕ allocations value the
+-- service layer synthesised and threaded through the saga. The
+-- projection replaces the existing 'transactionType' with this value
+-- verbatim — no rescale, no kind-merge.
 data TransactionAmendmentCompleted = TransactionAmendmentCompleted
   { -- | The transaction being amended.
     transactionId :: TransactionId,
@@ -262,11 +252,8 @@ data TransactionAmendmentCompleted = TransactionAmendmentCompleted
     newTargetAmount :: Money,
     -- | New exchange rate (Nothing if same-currency).
     newExchangeRate :: Maybe ExchangeRate,
-    -- | Handler-computed post-amendment allocations. 'Just' for
-    -- categorised existing kinds (Income / Expense) — allocations may
-    -- have been rescaled proportionally on amount change. 'Nothing'
-    -- for 'Transfer' / 'Adjustment' (no allocations to carry).
-    newAllocations :: Maybe Allocations,
+    -- | Full new 'TransactionType' synthesised by the service layer.
+    newTransactionType :: TransactionType,
     -- | User who amended the transfer.
     amendedBy :: UserId
   }

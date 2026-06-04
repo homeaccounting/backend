@@ -41,21 +41,16 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Domain.Core.Types
   ( Allocation (..),
     Allocations,
     Currency,
     Money,
-    TransactionKind (..),
     TransactionType (..),
     allSameCurrency,
     allocationsOf,
-    categorisedAmount,
-    kindOf,
     moneyCurrency,
-    rescaleAllocations,
     sumAllocationsUnchecked,
     unAccountId,
     unMoney,
@@ -119,6 +114,9 @@ data TransactionError
   | -- | 'AmendTransaction' was issued while a cancellation saga is in flight
     -- (@cancellationInProgress = True@).
     CannotAmendDuringCancellation
+  | -- | 'AmendTransaction' supplied a 'newTransactionType' whose kind is
+    --   'Adjustment'. Cross-kind amendment into Adjustment is unsupported.
+    CannotAmendToAdjustmentKind
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -291,6 +289,10 @@ handleTransactionCommand transaction (ChangeTransactionDateTransactionCommand Ch
         ]
     _ -> Left CannotEditUncompletedTransaction
 -- Handle AmendTransaction command
+--
+-- The service layer has already synthesised the full @newTransactionType@
+-- (kind ⊕ allocations). The handler only validates structural
+-- invariants and the allocation shape against the supplied amounts.
 handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTransaction {..}) =
   case transaction ^. #status of
     Completed
@@ -300,7 +302,17 @@ handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTr
           Left AmendTransferToSameAccountPair
       | unMoney newSourceAmount == 0 || unMoney newTargetAmount == 0 ->
           Left AmendTransferToZeroAmount
-      | otherwise ->
+      | otherwise -> do
+          -- Validate the service-synthesised newTransactionType against
+          -- the new posting amounts. checkAllocationsAgainst is the
+          -- same helper used by InitiateTransaction (sum, currency,
+          -- positivity). 'do' here is the Either monad: a Left short-
+          -- circuits and is returned; Right () proceeds.
+          case newTransactionType of
+            Income allocs -> checkAllocationsAgainst newTargetAmount allocs
+            Expense allocs -> checkAllocationsAgainst newSourceAmount allocs
+            Transfer -> Right ()
+            Adjustment -> Left CannotAmendToAdjustmentKind
           Right
             [ TransactionAmendmentInitiatedTransactionEvent
                 TransactionAmendmentInitiated
@@ -310,56 +322,33 @@ handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTr
                     newSourceAmount = newSourceAmount,
                     newTargetAmount = newTargetAmount,
                     newExchangeRate = newExchangeRate,
+                    newTransactionType = newTransactionType,
                     amendedBy = amendedBy
                   }
             ]
     _ -> Left CannotEditUncompletedTransaction
 -- Handle CompleteTransactionAmendment command
 --
--- The handler computes the post-amendment allocations once and emits
--- them on the event. Projections apply 'evt.newAllocations' via
--- 'replaceAllocations' on the existing kind. The command itself is
--- lean (posting facts only); the scaled allocations are a
--- handler-computed fact, not a user-amendable input.
---
--- For categorised existing kinds (Income / Expense) the field is
--- 'Just' (rescaled when the categorised amount changed, verbatim
--- otherwise). For 'Transfer' / 'Adjustment' the field is 'Nothing'.
+-- Saga-internal. The service layer has already synthesised
+-- @newTransactionType@; the saga echoed it onto this command via
+-- 'TransactionAmendmentData'. The handler emits the event verbatim.
 handleTransactionCommand transaction (CompleteTransactionAmendmentTransactionCommand CompleteTransactionAmendment {..}) =
   if not (transaction ^. #amendmentInProgress)
     then Left NoAmendmentInProgress
     else
-      let oldTransactionType = transaction ^. #transactionType
-          scaledAllocations :: Maybe Allocations
-          scaledAllocations = case (kindOf oldTransactionType, allocationsOf oldTransactionType) of
-            (IncomeKind, Just oldAllocs) ->
-              -- Income's categorised side = target amount.
-              let oldTotal = sumAllocationsUnchecked oldAllocs
-               in Just $
-                    if oldTotal /= newTargetAmount
-                      then rescaleAllocations oldTotal newTargetAmount oldAllocs
-                      else oldAllocs
-            (ExpenseKind, Just oldAllocs) ->
-              -- Expense's categorised side = source amount.
-              let oldTotal = sumAllocationsUnchecked oldAllocs
-               in Just $
-                    if oldTotal /= newSourceAmount
-                      then rescaleAllocations oldTotal newSourceAmount oldAllocs
-                      else oldAllocs
-            _ -> Nothing
-       in Right
-            [ TransactionAmendmentCompletedTransactionEvent
-                TransactionAmendmentCompleted
-                  { transactionId = transactionId,
-                    newSourceAccountId = newSourceAccountId,
-                    newTargetAccountId = newTargetAccountId,
-                    newSourceAmount = newSourceAmount,
-                    newTargetAmount = newTargetAmount,
-                    newExchangeRate = newExchangeRate,
-                    newAllocations = scaledAllocations,
-                    amendedBy = amendedBy
-                  }
-            ]
+      Right
+        [ TransactionAmendmentCompletedTransactionEvent
+            TransactionAmendmentCompleted
+              { transactionId = transactionId,
+                newSourceAccountId = newSourceAccountId,
+                newTargetAccountId = newTargetAccountId,
+                newSourceAmount = newSourceAmount,
+                newTargetAmount = newTargetAmount,
+                newExchangeRate = newExchangeRate,
+                newTransactionType = newTransactionType,
+                amendedBy = amendedBy
+              }
+        ]
 -- Handle FailTransactionAmendment command
 handleTransactionCommand transaction (FailTransactionAmendmentTransactionCommand FailTransactionAmendment {..}) =
   if not (transaction ^. #amendmentInProgress)

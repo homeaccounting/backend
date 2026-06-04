@@ -51,6 +51,7 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
     TransactionId,
+    TransactionType (..),
     UserId,
     unMoney,
     unsafeMoney,
@@ -273,6 +274,8 @@ amendThenCancelSpec =
                 newSourceAmount = unsafeMoney Core.USD 250,
                 newTargetAmount = unsafeMoney Core.USD 250,
                 newExchangeRate = Nothing,
+                newAllocations = Nothing,
+                newTransactionType = Transfer,
                 amendedBy = uid
               }
       amendResult <- runAppM env (amendTransaction uid txId amendCmd)

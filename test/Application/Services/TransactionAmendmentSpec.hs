@@ -105,6 +105,8 @@ amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
       newSourceAmount = unsafeMoney Core.USD newSrcAmt,
       newTargetAmount = unsafeMoney Core.USD newTgtAmt,
       newExchangeRate = Nothing,
+      newAllocations = Nothing,
+      newTransactionType = Transfer,
       amendedBy = uid
     }
 
@@ -207,39 +209,6 @@ spec = describe "TransactionService.amendTransaction" $ do
               }
       result <- runAppM env (amendTransaction fx.userId txId cmd)
       result `shouldBe` Left CannotAmendToSameAccountPair
-
-  describe "Account-type preservation"
-    $ it "rejects flipping the Income's Regular target to an External account"
-    $ do
-      env <- createTestAppEnvWithProcessManager
-      fx <- setupMetadataFixture env "amend-account-type@test.com"
-      create <-
-        runAppM env
-          $ initiateIncome
-            fx.userId
-            fx.regularAccountId
-            (unsafeMoney Core.USD 100)
-            (incomeAllocs fx (unsafeMoney Core.USD 100))
-            Set.empty
-            "Seed"
-            Nothing
-      (txId, original) <- case create of
-        Right r -> pure r
-        Left err -> fail $ "initiateIncome failed: " <> show err
-
-      -- 'original.sourceAccountId' is the External counterpart of the
-      -- seeded Regular wallet (auto-created by 'initiateIncome'). Swap
-      -- source and target so the new target is External (== original
-      -- source) and the new source is the original Regular target —
-      -- this attempts to flip Income (External → Regular) into
-      -- Regular → External, which 'validateAccountTypePreserved' must
-      -- reject.
-      let cmd =
-            (amendCmd original.targetAccountId original.sourceAccountId 100 100 fx.userId)
-              { transactionId = txId
-              }
-      result <- runAppM env (amendTransaction fx.userId txId cmd)
-      result `shouldBe` Left CannotAmendAcrossAccountType
 
   describe "Subtype change within the same accountType"
     $ it "accepts swapping a Regular Cash source to a Regular Bank source on an Expense"

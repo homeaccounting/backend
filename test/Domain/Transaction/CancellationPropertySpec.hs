@@ -29,7 +29,6 @@ import Domain.Core.Types
     TransactionId,
     TransactionType (..),
     UserId,
-    allocationsOf,
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
@@ -242,6 +241,7 @@ genAmendmentInitiatedEvt = do
           newSourceAmount = newSrcAmt,
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
+          newTransactionType = Transfer,
           amendedBy = uid
         }
 
@@ -264,7 +264,7 @@ genAmendmentCompletedEvt = do
           newSourceAmount = newSrcAmt,
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
-          newAllocations = allocationsOf seedTransactionType,
+          newTransactionType = seedTransactionType,
           amendedBy = uid
         }
 

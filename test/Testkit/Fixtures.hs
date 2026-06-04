@@ -19,6 +19,7 @@ module Testkit.Fixtures
     createRegularAccount,
     firstDictionaryEntry,
     seedDefaultAndRegister,
+    userExternalAccountId,
     MetadataFixture (..),
     setupMetadataFixture,
     incomeAllocs,
@@ -85,6 +86,15 @@ createRegularAccount env uid accName = do
   case res of
     Left err -> fail $ "createRegularAccount " <> show accName <> " failed: " <> show err
     Right (aid, _) -> pure aid
+
+-- | Resolve the user's auto-created External account id. Fails the test
+-- if the user is missing from the read model.
+userExternalAccountId :: AppEnv -> UserId -> IO AccountId
+userExternalAccountId env uid = do
+  mUser <- getUser env.userReadModel uid
+  case mUser of
+    Nothing -> fail $ "userExternalAccountId: user not found: " <> show uid
+    Just ud -> pure ud.externalAccountId
 
 -- | Return the first 'DictionaryEntryId' from the named dictionary on the
 -- given user's configuration.

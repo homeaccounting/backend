@@ -458,12 +458,14 @@ instance FromJSON ChangeTransactionDateRequest
 -- posting facts on a Completed transaction. The client supplies the
 -- complete desired end-state; the saga computes the diff.
 --
--- The transaction's 'transactionType' is not amendable — it is a function
--- of the source / target accounts' 'AccountType' (Regular vs External)
--- and is preserved by service-layer validation. Recategorising across
--- the internal\/external boundary is a delete-and-repost operation;
--- editing the category in place on Income\/Expense uses
--- @PUT \/api\/transactions\/:id\/category@.
+-- Cross-kind amendment is supported: the new kind (Income \/ Expense \/
+-- Transfer) is structurally derived from the (source, target) account
+-- types at the service layer. 'Adjustment' is out of scope (single
+-- account; use 'AdjustAccountBalance').
+--
+-- @newAllocations@ is required when the new kind is Income or Expense
+-- AND that kind differs from the current kind. Omit (@null@) for
+-- within-kind amount edits and for Transfer-kind amendments.
 data AmendTransactionRequest = AmendTransactionRequest
   { sourceAccountId :: UUID,
     targetAccountId :: UUID,
@@ -471,7 +473,8 @@ data AmendTransactionRequest = AmendTransactionRequest
     sourceCurrency :: Text,
     targetAmount :: Double,
     targetCurrency :: Text,
-    exchangeRate :: Maybe Double
+    exchangeRate :: Maybe Double,
+    newAllocations :: Maybe Allocations
   }
   deriving (Show, Eq, Generic)
 

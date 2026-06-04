@@ -18,6 +18,7 @@ import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
     TransactionId,
+    TransactionType (..),
     UserId,
     unsafeTransactionId,
     unsafeUserId,
@@ -114,6 +115,8 @@ validAmendCmd =
         newSourceAmount = mockMoney 200,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
+        newAllocations = Nothing,
+        newTransactionType = Transfer,
         amendedBy = amendedBy
       }
 
@@ -128,6 +131,7 @@ validCompleteAmendCmd =
         newSourceAmount = mockMoney 200,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
+        newTransactionType = Transfer,
         amendedBy = amendedBy
       }
 
@@ -192,6 +196,8 @@ spec = do
                   newSourceAmount = mockMoney 200,
                   newTargetAmount = mockMoney 200,
                   newExchangeRate = Nothing,
+                  newAllocations = Nothing,
+                  newTransactionType = Transfer,
                   amendedBy = amendedBy
                 }
       handleTransactionCommand completedTx sameAccountCmd
@@ -207,6 +213,8 @@ spec = do
                   newSourceAmount = mockMoney 0,
                   newTargetAmount = mockMoney 200,
                   newExchangeRate = Nothing,
+                  newAllocations = Nothing,
+                  newTransactionType = Transfer,
                   amendedBy = amendedBy
                 }
       handleTransactionCommand completedTx zeroSrcCmd
@@ -222,6 +230,8 @@ spec = do
                   newSourceAmount = mockMoney 200,
                   newTargetAmount = mockMoney 0,
                   newExchangeRate = Nothing,
+                  newAllocations = Nothing,
+                  newTransactionType = Transfer,
                   amendedBy = amendedBy
                 }
       handleTransactionCommand completedTx zeroTgtCmd
@@ -244,7 +254,7 @@ spec = do
                   transactionId = _,
                   newTargetAmount = _,
                   newExchangeRate = _,
-                  newAllocations = _,
+                  newTransactionType = _,
                   amendedBy = _
                 }
             ] -> do
