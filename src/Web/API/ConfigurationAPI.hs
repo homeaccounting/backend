@@ -46,8 +46,11 @@ module Web.API.ConfigurationAPI
   )
 where
 
+import Application.ReadModels.Account (AccountData (..), getAccount)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import qualified Application.Services.ConfigurationService as ConfigService
+import Application.Services.Internal (getUserExternalAccountId)
+import Control.Monad.Except (runExceptT)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
@@ -55,6 +58,7 @@ import Data.UUID (UUID)
 import Domain.Configuration.Projection (BankingConfiguration (..))
 import Domain.Core.Types
   ( DictionaryId (..),
+    UserId,
     mkDictionaryEntryId,
     mkEntryName,
     parseCurrency,
@@ -62,7 +66,7 @@ import Domain.Core.Types
     unDictionaryId,
     unEntryName,
   )
-import Infrastructure.App (AppM)
+import Infrastructure.App (AppM, accountReadModelL)
 import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
@@ -193,7 +197,13 @@ data ConfigurationResponse = ConfigurationResponse
     defaultCurrency :: Text,
     dictionaries :: Map Text DictionaryResponse,
     banking :: BankingConfigurationDTO,
-    booksClosedThrough :: Maybe UTCTime
+    booksClosedThrough :: Maybe UTCTime,
+    -- | Whether the user's base currency can still be changed. False once any
+    -- transaction has posted against the user's External account (which anchors
+    -- reporting). Computed from the External account's @hasTransactions@ in
+    -- the account read model; mirrors the @AccountCurrencyLocked@ precondition
+    -- in 'Domain.Account.CommandHandler'.
+    baseCurrencyEditable :: Bool
   }
   deriving (Show, Eq, Generic)
 
@@ -319,7 +329,9 @@ getConfigurationHandler user = do
   result <- ConfigService.getConfigurationForUser user.userId
   case result of
     Left err -> throwDomainError err
-    Right configData -> return $ toConfigurationResponse configData
+    Right configData -> do
+      editable <- computeBaseCurrencyEditable user.userId
+      return $ toConfigurationResponse editable configData
 
 -- | Handler for PUT /api/users/me/configuration/base-currency
 changeBaseCurrencyHandler :: AuthenticatedUser -> ChangeCurrencyRequest -> AppM NoContent
@@ -385,7 +397,9 @@ closeBooksThroughHandler user req = do
   result <- ConfigService.closeBooksThrough user.userId req.closedThrough
   case result of
     Left err -> throwDomainError err
-    Right configData -> return $ toConfigurationResponse configData
+    Right configData -> do
+      editable <- computeBaseCurrencyEditable user.userId
+      return $ toConfigurationResponse editable configData
 
 -- | Handler for GET /api/users/me/configuration/dictionaries/:dictId
 listDictionaryHandler :: AuthenticatedUser -> Text -> AppM DictionaryResponse
@@ -447,10 +461,15 @@ removeEntryHandler user dictIdText entryUuid = do
 -- -----------------------------------------------------------------------------
 
 -- | Convert domain ConfigurationData to API response DTO.
+--
+-- @baseCurrencyEditable@ is supplied by the caller (typically derived from
+-- the user's External account via 'computeBaseCurrencyEditable') because
+-- that fact lives in the account read model, not in 'ConfigurationData'.
 toConfigurationResponse ::
+  Bool ->
   ConfigurationData ->
   ConfigurationResponse
-toConfigurationResponse configData =
+toConfigurationResponse editable configData =
   ConfigurationResponse
     { baseCurrency = tshow configData.baseCurrency,
       defaultCurrency = tshow configData.defaultCurrency,
@@ -458,8 +477,26 @@ toConfigurationResponse configData =
         Map.mapKeys unDictionaryId
           $ Map.map toDictionaryResponse configData.dictionaries,
       banking = toBankingDTO configData.banking,
-      booksClosedThrough = configData.booksClosedThrough
+      booksClosedThrough = configData.booksClosedThrough,
+      baseCurrencyEditable = editable
     }
+
+-- | Compute whether the user's base currency can still be changed.
+--
+-- Returns 'False' once the user's External account has been touched by any
+-- posted transaction (which is what the domain command handler uses to
+-- reject 'ChangeAccountCurrency' with 'AccountCurrencyLocked'). Defaults to
+-- 'True' if the External account can't be located in the read model — the
+-- domain layer remains authoritative and will still reject a stale request.
+computeBaseCurrencyEditable :: UserId -> AppM Bool
+computeBaseCurrencyEditable uid = do
+  extResult <- runExceptT (getUserExternalAccountId uid)
+  case extResult of
+    Left _ -> pure True
+    Right extAccId -> do
+      readModel <- view accountReadModelL
+      mAccount <- getAccount readModel extAccId
+      pure $ maybe True (not . (.hasTransactions)) mAccount
 
 -- | Convert domain DictionaryData to API response DTO.
 toDictionaryResponse ::

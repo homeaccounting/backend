@@ -337,6 +337,7 @@ test-suite backend-test
       Infrastructure.ExchangeRate.ProviderPropertySpec
       Infrastructure.ExchangeRateIntegrationSpec
       Integration.BankImportWorkflowSpec
+      Integration.BaseCurrencyEditableIntegrationSpec
       Integration.BooksClosePeriodIntegrationSpec
       Integration.CrossKindAmendmentIntegrationSpec
       Integration.ExchangeRatePersistenceSpec

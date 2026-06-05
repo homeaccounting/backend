@@ -88,6 +88,7 @@ mkLocalBankAccount owner iban =
           ),
       accessList = [AccountAccess {userId = owner, role = Owner}],
       overdraftLimit = Nothing,
+      hasTransactions = False,
       version = 1
     }
 

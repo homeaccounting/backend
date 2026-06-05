@@ -121,6 +121,11 @@ data AccountData = AccountData
     accessList :: [AccountAccess],
     -- | Overdraft limit (Nothing = unlimited)
     overdraftLimit :: Maybe Money,
+    -- | Whether the account has ever been touched by a posted transaction
+    -- (debited, credited, or had a debit/credit reversed). Mirrors the
+    -- domain aggregate's @hasTransactions@ in 'Domain.Account.Projection'
+    -- and is the precondition for 'ChangeAccountCurrency'.
+    hasTransactions :: Bool,
     -- | Version number from event stream for optimistic concurrency
     version :: Int
   }
@@ -244,6 +249,7 @@ processEvent accounts globalEvent =
                         accountType = evt.accountType,
                         accessList = [initialAccess],
                         overdraftLimit = evt.overdraftLimit,
+                        hasTransactions = False,
                         version = 1
                       }
                     accounts
@@ -288,6 +294,7 @@ processEvent accounts globalEvent =
                       Right newBalance ->
                         account
                           { balance = newBalance,
+                            hasTransactions = True,
                             version = account.version + 1
                           }
                       Left _ -> account -- Currency mismatch: should not happen for valid events
@@ -304,6 +311,7 @@ processEvent accounts globalEvent =
                       Right newBalance ->
                         account
                           { balance = newBalance,
+                            hasTransactions = True,
                             version = account.version + 1
                           }
                       Left _ -> account -- Currency mismatch: should not happen for valid events
@@ -320,6 +328,7 @@ processEvent accounts globalEvent =
                       Right newBalance ->
                         account
                           { balance = newBalance,
+                            hasTransactions = True,
                             version = account.version + 1
                           }
                       Left _ -> account
@@ -336,6 +345,7 @@ processEvent accounts globalEvent =
                       Right newBalance ->
                         account
                           { balance = newBalance,
+                            hasTransactions = True,
                             version = account.version + 1
                           }
                       Left _ -> account
