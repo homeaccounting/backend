@@ -35,6 +35,7 @@ import Domain.Transaction.Events
   ( TransactionCancellationCompleted (..),
     TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
+    TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
   )
 import Eventium (StreamEvent (..), emptyMetadata)
@@ -149,7 +150,7 @@ spec = do
       tvar <- seedReadModel [e1, e2]
       q <-
         either (fail . show) pure
-          $ mkTransactionQuery (Just acctA) Nothing Nothing False
+          $ mkTransactionQuery (Just acctA) Nothing Nothing False False
       results <- listTransactions tvar (Set.fromList [acctA, acctB, acctC]) q
       map fst results `shouldBe` [tx 1]
 
@@ -158,7 +159,7 @@ spec = do
       tvar <- seedReadModel [e]
       q <-
         either (fail . show) pure
-          $ mkTransactionQuery (Just acctC) Nothing Nothing False
+          $ mkTransactionQuery (Just acctC) Nothing Nothing False False
       results <- listTransactions tvar (Set.fromList [acctA, acctB]) q
       results `shouldBe` []
 
@@ -168,7 +169,7 @@ spec = do
       tvar <- seedReadModel [e]
       q <-
         either (fail . show) pure
-          $ mkTransactionQuery Nothing (Just (t 2026 1 15)) Nothing False
+          $ mkTransactionQuery Nothing (Just (t 2026 1 15)) Nothing False False
       results <- listTransactions tvar (Set.singleton acctA) q
       map fst results `shouldBe` [tx 1]
 
@@ -177,7 +178,7 @@ spec = do
       tvar <- seedReadModel [e]
       q <-
         either (fail . show) pure
-          $ mkTransactionQuery Nothing Nothing (Just (t 2026 1 15)) False
+          $ mkTransactionQuery Nothing Nothing (Just (t 2026 1 15)) False False
       results <- listTransactions tvar (Set.singleton acctA) q
       map fst results `shouldBe` [tx 1]
 
@@ -188,7 +189,7 @@ spec = do
       tvar <- seedReadModel [earlier, inside, later']
       q <-
         either (fail . show) pure
-          $ mkTransactionQuery Nothing (Just (t 2026 1 12)) (Just (t 2026 1 17)) False
+          $ mkTransactionQuery Nothing (Just (t 2026 1 12)) (Just (t 2026 1 17)) False False
       results <- listTransactions tvar (Set.singleton acctA) q
       map fst results `shouldBe` [tx 2]
 
@@ -242,13 +243,13 @@ spec = do
 
       qBusiness <-
         either (fail . show) pure
-          $ mkTransactionQuery Nothing (Just (t 2026 1 14)) (Just (t 2026 1 16)) False
+          $ mkTransactionQuery Nothing (Just (t 2026 1 14)) (Just (t 2026 1 16)) False False
       resultsBusiness <- listTransactions tvar (Set.singleton acctA) qBusiness
       map fst resultsBusiness `shouldBe` [tx 1]
 
       qPersist <-
         either (fail . show) pure
-          $ mkTransactionQuery Nothing (Just (t 2026 4 17)) (Just (t 2026 4 19)) False
+          $ mkTransactionQuery Nothing (Just (t 2026 4 17)) (Just (t 2026 4 19)) False False
       resultsPersist <- listTransactions tvar (Set.singleton acctA) qPersist
       resultsPersist `shouldBe` []
 
@@ -284,6 +285,32 @@ spec = do
       tvar <- seedReadModel [initiated, cancelled]
       q <-
         either (fail . show) pure
-          $ mkTransactionQuery Nothing Nothing Nothing True
+          $ mkTransactionQuery Nothing Nothing Nothing True False
+      results <- listTransactions tvar (Set.singleton acctA) q
+      map fst results `shouldBe` [tx 1]
+
+  describe "listTransactions / failed status filter" $ do
+    it "excludes failed transactions when qIncludeFailed = False" $ do
+      let initiated = mkInitiatedEvent (tx 1) acctA acctB (t 2026 1 15) (t 2026 1 15) 0
+          failed =
+            mkEditEvent
+              (tx 1)
+              (TransactionPostingFailedEvent (TransactionPostingFailed "Insufficient funds"))
+              1
+      tvar <- seedReadModel [initiated, failed]
+      results <- listTransactions tvar (Set.singleton acctA) emptyTransactionQuery
+      results `shouldBe` []
+
+    it "includes failed transactions when qIncludeFailed = True" $ do
+      let initiated = mkInitiatedEvent (tx 1) acctA acctB (t 2026 1 15) (t 2026 1 15) 0
+          failed =
+            mkEditEvent
+              (tx 1)
+              (TransactionPostingFailedEvent (TransactionPostingFailed "Insufficient funds"))
+              1
+      tvar <- seedReadModel [initiated, failed]
+      q <-
+        either (fail . show) pure
+          $ mkTransactionQuery Nothing Nothing Nothing False True
       results <- listTransactions tvar (Set.singleton acctA) q
       map fst results `shouldBe` [tx 1]

@@ -96,10 +96,12 @@ import Infrastructure.App
     HasAppConfig (appConfigL),
     HasBotState (botStateL),
     HasVersionInfo (versionInfoL),
+    bankingKeyRingFromConfig,
     initializeAppEnv,
     runAppM,
   )
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
+import Infrastructure.Banking.Monobank (mkBankProviderFactory)
 import Infrastructure.Bootstrap (configureProcess)
 import Infrastructure.Config
   ( AppConfig (..),
@@ -360,11 +362,22 @@ initializeEnvironment logFunc config versionInfo = do
   -- 6d. Per-user bank-import serialization locks
   bankImportLocksVar <- liftIO $ newTVarIO Set.empty
 
+  -- 6e. Banking token-encryption key ring (fails fast in prod on a
+  -- missing/invalid key; uses a dev key with a warning in local/test).
+  bankingKeyRing' <-
+    liftIO $ bankingKeyRingFromConfig config.environment config.banking
+
   let bankingEnv' =
         BankingEnv
           { bankImportReadModel = readModels.bankImport,
             bankImportLocks = bankImportLocksVar,
-            httpManager = httpManager
+            httpManager = httpManager,
+            bankingKeyRing = bankingKeyRing',
+            -- Pure factory: dispatches on the connection's provider enum and
+            -- captures the config + shared HTTP 'Manager'. This is the only
+            -- place provider/apiBaseUrl specifics live (see
+            -- 'mkBankProviderFactory').
+            bankProviderFactory = mkBankProviderFactory config httpManager
           }
 
   -- 7. Build application environment

@@ -85,6 +85,8 @@ exchange_rate:
 # Banking integration
 banking:
   enabled: false
+  # Deterministic base64 of 32 bytes (0x07 repeated); insecure, test-only.
+  token_enc_key: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
   providers:
     monobank:
       enabled: false

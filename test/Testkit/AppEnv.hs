@@ -16,12 +16,25 @@ module Testkit.AppEnv
     mkApp,
     mkAppWithProcessManager,
     mkAppBankingEnabled,
+    mkAppBankingEnabledSeeded,
+    mkAppBankingEnabledSeededWith,
     mkAppSeeded,
+
+    -- * Stub bank provider (for HTTP-level banking specs)
+    StubControls (..),
+    newStubControls,
   )
 where
 
+import Application.ReadModels.ExchangeRate (ExchangeRateReadModel)
 import qualified Application.Services.ConfigurationService as ConfigurationService
-import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.App (AppEnv (..), BankingEnv (..), runAppM)
+import Infrastructure.Banking.Provider
+  ( BankAccount,
+    BankProvider (..),
+    BankTransaction (..),
+    TransactionClassification (..),
+  )
 import Infrastructure.Config
   ( AppConfig (..),
     BankingConfig (..),
@@ -30,6 +43,7 @@ import Infrastructure.Config
   )
 import Network.Wai (Application)
 import RIO
+import qualified RIO.Map as Map
 import Testkit.InMemoryEventStore
   ( createTestAppEnv,
     createTestAppEnvWithProcessManager,
@@ -70,7 +84,11 @@ mkAppBankingEnabled = do
                 ( MonobankProviderConfig
                     True
                     "http://127.0.0.1:1"
-                )
+                ),
+            -- Preserve the deterministic test key ring already built into the
+            -- base env; flipping the feature flag only touches the config,
+            -- not the key ring on 'bankingEnv'.
+            tokenEncKey = cfg.banking.tokenEncKey
           }
       cfg' = cfg {banking = bankingCfg}
   pure $ buildApplication env {config = cfg'}
@@ -85,3 +103,104 @@ mkAppSeeded = do
   env <- createTestAppEnv
   runAppM env ConfigurationService.seedDefaultConfiguration
   pure (buildApplication env)
+
+-- -----------------------------------------------------------------------------
+-- Stub bank provider
+-- -----------------------------------------------------------------------------
+
+-- | Mutable fixtures backing the in-memory stub 'BankProvider'.
+--
+-- A test obtains a 'StubControls' from 'mkAppBankingEnabledSeededWith',
+-- pre-sets the external accounts that 'fetchAccounts' should return and/or
+-- the per-external-id statements that 'fetchStatements' should return, and
+-- then drives the HTTP layer. The same 'StubControls' is closed over by the
+-- provider factory installed on the env, so updates are visible to handlers.
+data StubControls = StubControls
+  { -- | What 'fetchAccounts' returns. Defaults to @Right []@.
+    stubAccounts :: !(IORef (Either Text [BankAccount])),
+    -- | Per-external-account-id statements 'fetchStatements' returns. A
+    -- missing key yields @Right []@ (no statements for that account).
+    stubStatements :: !(IORef (Map.Map Text [BankTransaction])),
+    -- | The env's exchange-rate read model, exposed so a test can seed
+    -- historical rates. The user's auto-created External account is
+    -- denominated in the configuration base currency (USD), so importing a
+    -- foreign-currency (e.g. UAH) bank transaction now requires a published
+    -- rate for the pair — see 'Application.Services.BankImportService'.
+    stubExchangeRateRM :: !(TVar ExchangeRateReadModel)
+  }
+
+-- | Allocate fresh, empty stub controls (no accounts, no statements) bound to
+-- the supplied exchange-rate read model.
+newStubControls :: TVar ExchangeRateReadModel -> IO StubControls
+newStubControls erRM =
+  StubControls
+    <$> newIORef (Right [])
+    <*> newIORef Map.empty
+    <*> pure erRM
+
+-- | An in-memory 'BankProvider' that serves whatever fixtures the given
+-- 'StubControls' currently hold. The @provider@ enum and @token@ passed by the
+-- factory are ignored — the stub does no real I/O.
+stubProvider :: StubControls -> BankProvider
+stubProvider controls =
+  BankProvider
+    { providerName = "stub",
+      fetchAccounts = readIORef controls.stubAccounts,
+      fetchStatements = \accId _from _to -> do
+        m <- readIORef controls.stubStatements
+        pure $ Right (Map.findWithDefault [] accId m),
+      registerWebhook = \_ -> pure (Right ()),
+      classifyTransaction = \tx ->
+        if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense
+    }
+
+-- -----------------------------------------------------------------------------
+-- Banking-enabled + seeded harness
+-- -----------------------------------------------------------------------------
+
+-- | Build a banking-enabled, default-configuration-seeded 'Application'
+-- wired to an in-memory stub provider.
+--
+-- This is the harness Tasks 7–9 use: it satisfies all three needs at once
+-- that no existing helper does —
+--
+--   * @banking.enabled = True@ and the Monobank provider enabled
+--     (unlike 'mkAppSeeded', which leaves banking disabled);
+--   * the default configuration seeded so dictionaries/UUIDs exist
+--     (unlike 'mkAppBankingEnabled', which is unseeded); and
+--   * a stub provider factory installed so handlers never touch the network
+--     (unlike 'mkAppBankingEnabled', which points at a dead @127.0.0.1:1@).
+--
+-- The deterministic test key ring already built into the base env is
+-- preserved. Use 'mkAppBankingEnabledSeededWith' when a test needs to
+-- pre-set the stub fixtures.
+mkAppBankingEnabledSeeded :: IO Application
+mkAppBankingEnabledSeeded = snd <$> mkAppBankingEnabledSeededWith
+
+-- | Like 'mkAppBankingEnabledSeeded' but also returns the 'StubControls'
+-- backing the installed provider so a test can pre-set the external accounts
+-- and per-account statements the stub should serve.
+mkAppBankingEnabledSeededWith :: IO (StubControls, Application)
+mkAppBankingEnabledSeededWith = do
+  env <- createTestAppEnv
+  controls <- newStubControls env.exchangeRateReadModel
+  let cfg = env.config
+      bankingCfg =
+        BankingConfig
+          { enabled = True,
+            providers =
+              BankingProvidersConfig
+                ( MonobankProviderConfig
+                    True
+                    "http://127.0.0.1:1"
+                ),
+            -- Preserve the deterministic test key ring already built into the
+            -- base env; flipping the feature flag only touches the config.
+            tokenEncKey = cfg.banking.tokenEncKey
+          }
+      cfg' = cfg {banking = bankingCfg}
+      bankingEnv' =
+        env.bankingEnv {bankProviderFactory = \_provider _tok -> stubProvider controls}
+      env' = env {config = cfg', bankingEnv = bankingEnv'}
+  runAppM env' ConfigurationService.seedDefaultConfiguration
+  pure (controls, buildApplication env')

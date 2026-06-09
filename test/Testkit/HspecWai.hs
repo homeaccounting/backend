@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -27,14 +28,27 @@ module Testkit.HspecWai
     jsonAuthHeaders,
     bearerHeader,
     invalidToken,
+
+    -- * Auth helpers
+    registerAndGetToken,
+
+    -- * Account helpers
+    createAccount,
+    createAccountWith,
+    IdResponse (..),
   )
 where
 
+import Data.Aeson (FromJSON (..), eitherDecode, encode, object, withObject, (.:), (.=))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
-import Network.HTTP.Types (Header, hAuthorization, hContentType)
-import Network.Wai.Test (SResponse)
+import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUID
+import Network.HTTP.Types (Header, hAuthorization, hContentType, statusCode)
+import Network.Wai.Test (SResponse, simpleBody, simpleStatus)
 import RIO
+import qualified RIO.Text as T
+import Test.Hspec (shouldBe)
 import Test.Hspec.Wai (WaiSession, request)
 
 -- | A literal "this is not a JWT" string useful for asserting the auth
@@ -79,3 +93,59 @@ getJSONAuth path token =
 deleteAuth :: BS.ByteString -> Text -> WaiSession st SResponse
 deleteAuth path token =
   request "DELETE" path [bearerHeader token] ""
+
+-- | Register a fresh user (unique random email) via @POST /api/auth/register@
+-- and return the issued JWT token. Throws via 'throwString' if the response
+-- body cannot be decoded.
+registerAndGetToken :: WaiSession st Text
+registerAndGetToken = do
+  uid <- liftIO UUID.nextRandom
+  let email = "test+" <> T.pack (UUID.toString uid) <> "@example.com" :: Text
+      body =
+        encode
+          $ object
+            [ "email" .= email,
+              "password" .= ("testpassword123" :: Text)
+            ]
+  resp <- request "POST" "/api/auth/register" [(hContentType, "application/json")] body
+  case eitherDecode (simpleBody resp) :: Either String TokenResponse of
+    Left err -> liftIO $ throwString $ "registerAndGetToken: " <> err
+    Right r -> pure r.token
+
+-- | Minimal decoder to extract the @token@ field from the registration
+-- response. Private to this module.
+newtype TokenResponse = TokenResponse {token :: Text}
+  deriving (Show)
+
+instance FromJSON TokenResponse where
+  parseJSON = withObject "TokenResponse" $ \o -> TokenResponse <$> o .: "token"
+
+-- | Create an account owned by the caller and return its @id@ (UUID text).
+-- POSTs @{name, initialBalance: 0, currency}@ to @\/api\/accounts@, asserts
+-- 201, and decodes the @id@ field. Throws via 'throwString' on decode failure.
+createAccountWith :: Text -> Text -> Text -> WaiSession st Text
+createAccountWith tok name currency = do
+  let body =
+        encode
+          $ object
+            [ "name" .= name,
+              "initialBalance" .= (0 :: Double),
+              "currency" .= currency
+            ]
+  resp <- request "POST" "/api/accounts" (jsonAuthHeaders tok) body
+  liftIO $ statusCode (simpleStatus resp) `shouldBe` 201
+  case eitherDecode (simpleBody resp) :: Either String IdResponse of
+    Left err -> liftIO $ throwString $ "createAccount: " <> err
+    Right r -> pure r.id
+
+-- | 'createAccountWith' defaulting the currency to @USD@.
+createAccount :: Text -> Text -> WaiSession st Text
+createAccount tok name = createAccountWith tok name "USD"
+
+-- | Minimal decoder to extract the @id@ field from a created-resource
+-- response (accounts, connections, …).
+newtype IdResponse = IdResponse {id :: Text}
+  deriving (Show)
+
+instance FromJSON IdResponse where
+  parseJSON = withObject "IdResponse" $ \o -> IdResponse <$> o .: "id"

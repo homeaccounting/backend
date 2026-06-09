@@ -149,6 +149,20 @@ data DomainError
   | -- | A cancellation saga is already in progress on this transaction.
     -- Reachable via two near-simultaneous DELETE requests.
     CancellationAlreadyInProgress
+  | -- | A bank-connection operation targeted a connection that does not exist
+    -- for the user.
+    BankConnectionNotFound
+  | -- | A resync was requested against a connection whose @enabled@ flag is
+    -- 'False'. Surfaces as 422 @CONNECTION_DISABLED@.
+    BankConnectionDisabled
+  | -- | A bank connection's account map references a local account that is
+    -- already a target of a /different/ connection in this configuration
+    -- (within-config uniqueness violation).
+    BankConnectionAccountConflict
+  | -- | A bank connection's account map references a local account that does
+    -- not exist, or that the user does not own/edit. The payload carries the
+    -- offending field name (e.g. @"accountMap"@) for the HTTP field-error.
+    BankConnectionAccountInvalid Text
   | -- | 'CancelTransaction' issued while an amendment saga is in flight on the
     -- same transaction.
     CannotCancelDuringAmendment
@@ -268,6 +282,14 @@ renderDomainError err = case err of
     "Transaction is already cancelled"
   CancellationAlreadyInProgress ->
     "A cancellation is already in progress for this transaction"
+  BankConnectionNotFound ->
+    "Bank connection not found"
+  BankConnectionDisabled ->
+    "Bank connection is disabled"
+  BankConnectionAccountConflict ->
+    "The local account is already mapped by another bank connection"
+  BankConnectionAccountInvalid field ->
+    "Invalid account in " <> field <> ": the account does not exist or you cannot write to it"
   CannotCancelDuringAmendment ->
     "Transaction cannot be cancelled while an amendment is in progress"
   CannotAmendDuringCancellation ->

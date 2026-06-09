@@ -40,6 +40,7 @@ module Application.ReadModels.Transaction
     queryFrom,
     queryTo,
     queryIncludeCancelled,
+    queryIncludeFailed,
 
     -- * Read Model Creation
     createTransactionReadModel,
@@ -87,15 +88,7 @@ import Domain.Models
         TransactionPostingInitiatedEvent
       ),
   )
-import Domain.Transaction.Events
-  ( TransactionAllocationsChanged (..),
-    TransactionAmendmentCompleted (..),
-    TransactionDateChanged (..),
-    TransactionDescriptionChanged (..),
-    TransactionLabelsSet (..),
-    TransactionPostingFailed (..),
-    TransactionPostingInitiated (..),
-  )
+import qualified Domain.Transaction.Events
 import Domain.Transaction.Projection (TransactionStatus (Cancelled, Completed, Failed, Pending))
 import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
@@ -157,7 +150,8 @@ data TransactionQuery = TransactionQuery
   { qAccountId :: Maybe AccountId,
     qFrom :: Maybe UTCTime,
     qTo :: Maybe UTCTime,
-    qIncludeCancelled :: Bool
+    qIncludeCancelled :: Bool,
+    qIncludeFailed :: Bool
   }
   deriving (Show, Eq)
 
@@ -168,8 +162,9 @@ mkTransactionQuery ::
   Maybe UTCTime ->
   Maybe UTCTime ->
   Bool ->
+  Bool ->
   Either Text TransactionQuery
-mkTransactionQuery acct mFrom mTo includeCancelled =
+mkTransactionQuery acct mFrom mTo includeCancelled includeFailed =
   case (mFrom, mTo) of
     (Just f, Just t)
       | f > t ->
@@ -180,7 +175,8 @@ mkTransactionQuery acct mFrom mTo includeCancelled =
           { qAccountId = acct,
             qFrom = mFrom,
             qTo = mTo,
-            qIncludeCancelled = includeCancelled
+            qIncludeCancelled = includeCancelled,
+            qIncludeFailed = includeFailed
           }
 
 -- | Query that matches every transaction (all filters unset).
@@ -190,7 +186,8 @@ emptyTransactionQuery =
     { qAccountId = Nothing,
       qFrom = Nothing,
       qTo = Nothing,
-      qIncludeCancelled = False
+      qIncludeCancelled = False,
+      qIncludeFailed = False
     }
 
 -- | Account filter, if any.
@@ -208,6 +205,10 @@ queryTo q = q.qTo
 -- | Whether cancelled transactions should be included in query results.
 queryIncludeCancelled :: TransactionQuery -> Bool
 queryIncludeCancelled q = q.qIncludeCancelled
+
+-- | Whether failed transactions should be included in query results.
+queryIncludeFailed :: TransactionQuery -> Bool
+queryIncludeFailed q = q.qIncludeFailed
 
 -- -----------------------------------------------------------------------------
 -- Read Model Creation
@@ -485,6 +486,7 @@ listTransactions readModelTVar visible query = do
         || Set.member td.targetAccountId visible
     isVisibleByStatus td = case td.status of
       Cancelled -> query.qIncludeCancelled
+      Failed _ -> query.qIncludeFailed
       _ -> True
     matchesAccount td = case query.qAccountId of
       Nothing -> True

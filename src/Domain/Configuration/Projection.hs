@@ -16,8 +16,11 @@ module Domain.Configuration.Projection
     Configuration (..),
 
     -- * Banking Sub-record
-    BankingConfiguration (defaultIncomeCategory, defaultExpenseCategory, mccExpenseCategoryMap),
+    BankingConfiguration (defaultIncomeCategory, defaultExpenseCategory, mccExpenseCategoryMap, connections),
     emptyBankingConfiguration,
+
+    -- * Bank Connections
+    BankConnection (..),
 
     -- * Event Sum Type
     ConfigurationEvent (..),
@@ -32,9 +35,22 @@ where
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Text (Text)
 import Data.Time (UTCTime)
+import Domain.Banking.Types
+  ( BankConnectionId,
+    BankConnectionName,
+    BankProvider,
+    ExternalAccountId,
+  )
 import Domain.Configuration.Events
-  ( BankingDefaultExpenseCategorySet (..),
+  ( BankConnectionAccountMapSet (..),
+    BankConnectionAdded (..),
+    BankConnectionEnabledSet (..),
+    BankConnectionRemoved (..),
+    BankConnectionRenamed (..),
+    BankConnectionTokenChanged (..),
+    BankingDefaultExpenseCategorySet (..),
     BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
@@ -47,7 +63,8 @@ import Domain.Configuration.Events
     configurationEvents,
   )
 import Domain.Core.Types
-  ( CategoryId,
+  ( AccountId,
+    CategoryId,
     CreatedBy (..),
     Currency (..),
     Dictionary (..),
@@ -58,6 +75,7 @@ import Domain.Core.Types
   )
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, withTagOptions)
+import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 
 -- -----------------------------------------------------------------------------
 -- Configuration Aggregate State
@@ -74,7 +92,28 @@ data BankingConfiguration = BankingConfiguration
     -- | Default category for expense transactions when none is inferred from MCC
     defaultExpenseCategory :: !(Maybe CategoryId),
     -- | Mapping from MCC codes to expense category IDs for automatic categorisation
-    mccExpenseCategoryMap :: !(Map MCC CategoryId)
+    mccExpenseCategoryMap :: !(Map MCC CategoryId),
+    -- | Configured bank connections, keyed by connection ID
+    connections :: !(Map BankConnectionId BankConnection)
+  }
+  deriving (Show, Eq)
+
+-- | A configured bank connection (spec §2.1).
+data BankConnection = BankConnection
+  { -- | Unique identifier for the connection
+    connectionId :: BankConnectionId,
+    -- | The external bank provider
+    provider :: BankProvider,
+    -- | User-facing display name
+    name :: BankConnectionName,
+    -- | The encrypted provider token
+    encryptedToken :: EncryptedSecret,
+    -- | Non-secret hint to help the user recognise the token
+    tokenHint :: Text,
+    -- | Whether the connection is enabled for syncing
+    enabled :: Bool,
+    -- | Mapping from external account IDs to local account IDs
+    accountMap :: Map ExternalAccountId AccountId
   }
   deriving (Show, Eq)
 
@@ -84,7 +123,8 @@ emptyBankingConfiguration =
   BankingConfiguration
     { defaultIncomeCategory = Nothing,
       defaultExpenseCategory = Nothing,
-      mccExpenseCategoryMap = Map.empty
+      mccExpenseCategoryMap = Map.empty,
+      connections = Map.empty
     }
 
 -- | The Configuration aggregate state.
@@ -163,6 +203,17 @@ deriving instance Eq ConfigurationEvent
 -- Event Handlers
 -- -----------------------------------------------------------------------------
 
+-- | Apply a function to the connection with the given ID, leaving the rest of
+-- the configuration unchanged. The explicit 'BankConnection' type on the
+-- adjusting function disambiguates the duplicate record fields it updates.
+adjustConnection ::
+  BankConnectionId ->
+  (BankConnection -> BankConnection) ->
+  Configuration ->
+  Configuration
+adjustConnection connId f c =
+  c {banking = c.banking {connections = Map.adjust f connId c.banking.connections}}
+
 -- | Handle an event and update the configuration state.
 handleConfigurationEvent :: Configuration -> ConfigurationEvent -> Configuration
 handleConfigurationEvent config (ConfigurationCreatedConfigurationEvent ConfigurationCreated {..}) =
@@ -229,6 +280,40 @@ handleConfigurationEvent config (BankingMccExpenseCategoryMapSetConfigurationEve
   config {banking = config.banking {mccExpenseCategoryMap = evt.mapping}}
 handleConfigurationEvent config (BooksClosedThroughSetConfigurationEvent evt) =
   config {booksClosedThrough = Just evt.closedThrough}
+handleConfigurationEvent c (BankConnectionAddedConfigurationEvent e) =
+  let conn =
+        BankConnection
+          { connectionId = e.connectionId,
+            provider = e.provider,
+            name = e.name,
+            encryptedToken = e.encryptedToken,
+            tokenHint = e.tokenHint,
+            enabled = e.enabled,
+            accountMap = Map.empty
+          }
+   in c {banking = c.banking {connections = Map.insert e.connectionId conn c.banking.connections}}
+handleConfigurationEvent c (BankConnectionRenamedConfigurationEvent e) =
+  adjustConnection
+    e.connectionId
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = e.name, encryptedToken = x.encryptedToken, tokenHint = x.tokenHint, enabled = x.enabled, accountMap = x.accountMap})
+    c
+handleConfigurationEvent c (BankConnectionTokenChangedConfigurationEvent e) =
+  adjustConnection
+    e.connectionId
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedToken = e.encryptedToken, tokenHint = e.tokenHint, enabled = x.enabled, accountMap = x.accountMap})
+    c
+handleConfigurationEvent c (BankConnectionEnabledSetConfigurationEvent e) =
+  adjustConnection
+    e.connectionId
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedToken = x.encryptedToken, tokenHint = x.tokenHint, enabled = e.enabled, accountMap = x.accountMap})
+    c
+handleConfigurationEvent c (BankConnectionAccountMapSetConfigurationEvent e) =
+  adjustConnection
+    e.connectionId
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedToken = x.encryptedToken, tokenHint = x.tokenHint, enabled = x.enabled, accountMap = e.accountMap})
+    c
+handleConfigurationEvent c (BankConnectionRemovedConfigurationEvent e) =
+  c {banking = c.banking {connections = Map.delete e.connectionId c.banking.connections}}
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

@@ -1,103 +1,150 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
 -- Module      : Web.API.BankingAPISpec
--- Description : Unit / HTTP tests for the banking API handler
+-- Description : HTTP tests for the connection-scoped resync endpoint
 --
--- Covers Phase 1 hardening of POST /api/banking/resync:
+-- Covers @POST /api/banking/connections/:id/resync@, which replaced the
+-- header-based @POST /api/banking/resync@. The endpoint:
 --
---   * The endpoint returns 404 when the banking feature flag is disabled.
---     The default test 'AppEnv' already ships with @banking.enabled = False@,
---     which makes this the "disabled" case without additional setup.
---
---   * 'buildBankLink' matches bank accounts to local accounts by IBAN, and
---     honours the caller's role:
---       - single match: returns that one pair.
---       - multi match:  picks the first deterministically and emits a warning.
---       - no match:     raises 'BankingError'.
---       - Viewer-only:  is excluded so read-only shares are never written to.
+--   * is feature-gated: 404 @FEATURE_DISABLED@ when banking is off;
+--   * 404s an unknown connection id;
+--   * 422 @CONNECTION_DISABLED@ when the connection's @enabled@ flag is false;
+--   * routes the import strictly by the connection's persisted
+--     @externalId -> local account@ map: an external id present in the map
+--     (and backed by the stub provider) is imported, while an external id
+--     absent from the map is never fetched (reported as skipped by the
+--     import summary — i.e. it produces no per-account row at all).
 module Web.API.BankingAPISpec (spec) where
 
-import Application.ReadModels.Account (AccountData (..))
-import qualified Control.Exception as E
-import Data.Aeson (eitherDecode, encode, object, (.=))
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Map.Strict as Map
-import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
-import qualified Data.UUID as UUID
-import Domain.Core.Types
-  ( AccountAccess (..),
-    AccountRole (..),
-    AccountSubtype (..),
-    AccountType (..),
-    BankAccountProperties (..),
-    Money,
-    defaultBankAccountProperties,
+import Application.ReadModels.ExchangeRate (handleExchangeRateEvents)
+import Data.Aeson
+  ( Value (..),
+    eitherDecode,
+    encode,
+    object,
+    (.=),
   )
-import qualified Domain.Core.Types as Core
-import Infrastructure.App (runAppM)
-import qualified Infrastructure.Banking.Provider as Banking
-import Network.HTTP.Types (status404)
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime (..), fromGregorian, getCurrentTime, secondsToDiffTime, utctDay)
+import qualified Data.UUID as UUID0
+import qualified Data.UUID.V4 as UUID
+import Domain.Core.Types (Currency (..), unsafeExternalTransactionId)
+import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
+import Domain.Models (AccountingEvent (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
+import Infrastructure.Banking.Provider (BankTransaction)
+import Network.HTTP.Types (status200, status204, status404, status422)
 import Network.Wai.Test (SResponse (..))
 import RIO
-import Servant.Server (ServerError (..))
+import qualified RIO.Text as T
 import Test.Hspec
 import Test.Hspec.Wai
-import Testkit.AppEnv (mkApp, mkAppBankingEnabled)
-import Testkit.Auth (generateTestToken)
-import Testkit.Helpers
-  ( mockAccountId,
-    mockMoneyWith,
-    mockUserId,
+import Testkit.AppEnv
+  ( StubControls (..),
+    mkApp,
+    mkAppBankingEnabledSeeded,
+    mkAppBankingEnabledSeededWith,
   )
-import Testkit.HspecWai (jsonAuthHeaders)
-import Testkit.InMemoryEventStore (createTestAppEnv)
-import Web.API.BankingAPI (buildBankLink)
+import Testkit.BankingHelpers (mkSameCurrencyBankTx)
+import Testkit.Helpers (mockExchangeRate)
+import Testkit.HspecWai (IdResponse (..), createAccountWith, jsonAuthHeaders, registerAndGetToken)
 import Web.Types (ErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
--- Common fixtures
+-- Auth + small JSON helpers (mirrors BankConnectionAPISpec)
 -- -----------------------------------------------------------------------------
 
--- | Bank account fetched from the provider, carrying a sample IBAN.
-sampleBankAccount :: Text -> Banking.BankAccount
-sampleBankAccount iban =
-  Banking.BankAccount
-    { Banking.externalId = "ext-" <> iban,
-      Banking.accountNumber = iban,
-      Banking.currencyCode = 980,
-      Banking.cardMasks = [],
-      Banking.balance = 0
-    }
+-- | Add a connection over HTTP and return its @id@ (UUID text).
+addConnection :: Text -> Text -> Bool -> WaiSession st Text
+addConnection tok name enabled = do
+  let body =
+        encode
+          $ object
+            [ "provider" .= ("monobank" :: Text),
+              "name" .= name,
+              "token" .= ("super-secret-token-123" :: Text),
+              "enabled" .= enabled
+            ]
+  resp <- request "POST" "/api/users/me/configuration/banking/connections" (jsonAuthHeaders tok) body
+  case eitherDecode (simpleBody resp) :: Either String IdResponse of
+    Left err -> liftIO $ throwString $ "addConnection: " <> err
+    Right r -> pure r.id
 
--- | Construct a local AccountData whose IBAN equals the given text.
-mkLocalBankAccount :: Core.UserId -> Text -> AccountData
-mkLocalBankAccount owner iban =
-  AccountData
-    { name = "Bank " <> iban,
-      balance = zeroMoney,
-      createdBy = owner,
-      accountType =
-        Regular
-          ( BankAccount
-              defaultBankAccountProperties
-                { accountNumber = Just iban
-                }
-          ),
-      accessList = [AccountAccess {userId = owner, role = Owner}],
-      overdraftLimit = Nothing,
-      hasTransactions = False,
-      version = 1
-    }
+-- | Map an external account id to a local account on a connection.
+setAccountMap :: Text -> Text -> Text -> Text -> WaiSession st ()
+setAccountMap tok connId extId accId = do
+  let path = encodeUtf8 ("/api/users/me/configuration/banking/connections/" <> connId <> "/accounts")
+      body = encode $ object ["accountMap" .= object [Key.fromText extId .= accId]]
+  r <- request "PUT" path (jsonAuthHeaders tok) body
+  liftIO $ simpleStatus r `shouldBe` status204
 
-zeroMoney :: Money
-zeroMoney = mockMoneyWith Core.USD 0
+-- | Decode an error envelope from a response body.
+decodeError :: SResponse -> IO ErrorResponse
+decodeError resp =
+  case eitherDecode (simpleBody resp) :: Either String ErrorResponse of
+    Left err -> throwString $ "body is not an ErrorResponse: " <> err
+    Right e -> pure e
 
--- | Convenience: an arbitrary but stable UserId for fixture building.
-fixtureUserId :: Core.UserId
-fixtureUserId = mockUserId (UUID.fromWords 1 0 0 0)
+-- -----------------------------------------------------------------------------
+-- Fixtures
+-- -----------------------------------------------------------------------------
+
+resyncPath :: Text -> ByteString
+resyncPath connId = encodeUtf8 ("/api/banking/connections/" <> connId <> "/resync")
+
+sampleBody :: LByteString
+sampleBody =
+  encode
+    $ object
+      [ "from" .= fromDay,
+        "to" .= toDay
+      ]
+  where
+    fromDay :: UTCTime
+    fromDay = UTCTime (fromGregorian 2026 4 1) 0
+    toDay :: UTCTime
+    toDay = UTCTime (fromGregorian 2026 4 10) (secondsToDiffTime 0)
+
+-- | One same-currency statement (UAH) for the stub provider. @extAccId@
+-- doubles as the external account id (the stub map key) and the transaction
+-- id seed, which only needs to be unique.
+sampleTxn :: Text -> BankTransaction
+sampleTxn extAccId =
+  mkSameCurrencyBankTx
+    (unsafeExternalTransactionId ("tx-" <> extAccId))
+    extAccId
+    1000
+
+-- | Publish today's USD<->UAH rate into the env's exchange-rate read model
+-- (via the stub controls) under the env's configured provider ("ecb"), so
+-- the cross-currency import (UAH statement, USD base External account) can
+-- resolve. Feeds a synthetic 'ExchangeRatesPublishedEvent' through
+-- 'handleExchangeRateEvents' exactly as production does.
+seedRate :: StubControls -> IO ()
+seedRate controls = do
+  today <- utctDay <$> getCurrentTime
+  let rateMap =
+        Map.fromList
+          [ ((USD, UAH), mockExchangeRate USD UAH 41),
+            ((UAH, USD), mockExchangeRate UAH USD (1 / 41))
+          ]
+      payload =
+        ExchangeRatesPublishedEvent
+          ExchangeRatesPublished
+            { provider = "ecb",
+              rates = rateMap,
+              at = today
+            }
+      versionedEvent = StreamEvent UUID0.nil 0 (emptyMetadata mempty) payload
+      globalEvent :: GlobalStreamEvent AccountingEvent
+      globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
+  (handleExchangeRateEvents controls.stubExchangeRateRM).handleEvent [globalEvent]
 
 -- -----------------------------------------------------------------------------
 -- Spec
@@ -105,122 +152,106 @@ fixtureUserId = mockUserId (UUID.fromWords 1 0 0 0)
 
 spec :: Spec
 spec = do
-  buildBankLinkSpec
-  featureFlagSpec
+  featureGateSpec
+  notFoundSpec
+  disabledSpec
+  routesByAccountMapSpec
 
--- -----------------------------------------------------------------------------
--- buildBankLink unit tests
--- -----------------------------------------------------------------------------
-
-buildBankLinkSpec :: Spec
-buildBankLinkSpec = describe "buildBankLink" $ do
-  it "returns a single (external, local) pair when exactly one IBAN matches" $ do
-    env <- createTestAppEnv
-    let iban = "UA001"
-        localAccId = mockAccountId (UUID.fromWords 100 0 0 1)
-        localAccs =
-          [(localAccId, mkLocalBankAccount fixtureUserId iban, Owner)]
-        bank = [sampleBankAccount iban]
-    result <- runAppM env (buildBankLink bank localAccs)
-    result `shouldBe` [("ext-" <> iban, localAccId)]
-
-  it "picks the first candidate (and logs a warning) when an IBAN matches multiple local accounts" $ do
-    env <- createTestAppEnv
-    let iban = "UA002"
-        firstId = mockAccountId (UUID.fromWords 200 0 0 1)
-        secondId = mockAccountId (UUID.fromWords 200 0 0 2)
-        localAccs =
-          [ (firstId, mkLocalBankAccount fixtureUserId iban, Owner),
-            (secondId, mkLocalBankAccount fixtureUserId iban, Editor)
-          ]
-        bank = [sampleBankAccount iban]
-    result <- runAppM env (buildBankLink bank localAccs)
-    -- The implementation is documented to pick the first candidate
-    -- deterministically. The warning goes to the log function — we do not
-    -- assert on log contents here (the test env logs to stderr), but we do
-    -- assert that the picked pair is the first candidate.
-    result `shouldBe` [("ext-" <> iban, firstId)]
-
-  it "raises BankingError (a 400 ServerError) when no bank account matches" $ do
-    env <- createTestAppEnv
-    let localAccs =
-          [ ( mockAccountId (UUID.fromWords 300 0 0 1),
-              mkLocalBankAccount fixtureUserId "UA-LOCAL",
-              Owner
-            )
-          ]
-        bank = [sampleBankAccount "UA-REMOTE"]
-    outcome <- E.try (runAppM env (buildBankLink bank localAccs))
-    case outcome of
-      Left (se :: ServerError) ->
-        errHTTPCode se `shouldBe` 400
-      Right _ ->
-        expectationFailure "expected BankingError but got a successful mapping"
-
-  it "filters out Viewer-shared accounts (they are not writable)" $ do
-    env <- createTestAppEnv
-    let iban = "UA003"
-        viewerShared = mockAccountId (UUID.fromWords 400 0 0 1)
-        localAccs =
-          [(viewerShared, mkLocalBankAccount fixtureUserId iban, Viewer)]
-        bank = [sampleBankAccount iban]
-    outcome <- E.try (runAppM env (buildBankLink bank localAccs))
-    case outcome of
-      Left (se :: ServerError) ->
-        errHTTPCode se `shouldBe` 400
-      Right rs ->
-        expectationFailure
-          $ "expected Viewer-shared accounts to be ignored, got: "
-          <> show rs
-
--- -----------------------------------------------------------------------------
--- Feature-flag HTTP test
--- -----------------------------------------------------------------------------
-
-featureFlagSpec :: Spec
-featureFlagSpec = do
-  describe "POST /api/banking/resync (feature flag disabled)"
+-- | Feature off (the default 'mkApp' ships banking.enabled = False): 404
+-- FEATURE_DISABLED, hiding the endpoint's existence entirely.
+featureGateSpec :: Spec
+featureGateSpec =
+  describe "POST /api/banking/connections/:id/resync (feature disabled)"
     $ with mkApp
-    $ it "returns a 404 JSON envelope when banking.enabled is false"
+    $ it "returns 404 FEATURE_DISABLED when banking is off"
     $ do
-      token <- liftIO generateTestToken
-      let headers = ("X-Banking-Token", "dummy-monobank-token") : jsonAuthHeaders token
-      resp <- request "POST" "/api/banking/resync" headers sampleBody
+      tok <- registerAndGetToken
+      connId <- liftIO UUID.nextRandom
+      resp <- request "POST" (resyncPath (T.pack (show connId))) (jsonAuthHeaders tok) sampleBody
       liftIO $ do
         simpleStatus resp `shouldBe` status404
-        -- Response goes through Web.ErrorMapping, so the body must be a
-        -- proper JSON envelope (not Servant's default empty body) and
-        -- the code/details must identify the disabled feature so the
-        -- test fails loudly if the mapping regresses to a different
-        -- 404 variant.
-        LBS.null (simpleBody resp) `shouldBe` False
-        case eitherDecode (simpleBody resp) :: Either String ErrorResponse of
-          Left err -> expectationFailure $ "404 body is not an ErrorResponse: " <> err
-          Right env -> do
-            env.code `shouldBe` "FEATURE_DISABLED"
-            env.details `shouldBe` Just (Map.singleton "feature" "banking")
+        e <- decodeError resp
+        e.code `shouldBe` "FEATURE_DISABLED"
+        e.details `shouldBe` Just (Map.singleton "feature" "banking")
 
-  describe "POST /api/banking/resync (feature flag enabled)"
-    $ with mkAppBankingEnabled
-    $ it "crosses the feature-flag gate when banking + monobank are enabled"
+-- | Unknown connection id → 404 BANK_CONNECTION_NOT_FOUND.
+notFoundSpec :: Spec
+notFoundSpec =
+  describe "POST /api/banking/connections/:id/resync (unknown id)"
+    $ with mkAppBankingEnabledSeeded
+    $ it "returns 404 when the connection does not exist"
     $ do
-      token <- liftIO generateTestToken
-      let headers = ("X-Banking-Token", "dummy-monobank-token") : jsonAuthHeaders token
-      resp <- request "POST" "/api/banking/resync" headers sampleBody
-      -- The downstream Monobank call points at 127.0.0.1:1 and will
-      -- fail with some 4xx/5xx. We don't care about the exact code,
-      -- only that the gate did NOT short-circuit to 404. This guards
-      -- against accidentally inverting the `unless` predicate in the
-      -- handler.
-      liftIO $ simpleStatus resp `shouldNotBe` status404
-  where
-    fromDay :: UTCTime
-    fromDay = UTCTime (fromGregorian 2026 4 1) 0
-    toDay :: UTCTime
-    toDay = UTCTime (fromGregorian 2026 4 10) (secondsToDiffTime 0)
-    sampleBody =
-      encode
-        $ object
-          [ "from" .= fromDay,
-            "to" .= toDay
+      tok <- registerAndGetToken
+      connId <- liftIO UUID.nextRandom
+      resp <- request "POST" (resyncPath (T.pack (show connId))) (jsonAuthHeaders tok) sampleBody
+      liftIO $ do
+        simpleStatus resp `shouldBe` status404
+        e <- decodeError resp
+        e.code `shouldBe` "BANK_CONNECTION_NOT_FOUND"
+
+-- | A disabled connection → 422 CONNECTION_DISABLED.
+disabledSpec :: Spec
+disabledSpec =
+  describe "POST /api/banking/connections/:id/resync (disabled connection)"
+    $ with mkAppBankingEnabledSeeded
+    $ it "returns 422 CONNECTION_DISABLED when enabled == false"
+    $ do
+      tok <- registerAndGetToken
+      connId <- addConnection tok "Disabled" False
+      resp <- request "POST" (resyncPath connId) (jsonAuthHeaders tok) sampleBody
+      liftIO $ do
+        simpleStatus resp `shouldBe` status422
+        e <- decodeError resp
+        e.code `shouldBe` "CONNECTION_DISABLED"
+
+-- | Enabled + mapped: the import is routed strictly by accountMap. The stub
+-- serves statements for two external ids, but only one is in the map, so only
+-- that one produces a per-account summary row (with a positive import count);
+-- the unmapped external id is never fetched.
+routesByAccountMapSpec :: Spec
+routesByAccountMapSpec =
+  describe "POST /api/banking/connections/:id/resync (enabled + mapped)"
+    $ withState mkAppBankingEnabledSeededWith
+    $ it "routes the import by accountMap (mapped imported, unmapped skipped)"
+    $ do
+      controls <- getState
+      -- The auto-created External account is denominated in the base
+      -- currency (USD), while the bank statements are UAH; seed a rate so
+      -- the cross-currency import can resolve per-leg amounts.
+      liftIO $ seedRate controls
+      -- Stub serves statements for BOTH external ids ...
+      liftIO
+        $ writeIORef controls.stubStatements
+        $ Map.fromList
+          [ ("ext-mapped", [sampleTxn "ext-mapped"]),
+            ("ext-unmapped", [sampleTxn "ext-unmapped"])
           ]
+      tok <- registerAndGetToken
+      accId <- createAccountWith tok "Wallet" "UAH"
+      connId <- addConnection tok "Live" True
+      -- ... but only "ext-mapped" is in the connection's accountMap.
+      setAccountMap tok connId "ext-mapped" accId
+      resp <- request "POST" (resyncPath connId) (jsonAuthHeaders tok) sampleBody
+      liftIO $ do
+        simpleStatus resp `shouldBe` status200
+        o <- asObject resp
+        case KeyMap.lookup "accounts" o of
+          Just (Array rows) -> do
+            let objs = [r | Object r <- toList rows]
+                extIds = [i | r <- objs, Just (String i) <- [KeyMap.lookup "externalAccountId" r]]
+            -- Only the mapped external id produced a row; the unmapped one was
+            -- never fetched.
+            extIds `shouldBe` ["ext-mapped"]
+            case objs of
+              [row] -> do
+                KeyMap.lookup "localAccountId" row `shouldBe` Just (String accId)
+                KeyMap.lookup "importedCount" row `shouldBe` Just (Number 1)
+              _ -> expectationFailure $ "expected exactly one account row, got: " <> show objs
+          other -> expectationFailure $ "expected accounts array, got: " <> show other
+
+-- | Decode a JSON object body to an aeson 'KeyMap.KeyMap'.
+asObject :: SResponse -> IO (KeyMap.KeyMap Value)
+asObject resp =
+  case eitherDecode (simpleBody resp) :: Either String Value of
+    Right (Object o) -> pure o
+    other -> throwString $ "expected JSON object, got: " <> show other

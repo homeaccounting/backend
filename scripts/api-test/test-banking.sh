@@ -8,13 +8,17 @@
 #   - A JWT, supplied as either TEST_USER_TOKEN env var or the
 #     /tmp/test_user_token.txt cache populated by test-auth.sh /
 #     test-telegram.sh login
-#   - MONOBANK_TOKEN env var (personal token from api.monobank.ua)
 #   - MONOBANK_IBAN env var (must match the IBAN Monobank returns for
 #     the account you want to import)
+#   - CONNECTION_ID env var (an enabled bank connection whose token is
+#     already stored and whose account map targets the local account) —
+#     required by 'resync' / 'all'. The Monobank token is NO LONGER passed
+#     to this script; it lives on the stored connection.
 #
 # Subcommands:
 #   setup   - Find-or-create a BankAccount-typed local account for $MONOBANK_IBAN
-#   resync  - POST /api/banking/resync for the resolved account
+#   resync  - POST /api/banking/connections/$CONNECTION_ID/resync (token read
+#             from the stored connection; routed by its account map)
 #   verify  - Diff account balance before/after and print import counts
 #   all     - setup -> resync -> verify
 #
@@ -99,13 +103,6 @@ require_iban() {
     fi
 }
 
-require_token() {
-    if [ -z "$MONOBANK_TOKEN" ]; then
-        print_error "MONOBANK_TOKEN is not set (personal token from api.monobank.ua)"
-        exit 1
-    fi
-}
-
 # --- Subcommand stubs (filled in by later tasks) ------------------------------
 
 test_setup() {
@@ -176,7 +173,21 @@ test_resync() {
     print_header "TEST: Banking resync"
 
     require_auth_token
-    require_token
+
+    # The resync endpoint is now connection-scoped: the Monobank token is read
+    # from the stored connection (set via the configuration banking-connection
+    # endpoints), not from an X-Banking-Token header. A CONNECTION_ID is
+    # required; the import is routed by that connection's persisted
+    # externalId -> local account map.
+    if [ -z "$CONNECTION_ID" ]; then
+        print_error "CONNECTION_ID is not set."
+        echo ""
+        echo "Create a connection and map accounts first, then export its id:"
+        echo "  POST   /api/users/me/configuration/banking/connections"
+        echo "  PUT    /api/users/me/configuration/banking/connections/:id/accounts"
+        echo "  export CONNECTION_ID='<uuid>'"
+        exit 1
+    fi
 
     if [ ! -s "$ACCOUNT_ID_CACHE" ]; then
         print_error "No cached account id. Run 'setup' first or export ACCOUNT_ID."
@@ -200,29 +211,21 @@ test_resync() {
     echo "$balance_before" > "$BALANCE_BEFORE_CACHE"
     print_balance "Balance before: $balance_before"
 
-    # Resolve CATEGORY_ID from configuration if not supplied.
-    if [ -z "$CATEGORY_ID" ]; then
-        print_info "CATEGORY_ID unset; resolving first expense-category entry..."
-        fetch_configuration
-        CATEGORY_ID=$(first_category_id "expense-category")
-        if [ -z "$CATEGORY_ID" ]; then
-            print_error "Could not resolve a default expense-category id from /api/users/me/configuration"
-            exit 1
-        fi
-        print_info "Using CATEGORY_ID=$CATEGORY_ID"
-    fi
+    # Category resolution is performed server-side from the user's banking
+    # configuration (mccExpenseCategoryMap + default income/expense
+    # categories), so the request body carries only the date range.
 
     local body
-    body=$(FROM="$FROM" TO="$TO" CATEGORY_ID="$CATEGORY_ID" \
+    body=$(FROM="$FROM" TO="$TO" \
            envsubst < "${PAYLOADS_DIR}/resync.template.json")
 
-    print_info "POST /api/banking/resync  from=$FROM  to=$TO"
+    local resync_url="${API_BASE_URL}/api/banking/connections/${CONNECTION_ID}/resync"
+    print_info "POST /api/banking/connections/${CONNECTION_ID}/resync  from=$FROM  to=$TO"
     local response
     # Use a separate variable so the curl -w suffix does not pollute the JSON body.
-    response=$(curl -s -w "\n%{http_code}" -X POST "${API_BASE_URL}/api/banking/resync" \
+    response=$(curl -s -w "\n%{http_code}" -X POST "$resync_url" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $TEST_USER_TOKEN" \
-        -H "X-Banking-Token: $MONOBANK_TOKEN" \
         -d "$body")
 
     local http_code body_json
@@ -245,8 +248,14 @@ test_resync() {
             exit 1
             ;;
         404)
-            print_error "Not found (HTTP 404). The banking feature may be disabled:"
-            print_info "Check AppConfig.banking.enabled and providers.monobank.enabled in your config"
+            print_error "Not found (HTTP 404). The banking feature may be disabled, or the connection id is unknown:"
+            print_info "Check AppConfig.banking.enabled / providers.monobank.enabled, and that CONNECTION_ID=$CONNECTION_ID exists"
+            echo "$body_json" | jq '.' 2>/dev/null || echo "$body_json"
+            exit 1
+            ;;
+        422)
+            print_error "Unprocessable (HTTP 422). The connection is likely disabled (CONNECTION_DISABLED):"
+            print_info "Enable it via PUT /api/users/me/configuration/banking/connections/$CONNECTION_ID with {\"enabled\": true}"
             echo "$body_json" | jq '.' 2>/dev/null || echo "$body_json"
             exit 1
             ;;
@@ -342,18 +351,18 @@ Usage: $0 [--prod|--local] <subcommand>
 
 Subcommands:
   setup    Find-or-create a BankAccount-typed local account for \$MONOBANK_IBAN
-  resync   POST /api/banking/resync for the resolved account
+  resync   POST /api/banking/connections/\$CONNECTION_ID/resync (token read
+           from the stored connection; routed by its account map)
   verify   Diff account balance before/after and print import counts
   all      setup -> resync -> verify
 
 Required env vars (per subcommand):
-  MONOBANK_TOKEN   resync, all
+  CONNECTION_ID    resync, all (an enabled connection with a stored token)
   MONOBANK_IBAN    setup, all
   FROM, TO         resync, all (ISO-8601; default last 30 days / now; max span 31 days)
 
 Optional:
   ACCOUNT_ID       short-circuit setup
-  CATEGORY_ID      defaultCategory UUID; default = first expense-category entry
   CURRENCY         default UAH
   BANK_NAME        default Monobank
   ACCOUNT_NAME     default "Mono \${CURRENCY}"

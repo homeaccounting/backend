@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.5.0
+version:        0.5.1
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -57,6 +57,7 @@ library
       Domain.Account.Errors
       Domain.Account.Events
       Domain.Account.Projection
+      Domain.Banking.Types
       Domain.Commands
       Domain.Configuration
       Domain.Configuration.CommandHandler
@@ -94,6 +95,7 @@ library
       Infrastructure.Banking.Provider
       Infrastructure.Bootstrap
       Infrastructure.Config
+      Infrastructure.Crypto.SecretBox
       Infrastructure.Database
       Infrastructure.Eventium
       Infrastructure.Eventium.GlobalEvent
@@ -303,6 +305,7 @@ test-suite backend-test
       Domain.Account.CommandHandlerSpec
       Domain.Account.ReversalCommandHandlerSpec
       Domain.Account.ReversalProjectionPropertySpec
+      Domain.Banking.TypesSpec
       Domain.Configuration.BooksCloseSpec
       Domain.Configuration.CommandHandlerSpec
       Domain.Configuration.DefaultsSpec
@@ -332,6 +335,7 @@ test-suite backend-test
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.ProviderSpec
       Infrastructure.ConfigSpec
+      Infrastructure.Crypto.SecretBoxSpec
       Infrastructure.ExchangeRate.NBUIntegrationSpec
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
@@ -351,6 +355,7 @@ test-suite backend-test
       Telegram.CommandsSpec
       Telegram.FormattingSpec
       Testkit.AppEnv
+      Testkit.AppEnvSpec
       Testkit.Auth
       Testkit.BankingHelpers
       Testkit.Fixtures
@@ -362,6 +367,7 @@ test-suite backend-test
       Testkit.TransactionEditFixture
       Web.API.AccountAPISpec
       Web.API.AuthAPIIntegrationSpec
+      Web.API.BankConnectionAPISpec
       Web.API.BankingAPISpec
       Web.API.ConfigurationBankingAPISpec
       Web.API.TransactionAllocationsAPISpec

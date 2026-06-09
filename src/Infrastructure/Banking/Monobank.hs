@@ -6,6 +6,7 @@
 
 module Infrastructure.Banking.Monobank
   ( mkMonobankProvider,
+    mkBankProviderFactory,
   )
 where
 
@@ -15,6 +16,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time (UTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import qualified Domain.Banking.Types as Domain
+import Infrastructure.App (BankProviderFactory)
 import Infrastructure.Banking.Monobank.Internal
   ( MonoAccount (..),
     MonoClientInfo (..),
@@ -22,6 +25,7 @@ import Infrastructure.Banking.Monobank.Internal
     toProviderTransaction,
   )
 import Infrastructure.Banking.Provider
+import Infrastructure.Config (AppConfig (..), BankingConfig (..), BankingProvidersConfig (..), MonobankProviderConfig (..))
 import Network.HTTP.Client
   ( Manager,
     RequestBody (RequestBodyLBS),
@@ -49,6 +53,20 @@ mkMonobankProvider apiBaseUrl token manager =
       registerWebhook = monoRegisterWebhook apiBaseUrl token manager,
       classifyTransaction = monoClassifyTransaction
     }
+
+-- | Build the application's 'BankProviderFactory' from the loaded config and
+-- shared HTTP 'Manager'.
+--
+-- This is the single place where provider-specific configuration (the
+-- Monobank API base URL) and the constructor are wired together. The returned
+-- factory dispatches on the connection's 'Domain.BankProvider' enum and
+-- captures @config@/@manager@ in its closure, so callers never see the
+-- per-provider config. New providers are added by extending the @case@ here.
+mkBankProviderFactory :: AppConfig -> Manager -> BankProviderFactory
+mkBankProviderFactory config manager provider token =
+  case provider of
+    Domain.Monobank ->
+      mkMonobankProvider config.banking.providers.monobank.apiBaseUrl token manager
 
 -- | Monobank classify: amount-sign based (direction only).
 --

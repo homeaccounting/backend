@@ -16,6 +16,12 @@
 --   - Resolves categories from per-user banking configuration (Phase 2)
 module Application.Services.BankImportServiceSpec (spec) where
 
+import Application.ReadModels.BankImportReadModel
+  ( BankImportReadModel,
+    createBankImportReadModel,
+    handleBankImportEvents,
+    isImported,
+  )
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.ReadModels.User (UserData (..), UserReadModel (..))
@@ -23,6 +29,7 @@ import Application.Services.AccountService (createAccount)
 import Application.Services.BankImportService (importTransaction)
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Control.Concurrent.STM as STM
+import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -38,12 +45,22 @@ import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     Currency (..),
+    ExternalTransactionId,
+    TransactionId,
+    TransactionType (..),
     UserId,
     defaultBankAccount,
     defaultConfigurationId,
     mkMoney,
+    unTransactionId,
     unsafeExternalTransactionId,
   )
+import Domain.Models (AccountingEvent (..))
+import Domain.Transaction.Events
+  ( TransactionPostingFailed (..),
+    TransactionPostingInitiated (..),
+  )
+import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), HasReadModel (..), runAppM)
 import Infrastructure.Banking.Provider
   ( BankAccountId,
@@ -56,7 +73,9 @@ import qualified RIO.Map as Map
 import Test.Hspec
 import Testkit.Helpers
   ( fromRight',
+    mockAccountId,
     mockMoneyWith,
+    mockTransactionId,
     mockUserId,
     shouldBeRight,
     singletonExpense,
@@ -171,9 +190,9 @@ setupTestEnv = do
     -- Create bank account. Give it a generous overdraft so the imported
     -- transfers clear: bank imports debit the BankAccount from a zero
     -- initial balance; without room to overdraw, every expense saga would
-    -- emit TransactionPostingFailed, which the dedup read model now evicts (so the
-    -- same tx could be re-imported). The overdraft keeps the test focused
-    -- on dedup semantics rather than balance accounting.
+    -- emit TransactionPostingFailed. Dedup is now permanent (a failed posting
+    -- is never evicted), but the overdraft keeps these service-level tests
+    -- focused on dedup semantics rather than balance accounting.
     bankResult <-
       createAccount
         CreateAccount
@@ -519,3 +538,90 @@ spec = describe "BankImportService" $ do
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
       txData.transactionType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 200))
+
+  -- Regression guard for the permanent-dedup fix. The BankImportReadModel
+  -- records an externalTransactionId on TransactionPostingInitiated and must
+  -- NEVER evict it, even when the posting subsequently fails. The previous
+  -- (evict-on-failure) behaviour caused every previously-failed transaction to
+  -- be re-imported as a brand-new aggregate on each re-sync, accumulating
+  -- duplicates without bound. We drive the read model's own event handler
+  -- directly (mirroring production) to assert the mapping survives a failure.
+  describe "BankImportReadModel dedup is permanent" $ do
+    it "keeps an external id imported even after the posting fails (no evict)" $ do
+      let txId = mockTransactionId (UUID.fromWords 7 0 0 0)
+          extId = unsafeExternalTransactionId "tx-fails-later"
+
+      rm <- createBankImportReadModel
+
+      -- TransactionPostingInitiated carrying the external id records the mapping.
+      feedBankImportEvents rm [mkInitiatedEvent txId (Just extId) 0]
+      imported1 <- isImported rm extId
+      imported1 `shouldBe` True
+
+      -- A later TransactionPostingFailed on the SAME stream must NOT evict it.
+      feedBankImportEvents rm [mkFailedEvent txId 1]
+      imported2 <- isImported rm extId
+      imported2 `shouldBe` True
+
+-- -----------------------------------------------------------------------------
+-- Event construction for the read-model dedup test
+--
+-- Shape: GlobalStreamEvent = StreamEvent () SequenceNumber (VersionedStreamEvent)
+-- where VersionedStreamEvent = StreamEvent UUID EventVersion AccountingEvent.
+-- The inner stream UUID is the transaction aggregate's stream id, which
+-- processEvent reads back via unpackGlobalEvent.
+-- -----------------------------------------------------------------------------
+
+-- | Drive the bank-import read model's own event handler in IO. The explicit
+-- IO signature pins the otherwise-ambiguous @MonadIO m@ on
+-- 'handleBankImportEvents'.
+feedBankImportEvents ::
+  TVar BankImportReadModel ->
+  [GlobalStreamEvent AccountingEvent] ->
+  IO ()
+feedBankImportEvents rm events =
+  let EventHandler runHandler = handleBankImportEvents rm
+   in runHandler events
+
+mkInitiatedEvent ::
+  TransactionId ->
+  Maybe ExternalTransactionId ->
+  SequenceNumber ->
+  GlobalStreamEvent AccountingEvent
+mkInitiatedEvent txId mExtId seqNo =
+  let acctSrc = mockAccountId (UUID.fromWords 1 0 0 0)
+      acctTgt = mockAccountId (UUID.fromWords 2 0 0 0)
+      inner =
+        StreamEvent
+          (unTransactionId txId)
+          0
+          (emptyMetadata "TransactionPostingInitiated")
+          ( TransactionPostingInitiatedEvent
+              TransactionPostingInitiated
+                { sourceAccountId = acctSrc,
+                  targetAccountId = acctTgt,
+                  sourceAmount = mockMoneyWith UAH 100,
+                  targetAmount = mockMoneyWith UAH 100,
+                  exchangeRate = Nothing,
+                  description = "seed",
+                  by = mockUserId (UUID.fromWords 9 0 0 0),
+                  at = testTime,
+                  transactionType = Transfer,
+                  externalTransactionId = mExtId,
+                  labels = Set.empty
+                }
+          )
+   in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
+
+mkFailedEvent ::
+  TransactionId ->
+  SequenceNumber ->
+  GlobalStreamEvent AccountingEvent
+mkFailedEvent txId seqNo =
+  let inner =
+        StreamEvent
+          (unTransactionId txId)
+          1
+          (emptyMetadata "TransactionPostingFailed")
+          (TransactionPostingFailedEvent (TransactionPostingFailed "Insufficient funds"))
+   in StreamEvent () seqNo (emptyMetadata "TransactionPostingFailed") inner

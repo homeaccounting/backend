@@ -22,7 +22,8 @@
 --
 -- API Endpoints:
 --
---   POST   /api/banking/resync                   - Manual resync (authenticated)
+--   GET    /api/banking/connections/:id/external-accounts - Live account list
+--   POST   /api/banking/connections/:id/resync            - Manual resync
 module Web.API.BankingAPI
   ( -- * API Type
     BankingAPI,
@@ -35,48 +36,52 @@ module Web.API.BankingAPI
     ResyncRequest (..),
     ResyncResponse (..),
     AccountResyncSummary (..),
+    ExternalAccountDTO (..),
 
     -- * Individual Handlers (exported for testing)
     resyncHandler,
-    buildBankLink,
+    externalAccountsHandler,
+
+    -- * Feature gate
+    requireBankingEnabled,
   )
 where
 
-import Application.ReadModels.Account (AccountData (..), getAccessibleAccounts)
+import Application.ReadModels.Account (getAccessibleAccounts)
+import Application.ReadModels.Configuration (ConfigurationData (..))
 import Application.Services.BankImportService (ResyncResult (..))
 import qualified Application.Services.BankImportService as BankImportService
+import qualified Application.Services.ConfigurationService as ConfigService
 import Data.Aeson (FromJSON, ToJSON)
-import qualified Data.Text as T
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Time (UTCTime, diffUTCTime)
+import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import Domain.Banking.Types (mkBankConnectionId)
+import Domain.Configuration.Projection (BankConnection (..), BankingConfiguration (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
-  ( AccountId,
-    AccountRole (..),
-    AccountSubtype (..),
-    AccountType (..),
-    BankAccountProperties (..),
+  ( AccountRole (..),
+    currencyFromNumericCode,
     unAccountId,
   )
 import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
-    HasHttpManager (..),
     HasReadModel (..),
   )
-import Infrastructure.Banking.Monobank (mkMonobankProvider)
-import Infrastructure.Banking.Provider (BankAccountId, BankProvider (..))
+import Infrastructure.Banking.Provider (BankProvider (..))
 import qualified Infrastructure.Banking.Provider as Banking
 import Infrastructure.Config
   ( AppConfig (..),
-    BankingConfig (..),
-    BankingProvidersConfig (..),
-    MonobankProviderConfig (..),
+    bankingFeatureAvailable,
   )
 import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
+import Web.Validation (validateFieldCtx)
 
 -- -----------------------------------------------------------------------------
 -- API Type Definition
@@ -85,22 +90,38 @@ import Web.Middleware.Auth (AuthenticatedUser (..))
 -- | Banking API type-level definition.
 --
 -- Endpoints:
---   - POST resync: Authenticated user triggers manual bank statement import
+--   - GET external-accounts: live list of a connection's external accounts.
+--   - POST resync: authenticated user triggers a manual import for a stored
+--     connection, routed by its persisted externalId -> local account map.
 --
--- The Monobank API token is supplied via the dedicated @X-Banking-Token@
--- header rather than @Authorization: Bearer@. Reusing the @Authorization@
--- scheme would collide with the JWT bearer token already required by
--- @AuthProtect "jwt"@ on this route, so a distinct header is used.
+-- Both endpoints are connection-scoped: the Monobank token is read from the
+-- connection's encrypted store rather than carried on the wire, so no secret
+-- header is required.
 --
 -- Webhook endpoints are deferred to Phase 2 (see module header).
 type BankingAPI =
-  AuthProtect "jwt"
-    :> Header' '[Required, Strict] "X-Banking-Token" Text
-    :> "api"
-    :> "banking"
-    :> "resync"
-    :> ReqBody '[JSON] ResyncRequest
-    :> Post '[JSON] ResyncResponse
+  -- GET /api/banking/connections/:id/external-accounts
+  -- Live list of the connection's external accounts from the provider.
+  ( AuthProtect "jwt"
+      :> "api"
+      :> "banking"
+      :> "connections"
+      :> Capture "connId" UUID
+      :> "external-accounts"
+      :> Get '[JSON] [ExternalAccountDTO]
+  )
+    -- POST /api/banking/connections/:id/resync
+    -- Trigger a manual import for a stored connection, routed by its
+    -- persisted externalId -> local account map.
+    :<|> ( AuthProtect "jwt"
+             :> "api"
+             :> "banking"
+             :> "connections"
+             :> Capture "connId" UUID
+             :> "resync"
+             :> ReqBody '[JSON] ResyncRequest
+             :> Post '[JSON] ResyncResponse
+         )
 
 -- | Proxy for the BankingAPI.
 bankingAPI :: Proxy BankingAPI
@@ -112,10 +133,10 @@ bankingAPI = Proxy
 
 -- | Request body for manual bank statement resync.
 --
--- The Monobank token is supplied in the @X-Banking-Token@ header rather
--- than the JSON body so it does not appear in request-body logs or traces.
--- Category resolution is performed server-side from the user's banking
--- configuration (mccExpenseCategoryMap + default income/expense categories).
+-- The Monobank token is read from the connection's encrypted store, not the
+-- request, so it never appears in request-body logs or traces. Category
+-- resolution is performed server-side from the user's banking configuration
+-- (mccExpenseCategoryMap + default income/expense categories).
 data ResyncRequest = ResyncRequest
   { -- | Start of the date range to import
     from :: UTCTime,
@@ -160,53 +181,109 @@ instance FromJSON ResyncResponse
 
 instance ToJSON ResyncResponse
 
+-- | A single external bank account as listed by the provider.
+--
+-- Returned by @GET /api/banking/connections/:id/external-accounts@. This is
+-- the read-only projection a client needs to map external accounts to local
+-- ones; it deliberately omits provider-specific internals.
+--
+-- @maskedPan@ is the first card mask, when the provider reports any. Monobank's
+-- mapper currently hardcodes @cardMasks = []@ ('Monobank.hs'), so this is
+-- always @null@ for monobank today.
+data ExternalAccountDTO = ExternalAccountDTO
+  { -- | Provider-specific account identifier.
+    externalId :: !Text,
+    -- | IBAN / account number reported by the provider.
+    iban :: !Text,
+    -- | First card mask, if any (monobank: always 'Nothing').
+    maskedPan :: !(Maybe Text),
+    -- | ISO-4217 alphabetic currency code (e.g. "UAH").
+    currency :: !Text,
+    -- | Balance in minor units (e.g. kopiykas/cents).
+    balance :: !Integer
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON ExternalAccountDTO
+
+instance ToJSON ExternalAccountDTO
+
 -- -----------------------------------------------------------------------------
 -- Server Implementation
 -- -----------------------------------------------------------------------------
 
 -- | Banking API server implementation.
 bankingServer :: ServerT BankingAPI AppM
-bankingServer = resyncHandler
+bankingServer = externalAccountsHandler :<|> resyncHandler
+
+-- -----------------------------------------------------------------------------
+-- Feature gate
+-- -----------------------------------------------------------------------------
+
+-- | Reject the request with HTTP 404 @FEATURE_DISABLED@ unless both the
+-- global banking feature and the Monobank provider are enabled in config.
+--
+-- 404 (rather than 403) hides the endpoint's existence entirely when the
+-- feature is off. The error flows through the unified
+-- @DomainError -> JSON@ envelope so clients see the same shape as every
+-- other banking response. Shared by the banking and configuration-banking
+-- endpoints so the gate stays in one place.
+requireBankingEnabled :: AppM ()
+requireBankingEnabled = do
+  cfg <- view appConfigL
+  unless (bankingFeatureAvailable cfg.banking)
+    $ throwDomainError
+    $ FeatureDisabled "banking"
 
 -- -----------------------------------------------------------------------------
 -- Handlers
 -- -----------------------------------------------------------------------------
 
--- | Handler for POST /api/banking/resync
+-- | Handler for POST /api/banking/connections/:id/resync
 --
--- Triggers a manual bank statement import for the authenticated user.
---
--- The Monobank API token is carried in a dedicated @X-Banking-Token@
--- header rather than @Authorization: Bearer@ because the same request
--- already uses an @Authorization: Bearer <jwt>@ header for the app's
--- own JWT scheme. Sharing one @Authorization@ header between two
--- independent bearer schemes is not expressible in Servant and would
--- confuse both clients and server-side auth handlers.
+-- Triggers a manual bank statement import for a stored connection, routed by
+-- its persisted @externalId -> local account@ map. The provider token comes
+-- from the connection's encrypted store rather than a request header, so no
+-- secret is carried on the wire.
 --
 -- Flow:
 --   0. Feature-flag gate: 404 when banking or monobank are disabled.
---   1. Validate date range (max 31 days)
---   2. Create Monobank provider from the header token
---   3. Fetch bank accounts from provider
---   4. Match bank accounts to Owner/Editor local accounts by accountNumber
---   5. Build the mapping list from the matches
---   6. Call BankImportService.resync
---   7. Return import counts
-resyncHandler :: AuthenticatedUser -> Text -> ResyncRequest -> AppM ResyncResponse
-resyncHandler user bankingToken request = do
-  -- 0. Feature-flag gate: return 404 when the banking feature or the
-  -- Monobank provider are disabled. 404 (rather than 403) hides the
-  -- endpoint's existence entirely when the feature is off. The error
-  -- flows through the unified DomainError -> JSON envelope so clients
-  -- see the same shape as every other banking response.
-  cfg <- view appConfigL
-  let bankingCfg = cfg.banking
-      monoCfg = bankingCfg.providers.monobank
-  unless (bankingCfg.enabled && monoCfg.enabled)
-    $ throwDomainError
-    $ FeatureDisabled "banking"
+--   1. Validate the captured connection id.
+--   2. Load the caller's connection (404 'BankConnectionNotFound' if absent);
+--      reject a disabled connection with 422 'BankConnectionDisabled'.
+--   3. Validate the date range (max 31 days, strictly positive).
+--   4-5. Build a ready-to-use provider for the connection via the
+--      configuration service ('getConnectionProvider'), which decrypts the
+--      stored token and dispatches on the connection's provider. The handler
+--      stays provider-agnostic.
+--   6. Build the import link directly from @connection.accountMap@, keeping
+--      only targets the caller may write to (Owner/Editor). External accounts
+--      not in the map are simply absent and reported as skipped by the import.
+--   7. Call BankImportService.resync and return import counts.
+resyncHandler :: AuthenticatedUser -> UUID -> ResyncRequest -> AppM ResyncResponse
+resyncHandler user connUuid request = do
+  -- 0. Feature-flag gate.
+  requireBankingEnabled
 
-  -- 1. Validate date range (max 31 days)
+  let userId = user.userId
+
+  -- 1. Validate the captured connection id.
+  connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
+
+  -- 2. Load the caller's connection; 404 when absent.
+  configResult <- ConfigService.getConfigurationForUser userId
+  configData <- case configResult of
+    Left err -> throwDomainError err
+    Right c -> pure c
+  connection <- case Map.lookup connId configData.banking.connections of
+    Nothing -> throwDomainError BankConnectionNotFound
+    Just c -> pure c
+
+  -- 2a. Reject a disabled connection with 422 CONNECTION_DISABLED.
+  unless connection.enabled
+    $ throwDomainError BankConnectionDisabled
+
+  -- 3. Validate date range (max 31 days).
   let maxSeconds = 31 * 86400 :: Double
       rangeSeconds = realToFrac (diffUTCTime request.to request.from) :: Double
   when (rangeSeconds > maxSeconds)
@@ -216,36 +293,97 @@ resyncHandler user bankingToken request = do
     $ throwDomainError
     $ BankingError "Date range 'to' must be after 'from'"
 
-  -- 1a. Reject an empty/whitespace-only X-Banking-Token early so the
-  -- failure mode is a clear banking validation error rather than an
-  -- opaque downstream 401 from the Monobank API.
-  when (T.null (T.strip bankingToken))
-    $ throwDomainError
-    $ BankingError "X-Banking-Token header must not be empty"
+  -- 4-5. Build a ready-to-use provider for this connection. The service layer
+  -- loads the connection, decrypts its stored token, and dispatches on the
+  -- connection's provider via the injected factory, so the handler stays
+  -- provider-agnostic and never touches app config.
+  providerResult <- ConfigService.getConnectionProvider userId connId
+  provider <- case providerResult of
+    Left err -> throwDomainError err
+    Right p -> pure p
 
-  let userId = user.userId
-
-  -- 3. Create provider from token + httpManager
-  manager <- view httpManagerL
-  let MonobankProviderConfig {apiBaseUrl = apiBaseUrl} = monoCfg
-      provider = mkMonobankProvider apiBaseUrl bankingToken manager
-
-  -- 4. Fetch bank accounts from provider
-  fetchResult <- liftIO provider.fetchAccounts
-  bankAccounts <- case fetchResult of
-    Left err -> do
-      logError $ "Failed to fetch bank accounts: " <> display err
-      throwDomainError $ BankingError $ "Failed to fetch bank accounts: " <> err
-    Right accs -> return accs
-
-  -- 5. Match bank accounts to local accounts (Owner/Editor only)
+  -- 6. Build the import link from the connection's accountMap, keeping only
+  -- Owner/Editor (writable) targets so an import never writes to a read-only
+  -- share. accountMap :: Map ExternalAccountId AccountId, and
+  -- BankAccountId = ExternalAccountId = Text, so each entry is already a
+  -- (BankAccountId, AccountId) pair.
   accountRM <- view accountReadModelL
   localAccounts <- getAccessibleAccounts accountRM userId
-  bankLink <- buildBankLink bankAccounts localAccounts
+  let writable =
+        Set.fromList
+          [ accId
+          | (accId, _accData, role) <- localAccounts,
+            role == Owner || role == Editor
+          ]
+      accountLink =
+        [ (extId, accId)
+        | (extId, accId) <- Map.toList connection.accountMap,
+          Set.member accId writable
+        ]
 
-  -- 6. Call BankImportService.resync
-  result <- BankImportService.resync provider userId bankLink request.from request.to
+  -- 7. Call BankImportService.resync and project to the HTTP response.
+  result <- BankImportService.resync provider userId accountLink request.from request.to
   return $ toResyncResponse result
+
+-- | Handler for GET /api/banking/connections/:id/external-accounts
+--
+-- Returns the live list of external accounts for a stored connection, fetched
+-- from the provider using the connection's decrypted token.
+--
+-- Flow:
+--   0. Feature-flag gate: 404 when banking or monobank are disabled.
+--   1. Validate the captured connection id.
+--   2-3. Build a ready-to-use provider for the connection via the
+--      configuration service ('getConnectionProvider'), which loads the
+--      connection, decrypts its stored token, and dispatches on the
+--      connection's provider. Absent connection surfaces as
+--      'BankConnectionNotFound' (404); decryption failure as a 'BankingError'.
+--      The handler stays provider-agnostic.
+--   4. Fetch accounts; an upstream failure surfaces as a 'BankingError'.
+--   5. Map each 'BankAccount' to an 'ExternalAccountDTO'.
+externalAccountsHandler :: AuthenticatedUser -> UUID -> AppM [ExternalAccountDTO]
+externalAccountsHandler user connUuid = do
+  -- 0. Feature-flag gate.
+  requireBankingEnabled
+
+  -- 1. Validate the captured connection id.
+  connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
+
+  -- 2-3. Build a ready-to-use provider for this connection via the service
+  -- layer, which loads the connection, decrypts its stored token, and
+  -- dispatches on the connection's provider. An absent connection surfaces as
+  -- 'BankConnectionNotFound' (404) and a decryption failure as a
+  -- 'BankingError'; the handler stays provider-agnostic.
+  providerResult <- ConfigService.getConnectionProvider user.userId connId
+  provider <- case providerResult of
+    Left err -> throwDomainError err
+    Right p -> pure p
+
+  -- 4. Fetch accounts; surface an upstream failure as a BankingError.
+  fetchResult <- liftIO provider.fetchAccounts
+  case fetchResult of
+    Left err -> do
+      logError $ "Failed to list external accounts: " <> display err
+      throwDomainError $ BankingError $ "Failed to fetch external accounts: " <> err
+    Right accs -> pure (map toExternalAccountDTO accs)
+
+-- | Project a provider 'BankAccount' onto the wire 'ExternalAccountDTO'.
+--
+-- The ISO-4217 numeric currency code is converted to its alphabetic form using
+-- the same converter the import path uses ('currencyFromNumericCode'); an
+-- unsupported code falls back to the numeric code rendered as text so the row
+-- is still listed rather than failing the whole request.
+toExternalAccountDTO :: Banking.BankAccount -> ExternalAccountDTO
+toExternalAccountDTO acc =
+  ExternalAccountDTO
+    { externalId = acc.externalId,
+      iban = acc.accountNumber,
+      maskedPan = listToMaybe acc.cardMasks,
+      currency = case currencyFromNumericCode acc.currencyCode of
+        Right c -> tshow c
+        Left _ -> tshow acc.currencyCode,
+      balance = fromIntegral acc.balance
+    }
 
 -- -----------------------------------------------------------------------------
 -- Helpers
@@ -267,57 +405,3 @@ toResyncResponse r =
           skippedCount = acc.skipped,
           failureCount = length acc.failures
         }
-
--- | Build the account mapping list on the fly by matching bank accounts to local accounts.
---
--- For each bank account, finds local accounts with matching accountNumber
--- (from BankAccountProperties). Only accounts where the caller has the
--- 'Owner' or 'Editor' role are considered; 'Viewer'-shared accounts are
--- excluded so bank imports never write to a read-only share.
---
--- When a bank IBAN matches more than one local account the first candidate
--- is picked deterministically and a warning is logged listing all
--- candidates so the user can disambiguate manually.
---
--- Returns an error if no accounts could be matched.
-buildBankLink ::
-  (MonadIO m, MonadReader env m, HasLogFunc env) =>
-  [Banking.BankAccount] ->
-  [(AccountId, AccountData, AccountRole)] ->
-  m [(BankAccountId, AccountId)]
-buildBankLink bankAccounts localAccounts = do
-  let writable =
-        [ (accId, accData)
-        | (accId, accData, role) <- localAccounts,
-          role == Owner || role == Editor
-        ]
-  resolved <- forM bankAccounts $ \bankAcc -> do
-    let bankIBAN = bankAcc.accountNumber
-        candidates =
-          [ (bankAcc.externalId, accId)
-          | (accId, accData) <- writable,
-            matchesAccountNumber bankIBAN accData
-          ]
-    case candidates of
-      [] -> return Nothing
-      [single] -> return (Just single)
-      candidates'@(firstCandidate : _) -> do
-        logWarn
-          $ "IBAN "
-          <> display bankIBAN
-          <> " matches multiple local accounts; picking first. Candidates: "
-          <> displayShow (map snd candidates')
-        return (Just firstCandidate)
-  let collected = catMaybes resolved
-  when (null collected)
-    $ throwDomainError
-    $ BankingError
-      "No bank accounts could be matched to local accounts. Ensure your Owner/Editor accounts have matching IBANs."
-  return collected
-  where
-    matchesAccountNumber :: Text -> AccountData -> Bool
-    matchesAccountNumber bankNumber accData =
-      case accData.accountType of
-        Regular (BankAccount props) ->
-          props.accountNumber == Just bankNumber
-        _ -> False

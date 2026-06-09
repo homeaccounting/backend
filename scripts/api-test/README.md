@@ -157,28 +157,32 @@ Available operations:
 
 #### Test Banking (Monobank resync)
 
-Smoke-tests `POST /api/banking/resync` end-to-end with a real Monobank
-personal token.
+Smoke-tests `POST /api/banking/connections/:id/resync` end-to-end against a
+stored bank connection (the Monobank token lives on the connection, not in the
+request).
 
 **Prerequisites**
 
 1. A cached JWT in `/tmp/test_user_token.txt`. Two ways to obtain one:
    - **Password user:** `./scripts/api-test/test-auth.sh login`
    - **Pasted JWT:** `export TEST_USER_TOKEN='<jwt>'` and the script will seed the cache on the next run.
-2. A Monobank personal token from <https://api.monobank.ua/>. Export as `MONOBANK_TOKEN`.
+2. An **enabled** bank connection whose token is already stored and whose
+   account map targets the local account. Create it via
+   `POST /api/users/me/configuration/banking/connections` and map accounts via
+   `PUT .../connections/:id/accounts`, then export its id as `CONNECTION_ID`.
 3. The exact IBAN Monobank reports for the account you want to import. Export as `MONOBANK_IBAN`.
 
 **Caveats**
 
 - Monobank enforces a **60-second rate limit** between `/personal/statement` calls. Running `resync` or `all` repeatedly will start failing until the cooldown elapses.
-- The local `BankAccount.accountNumber` must match the Monobank-reported IBAN **verbatim** — the backend matches on string equality (see `src/Web/API/BankingAPI.hs:327`).
-- The resync date range must not exceed **31 days** (enforced at `src/Web/API/BankingAPI.hs:216-220`).
+- The import is routed strictly by the connection's persisted `externalId -> local account` map; external accounts not in the map are skipped (see `src/Web/API/BankingAPI.hs`).
+- The resync date range must not exceed **31 days** (enforced in the resync handler in `src/Web/API/BankingAPI.hs`).
 - `verify` relies on balance diffs + response counts. For per-account transaction enumeration, use `GET /api/transactions?accountId=...` (exercised by `./scripts/api-test/test-transactions.sh list`).
 
 **Usage**
 
 ```bash
-export MONOBANK_TOKEN='your-personal-token'
+export CONNECTION_ID='<connection-uuid>'
 export MONOBANK_IBAN='UA000000000000000000000000000'
 
 ./scripts/api-test/test-banking.sh setup    # find-or-create a BankAccount

@@ -32,6 +32,8 @@ module Infrastructure.Config
     BankingConfig (..),
     BankingProvidersConfig (..),
     MonobankProviderConfig (..),
+    anyProviderEnabled,
+    bankingFeatureAvailable,
 
     -- * Auth Configuration (re-exports)
     JWTConfig (..),
@@ -328,7 +330,13 @@ instance ToJSON ExchangeRateConfig
 -- | Banking integration configuration.
 data BankingConfig = BankingConfig
   { enabled :: !Bool,
-    providers :: !BankingProvidersConfig
+    providers :: !BankingProvidersConfig,
+    -- | Base64-encoded 32-byte key used to encrypt persisted bank-connection
+    -- access tokens (see 'Infrastructure.Crypto.SecretBox'). Sourced from the
+    -- @BANKING_TOKEN_ENC_KEY@ environment variable via the @token_enc_key@
+    -- YAML key. Decoded and validated into a 'KeyRing' at startup; defaults to
+    -- the empty string when unset (rejected outside the dev/test environment).
+    tokenEncKey :: !Text
   }
   deriving (Show, Eq, Generic)
 
@@ -337,11 +345,12 @@ instance FromJSON BankingConfig where
     BankingConfig
       <$> v .:? "enabled" .!= False
       <*> v .:? "providers" .!= defaultBankingProviders
+      <*> v .:? "token_enc_key" .!= ""
 
 instance ToJSON BankingConfig
 
 defaultBankingConfig :: BankingConfig
-defaultBankingConfig = BankingConfig False defaultBankingProviders
+defaultBankingConfig = BankingConfig False defaultBankingProviders ""
 
 data BankingProvidersConfig = BankingProvidersConfig
   { monobank :: !MonobankProviderConfig
@@ -377,6 +386,17 @@ instance FromJSON MonobankProviderConfig where
       <*> v .:? "api_base_url" .!= defaultMonoApiBaseUrl
 
 instance ToJSON MonobankProviderConfig
+
+-- | True when at least one bank provider is enabled. Aggregates across all
+-- providers (currently just monobank) so adding a provider automatically
+-- participates in the banking feature gate.
+anyProviderEnabled :: BankingProvidersConfig -> Bool
+anyProviderEnabled providers = or [providers.monobank.enabled]
+
+-- | True when the banking feature is globally available: the master switch is
+-- on AND at least one provider is enabled.
+bankingFeatureAvailable :: BankingConfig -> Bool
+bankingFeatureAvailable cfg = cfg.enabled && anyProviderEnabled cfg.providers
 
 -- -----------------------------------------------------------------------------
 -- Configuration Loading

@@ -83,6 +83,8 @@ exchange_rate:
 # Banking integration
 banking:
   enabled: ${BANKING_ENABLED:-false}
+  # Base64-encoded 32-byte key used to encrypt persisted bank-connection tokens.
+  token_enc_key: "${BANKING_TOKEN_ENC_KEY:-}"
   providers:
     monobank:
       enabled: ${MONOBANK_ENABLED:-false}

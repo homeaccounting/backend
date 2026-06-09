@@ -19,7 +19,6 @@ import qualified Data.Aeson as Aeson
 import Data.Text (isInfixOf)
 import qualified Data.Text as T
 import Data.UUID (nil)
-import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types
 import RIO

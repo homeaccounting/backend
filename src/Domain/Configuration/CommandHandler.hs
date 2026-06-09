@@ -37,11 +37,12 @@ where
 
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
+import Domain.Banking.Types (BankConnectionId, ExternalAccountId)
 import Domain.Configuration.Commands
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Events
 import Domain.Configuration.Projection
-import Domain.Core.Types (CategoryId, Dictionary (..), DictionaryEntry (..), DictionaryEntryId, DictionaryId (..), EntryName)
+import Domain.Core.Types (AccountId, CategoryId, Dictionary (..), DictionaryEntry (..), DictionaryEntryId, DictionaryId (..), EntryName)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 
@@ -71,6 +72,11 @@ data ConfigurationError
       { current :: UTCTime,
         attempted :: UTCTime
       }
+  | -- | A bank-connection command targeted a connection that does not exist.
+    BankConnectionNotFound
+  | -- | A bank connection's account map references a local account that is
+    -- already a target of a /different/ connection in this configuration.
+    BankConnectionAccountConflict
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -141,6 +147,29 @@ isBankingDefault eid config =
 -- | Check if an entry is referenced as a value in the banking MCC expense category map.
 isInMccMap :: CategoryId -> Configuration -> Bool
 isInMccMap eid config = eid `elem` Map.elems config.banking.mccExpenseCategoryMap
+
+-- | Reject the command if the targeted bank connection does not exist.
+requireConnection :: BankConnectionId -> Configuration -> Either ConfigurationError ()
+requireConnection connId config
+  | Map.member connId config.banking.connections = Right ()
+  | otherwise = Left BankConnectionNotFound
+
+-- | Reject the command if any 'AccountId' in the proposed account map is already
+-- a target of a /different/ connection's account map (within-config uniqueness).
+requireNoAccountConflict ::
+  BankConnectionId ->
+  Map.Map ExternalAccountId AccountId ->
+  Configuration ->
+  Either ConfigurationError ()
+requireNoAccountConflict connId proposed config
+  | any (`elem` takenByOthers) (Map.elems proposed) = Left BankConnectionAccountConflict
+  | otherwise = Right ()
+  where
+    takenByOthers :: [AccountId]
+    takenByOthers =
+      concatMap (Map.elems . (.accountMap)) $
+        Map.elems $
+          Map.delete connId config.banking.connections
 
 -- -----------------------------------------------------------------------------
 -- Command Handler Function
@@ -271,6 +300,70 @@ handleConfigurationCommand config (CloseBooksThroughConfigurationCommand CloseBo
               { closedThrough = closedThrough
               }
         ]
+-- Handle AddBankConnection command (no validation; fresh connectionId)
+handleConfigurationCommand _ (AddBankConnectionConfigurationCommand AddBankConnection {..}) =
+  Right
+    [ BankConnectionAddedConfigurationEvent
+        BankConnectionAdded
+          { connectionId = connectionId,
+            provider = provider,
+            name = name,
+            encryptedToken = encryptedToken,
+            tokenHint = tokenHint,
+            enabled = enabled
+          }
+    ]
+-- Handle RenameBankConnection command
+handleConfigurationCommand config (RenameBankConnectionConfigurationCommand RenameBankConnection {..}) = do
+  requireConnection connectionId config
+  Right
+    [ BankConnectionRenamedConfigurationEvent
+        BankConnectionRenamed
+          { connectionId = connectionId,
+            name = name
+          }
+    ]
+-- Handle ChangeBankConnectionToken command
+handleConfigurationCommand config (ChangeBankConnectionTokenConfigurationCommand ChangeBankConnectionToken {..}) = do
+  requireConnection connectionId config
+  Right
+    [ BankConnectionTokenChangedConfigurationEvent
+        BankConnectionTokenChanged
+          { connectionId = connectionId,
+            encryptedToken = encryptedToken,
+            tokenHint = tokenHint
+          }
+    ]
+-- Handle SetBankConnectionEnabled command
+handleConfigurationCommand config (SetBankConnectionEnabledConfigurationCommand SetBankConnectionEnabled {..}) = do
+  requireConnection connectionId config
+  Right
+    [ BankConnectionEnabledSetConfigurationEvent
+        BankConnectionEnabledSet
+          { connectionId = connectionId,
+            enabled = enabled
+          }
+    ]
+-- Handle SetBankConnectionAccountMap command
+handleConfigurationCommand config (SetBankConnectionAccountMapConfigurationCommand SetBankConnectionAccountMap {..}) = do
+  requireConnection connectionId config
+  requireNoAccountConflict connectionId accountMap config
+  Right
+    [ BankConnectionAccountMapSetConfigurationEvent
+        BankConnectionAccountMapSet
+          { connectionId = connectionId,
+            accountMap = accountMap
+          }
+    ]
+-- Handle RemoveBankConnection command
+handleConfigurationCommand config (RemoveBankConnectionConfigurationCommand RemoveBankConnection {..}) = do
+  requireConnection connectionId config
+  Right
+    [ BankConnectionRemovedConfigurationEvent
+        BankConnectionRemoved
+          { connectionId = connectionId
+          }
+    ]
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

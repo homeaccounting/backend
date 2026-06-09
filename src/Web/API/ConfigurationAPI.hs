@@ -32,6 +32,7 @@ module Web.API.ConfigurationAPI
     -- * Request/Response Types
     ConfigurationResponse (..),
     BankingConfigurationDTO (..),
+    BankConnectionDTO (..),
     DictionaryResponse (..),
     DictionaryEntryResponse (..),
     ChangeCurrencyRequest (..),
@@ -40,6 +41,10 @@ module Web.API.ConfigurationAPI
     AddEntryRequest (..),
     AddEntryResponse (..),
     RenameEntryRequest (..),
+    AddConnectionRequest (..),
+    UpdateConnectionRequest (..),
+    ChangeTokenRequest (..),
+    SetAccountMapRequest (..),
 
     -- * Server
     configurationServer,
@@ -55,21 +60,38 @@ import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
-import Domain.Configuration.Projection (BankingConfiguration (..))
+import Domain.Banking.Types
+  ( BankConnectionId,
+    BankProvider (..),
+    ExternalAccountId,
+    mkBankConnectionId,
+    unBankConnectionId,
+  )
+import Domain.Configuration.Projection
+  ( BankConnection (..),
+    BankingConfiguration (..),
+  )
 import Domain.Core.Types
   ( DictionaryId (..),
     UserId,
+    mkAccountId,
     mkDictionaryEntryId,
     mkEntryName,
     parseCurrency,
+    unAccountId,
     unDictionaryEntryId,
     unDictionaryId,
     unEntryName,
   )
-import Infrastructure.App (AppM, accountReadModelL)
+import Infrastructure.App (AppM, HasAppConfig (..), accountReadModelL)
+import Infrastructure.Config
+  ( AppConfig (..),
+    bankingFeatureAvailable,
+  )
 import RIO
 import Servant
-import Web.ErrorMapping (throwDomainError)
+import Web.API.BankingAPI (requireBankingEnabled)
+import Web.ErrorMapping (throwDomainError, throwValidation)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Validation (validateFieldCtx)
 
@@ -165,6 +187,61 @@ type ConfigurationAPI =
       :> "entries"
       :> Capture "entryId" UUID
       :> Delete '[JSON] NoContent
+    -- POST …/configuration/banking/connections - Add a bank connection
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "banking"
+      :> "connections"
+      :> ReqBody '[JSON] AddConnectionRequest
+      :> Verb 'POST 201 '[JSON] BankConnectionDTO
+    -- PUT …/configuration/banking/connections/:id - Update name and/or enabled
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "banking"
+      :> "connections"
+      :> Capture "connId" UUID
+      :> ReqBody '[JSON] UpdateConnectionRequest
+      :> PutNoContent
+    -- PUT …/configuration/banking/connections/:id/token - Replace the token
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "banking"
+      :> "connections"
+      :> Capture "connId" UUID
+      :> "token"
+      :> ReqBody '[JSON] ChangeTokenRequest
+      :> PutNoContent
+    -- DELETE …/configuration/banking/connections/:id - Remove a connection
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "banking"
+      :> "connections"
+      :> Capture "connId" UUID
+      :> DeleteNoContent
+    -- PUT …/configuration/banking/connections/:id/accounts - Set account map
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "banking"
+      :> "connections"
+      :> Capture "connId" UUID
+      :> "accounts"
+      :> ReqBody '[JSON] SetAccountMapRequest
+      :> PutNoContent
 
 -- -----------------------------------------------------------------------------
 -- Request/Response Types
@@ -174,7 +251,9 @@ type ConfigurationAPI =
 data BankingConfigurationDTO = BankingConfigurationDTO
   { defaultIncomeCategory :: Maybe UUID,
     defaultExpenseCategory :: Maybe UUID,
-    mccExpenseCategoryMap :: Map Text UUID
+    mccExpenseCategoryMap :: Map Text UUID,
+    -- | Configured bank connections (secrets never serialised).
+    connections :: [BankConnectionDTO]
   }
   deriving (Show, Eq, Generic)
 
@@ -182,13 +261,52 @@ instance ToJSON BankingConfigurationDTO
 
 instance FromJSON BankingConfigurationDTO
 
+-- | Wire projection of a single 'BankConnection'.
+--
+-- The provider token is NEVER serialised; clients learn only that a token is
+-- set ('tokenSet') and a non-secret 'tokenHint'.
+data BankConnectionDTO = BankConnectionDTO
+  { id :: UUID,
+    provider :: Text,
+    name :: Text,
+    enabled :: Bool,
+    -- | True iff an (encrypted) token is stored for the connection.
+    tokenSet :: Bool,
+    tokenHint :: Text,
+    -- | External-account-id → local-account-id mapping.
+    accountMap :: Map Text UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON BankConnectionDTO
+
+instance FromJSON BankConnectionDTO
+
+-- | Convert a domain 'BankConnection' to its wire DTO. The token is omitted.
+toBankConnectionDTO :: BankConnection -> BankConnectionDTO
+toBankConnectionDTO c =
+  BankConnectionDTO
+    { id = unBankConnectionId c.connectionId,
+      provider = bankProviderText c.provider,
+      name = c.name,
+      enabled = c.enabled,
+      tokenSet = True,
+      tokenHint = c.tokenHint,
+      accountMap = Map.map unAccountId c.accountMap
+    }
+
+-- | Render a 'BankProvider' as its wire string.
+bankProviderText :: BankProvider -> Text
+bankProviderText Monobank = "monobank"
+
 -- | Convert domain BankingConfiguration to its wire DTO.
 toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
 toBankingDTO b =
   BankingConfigurationDTO
     { defaultIncomeCategory = unDictionaryEntryId <$> b.defaultIncomeCategory,
       defaultExpenseCategory = unDictionaryEntryId <$> b.defaultExpenseCategory,
-      mccExpenseCategoryMap = Map.map unDictionaryEntryId b.mccExpenseCategoryMap
+      mccExpenseCategoryMap = Map.map unDictionaryEntryId b.mccExpenseCategoryMap,
+      connections = map toBankConnectionDTO (Map.elems b.connections)
     }
 
 -- | Configuration response DTO.
@@ -203,7 +321,11 @@ data ConfigurationResponse = ConfigurationResponse
     -- reporting). Computed from the External account's @hasTransactions@ in
     -- the account read model; mirrors the @AccountCurrencyLocked@ precondition
     -- in 'Domain.Account.CommandHandler'.
-    baseCurrencyEditable :: Bool
+    baseCurrencyEditable :: Bool,
+    -- | Whether the banking feature is globally enabled for this deployment
+    -- (banking + Monobank provider both on). Lets clients hide banking UI
+    -- without probing a gated endpoint. This field is UNGATED.
+    bankingFeatureEnabled :: Bool
   }
   deriving (Show, Eq, Generic)
 
@@ -298,6 +420,52 @@ instance ToJSON CloseBooksThroughRequest
 
 instance FromJSON CloseBooksThroughRequest
 
+-- | Body for @POST …/configuration/banking/connections@.
+data AddConnectionRequest = AddConnectionRequest
+  { provider :: Text,
+    name :: Text,
+    token :: Text,
+    enabled :: Bool
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AddConnectionRequest
+
+instance FromJSON AddConnectionRequest
+
+-- | Body for @PUT …/configuration/banking/connections/:id@.
+--
+-- Absent fields mean "no change"; present fields are applied.
+data UpdateConnectionRequest = UpdateConnectionRequest
+  { name :: Maybe Text,
+    enabled :: Maybe Bool
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON UpdateConnectionRequest
+
+instance FromJSON UpdateConnectionRequest
+
+-- | Body for @PUT …/configuration/banking/connections/:id/token@.
+newtype ChangeTokenRequest = ChangeTokenRequest
+  { token :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ChangeTokenRequest
+
+instance FromJSON ChangeTokenRequest
+
+-- | Body for @PUT …/configuration/banking/connections/:id/accounts@.
+newtype SetAccountMapRequest = SetAccountMapRequest
+  { accountMap :: Map Text UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SetAccountMapRequest
+
+instance FromJSON SetAccountMapRequest
+
 -- | Proxy for the ConfigurationAPI.
 configurationAPI :: Proxy ConfigurationAPI
 configurationAPI = Proxy
@@ -318,6 +486,11 @@ configurationServer =
     :<|> addEntryHandler
     :<|> renameEntryHandler
     :<|> removeEntryHandler
+    :<|> addConnectionHandler
+    :<|> updateConnectionHandler
+    :<|> changeConnectionTokenHandler
+    :<|> removeConnectionHandler
+    :<|> setConnectionAccountsHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers
@@ -331,7 +504,8 @@ getConfigurationHandler user = do
     Left err -> throwDomainError err
     Right configData -> do
       editable <- computeBaseCurrencyEditable user.userId
-      return $ toConfigurationResponse editable configData
+      featureEnabled <- computeBankingFeatureEnabled
+      return $ toConfigurationResponse editable featureEnabled configData
 
 -- | Handler for PUT /api/users/me/configuration/base-currency
 changeBaseCurrencyHandler :: AuthenticatedUser -> ChangeCurrencyRequest -> AppM NoContent
@@ -399,7 +573,8 @@ closeBooksThroughHandler user req = do
     Left err -> throwDomainError err
     Right configData -> do
       editable <- computeBaseCurrencyEditable user.userId
-      return $ toConfigurationResponse editable configData
+      featureEnabled <- computeBankingFeatureEnabled
+      return $ toConfigurationResponse editable featureEnabled configData
 
 -- | Handler for GET /api/users/me/configuration/dictionaries/:dictId
 listDictionaryHandler :: AuthenticatedUser -> Text -> AppM DictionaryResponse
@@ -457,6 +632,104 @@ removeEntryHandler user dictIdText entryUuid = do
     Right () -> return NoContent
 
 -- -----------------------------------------------------------------------------
+-- Bank-connection handlers
+-- -----------------------------------------------------------------------------
+
+-- | Parse the wire provider string into a domain 'BankProvider'.
+parseBankProvider :: Text -> Either Text BankProvider
+parseBankProvider "monobank" = Right Monobank
+parseBankProvider other = Left ("unsupported provider: " <> other)
+
+-- | Handler for POST …/configuration/banking/connections.
+--
+-- Adds a bank connection and returns its freshly-built DTO (201). The token is
+-- accepted in the request body, encrypted by the service, and never echoed.
+addConnectionHandler :: AuthenticatedUser -> AddConnectionRequest -> AppM BankConnectionDTO
+addConnectionHandler user req = do
+  requireBankingEnabled
+  provider <- validateFieldCtx "provider" req.provider (parseBankProvider req.provider)
+  result <- ConfigService.addBankConnection user.userId provider req.name req.token req.enabled
+  case result of
+    Left err -> throwDomainError err
+    Right connId -> do
+      conn <- loadConnection user.userId connId
+      pure (toBankConnectionDTO conn)
+
+-- | Handler for PUT …/configuration/banking/connections/:id.
+--
+-- Applies the rename and/or enabled change for the fields present in the body.
+updateConnectionHandler :: AuthenticatedUser -> UUID -> UpdateConnectionRequest -> AppM NoContent
+updateConnectionHandler user connUuid req = do
+  requireBankingEnabled
+  connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
+  forM_ req.name $ \newName -> do
+    result <- ConfigService.renameBankConnection user.userId connId newName
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+  forM_ req.enabled $ \isEnabled -> do
+    result <- ConfigService.setBankConnectionEnabled user.userId connId isEnabled
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+  pure NoContent
+
+-- | Handler for PUT …/configuration/banking/connections/:id/token.
+changeConnectionTokenHandler :: AuthenticatedUser -> UUID -> ChangeTokenRequest -> AppM NoContent
+changeConnectionTokenHandler user connUuid req = do
+  requireBankingEnabled
+  connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
+  result <- ConfigService.changeBankConnectionToken user.userId connId req.token
+  case result of
+    Left err -> throwDomainError err
+    Right () -> pure NoContent
+
+-- | Handler for DELETE …/configuration/banking/connections/:id.
+removeConnectionHandler :: AuthenticatedUser -> UUID -> AppM NoContent
+removeConnectionHandler user connUuid = do
+  requireBankingEnabled
+  connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
+  result <- ConfigService.removeBankConnection user.userId connId
+  case result of
+    Left err -> throwDomainError err
+    Right () -> pure NoContent
+
+-- | Handler for PUT …/configuration/banking/connections/:id/accounts.
+--
+-- Validates and converts each external→local mapping target into an 'AccountId',
+-- then replaces the connection's account map wholesale. Cross-aggregate
+-- ownership validation lives in the service.
+setConnectionAccountsHandler :: AuthenticatedUser -> UUID -> SetAccountMapRequest -> AppM NoContent
+setConnectionAccountsHandler user connUuid req = do
+  requireBankingEnabled
+  connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
+  accountMap <-
+    Map.traverseWithKey
+      (\_extId uuid -> validateFieldCtx "accountMap" (tshow uuid) (mkAccountId uuid))
+      (toExternalKeyedMap req.accountMap)
+  result <- ConfigService.setBankConnectionAccountMap user.userId connId accountMap
+  case result of
+    Left err -> throwDomainError err
+    Right () -> pure NoContent
+
+-- | Re-key a @Map Text UUID@ wire map as @Map ExternalAccountId UUID@.
+-- 'ExternalAccountId' is a 'Text' alias, so this is identity at runtime but
+-- documents the conversion at the type level.
+toExternalKeyedMap :: Map Text UUID -> Map ExternalAccountId UUID
+toExternalKeyedMap = id
+
+-- | Load a single bank connection for the user, or 'BankConnectionNotFound'.
+loadConnection :: UserId -> BankConnectionId -> AppM BankConnection
+loadConnection uid connId = do
+  result <- ConfigService.getConfigurationForUser uid
+  case result of
+    Left err -> throwDomainError err
+    Right configData ->
+      case Map.lookup connId configData.banking.connections of
+        Just conn -> pure conn
+        Nothing -> throwValidation "connId" "bank connection not found"
+
+-- -----------------------------------------------------------------------------
 -- Response Conversion
 -- -----------------------------------------------------------------------------
 
@@ -467,9 +740,10 @@ removeEntryHandler user dictIdText entryUuid = do
 -- that fact lives in the account read model, not in 'ConfigurationData'.
 toConfigurationResponse ::
   Bool ->
+  Bool ->
   ConfigurationData ->
   ConfigurationResponse
-toConfigurationResponse editable configData =
+toConfigurationResponse editable featureEnabled configData =
   ConfigurationResponse
     { baseCurrency = tshow configData.baseCurrency,
       defaultCurrency = tshow configData.defaultCurrency,
@@ -478,8 +752,17 @@ toConfigurationResponse editable configData =
           $ Map.map toDictionaryResponse configData.dictionaries,
       banking = toBankingDTO configData.banking,
       booksClosedThrough = configData.booksClosedThrough,
-      baseCurrencyEditable = editable
+      baseCurrencyEditable = editable,
+      bankingFeatureEnabled = featureEnabled
     }
+
+-- | Whether the banking feature is globally enabled (banking + Monobank both
+-- on). Read directly from the app config; this is the same predicate the
+-- banking feature gate uses.
+computeBankingFeatureEnabled :: AppM Bool
+computeBankingFeatureEnabled = do
+  cfg <- view appConfigL
+  pure (bankingFeatureAvailable cfg.banking)
 
 -- | Compute whether the user's base currency can still be changed.
 --

@@ -78,6 +78,10 @@ exchange_rate:
 # Banking integration
 banking:
   enabled: ${BANKING_ENABLED:-true}
+  # Base64-encoded 32-byte key used to encrypt persisted bank-connection tokens.
+  # Required in production: startup fails fast if unset or not 32 bytes
+  # (validated in 'bankingKeyRingFromConfig').
+  token_enc_key: "${BANKING_TOKEN_ENC_KEY:-}"
   providers:
     monobank:
       enabled: ${MONOBANK_ENABLED:-true}

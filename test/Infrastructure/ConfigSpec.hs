@@ -1,12 +1,20 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Infrastructure.ConfigSpec (spec) where
 
-import Data.Aeson (Value (..))
+import Data.Aeson (Result (..), Value (..), fromJSON, object, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Vector as V
-import Infrastructure.Config (substituteEnvVars)
+import Infrastructure.Config
+  ( BankingConfig (..),
+    BankingProvidersConfig (..),
+    MonobankProviderConfig (..),
+    anyProviderEnabled,
+    bankingFeatureAvailable,
+    substituteEnvVars,
+  )
 import RIO
 import qualified RIO.Text as T
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -165,3 +173,38 @@ spec = do
       $ do
         result <- substituteEnvVars (String "port=${CFG_TEST_N}")
         result `shouldBe` Right (String "port=42")
+
+  describe "BankingConfig" $ do
+    it "parses token_enc_key into tokenEncKey" $ do
+      let payload =
+            object
+              [ "enabled" .= True,
+                "token_enc_key" .= ("***REMOVED***" :: T.Text)
+              ]
+      case fromJSON payload :: Result BankingConfig of
+        Success cfg -> do
+          cfg.tokenEncKey `shouldBe` "***REMOVED***"
+          cfg.enabled `shouldBe` True
+        Error e -> expectationFailure ("failed to parse BankingConfig: " <> e)
+
+    it "defaults tokenEncKey to empty when token_enc_key is absent" $ do
+      let payload = object ["enabled" .= False]
+      case fromJSON payload :: Result BankingConfig of
+        Success cfg -> cfg.tokenEncKey `shouldBe` ""
+        Error e -> expectationFailure ("failed to parse BankingConfig: " <> e)
+
+  describe "bankingFeatureAvailable / anyProviderEnabled" $ do
+    let mkCfg masterOn providerOn =
+          BankingConfig masterOn (BankingProvidersConfig (MonobankProviderConfig providerOn "https://api.monobank.ua")) ""
+    it "is False when the master switch is off"
+      $ bankingFeatureAvailable (mkCfg False True)
+      `shouldBe` False
+    it "is False when the master switch is on but no provider is enabled"
+      $ bankingFeatureAvailable (mkCfg True False)
+      `shouldBe` False
+    it "is True when the master switch is on and a provider is enabled"
+      $ bankingFeatureAvailable (mkCfg True True)
+      `shouldBe` True
+    it "anyProviderEnabled reflects the monobank provider flag" $ do
+      anyProviderEnabled (BankingProvidersConfig (MonobankProviderConfig False "x")) `shouldBe` False
+      anyProviderEnabled (BankingProvidersConfig (MonobankProviderConfig True "x")) `shouldBe` True

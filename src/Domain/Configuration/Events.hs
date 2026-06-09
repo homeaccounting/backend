@@ -32,13 +32,36 @@ module Domain.Configuration.Events
     BankingDefaultExpenseCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     BooksClosedThroughSet (..),
+    BankConnectionAdded (..),
+    BankConnectionRenamed (..),
+    BankConnectionTokenChanged (..),
+    BankConnectionEnabledSet (..),
+    BankConnectionAccountMapSet (..),
+    BankConnectionRemoved (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Map.Strict (Map)
+import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (CategoryId, CreatedBy, Currency, DictionaryEntryId, DictionaryId, EntryName, MCC)
+import Domain.Banking.Types
+  ( BankConnectionId,
+    BankConnectionName,
+    BankProvider,
+    ExternalAccountId,
+  )
+import Domain.Core.Types
+  ( AccountId,
+    CategoryId,
+    CreatedBy,
+    Currency,
+    DictionaryEntryId,
+    DictionaryId,
+    EntryName,
+    MCC,
+  )
+import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -60,7 +83,13 @@ configurationEvents =
     ''BankingDefaultIncomeCategorySet,
     ''BankingDefaultExpenseCategorySet,
     ''BankingMccExpenseCategoryMapSet,
-    ''BooksClosedThroughSet
+    ''BooksClosedThroughSet,
+    ''BankConnectionAdded,
+    ''BankConnectionRenamed,
+    ''BankConnectionTokenChanged,
+    ''BankConnectionEnabledSet,
+    ''BankConnectionAccountMapSet,
+    ''BankConnectionRemoved
   ]
 
 -- -----------------------------------------------------------------------------
@@ -153,6 +182,65 @@ newtype BooksClosedThroughSet = BooksClosedThroughSet
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
+-- Bank Connection Events
+-- -----------------------------------------------------------------------------
+
+-- | Event emitted when a new bank connection is added.
+--
+-- The account map starts empty; it is populated later via
+-- 'BankConnectionAccountMapSet'.
+data BankConnectionAdded = BankConnectionAdded
+  { -- | Unique identifier for the new connection
+    connectionId :: BankConnectionId,
+    -- | The external bank provider
+    provider :: BankProvider,
+    -- | User-facing display name
+    name :: BankConnectionName,
+    -- | The encrypted provider token
+    encryptedToken :: EncryptedSecret,
+    -- | Non-secret hint to help the user recognise the token
+    tokenHint :: Text,
+    -- | Whether the connection is enabled for syncing
+    enabled :: Bool
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when a bank connection is renamed.
+data BankConnectionRenamed = BankConnectionRenamed
+  { connectionId :: BankConnectionId,
+    name :: BankConnectionName
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when a bank connection's token is changed.
+data BankConnectionTokenChanged = BankConnectionTokenChanged
+  { connectionId :: BankConnectionId,
+    encryptedToken :: EncryptedSecret,
+    tokenHint :: Text
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when a bank connection's enabled flag is set.
+data BankConnectionEnabledSet = BankConnectionEnabledSet
+  { connectionId :: BankConnectionId,
+    enabled :: Bool
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when a bank connection's account map is set (bulk replace).
+data BankConnectionAccountMapSet = BankConnectionAccountMapSet
+  { connectionId :: BankConnectionId,
+    accountMap :: Map ExternalAccountId AccountId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when a bank connection is removed.
+newtype BankConnectionRemoved = BankConnectionRemoved
+  { connectionId :: BankConnectionId
+  }
+  deriving (Show, Eq)
+
+-- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
 
@@ -167,3 +255,9 @@ deriveJSON defaultOptions ''BankingDefaultIncomeCategorySet
 deriveJSON defaultOptions ''BankingDefaultExpenseCategorySet
 deriveJSON defaultOptions ''BankingMccExpenseCategoryMapSet
 deriveJSON defaultOptions ''BooksClosedThroughSet
+deriveJSON defaultOptions ''BankConnectionAdded
+deriveJSON defaultOptions ''BankConnectionRenamed
+deriveJSON defaultOptions ''BankConnectionTokenChanged
+deriveJSON defaultOptions ''BankConnectionEnabledSet
+deriveJSON defaultOptions ''BankConnectionAccountMapSet
+deriveJSON defaultOptions ''BankConnectionRemoved

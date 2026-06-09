@@ -50,10 +50,11 @@ import Eventium.Store.Memory
     tvarGlobalEventStoreReader,
   )
 import Eventium.Store.Postgresql (JSONString, jsonStringCodec)
-import Infrastructure.App (AppEnv (..), BankingEnv (..))
+import Infrastructure.App (AppEnv (..), BankingEnv (..), bankingKeyRingFromConfig)
 import Infrastructure.Auth.JWT (defaultJWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
+import Infrastructure.Banking.Monobank (mkBankProviderFactory)
 import Infrastructure.Config
   ( AppConfig (..),
     BankingConfig (..),
@@ -206,6 +207,9 @@ mkAppEnv withProcessManager = do
   botState <- RIO.newTVarIO emptyBotState
   testHttpManager <- newManager defaultManagerSettings
   bankImportLocksVar <- RIO.newTVarIO Set.empty
+  -- Deterministic banking key ring built from the test config's
+  -- 'tokenEncKey' so encryption is reproducible across test runs.
+  testBankingKeyRing <- bankingKeyRingFromConfig config.environment config.banking
   linkCodeStore <- newLinkCodeStore
 
   return
@@ -232,7 +236,13 @@ mkAppEnv withProcessManager = do
           BankingEnv
             { bankImportReadModel = readModels.bankImport,
               bankImportLocks = bankImportLocksVar,
-              httpManager = testHttpManager
+              httpManager = testHttpManager,
+              bankingKeyRing = testBankingKeyRing,
+              -- Default factory mirrors production (dispatches on the
+              -- provider enum, real Monobank provider over the test HTTP
+              -- manager). Banking-enabled HTTP specs override this with a stub
+              -- via 'Testkit.AppEnv'.
+              bankProviderFactory = mkBankProviderFactory config testHttpManager
             },
         linkCodeStore = linkCodeStore
       }
@@ -307,7 +317,10 @@ testAppConfig =
       banking =
         BankingConfig
           { enabled = False,
-            providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua")
+            providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua"),
+            -- Deterministic base64 of 32 bytes (0x07 repeated) so the test
+            -- key ring is reproducible across runs and processes.
+            tokenEncKey = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
           }
     }
 

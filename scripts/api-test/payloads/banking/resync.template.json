@@ -1,5 +1,4 @@
 {
   "from": "${FROM}",
-  "to": "${TO}",
-  "defaultCategory": "${CATEGORY_ID}"
+  "to": "${TO}"
 }

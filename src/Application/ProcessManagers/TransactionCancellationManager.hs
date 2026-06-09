@@ -76,7 +76,7 @@ import Eventium
   )
 import Infrastructure.Eventium (embedWith)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
-import RIO hiding ((%~), (&), (.~), (^.))
+import RIO ()
 
 -- -----------------------------------------------------------------------------
 -- State types

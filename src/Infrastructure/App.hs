@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -93,7 +94,15 @@ module Infrastructure.App
     HasBankImportReadModel (..),
     HasBankImportLocks (..),
     HasHttpManager (..),
+    HasBankingKeyRing (..),
+    HasBankProviderFactory (..),
     HasLinkCodeStore (..),
+
+    -- * Banking provider factory
+    BankProviderFactory,
+
+    -- * Banking key ring construction
+    bankingKeyRingFromConfig,
 
     -- * Running the Application
     runAppM,
@@ -119,13 +128,26 @@ import Application.ReadModels.Transaction (TransactionReadModel)
 import Application.ReadModels.User (UserReadModel)
 import Control.Concurrent.STM (retry)
 import Control.Monad.Logger (LoggingT, runStdoutLoggingT)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base64 as B64
 import qualified Data.Set as Set
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text.IO as TIO
 import Database.Persist.Postgresql (ConnectionPool, SqlBackend, runSqlPool)
+import Domain.Banking.Types (PlainToken)
+import qualified Domain.Banking.Types as Domain
 import Domain.Core.Types (UserId)
 import Infrastructure.Auth.JWT (JWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig)
 import Infrastructure.Auth.Telegram (TelegramConfig)
-import Infrastructure.Config (AppConfig, DatabaseConfig)
+import Infrastructure.Banking.Provider (BankProvider)
+import Infrastructure.Config
+  ( AppConfig,
+    BankingConfig (..),
+    DatabaseConfig,
+    Environment (..),
+  )
+import Infrastructure.Crypto.SecretBox (KeyRing, mkKeyRing)
 import Infrastructure.Eventium
   ( AccountingGlobalEventStoreReader,
     AccountingTaggedEventStoreWriter,
@@ -134,6 +156,7 @@ import Infrastructure.Eventium
 import Infrastructure.Version (VersionInfo)
 import Network.HTTP.Client (Manager)
 import RIO
+import qualified RIO.Text as T
 import Servant.Client (ClientEnv)
 import Telegram.Types (BotState)
 
@@ -231,8 +254,31 @@ data BankingEnv = BankingEnv
     -- 'UserId' values whose bank import is currently in flight.
     bankImportLocks :: !(TVar (Set.Set UserId)),
     -- | HTTP client manager (shared, for bank API calls).
-    httpManager :: !Manager
+    httpManager :: !Manager,
+    -- | Key ring used to encrypt/decrypt persisted bank-connection access
+    -- tokens (see 'Infrastructure.Crypto.SecretBox'). Built from
+    -- @banking.token_enc_key@ at startup via 'bankingKeyRingFromConfig'.
+    bankingKeyRing :: !KeyRing,
+    -- | Factory that builds a (per-request, ephemeral) 'BankProvider' from a
+    -- connection's 'Domain.BankProvider' and a user's decrypted access token.
+    -- Production wires this via 'mkBankProviderFactory', which dispatches on
+    -- the provider enum and captures the per-provider config (e.g. the
+    -- Monobank API base URL) and the shared 'Manager' at env-build time; tests
+    -- install an in-memory stub. Handlers obtain the provider through the
+    -- configuration service ('getConnectionProvider') rather than constructing
+    -- a concrete provider inline, which keeps the HTTP layer
+    -- provider-injectable. 'BankProvider' itself stays ephemeral (see
+    -- 'Infrastructure.Banking.Provider'); only the factory is held in the env.
+    bankProviderFactory :: !BankProviderFactory
   }
+
+-- | A pure factory producing an ephemeral 'BankProvider' from a connection's
+-- 'Domain.BankProvider' and a user's decrypted access token. All
+-- provider-specific configuration (e.g. the Monobank API base URL) and the
+-- shared HTTP 'Manager' (or, for tests, the stub state) are captured in the
+-- closure at env-build time, so the factory dispatches on the provider enum
+-- without exposing any provider internals to its callers.
+type BankProviderFactory = Domain.BankProvider {- provider -} -> PlainToken {- token -} -> BankProvider
 
 -- | Initialize the application environment.
 --
@@ -293,6 +339,72 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       bankingEnv = bankingEnv,
       linkCodeStore = linkCodeStore'
     }
+
+-- -----------------------------------------------------------------------------
+-- Banking key ring construction
+-- -----------------------------------------------------------------------------
+
+-- | Build the banking token-encryption 'KeyRing' from configuration.
+--
+-- The configured @banking.token_enc_key@ is base64-decoded and must yield
+-- exactly 32 bytes (AES-256). The resulting ring designates key version @1@
+-- as the current key.
+--
+-- Behaviour when the key is missing or invalid:
+--
+--   * In production ('EnvProd') the application __fails fast__ — a missing or
+--     wrong-length key aborts startup via 'exitFailure', because operating
+--     without a valid key would silently disable token encryption.
+--   * In the local/test environments ('EnvLocal', 'EnvTest') a fixed,
+--     well-known development key is substituted and a warning is logged, so
+--     developers and the test suite can run without provisioning a real key.
+--     This key is __not secret__ and must never be used in production.
+bankingKeyRingFromConfig :: Environment -> BankingConfig -> IO KeyRing
+bankingKeyRingFromConfig env cfg =
+  case decodeKey cfg.tokenEncKey of
+    Right key -> pure (mkKeyRing 1 [(1, key)])
+    Left reason ->
+      if isDev
+        then do
+          TIO.hPutStrLn
+            stderr
+            ( "WARNING: banking.token_enc_key "
+                <> T.pack reason
+                <> "; using an insecure fixed development key. "
+                <> "Do NOT use this in production."
+            )
+          pure (mkKeyRing 1 [(1, devKey)])
+        else do
+          TIO.hPutStrLn
+            stderr
+            ( "FATAL: banking.token_enc_key "
+                <> T.pack reason
+                <> ". Set BANKING_TOKEN_ENC_KEY to a base64-encoded 32-byte key."
+            )
+          exitFailure
+  where
+    isDev = env == EnvLocal || env == EnvTest
+
+    -- \| Decode and length-validate the configured key. 'Left' carries a
+    -- human-readable reason suitable for a log message.
+    decodeKey :: Text -> Either String BS.ByteString
+    decodeKey t
+      | T.null t = Left "is not set"
+      | otherwise =
+          case B64.decode (TE.encodeUtf8 t) of
+            Left err -> Left ("is not valid base64 (" <> err <> ")")
+            Right bs
+              | BS.length bs == 32 -> Right bs
+              | otherwise ->
+                  Left
+                    ( "must decode to 32 bytes but decoded to "
+                        <> show (BS.length bs)
+                    )
+
+    -- \| Insecure, fixed 32-byte development key. Distinct, recognisable
+    -- bytes so it never collides with a real key by accident.
+    devKey :: BS.ByteString
+    devKey = BS.pack [0xDE, 0xAD, 0xBE, 0xEF] <> BS.replicate 28 0x2A
 
 -- -----------------------------------------------------------------------------
 -- Application Monad
@@ -475,6 +587,32 @@ instance HasHttpManager AppEnv where
 
 instance HasHttpManager BankingEnv where
   httpManagerL = lens (.httpManager) (\x y -> x {httpManager = y})
+
+-- | Type class for environments that expose the banking token-encryption
+-- 'KeyRing'. Used by the configuration service to encrypt/decrypt persisted
+-- bank-connection access tokens.
+class HasBankingKeyRing env where
+  bankingKeyRingL :: Lens' env KeyRing
+
+instance HasBankingKeyRing AppEnv where
+  bankingKeyRingL = bankingEnvL . bankingKeyRingL
+
+instance HasBankingKeyRing BankingEnv where
+  bankingKeyRingL = lens (.bankingKeyRing) (\x y -> x {bankingKeyRing = y})
+
+-- | Type class for environments that expose the banking provider factory.
+-- The configuration service uses this to obtain an ephemeral 'BankProvider'
+-- (from a connection's 'Domain.BankProvider' + decrypted token) without
+-- depending on a concrete provider implementation, so tests can inject an
+-- in-memory stub.
+class HasBankProviderFactory env where
+  bankProviderFactoryL :: Lens' env BankProviderFactory
+
+instance HasBankProviderFactory AppEnv where
+  bankProviderFactoryL = bankingEnvL . bankProviderFactoryL
+
+instance HasBankProviderFactory BankingEnv where
+  bankProviderFactoryL = lens (.bankProviderFactory) (\x y -> x {bankProviderFactory = y})
 
 -- | Type class for environments that have the short-lived Telegram link-code
 -- store (used in the bot deep-link account-linking flow).

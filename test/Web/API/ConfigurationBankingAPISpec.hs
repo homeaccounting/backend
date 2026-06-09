@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -28,13 +27,12 @@
 --   7. GET /api/users/me/configuration after PUT → banking.defaultIncomeCategory set.
 module Web.API.ConfigurationBankingAPISpec (spec) where
 
-import Data.Aeson (FromJSON (..), eitherDecode, encode, object, withObject, (.:), (.=))
+import Data.Aeson (eitherDecode, encode, object, (.=))
 import qualified Data.Aeson.Key as Key
 import Data.Aeson.Types (Pair)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
 import Domain.Configuration.Defaults
   ( expenseCategoryDictId,
     incomeCategoryDictId,
@@ -52,7 +50,7 @@ import RIO
 import Test.Hspec
 import Test.Hspec.Wai
 import Testkit.AppEnv (mkAppSeeded)
-import Testkit.HspecWai (bearerHeader, jsonAuthHeaders)
+import Testkit.HspecWai (bearerHeader, jsonAuthHeaders, registerAndGetToken)
 import Web.API.ConfigurationAPI (BankingConfigurationDTO (..), ConfigurationResponse (..))
 import Web.Types (ErrorResponse (..))
 
@@ -75,37 +73,6 @@ unknownUUID = UUID.fromWords 0xDEAD 0xBEEF 0 1
 -- -----------------------------------------------------------------------------
 -- Request helpers
 -- -----------------------------------------------------------------------------
-
--- | Register a fresh user and return the JWT token.
---
--- Each test that needs a real user calls this helper so the JWT corresponds to
--- an existing user record in the read model.  A random UUID suffix is used
--- in the email address so multiple calls within the same app instance do not
--- collide on duplicate email registration.
-registerAndGetToken :: WaiSession st Text
-registerAndGetToken = do
-  uid <- liftIO UUID.nextRandom
-  let email = "test+" <> fromString (UUID.toString uid) <> "@example.com" :: Text
-      body =
-        encode
-          $ object
-            [ "email" .= email,
-              "password" .= ("testpassword123" :: Text)
-            ]
-  resp <- request "POST" "/api/auth/register" [(hContentType, "application/json")] body
-  case eitherDecode (simpleBody resp) :: Either String RegisterTokenResponse of
-    Left err -> liftIO $ throwString $ "registerAndGetToken: failed to parse response: " <> err
-    Right r -> pure r.token
-
--- | Minimal DTO to extract the token from the registration response.
-data RegisterTokenResponse = RegisterTokenResponse
-  { token :: Text
-  }
-  deriving (Show, Generic)
-
-instance FromJSON RegisterTokenResponse where
-  parseJSON = withObject "RegisterTokenResponse" $ \o ->
-    RegisterTokenResponse <$> o .: "token"
 
 -- -----------------------------------------------------------------------------
 -- Spec entry point

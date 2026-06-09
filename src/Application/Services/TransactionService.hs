@@ -39,6 +39,7 @@ module Application.Services.TransactionService
 
     -- * Re-exported helpers for sibling services
     resolveAndInitiate,
+    resolveAmounts,
 
     -- * Pure predicates (exposed for testing)
     isIdentityAmend,

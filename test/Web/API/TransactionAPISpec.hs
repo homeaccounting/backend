@@ -34,6 +34,11 @@
 --   (no param)              cancelled tx absent from response
 --   ?includeCancelled=true  cancelled tx present with status = "Cancelled"
 --   ?includeCancelled=false cancelled tx absent (same as default)
+--
+-- GET /api/transactions ?includeFailed cases:
+--   (no param)              failed tx absent from response
+--   ?includeFailed=true     failed tx present with status = "Failed"
+--   ?includeFailed=false    failed tx absent (same as default)
 module Web.API.TransactionAPISpec (spec) where
 
 import qualified Application.Services.AccountService as AccountService
@@ -44,7 +49,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.UUID.V4 as UUID4
 import Domain.Core.Types
-  ( UserId,
+  ( TransactionId,
+    UserId,
     unAccountId,
     unTransactionId,
     unUserId,
@@ -348,9 +354,88 @@ spec = do
           let txIds = map (.id) body.transactions
            in txIds `shouldNotContain` [unTransactionId txId]
 
+  -- ---------------------------------------------------------------------------
+  -- GET /api/transactions ?includeFailed
+  -- ---------------------------------------------------------------------------
+
+  describe "GET /api/transactions ?includeFailed" $ do
+    it "excludes failed transactions by default (no param)" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "include-failed-default@test.com"
+      token <- seedToken seed
+      txId <- seedFailedTransfer seed
+      let path = encodeUtf8 $ "/api/transactions?accountId=" <> uuidText (unAccountId seed.seedAccount)
+      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
+      simpleStatus resp `shouldBe` status200
+      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
+        Left err -> expectationFailure $ "bad JSON: " <> err
+        Right body ->
+          let txIds = map (.id) body.transactions
+           in txIds `shouldNotContain` [unTransactionId txId]
+
+    it "includes failed transactions with status Failed when ?includeFailed=true" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "include-failed-true@test.com"
+      token <- seedToken seed
+      txId <- seedFailedTransfer seed
+      let path =
+            encodeUtf8
+              $ "/api/transactions?accountId="
+              <> uuidText (unAccountId seed.seedAccount)
+              <> "&includeFailed=true"
+      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
+      simpleStatus resp `shouldBe` status200
+      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
+        Left err -> expectationFailure $ "bad JSON: " <> err
+        Right body -> do
+          let txIds = map (.id) body.transactions
+          txIds `shouldContain` [unTransactionId txId]
+          -- The failed transaction carries status = "Failed"
+          case List.find (\t -> t.id == unTransactionId txId) body.transactions of
+            Nothing -> expectationFailure "failed tx not found in inclusive list"
+            Just t -> t.status `shouldBe` "Failed"
+
+    it "excludes failed transactions when ?includeFailed=false (same as default)" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "include-failed-false@test.com"
+      token <- seedToken seed
+      txId <- seedFailedTransfer seed
+      let path =
+            encodeUtf8
+              $ "/api/transactions?accountId="
+              <> uuidText (unAccountId seed.seedAccount)
+              <> "&includeFailed=false"
+      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
+      simpleStatus resp `shouldBe` status200
+      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
+        Left err -> expectationFailure $ "bad JSON: " <> err
+        Right body ->
+          let txIds = map (.id) body.transactions
+           in txIds `shouldNotContain` [unTransactionId txId]
+
 -- -----------------------------------------------------------------------------
 -- Helpers
 -- -----------------------------------------------------------------------------
+
+-- | Seed a transfer that fails to post (Insufficient Funds) and lands in the
+-- Failed state. The seed account starts at 5000 USD with no overdraft, so a
+-- transfer larger than that emits TransactionPostingFailed via the synchronous
+-- in-memory process manager, leaving the transaction in the read model as
+-- status = Failed.
+seedFailedTransfer :: Seed -> IO TransactionId
+seedFailedTransfer seed = do
+  other <- createRegularAccount seed.seedEnv seed.seedUserId "Failed-Other"
+  res <-
+    runAppM seed.seedEnv
+      $ TransactionService.initiateTransfer
+        seed.seedUserId
+        seed.seedAccount
+        other
+        (unsafeMoney Core.USD 999999)
+        Set.empty
+        "Seed failed transfer"
+        Nothing
+        Nothing
+  case res of
+    Left err -> fail $ "seedFailedTransfer failed: " <> show err
+    Right (txId, _) -> pure txId
 
 -- | Mint a JWT signed for an existing user.
 mintToken :: UserId -> Text -> IO Text

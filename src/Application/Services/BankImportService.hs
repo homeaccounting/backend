@@ -34,6 +34,8 @@ module Application.Services.BankImportService
   )
 where
 
+import Application.ReadModels.Account (AccountData (..))
+import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.BankImportReadModel (isImported)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import qualified Application.ReadModels.User as UserRM
@@ -44,7 +46,7 @@ import Data.Aeson (ToJSON)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Time (UTCTime)
+import Data.Time (UTCTime, utctDay)
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Projection (BankingConfiguration (..))
 import Domain.Core.Errors (DomainError (..), renderDomainError)
@@ -59,6 +61,7 @@ import Domain.Core.Types
     currencyFromNumericCode,
     mkAllocation,
     mkMoney,
+    moneyCurrency,
     unEntryName,
   )
 import Domain.Transaction.Commands (InitiateTransaction (..))
@@ -349,6 +352,49 @@ commitImport ::
 commitImport provider userId userData localAccId tx money = do
   let externalAccId = userData.externalAccountId
       direction = provider.classifyTransaction tx
+      txCurrency = moneyCurrency money
+  -- Guard: a card's transactions can only be imported into a local account of
+  -- the SAME currency (a UAH card → a UAH account). Mapping a card to a
+  -- different-currency local account is unsupported. Detect it up front and
+  -- SKIP the transaction with a clear reason, rather than initiating it and
+  -- letting the posting saga fail with a cryptic 'CurrencyMismatch'.
+  accountRM <- lift (view accountReadModelL)
+  localData <-
+    ExceptT
+      $ maybe (Left (NotFound "Account" (tshow localAccId))) Right
+      <$> AccountRM.getAccount accountRM localAccId
+  let localCurrency = moneyCurrency localData.balance
+  if localCurrency /= txCurrency
+    then do
+      lift
+        $ logWarn
+        $ "Skipping bank tx "
+        <> display tx.externalId
+        <> ": account '"
+        <> display localData.name
+        <> "' is "
+        <> displayShow localCurrency
+        <> " but the transaction is "
+        <> displayShow txCurrency
+        <> ". Map this card to a "
+        <> displayShow txCurrency
+        <> " account."
+      pure Nothing
+    else commitMatchingCurrencyImport userId externalAccId localAccId tx money direction
+
+-- | Continue an import once the LOCAL account's currency has been confirmed to
+-- match the transaction currency. Handles configuration lookup, category
+-- resolution, and transfer initiation. The source/target ACCOUNT currencies may
+-- still differ (e.g. local UAH → External USD), which 'resolveAmounts' handles.
+commitMatchingCurrencyImport ::
+  UserId ->
+  AccountId ->
+  AccountId ->
+  BankTransaction ->
+  Money ->
+  TransactionClassification ->
+  ExceptT DomainError AppM (Maybe TransactionId)
+commitMatchingCurrencyImport userId externalAccId localAccId tx money direction = do
   cfg <- ExceptT $ do
     result <- ConfigurationService.getConfigurationForUser userId
     case result of
@@ -370,7 +416,33 @@ commitImport provider userId userData localAccId tx money = do
   let allocations = NE.singleton allocation
       (sourceAccId, targetAccId, transactionType) =
         classifyEndpoints localAccId externalAccId direction allocations
-      cmd = buildTransferCmd userId tx sourceAccId targetAccId money transactionType
+  -- Resolve per-leg amounts and the historical exchange rate exactly like the
+  -- manual income/expense flow ('TransactionService.resolveAmounts'). The
+  -- External account is created in the user's BASE currency, which can differ
+  -- from the bank transaction's currency; without this, the External leg would
+  -- post an amount in the wrong currency and the posting saga would reject it
+  -- with 'CurrencyMismatch'. See 'resolveAmounts' for same-currency handling
+  -- (returns the amount unchanged with a 'Nothing' rate) and nearest-date
+  -- fallback semantics.
+  accountRM <- lift (view accountReadModelL)
+  srcData <-
+    ExceptT
+      $ maybe (Left (NotFound "Account" (tshow sourceAccId))) Right
+      <$> AccountRM.getAccount accountRM sourceAccId
+  tgtData <-
+    ExceptT
+      $ maybe (Left (NotFound "Account" (tshow targetAccId))) Right
+      <$> AccountRM.getAccount accountRM targetAccId
+  let srcCurrency = moneyCurrency srcData.balance
+      tgtCurrency = moneyCurrency tgtData.balance
+      -- The known bank amount 'money' is in the LOCAL account's currency. For
+      -- an expense the local account is the source leg; for an income it is
+      -- the target leg.
+      userAmountIsSource = direction == ClassifiedExpense
+      rateDay = utctDay tx.time
+  (srcAmt, tgtAmt, rate) <-
+    ExceptT (TransactionService.resolveAmounts money srcCurrency tgtCurrency userAmountIsSource Nothing rateDay)
+  let cmd = buildTransferCmd userId tx sourceAccId targetAccId srcAmt tgtAmt rate transactionType
   (txId, _) <- ExceptT (TransactionService.initiateTransaction cmd)
   lift $ logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
   pure (Just txId)
@@ -382,13 +454,13 @@ commitImport provider userId userData localAccId tx money = do
         ClassifiedIncome ->
           (externalAcc, localAcc, Income allocs)
 
-    buildTransferCmd uid bankTx sourceAccId targetAccId m transactionType =
+    buildTransferCmd uid bankTx sourceAccId targetAccId srcAmt tgtAmt rate transactionType =
       InitiateTransaction
         { sourceAccountId = sourceAccId,
           targetAccountId = targetAccId,
-          sourceAmount = m,
-          targetAmount = m,
-          exchangeRate = Nothing,
+          sourceAmount = srcAmt,
+          targetAmount = tgtAmt,
+          exchangeRate = rate,
           description = bankTx.description,
           initiatedBy = uid,
           at = bankTx.time,

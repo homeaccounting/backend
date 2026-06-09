@@ -123,7 +123,7 @@ type TransactionAPI =
       :> "transfer"
       :> ReqBody '[JSON] TransferRequest
       :> Post '[JSON] TransactionResponse
-    -- GET /api/transactions?accountId=&from=&to=&includeCancelled= - List transactions visible to the caller.
+    -- GET /api/transactions?accountId=&from=&to=&includeCancelled=&includeFailed= - List transactions visible to the caller.
     :<|> AuthProtect "jwt"
       :> "api"
       :> "transactions"
@@ -131,6 +131,7 @@ type TransactionAPI =
       :> QueryParam "from" UTCTime
       :> QueryParam "to" UTCTime
       :> QueryParam "includeCancelled" Bool
+      :> QueryParam "includeFailed" Bool
       :> Get '[JSON] TransactionListResponse
     -- PUT /api/transactions/:id/labels - Replace the label set on a Completed transaction.
     :<|> AuthProtect "jwt"
@@ -400,6 +401,7 @@ transactionHistoryHandler user rawId = do
 --   - from:             inclusive lower bound on business timestamp (UTCTime, ISO-8601)
 --   - to:               inclusive upper bound on business timestamp (UTCTime, ISO-8601)
 --   - includeCancelled: when true, cancelled transactions are included (default false)
+--   - includeFailed:    when true, failed transactions are included (default false)
 --
 -- from > to is rejected as a 400 ValidationErr via mkTransactionQuery.
 -- An accountId the caller cannot see produces a 200 empty list (hide existence).
@@ -411,12 +413,14 @@ listTransactionsHandler ::
   Maybe UTCTime ->
   Maybe UTCTime ->
   Maybe Bool ->
+  Maybe Bool ->
   AppM TransactionListResponse
-listTransactionsHandler user maybeAccountUuid maybeFrom maybeTo maybeIncludeCancelled = do
+listTransactionsHandler user maybeAccountUuid maybeFrom maybeTo maybeIncludeCancelled maybeIncludeFailed = do
   let userId = user.userId
       includeCancelled = fromMaybe False maybeIncludeCancelled
+      includeFailed = fromMaybe False maybeIncludeFailed
   accountIdDomain <- traverse (validateField "accountId" . mkAccountId) maybeAccountUuid
-  query <- validateField "query" $ mkTransactionQuery accountIdDomain maybeFrom maybeTo includeCancelled
+  query <- validateField "query" $ mkTransactionQuery accountIdDomain maybeFrom maybeTo includeCancelled includeFailed
   results <- TransactionService.listTransactions userId query
   let responses = map (uncurry fromTransactionData) results
       totalCount = length responses

@@ -420,6 +420,48 @@ mapDomainError CannotAmendDuringCancellation =
               details = Nothing
             }
     }
+mapDomainError BankConnectionNotFound =
+  err404
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Bank connection not found",
+              code = "BANK_CONNECTION_NOT_FOUND",
+              details = Nothing
+            }
+    }
+mapDomainError BankConnectionDisabled =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Bank connection is disabled",
+              code = "CONNECTION_DISABLED",
+              details = Nothing
+            }
+    }
+mapDomainError BankConnectionAccountConflict =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Account is already mapped by another bank connection",
+              code = "BANK_CONNECTION_ACCOUNT_CONFLICT",
+              details = Nothing
+            }
+    }
+mapDomainError (BankConnectionAccountInvalid field) =
+  err400
+    { errBody =
+        encode $
+          ValidationErrorResponse
+            { message = "Validation failed",
+              fieldErrors =
+                Map.singleton
+                  field
+                  "Account is not accessible or not writable by this user"
+            }
+    }
 
 -- -----------------------------------------------------------------------------
 -- Convenience Functions

@@ -19,10 +19,17 @@ module Domain.Configuration.CommandHandlerSpec (spec) where
 
 import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
+import Domain.Banking.Types (BankConnectionId, BankProvider (..), unsafeBankConnectionId)
 import Domain.Configuration
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Events
-  ( BankingDefaultExpenseCategorySet (..),
+  ( BankConnectionAccountMapSet (..),
+    BankConnectionAdded (..),
+    BankConnectionEnabledSet (..),
+    BankConnectionRemoved (..),
+    BankConnectionRenamed (..),
+    BankConnectionTokenChanged (..),
+    BankingDefaultExpenseCategorySet (..),
     BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
@@ -30,6 +37,7 @@ import Domain.Configuration.Events
   )
 import Domain.Core.Types
 import Eventium (latestProjection)
+import Infrastructure.Crypto.SecretBox (EncryptedSecret (..))
 import RIO
 import Test.Hspec
 import Testkit.Generators ()
@@ -48,6 +56,9 @@ spec = do
   setBankingDefaultExpenseCategorySpec
   setBankingMccExpenseCategoryMapSpec
   removeDictionaryEntryBankingGuardSpec
+  addBankConnectionSpec
+  bankConnectionMissingSpec
+  setBankConnectionAccountMapSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -923,4 +934,306 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
               DictionaryEntryRemovedConfigurationEvent removed ->
                 removed.entryId `shouldBe` testCategoryId2
               _ -> expectationFailure "Expected DictionaryEntryRemoved event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- Bank Connection Test Fixtures
+-- -----------------------------------------------------------------------------
+
+-- | A connection id present in fixtures.
+testConnectionId1 :: BankConnectionId
+testConnectionId1 = unsafeBankConnectionId (read "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+-- | A second connection id.
+testConnectionId2 :: BankConnectionId
+testConnectionId2 = unsafeBankConnectionId (read "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+-- | A connection id that is never present.
+testMissingConnectionId :: BankConnectionId
+testMissingConnectionId = unsafeBankConnectionId (read "cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+testAccountId1 :: AccountId
+testAccountId1 = mockAccountId (read "d1111111-1111-1111-1111-111111111111")
+
+testAccountId2 :: AccountId
+testAccountId2 = mockAccountId (read "d2222222-2222-2222-2222-222222222222")
+
+-- | A deterministic encrypted-secret value for fixtures (opaque to the handler).
+testEncryptedSecret :: EncryptedSecret
+testEncryptedSecret =
+  EncryptedSecret
+    { keyVersion = 1,
+      nonce = "bm9uY2U=",
+      ciphertext = "Y2lwaGVy",
+      authTag = "dGFn"
+    }
+
+-- | A created config with one bank connection (testConnectionId1), no account map.
+configWithConnection :: Configuration
+configWithConnection =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      BankConnectionAddedConfigurationEvent
+        BankConnectionAdded
+          { connectionId = testConnectionId1,
+            provider = Monobank,
+            name = "Mono",
+            encryptedToken = testEncryptedSecret,
+            tokenHint = "1234",
+            enabled = True
+          }
+    ]
+
+-- | A created config with two connections; connection 2 already maps an external
+-- account to testAccountId1.
+configWithTwoConnections :: Configuration
+configWithTwoConnections =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      BankConnectionAddedConfigurationEvent
+        BankConnectionAdded
+          { connectionId = testConnectionId1,
+            provider = Monobank,
+            name = "Mono A",
+            encryptedToken = testEncryptedSecret,
+            tokenHint = "1111",
+            enabled = True
+          },
+      BankConnectionAddedConfigurationEvent
+        BankConnectionAdded
+          { connectionId = testConnectionId2,
+            provider = Monobank,
+            name = "Mono B",
+            encryptedToken = testEncryptedSecret,
+            tokenHint = "2222",
+            enabled = True
+          },
+      BankConnectionAccountMapSetConfigurationEvent
+        BankConnectionAccountMapSet
+          { connectionId = testConnectionId2,
+            accountMap = Map.fromList [("ext-b", testAccountId1)]
+          }
+    ]
+
+-- -----------------------------------------------------------------------------
+-- AddBankConnection Tests
+-- -----------------------------------------------------------------------------
+
+addBankConnectionSpec :: Spec
+addBankConnectionSpec = describe "AddBankConnection Command" $ do
+  context "Given a created configuration" $ do
+    describe "When adding a bank connection" $ do
+      it "Then emits BankConnectionAdded event" $ do
+        let config = createdConfig
+        let command =
+              AddBankConnectionConfigurationCommand
+                AddBankConnection
+                  { connectionId = testConnectionId1,
+                    provider = Monobank,
+                    name = "Mono",
+                    encryptedToken = testEncryptedSecret,
+                    tokenHint = "1234",
+                    enabled = True
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankConnectionAddedConfigurationEvent evt -> do
+                evt.connectionId `shouldBe` testConnectionId1
+                evt.tokenHint `shouldBe` "1234"
+                evt.enabled `shouldBe` True
+              _ -> expectationFailure "Expected BankConnectionAdded event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- Missing-connection rejection tests (rename/token/enabled/map/remove)
+-- -----------------------------------------------------------------------------
+
+bankConnectionMissingSpec :: Spec
+bankConnectionMissingSpec = describe "Bank connection commands on a missing connection" $ do
+  context "Given a config without the target connection" $ do
+    describe "When renaming the connection" $ do
+      it "Then returns Left BankConnectionNotFound" $ do
+        let command =
+              RenameBankConnectionConfigurationCommand
+                RenameBankConnection
+                  { connectionId = testMissingConnectionId,
+                    name = "New name"
+                  }
+        handleConfigurationCommand configWithConnection command
+          `shouldBe` Left BankConnectionNotFound
+
+    describe "When changing the token" $ do
+      it "Then returns Left BankConnectionNotFound" $ do
+        let command =
+              ChangeBankConnectionTokenConfigurationCommand
+                ChangeBankConnectionToken
+                  { connectionId = testMissingConnectionId,
+                    encryptedToken = testEncryptedSecret,
+                    tokenHint = "9999"
+                  }
+        handleConfigurationCommand configWithConnection command
+          `shouldBe` Left BankConnectionNotFound
+
+    describe "When setting enabled" $ do
+      it "Then returns Left BankConnectionNotFound" $ do
+        let command =
+              SetBankConnectionEnabledConfigurationCommand
+                SetBankConnectionEnabled
+                  { connectionId = testMissingConnectionId,
+                    enabled = False
+                  }
+        handleConfigurationCommand configWithConnection command
+          `shouldBe` Left BankConnectionNotFound
+
+    describe "When setting the account map" $ do
+      it "Then returns Left BankConnectionNotFound" $ do
+        let command =
+              SetBankConnectionAccountMapConfigurationCommand
+                SetBankConnectionAccountMap
+                  { connectionId = testMissingConnectionId,
+                    accountMap = Map.fromList [("ext-1", testAccountId1)]
+                  }
+        handleConfigurationCommand configWithConnection command
+          `shouldBe` Left BankConnectionNotFound
+
+    describe "When removing the connection" $ do
+      it "Then returns Left BankConnectionNotFound" $ do
+        let command =
+              RemoveBankConnectionConfigurationCommand
+                RemoveBankConnection
+                  { connectionId = testMissingConnectionId
+                  }
+        handleConfigurationCommand configWithConnection command
+          `shouldBe` Left BankConnectionNotFound
+
+  context "Given a config WITH the target connection" $ do
+    describe "When renaming the connection" $ do
+      it "Then emits BankConnectionRenamed event" $ do
+        let command =
+              RenameBankConnectionConfigurationCommand
+                RenameBankConnection
+                  { connectionId = testConnectionId1,
+                    name = "Renamed"
+                  }
+        case handleConfigurationCommand configWithConnection command of
+          Right events -> case head events of
+            BankConnectionRenamedConfigurationEvent evt -> do
+              evt.connectionId `shouldBe` testConnectionId1
+              evt.name `shouldBe` "Renamed"
+            _ -> expectationFailure "Expected BankConnectionRenamed event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+    describe "When changing the token" $ do
+      it "Then emits BankConnectionTokenChanged event" $ do
+        let command =
+              ChangeBankConnectionTokenConfigurationCommand
+                ChangeBankConnectionToken
+                  { connectionId = testConnectionId1,
+                    encryptedToken = testEncryptedSecret,
+                    tokenHint = "9999"
+                  }
+        case handleConfigurationCommand configWithConnection command of
+          Right events -> case head events of
+            BankConnectionTokenChangedConfigurationEvent evt -> do
+              evt.connectionId `shouldBe` testConnectionId1
+              evt.tokenHint `shouldBe` "9999"
+            _ -> expectationFailure "Expected BankConnectionTokenChanged event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+    describe "When setting enabled" $ do
+      it "Then emits BankConnectionEnabledSet event" $ do
+        let command =
+              SetBankConnectionEnabledConfigurationCommand
+                SetBankConnectionEnabled
+                  { connectionId = testConnectionId1,
+                    enabled = False
+                  }
+        case handleConfigurationCommand configWithConnection command of
+          Right events -> case head events of
+            BankConnectionEnabledSetConfigurationEvent evt -> do
+              evt.connectionId `shouldBe` testConnectionId1
+              evt.enabled `shouldBe` False
+            _ -> expectationFailure "Expected BankConnectionEnabledSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+    describe "When removing the connection" $ do
+      it "Then emits BankConnectionRemoved event" $ do
+        let command =
+              RemoveBankConnectionConfigurationCommand
+                RemoveBankConnection
+                  { connectionId = testConnectionId1
+                  }
+        case handleConfigurationCommand configWithConnection command of
+          Right events -> case head events of
+            BankConnectionRemovedConfigurationEvent evt ->
+              evt.connectionId `shouldBe` testConnectionId1
+            _ -> expectationFailure "Expected BankConnectionRemoved event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- SetBankConnectionAccountMap Tests
+-- -----------------------------------------------------------------------------
+
+setBankConnectionAccountMapSpec :: Spec
+setBankConnectionAccountMapSpec = describe "SetBankConnectionAccountMap Command" $ do
+  context "Given a map referencing an account already used by another connection" $ do
+    describe "When setting the account map" $ do
+      it "Then returns Left BankConnectionAccountConflict" $ do
+        -- connection 2 already maps testAccountId1; connection 1 tries to map it too
+        let command =
+              SetBankConnectionAccountMapConfigurationCommand
+                SetBankConnectionAccountMap
+                  { connectionId = testConnectionId1,
+                    accountMap = Map.fromList [("ext-a", testAccountId1)]
+                  }
+        handleConfigurationCommand configWithTwoConnections command
+          `shouldBe` Left BankConnectionAccountConflict
+
+  context "Given a map whose accounts are not used by another connection" $ do
+    describe "When setting the account map" $ do
+      it "Then emits BankConnectionAccountMapSet event" $ do
+        let testMap = Map.fromList [("ext-a", testAccountId2)]
+        let command =
+              SetBankConnectionAccountMapConfigurationCommand
+                SetBankConnectionAccountMap
+                  { connectionId = testConnectionId1,
+                    accountMap = testMap
+                  }
+        case handleConfigurationCommand configWithTwoConnections command of
+          Right events -> case head events of
+            BankConnectionAccountMapSetConfigurationEvent evt -> do
+              evt.connectionId `shouldBe` testConnectionId1
+              evt.accountMap `shouldBe` testMap
+            _ -> expectationFailure "Expected BankConnectionAccountMapSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+  context "Given the same connection re-maps the account it already owns" $ do
+    describe "When setting the account map on connection 2 with its own account" $ do
+      it "Then does NOT conflict and emits the event" $ do
+        let testMap = Map.fromList [("ext-b", testAccountId1)]
+        let command =
+              SetBankConnectionAccountMapConfigurationCommand
+                SetBankConnectionAccountMap
+                  { connectionId = testConnectionId2,
+                    accountMap = testMap
+                  }
+        case handleConfigurationCommand configWithTwoConnections command of
+          Right events -> case head events of
+            BankConnectionAccountMapSetConfigurationEvent evt ->
+              evt.accountMap `shouldBe` testMap
+            _ -> expectationFailure "Expected BankConnectionAccountMapSet event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err

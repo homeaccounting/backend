@@ -18,6 +18,11 @@
 --   - Enables O(1) deduplication lookups during bank statement import
 --   - Only indexes transactions that have an externalTransactionId
 --   - Follows the same TVar-based pattern as other read models
+--   - Deduplication is permanent: an external transaction id recorded on
+--     TransactionPostingInitiated is never evicted, even if the posting later
+--     fails. A re-sync therefore never re-imports a transaction it has already
+--     attempted, which prevents the unbounded duplicate accumulation that the
+--     previous (evict-on-failure) behaviour caused.
 module Application.ReadModels.BankImportReadModel
   ( BankImportReadModel (..),
     createBankImportReadModel,
@@ -100,16 +105,24 @@ handleBankImportEvents rmTVar = EventHandler $ \events -> do
 
 -- | Processes a single event and updates the external transaction ID index.
 --
--- Two cases matter:
+-- Only one case matters:
 --   * 'TransactionPostingInitiatedEvent' with an external transaction id -> record the
 --     mapping so future imports of the same bank tx are deduplicated.
---   * 'TransactionPostingFailedEvent' -> drop any mapping that pointed at the failing
---     stream. The transfer saga emits 'TransactionPostingInitiated' before running the
---     debit/credit and 'TransactionPostingFailed' when a step (e.g. insufficient
---     funds) aborts the transfer. Without this eviction, a failed bank
---     import would be permanently marked as imported and could never be
---     retried, even after the user corrects the underlying issue
---     (overdraft, top-up, etc.).
+--
+-- The mapping is /permanent/: once an external transaction id has been
+-- recorded, it stays recorded regardless of whether the posting later
+-- succeeds or fails. We intentionally do NOT evict on
+-- 'TransactionPostingFailed'.
+--
+-- Rationale: the bank import now resolves cross-currency exchange rates
+-- correctly, so imports succeed on first sync. The remaining failure modes
+-- (insufficient funds, no exchange rate at all) are not fixed by re-syncing,
+-- so auto-retrying a failed import on every re-sync isn't worth the cost: the
+-- old eviction behaviour caused every previously-failed transaction to be
+-- re-imported as a brand-new aggregate on each re-sync, accumulating
+-- duplicates without bound. Retrying a genuinely failed import, if ever
+-- needed, should be an explicit idempotent action rather than a side effect of
+-- re-sync.
 processEvent ::
   Map ExternalTransactionId TransactionId ->
   GlobalStreamEvent AccountingEvent ->
@@ -123,9 +136,5 @@ processEvent txMap globalEvent =
               case mkTransactionIdSafe streamUuid of
                 Just txId -> Map.insert extId txId txMap
                 Nothing -> txMap
-            Nothing -> txMap
-        TransactionPostingFailedEvent _ ->
-          case mkTransactionIdSafe streamUuid of
-            Just failedTxId -> Map.filter (/= failedTxId) txMap
             Nothing -> txMap
         _ -> txMap

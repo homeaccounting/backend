@@ -31,6 +31,14 @@ module Application.Services.ConfigurationService
     setBankingDefaultIncomeCategory,
     setBankingDefaultExpenseCategory,
     setBankingMccExpenseCategoryMap,
+    addBankConnection,
+    renameBankConnection,
+    changeBankConnectionToken,
+    setBankConnectionEnabled,
+    setBankConnectionAccountMap,
+    removeBankConnection,
+    getDecryptedConnectionToken,
+    getConnectionProvider,
     closeBooksThrough,
     seedDefaultConfiguration,
 
@@ -41,6 +49,7 @@ module Application.Services.ConfigurationService
   )
 where
 
+import Application.ReadModels.Account (getAccessibleAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
 import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..))
@@ -56,21 +65,36 @@ import Application.Services.Internal
   )
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (ChangeAccountCurrency (..))
+import Domain.Banking.Types
+  ( BankConnectionId,
+    BankConnectionName,
+    ExternalAccountId,
+    PlainToken,
+    unsafeBankConnectionId,
+  )
+import qualified Domain.Banking.Types as Domain
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
 import qualified Domain.Configuration.CommandHandler as ConfigCh
 import Domain.Configuration.Commands
-  ( AddDictionaryEntry (..),
+  ( AddBankConnection (..),
+    AddDictionaryEntry (..),
+    ChangeBankConnectionToken (..),
     ChangeBaseCurrency (..),
     ChangeDefaultCurrency (..),
     CloseBooksThrough (..),
     CreateConfiguration (..),
+    RemoveBankConnection (..),
     RemoveDictionaryEntry (..),
+    RenameBankConnection (..),
     RenameDictionaryEntry (..),
+    SetBankConnectionAccountMap (..),
+    SetBankConnectionEnabled (..),
     SetBankingDefaultExpenseCategory (..),
     SetBankingDefaultIncomeCategory (..),
     SetBankingMccExpenseCategoryMap (..),
@@ -87,10 +111,15 @@ import Domain.Configuration.Defaults
     income,
     incomeCategoryDictId,
   )
-import Domain.Configuration.Projection (BankingConfiguration (defaultExpenseCategory, defaultIncomeCategory, mccExpenseCategoryMap))
+import Domain.Configuration.Projection
+  ( BankConnection (..),
+    BankingConfiguration (connections, defaultExpenseCategory, defaultIncomeCategory, mccExpenseCategoryMap),
+  )
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
-  ( CategoryId,
+  ( AccountId,
+    AccountRole (..),
+    CategoryId,
     ConfigurationId,
     CreatedBy (..),
     Currency (..),
@@ -113,9 +142,13 @@ import Domain.User.Commands (AssignConfiguration (..))
 import Eventium (CommandHandlerError (..))
 import Infrastructure.App
   ( AppM,
+    HasBankProviderFactory (..),
+    HasBankingKeyRing (..),
     HasEventStore (..),
     HasReadModel (..),
   )
+import Infrastructure.Banking.Provider (BankProvider)
+import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
 import Infrastructure.Eventium (applyConfigurationCommand)
 import RIO
 import qualified RIO.Text as T
@@ -273,6 +306,192 @@ setBankingMccExpenseCategoryMap userId mapping = runExceptT $ do
     (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {mapping = mapping})
   lift $ logInfo "Banking MCC expense category map set successfully"
 
+-- -----------------------------------------------------------------------------
+-- Bank Connections
+-- -----------------------------------------------------------------------------
+
+-- | Compute the non-secret token hint: the last (up to) four characters of the
+-- plaintext token, used so the user can recognise a stored token.
+tokenHintOf :: Text -> Text
+tokenHintOf = T.takeEnd 4
+
+-- | Add a new bank connection to the user's configuration.
+--
+-- Encrypts the plaintext token in the service layer (only ciphertext enters
+-- the event log), generates a fresh 'BankConnectionId', computes a token hint,
+-- and emits 'AddBankConnection'. The connection starts with an empty account
+-- map.
+addBankConnection ::
+  UserId ->
+  Domain.BankProvider ->
+  -- | Display name
+  BankConnectionName ->
+  -- | Plaintext provider token (encrypted before it leaves this function)
+  PlainToken ->
+  -- | Whether the connection is enabled for syncing
+  Bool ->
+  AppM (Either DomainError BankConnectionId)
+addBankConnection userId provider name token enabled = runExceptT $ do
+  lift $ logInfo $ "Adding bank connection for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  connUuid <- liftIO UUID.nextRandom
+  let connId = unsafeBankConnectionId connUuid
+  ring <- lift (view bankingKeyRingL)
+  enc <- liftIO (encryptSecret ring token)
+  let cmd =
+        AddBankConnectionConfigurationCommand
+          AddBankConnection
+            { connectionId = connId,
+              provider = provider,
+              name = name,
+              encryptedToken = enc,
+              tokenHint = tokenHintOf token,
+              enabled = enabled
+            }
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Bank connection added successfully"
+  pure connId
+
+-- | Rename an existing bank connection.
+renameBankConnection :: UserId -> BankConnectionId -> BankConnectionName -> AppM (Either DomainError ())
+renameBankConnection userId connId newName = runExceptT $ do
+  lift $ logInfo $ "Renaming bank connection for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  let cmd =
+        RenameBankConnectionConfigurationCommand
+          RenameBankConnection
+            { connectionId = connId,
+              name = newName
+            }
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Bank connection renamed successfully"
+
+-- | Replace an existing bank connection's token. The new plaintext token is
+-- re-encrypted in the service layer and a fresh hint is computed.
+changeBankConnectionToken :: UserId -> BankConnectionId -> PlainToken -> AppM (Either DomainError ())
+changeBankConnectionToken userId connId token = runExceptT $ do
+  lift $ logInfo $ "Changing bank connection token for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  ring <- lift (view bankingKeyRingL)
+  enc <- liftIO (encryptSecret ring token)
+  let cmd =
+        ChangeBankConnectionTokenConfigurationCommand
+          ChangeBankConnectionToken
+            { connectionId = connId,
+              encryptedToken = enc,
+              tokenHint = tokenHintOf token
+            }
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Bank connection token changed successfully"
+
+-- | Enable or disable an existing bank connection.
+setBankConnectionEnabled :: UserId -> BankConnectionId -> Bool -> AppM (Either DomainError ())
+setBankConnectionEnabled userId connId enabled = runExceptT $ do
+  lift $ logInfo $ "Setting bank connection enabled flag for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  let cmd =
+        SetBankConnectionEnabledConfigurationCommand
+          SetBankConnectionEnabled
+            { connectionId = connId,
+              enabled = enabled
+            }
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Bank connection enabled flag set successfully"
+
+-- | Remove an existing bank connection.
+removeBankConnection :: UserId -> BankConnectionId -> AppM (Either DomainError ())
+removeBankConnection userId connId = runExceptT $ do
+  lift $ logInfo $ "Removing bank connection for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  let cmd =
+        RemoveBankConnectionConfigurationCommand
+          RemoveBankConnection
+            { connectionId = connId
+            }
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Bank connection removed successfully"
+
+-- | Replace a bank connection's external-account map wholesale.
+--
+-- Cross-aggregate validation lives here (not in the pure handler): every target
+-- 'AccountId' must exist and be accessible to the user with an 'Owner' or
+-- 'Editor' role, so bank imports never write to an account the user cannot
+-- write to (or one that is read-only shared). On any failure the whole map is
+-- rejected with 'BankConnectionAccountInvalid "accountMap"'.
+--
+-- Within-config uniqueness (an account already mapped by a different
+-- connection) is enforced by the command handler and surfaces as
+-- 'BankConnectionAccountConflict'.
+setBankConnectionAccountMap ::
+  UserId ->
+  BankConnectionId ->
+  Map ExternalAccountId AccountId ->
+  AppM (Either DomainError ())
+setBankConnectionAccountMap userId connId accountMap = runExceptT $ do
+  lift $ logInfo $ "Setting bank connection account map for user " <> displayShow userId
+  -- Cross-aggregate validation against the account read model BEFORE issuing the
+  -- command. The user must own/edit every target account.
+  accountRM <- lift (view accountReadModelL)
+  accessible <- lift (getAccessibleAccounts accountRM userId)
+  let writable =
+        [ accId
+        | (accId, _accData, role) <- accessible,
+          role == Owner || role == Editor
+        ]
+      writableSet = Set.fromList writable
+      targets = Map.elems accountMap
+  unless (all (`Set.member` writableSet) targets)
+    $ throwE (BankConnectionAccountInvalid "accountMap")
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  let cmd =
+        SetBankConnectionAccountMapConfigurationCommand
+          SetBankConnectionAccountMap
+            { connectionId = connId,
+              accountMap = accountMap
+            }
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Bank connection account map set successfully"
+
+-- | Load a user's configuration, find the named connection, and decrypt its
+-- stored token. Used by the external-accounts and resync endpoints (Tasks 8/9).
+--
+-- Returns 'BankConnectionNotFound' when the connection is absent, and a
+-- 'BankingError' when decryption fails (a misconfigured/rotated key ring).
+getDecryptedConnectionToken :: UserId -> BankConnectionId -> AppM (Either DomainError PlainToken)
+getDecryptedConnectionToken userId connId = runExceptT $ do
+  configData <- ExceptT (getConfigurationForUser userId)
+  conn <-
+    maybe
+      (throwE BankConnectionNotFound)
+      pure
+      (Map.lookup connId configData.banking.connections)
+  ring <- lift (view bankingKeyRingL)
+  case decryptSecret ring conn.encryptedToken of
+    Left err -> throwE (BankingError ("Failed to decrypt connection token: " <> tshow err))
+    Right plaintext -> pure plaintext
+
+-- | Build a ready-to-use 'BankProvider' (record-of-functions) for a user's
+-- stored bank connection.
+--
+-- Loads the connection by id ('BankConnectionNotFound' when absent), decrypts
+-- its stored token, then asks the injected 'bankProviderFactoryL' to construct
+-- the provider for the connection's 'Domain.BankProvider'. The factory captures
+-- all provider-specific configuration (e.g. the Monobank API base URL and the
+-- shared HTTP manager) at construction time, so callers — in particular the
+-- banking HTTP handlers — never touch app config or a concrete provider
+-- implementation.
+getConnectionProvider :: UserId -> BankConnectionId -> AppM (Either DomainError BankProvider)
+getConnectionProvider userId connId = runExceptT $ do
+  configData <- ExceptT (getConfigurationForUser userId)
+  conn <-
+    maybe
+      (throwE BankConnectionNotFound)
+      pure
+      (Map.lookup connId configData.banking.connections)
+  token <- ExceptT (getDecryptedConnectionToken userId connId)
+  factory <- lift (view bankProviderFactoryL)
+  pure (factory conn.provider token)
+
 -- | Advance the user's books-close cutoff. Both layers (service edge + aggregate)
 -- enforce the strict-advance rule:
 --
@@ -317,6 +536,10 @@ translateConfigurationError ::
   DomainError
 translateConfigurationError (CommandRejected ConfigCh.CannotRewindBooksCloseDate {current = cur, attempted = att}) =
   CannotRewindBooksCloseDate {current = cur, attempted = att}
+translateConfigurationError (CommandRejected ConfigCh.BankConnectionNotFound) =
+  BankConnectionNotFound
+translateConfigurationError (CommandRejected ConfigCh.BankConnectionAccountConflict) =
+  BankConnectionAccountConflict
 translateConfigurationError other =
   ConfigurationError (T.pack (show other))
 
@@ -554,3 +777,34 @@ copyBanking newConfigUuidVal srcBanking = do
     case copyResult of
       Left err -> logWarn $ "Failed to clone banking.mccExpenseCategoryMap: " <> displayShow err
       Right _ -> return ()
+
+  -- Clone bank connections. Each connection is re-emitted with its already
+  -- encrypted token, hint, provider, name, and enabled flag preserved; its
+  -- account map (if any) is set afterwards. Per-connection failures are logged
+  -- and skipped — clone-on-write must not abort on a single connection.
+  forM_ (Map.toList srcBanking.connections) $ \(connId, conn) -> do
+    let addCmd =
+          AddBankConnectionConfigurationCommand
+            AddBankConnection
+              { connectionId = connId,
+                provider = conn.provider,
+                name = conn.name,
+                encryptedToken = conn.encryptedToken,
+                tokenHint = conn.tokenHint,
+                enabled = conn.enabled
+              }
+    addResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal addCmd
+    case addResult of
+      Left err -> logWarn $ "Failed to clone bank connection: " <> displayShow err
+      Right _ ->
+        unless (Map.null conn.accountMap) $ do
+          let mapCmd =
+                SetBankConnectionAccountMapConfigurationCommand
+                  SetBankConnectionAccountMap
+                    { connectionId = connId,
+                      accountMap = conn.accountMap
+                    }
+          mapResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal mapCmd
+          case mapResult of
+            Left err -> logWarn $ "Failed to clone bank connection account map: " <> displayShow err
+            Right _ -> return ()

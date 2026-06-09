@@ -113,7 +113,7 @@ listDefault env uid = runAppM env (listTransactions uid emptyTransactionQuery)
 -- | List transactions visible to @uid@, including cancelled ones.
 listWithCancelled :: AppEnv -> UserId -> IO [(TransactionId, TransactionData)]
 listWithCancelled env uid =
-  case mkTransactionQuery Nothing Nothing Nothing True of
+  case mkTransactionQuery Nothing Nothing Nothing True False of
     Left err -> fail $ "mkTransactionQuery failed: " <> show err
     Right q -> runAppM env (listTransactions uid q)
 

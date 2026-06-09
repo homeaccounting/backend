@@ -50,7 +50,13 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Domain.Configuration.Events
-  ( BankingDefaultExpenseCategorySet (..),
+  ( BankConnectionAccountMapSet (..),
+    BankConnectionAdded (..),
+    BankConnectionEnabledSet (..),
+    BankConnectionRemoved (..),
+    BankConnectionRenamed (..),
+    BankConnectionTokenChanged (..),
+    BankingDefaultExpenseCategorySet (..),
     BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
@@ -61,7 +67,11 @@ import Domain.Configuration.Events
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
   )
-import Domain.Configuration.Projection (BankingConfiguration (defaultExpenseCategory, defaultIncomeCategory, mccExpenseCategoryMap), emptyBankingConfiguration)
+import Domain.Configuration.Projection
+  ( BankConnection (..),
+    BankingConfiguration (connections, defaultExpenseCategory, defaultIncomeCategory, mccExpenseCategoryMap),
+    emptyBankingConfiguration,
+  )
 import Domain.Core.Types
   ( ConfigurationId,
     CreatedBy,
@@ -341,6 +351,168 @@ processConfigurationEvent configurations globalEvent =
                 ( \config ->
                     config
                       { booksClosedThrough = Just evt.closedThrough,
+                        version = config.version + 1
+                      }
+                )
+                configId
+                configurations
+        BankConnectionAddedEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> configurations
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    let conn =
+                          BankConnection
+                            { connectionId = evt.connectionId,
+                              provider = evt.provider,
+                              name = evt.name,
+                              encryptedToken = evt.encryptedToken,
+                              tokenHint = evt.tokenHint,
+                              enabled = evt.enabled,
+                              accountMap = Map.empty
+                            }
+                     in config
+                          { banking =
+                              config.banking
+                                { connections = Map.insert evt.connectionId conn config.banking.connections
+                                },
+                            version = config.version + 1
+                          }
+                )
+                configId
+                configurations
+        BankConnectionRenamedEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> configurations
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking =
+                          config.banking
+                            { connections =
+                                Map.adjust
+                                  ( \c ->
+                                      c
+                                        { connectionId = c.connectionId,
+                                          provider = c.provider,
+                                          name = evt.name,
+                                          encryptedToken = c.encryptedToken,
+                                          tokenHint = c.tokenHint,
+                                          enabled = c.enabled,
+                                          accountMap = c.accountMap
+                                        }
+                                  )
+                                  evt.connectionId
+                                  config.banking.connections
+                            },
+                        version = config.version + 1
+                      }
+                )
+                configId
+                configurations
+        BankConnectionTokenChangedEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> configurations
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking =
+                          config.banking
+                            { connections =
+                                Map.adjust
+                                  ( \c ->
+                                      c
+                                        { connectionId = c.connectionId,
+                                          provider = c.provider,
+                                          name = c.name,
+                                          encryptedToken = evt.encryptedToken,
+                                          tokenHint = evt.tokenHint,
+                                          enabled = c.enabled,
+                                          accountMap = c.accountMap
+                                        }
+                                  )
+                                  evt.connectionId
+                                  config.banking.connections
+                            },
+                        version = config.version + 1
+                      }
+                )
+                configId
+                configurations
+        BankConnectionEnabledSetEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> configurations
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking =
+                          config.banking
+                            { connections =
+                                Map.adjust
+                                  ( \c ->
+                                      c
+                                        { connectionId = c.connectionId,
+                                          provider = c.provider,
+                                          name = c.name,
+                                          encryptedToken = c.encryptedToken,
+                                          tokenHint = c.tokenHint,
+                                          enabled = evt.enabled,
+                                          accountMap = c.accountMap
+                                        }
+                                  )
+                                  evt.connectionId
+                                  config.banking.connections
+                            },
+                        version = config.version + 1
+                      }
+                )
+                configId
+                configurations
+        BankConnectionAccountMapSetEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> configurations
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking =
+                          config.banking
+                            { connections =
+                                Map.adjust
+                                  ( \c ->
+                                      c
+                                        { connectionId = c.connectionId,
+                                          provider = c.provider,
+                                          name = c.name,
+                                          encryptedToken = c.encryptedToken,
+                                          tokenHint = c.tokenHint,
+                                          enabled = c.enabled,
+                                          accountMap = evt.accountMap
+                                        }
+                                  )
+                                  evt.connectionId
+                                  config.banking.connections
+                            },
+                        version = config.version + 1
+                      }
+                )
+                configId
+                configurations
+        BankConnectionRemovedEvent evt ->
+          case mkConfigurationIdSafe streamUuid of
+            Nothing -> configurations
+            Just configId ->
+              Map.adjust
+                ( \config ->
+                    config
+                      { banking =
+                          config.banking
+                            { connections = Map.delete evt.connectionId config.banking.connections
+                            },
                         version = config.version + 1
                       }
                 )
