@@ -36,7 +36,7 @@ module Integration.TransactionCancellationIntegrationSpec (spec) where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
-import Application.ReadModels.Transaction (TransactionData (..), emptyTransactionQuery, mkTransactionQuery)
+import Application.ReadModels.Transaction (TransactionData (..), emptyTransactionFilter, mkTransactionFilter)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService (closeBooksThrough)
@@ -46,8 +46,10 @@ import Application.Services.TransactionService
     initiateTransfer,
     listTransactions,
   )
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))
+import Domain.Core.Page (Page (..))
 import Domain.Core.Types
   ( AccountId,
     TransactionId,
@@ -58,7 +60,7 @@ import Domain.Core.Types
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Commands (AmendTransaction (..))
-import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
@@ -105,17 +107,16 @@ seedTransfer env uid src tgt amt = do
 runCancel :: AppEnv -> UserId -> TransactionId -> IO (Either DomainError TransactionData)
 runCancel env uid txId = runAppM env (cancelTransaction uid txId)
 
--- | List transactions visible to @uid@ with the default query (cancelled
--- excluded).
-listDefault :: AppEnv -> UserId -> IO [(TransactionId, TransactionData)]
-listDefault env uid = runAppM env (listTransactions uid emptyTransactionQuery)
+-- | List with no status filter — every status (incl. cancelled) is returned.
+listAll :: AppEnv -> UserId -> IO [(TransactionId, TransactionData)]
+listAll env uid = snd <$> runAppM env (listTransactions uid emptyTransactionFilter (Page 50 0))
 
--- | List transactions visible to @uid@, including cancelled ones.
-listWithCancelled :: AppEnv -> UserId -> IO [(TransactionId, TransactionData)]
-listWithCancelled env uid =
-  case mkTransactionQuery Nothing Nothing Nothing True False of
-    Left err -> fail $ "mkTransactionQuery failed: " <> show err
-    Right q -> runAppM env (listTransactions uid q)
+-- | List with a status filter that excludes cancelled.
+listExcludingCancelled :: AppEnv -> UserId -> IO [(TransactionId, TransactionData)]
+listExcludingCancelled env uid =
+  snd <$> runAppM env (listTransactions uid filt (Page 50 0))
+  where
+    filt = mkTransactionFilter Nothing Nothing (Just (PendingKind NE.:| [CompletedKind, FailedKind])) Nothing
 
 -- | Directly look up a transaction from the read model.
 getTransactionFromRM :: AppEnv -> TransactionId -> IO (Maybe TransactionData)
@@ -206,27 +207,27 @@ happyPathSpec =
 readModelVisibilitySpec :: Spec
 readModelVisibilitySpec =
   describe "Read-model visibility" $ do
-    it "default listTransactions excludes cancelled transactions" $ do
+    it "a status filter excluding cancelled omits cancelled transactions" $ do
       cf <- setupCancelFixture "cancel-list-default@test.com"
       (txId, _td) <- seedTransfer cf.cfEnv cf.cfUserId cf.cfSrc cf.cfTgt 50
       _ <- runCancel cf.cfEnv cf.cfUserId txId
-      txns <- listDefault cf.cfEnv cf.cfUserId
+      txns <- listExcludingCancelled cf.cfEnv cf.cfUserId
       let ids = map fst txns
       ids `shouldNotContain` [txId]
 
-    it "listTransactions with qIncludeCancelled=True includes cancelled transactions" $ do
+    it "default listTransactions (no status filter) includes cancelled transactions" $ do
       cf <- setupCancelFixture "cancel-list-include@test.com"
       (txId, _td) <- seedTransfer cf.cfEnv cf.cfUserId cf.cfSrc cf.cfTgt 50
       _ <- runCancel cf.cfEnv cf.cfUserId txId
-      txns <- listWithCancelled cf.cfEnv cf.cfUserId
+      txns <- listAll cf.cfEnv cf.cfUserId
       let ids = map fst txns
       ids `shouldContain` [txId]
 
-    it "the cancelled tx in the inclusive list carries status = Cancelled" $ do
+    it "the cancelled tx in the unfiltered list carries status = Cancelled" $ do
       cf <- setupCancelFixture "cancel-list-status@test.com"
       (txId, _td) <- seedTransfer cf.cfEnv cf.cfUserId cf.cfSrc cf.cfTgt 75
       _ <- runCancel cf.cfEnv cf.cfUserId txId
-      txns <- listWithCancelled cf.cfEnv cf.cfUserId
+      txns <- listAll cf.cfEnv cf.cfUserId
       case lookup txId txns of
         Nothing -> expectationFailure "cancelled tx not found in inclusive list"
         Just td -> td.status `shouldBe` Cancelled

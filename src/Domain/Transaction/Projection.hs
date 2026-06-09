@@ -30,6 +30,10 @@ module Domain.Transaction.Projection
 
     -- * Transaction Status
     TransactionStatus (..),
+    StatusKind (..),
+    statusKind,
+    parseStatusKind,
+    renderStatusKind,
 
     -- * Optics Labels (via OverloadedLabels)
     -- $labels
@@ -51,6 +55,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (nil)
 import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransactionType, UserId, mkAccountId, mkAllocation, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
@@ -92,6 +97,35 @@ data TransactionStatus
 instance ToJSON TransactionStatus
 
 instance FromJSON TransactionStatus
+
+-- | Payload-free discriminator of 'TransactionStatus', used by query
+-- filters. Unlike 'TransactionStatus' it carries no @Failed@ reason, so the
+-- query layer never depends on write-side failure detail.
+data StatusKind = PendingKind | CompletedKind | FailedKind | CancelledKind
+  deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
+-- | Project a 'TransactionStatus' onto its 'StatusKind'.
+statusKind :: TransactionStatus -> StatusKind
+statusKind Pending = PendingKind
+statusKind Completed = CompletedKind
+statusKind (Failed _) = FailedKind
+statusKind Cancelled = CancelledKind
+
+-- | Render a 'StatusKind' to its lowercase wire token.
+renderStatusKind :: StatusKind -> Text
+renderStatusKind PendingKind = "pending"
+renderStatusKind CompletedKind = "completed"
+renderStatusKind FailedKind = "failed"
+renderStatusKind CancelledKind = "cancelled"
+
+-- | Parse a wire token (trimmed, case-insensitive) to a 'StatusKind'.
+parseStatusKind :: Text -> Maybe StatusKind
+parseStatusKind raw = case T.toLower (T.strip raw) of
+  "pending" -> Just PendingKind
+  "completed" -> Just CompletedKind
+  "failed" -> Just FailedKind
+  "cancelled" -> Just CancelledKind
+  _ -> Nothing
 
 -- -----------------------------------------------------------------------------
 -- Transaction Aggregate State

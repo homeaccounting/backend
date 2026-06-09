@@ -564,7 +564,12 @@ instance FromJSON TransactionResponse
 -- @
 data TransactionListResponse = TransactionListResponse
   { transactions :: [TransactionResponse],
-    totalCount :: Int
+    -- | Count of ALL matches before pagination (clients compute page count).
+    totalCount :: Int,
+    -- | Effective page size applied (after defaulting).
+    limit :: Int,
+    -- | Effective offset applied.
+    offset :: Int
   }
   deriving (Show, Eq, Generic)
 

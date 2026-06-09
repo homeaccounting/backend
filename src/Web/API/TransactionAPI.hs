@@ -56,7 +56,7 @@ module Web.API.TransactionAPI
   )
 where
 
-import Application.ReadModels.Transaction (TransactionData (..), mkTransactionQuery)
+import Application.ReadModels.Transaction (TransactionData (..), mkTransactionFilter)
 import Application.Services.TransactionHistoryService (TransactionHistory)
 import qualified Application.Services.TransactionHistoryService as TransactionHistoryService
 import qualified Application.Services.TransactionService as TransactionService
@@ -64,13 +64,17 @@ import qualified Data.List.NonEmpty as NE
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (TransactionType (..), mkAccountId, mkAllocation, mkTransactionId, parseCurrency)
+import Domain.Core.Page (Page (..), mkPage)
+import Domain.Core.Range (mkRange)
+import Domain.Core.Types (TransactionType (..), mkAccountId, mkAllocation, mkDictionaryEntryId, mkTransactionId, parseCurrency)
 import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Projection (StatusKind)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
+import Web.Query (CommaSep (..))
 import Web.Types
   ( AmendTransactionRequest (..),
     ChangeTransactionDateRequest (..),
@@ -123,15 +127,21 @@ type TransactionAPI =
       :> "transfer"
       :> ReqBody '[JSON] TransferRequest
       :> Post '[JSON] TransactionResponse
-    -- GET /api/transactions?accountId=&from=&to=&includeCancelled=&includeFailed= - List transactions visible to the caller.
+    -- GET /api/transactions - List transactions visible to the caller.
+    -- Filters: accountId, dateFrom/dateTo (inclusive), status (CSV IN),
+    -- label (CSV IN, set overlap). Pagination: limit (default 50, max 200),
+    -- offset (default 0). All optional. See
+    -- docs/specs/2026-06-09-transaction-query-language-design.md.
     :<|> AuthProtect "jwt"
       :> "api"
       :> "transactions"
       :> QueryParam "accountId" UUID
-      :> QueryParam "from" UTCTime
-      :> QueryParam "to" UTCTime
-      :> QueryParam "includeCancelled" Bool
-      :> QueryParam "includeFailed" Bool
+      :> QueryParam "dateFrom" UTCTime
+      :> QueryParam "dateTo" UTCTime
+      :> QueryParam "status" (CommaSep StatusKind)
+      :> QueryParam "label" (CommaSep UUID)
+      :> QueryParam "limit" Int
+      :> QueryParam "offset" Int
       :> Get '[JSON] TransactionListResponse
     -- PUT /api/transactions/:id/labels - Replace the label set on a Completed transaction.
     :<|> AuthProtect "jwt"
@@ -396,35 +406,40 @@ transactionHistoryHandler user rawId = do
 
 -- | Handler for GET /api/transactions - list transactions visible to the caller.
 --
--- Optional query params:
+-- Optional query params (absent = no constraint on that field):
 --   - accountId:        restrict to transactions touching this account
---   - from:             inclusive lower bound on business timestamp (UTCTime, ISO-8601)
---   - to:               inclusive upper bound on business timestamp (UTCTime, ISO-8601)
---   - includeCancelled: when true, cancelled transactions are included (default false)
---   - includeFailed:    when true, failed transactions are included (default false)
+--   - dateFrom/dateTo:  inclusive bounds on business timestamp (UTCTime, ISO-8601)
+--   - status:           comma-separated StatusKind set (IN), e.g. failed,cancelled
+--   - label:            comma-separated label UUIDs (set overlap, "any of")
+--   - limit/offset:     pagination (limit default 50, max 200; offset default 0)
 --
--- from > to is rejected as a 400 ValidationErr via mkTransactionQuery.
--- An accountId the caller cannot see produces a 200 empty list (hide existence).
+-- dateFrom > dateTo (400 via mkRange) and out-of-range limit/offset (400 via
+-- mkPage) are validation errors. An accountId the caller cannot see produces a
+-- 200 empty list (hide existence). totalCount counts all matches before paging.
 --
--- See docs/specs/2026-04-18-list-transactions-endpoint-design.md.
+-- See docs/specs/2026-06-09-transaction-query-language-design.md.
 listTransactionsHandler ::
   AuthenticatedUser ->
   Maybe UUID ->
   Maybe UTCTime ->
   Maybe UTCTime ->
-  Maybe Bool ->
-  Maybe Bool ->
+  Maybe (CommaSep StatusKind) ->
+  Maybe (CommaSep UUID) ->
+  Maybe Int ->
+  Maybe Int ->
   AppM TransactionListResponse
-listTransactionsHandler user maybeAccountUuid maybeFrom maybeTo maybeIncludeCancelled maybeIncludeFailed = do
+listTransactionsHandler user mAccount mFrom mTo mStatus mLabel mLimit mOffset = do
   let userId = user.userId
-      includeCancelled = fromMaybe False maybeIncludeCancelled
-      includeFailed = fromMaybe False maybeIncludeFailed
-  accountIdDomain <- traverse (validateField "accountId" . mkAccountId) maybeAccountUuid
-  query <- validateField "query" $ mkTransactionQuery accountIdDomain maybeFrom maybeTo includeCancelled includeFailed
-  results <- TransactionService.listTransactions userId query
+  accountId <- traverse (validateField "accountId" . mkAccountId) mAccount
+  dateRange <- validateField "date" $ mkRange mFrom mTo
+  labels <-
+    traverse (traverse (validateField "label" . mkDictionaryEntryId) . (.values)) mLabel
+  page <- validateField "page" $ mkPage mLimit mOffset
+  let statuses = (.values) <$> mStatus
+      filt = mkTransactionFilter accountId dateRange statuses labels
+  (total, results) <- TransactionService.listTransactions userId filt page
   let responses = map (uncurry fromTransactionData) results
-      totalCount = length responses
-  pure $ TransactionListResponse responses totalCount
+  pure $ TransactionListResponse responses total page.limit page.offset
 
 -- | Handler for GET /api/transactions/:id - Get transaction status.
 getTransactionHandler :: AuthenticatedUser -> UUID -> AppM TransactionResponse

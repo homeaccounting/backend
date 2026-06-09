@@ -53,7 +53,7 @@ import Application.ReadModels.Account
   )
 import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
-import Application.ReadModels.Transaction (TransactionData (..), mkTransactionQuery)
+import Application.ReadModels.Transaction (TransactionData (..), mkTransactionFilter)
 import Application.ReadModels.User
   ( UserData (..),
     getUserByTelegramId,
@@ -63,11 +63,14 @@ import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTele
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateTransfer)
 import qualified Application.Services.TransactionService as TransactionService
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import Data.Time (addUTCTime, getCurrentTime)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Core.Page (Page (..))
+import Domain.Core.Range (mkRange)
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
@@ -88,7 +91,7 @@ import Domain.Core.Types
     unEntryName,
     unsafeMoney,
   )
-import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
 import Infrastructure.App (AppM, HasReadModel (..), HasTelegramClient (..))
 import RIO
 import qualified RIO.Map as Map
@@ -399,12 +402,13 @@ handleTransactions botState telegramId chatId = do
       selected <-
         atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
       let maybeAcctId = fst <$> selected
-      case mkTransactionQuery maybeAcctId (Just fromDate) (Just now) False False of
+      case mkRange (Just fromDate) (Just now) of
         Left err -> do
           logError $ "Failed to build transactions query: " <> display err
           sendMsg chatId "Failed to list transactions. Please try again."
-        Right query -> do
-          results <- TransactionService.listTransactions userId query
+        Right dateRange -> do
+          let filt = mkTransactionFilter maybeAcctId dateRange (Just (PendingKind :| [CompletedKind])) Nothing
+          (total, results) <- TransactionService.listTransactions userId filt (Page 50 0)
           entryNames <- getDictionaryEntryNames telegramId
           let header = case selected of
                 Just (_, name) -> "Transactions for " <> name <> " (last 30 days):"
@@ -414,7 +418,7 @@ handleTransactions botState telegramId chatId = do
             else do
               let maxItems = 20
                   shown = take maxItems results
-                  overflow = length results - length shown
+                  overflow = total - length shown
                   body = T.unlines $ map (formatTransactionLine entryNames) shown
                   suffix =
                     if overflow > 0

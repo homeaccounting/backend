@@ -66,7 +66,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
 import Domain.Transaction.Commands (AmendTransaction (..))
-import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
 import RIO
 import Test.QuickCheck
 
@@ -80,6 +80,9 @@ genCurrency = elements [UAH, USD, EUR, GBP]
 
 instance Arbitrary Currency where
   arbitrary = genCurrency
+
+instance Arbitrary StatusKind where
+  arbitrary = arbitraryBoundedEnum
 
 -- -----------------------------------------------------------------------------
 -- Money Generators

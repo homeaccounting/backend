@@ -12,11 +12,13 @@ import Application.ReadModels.Transaction
     createTransactionReadModel,
     handleTransactionEvents,
     listTransactions,
-    mkTransactionQuery,
+    mkTransactionFilter,
   )
 import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
+import Domain.Core.Page (Page (..), defaultLimit)
+import Domain.Core.Range (Range (..))
 import Domain.Core.Types
   ( AccountId,
     Currency (..),
@@ -116,8 +118,6 @@ spec = describe "listTransactions / date bounds (property)" $ do
         tvar <- createTransactionReadModel :: IO (TVar TransactionReadModel)
         let h = handleTransactionEvents tvar
         h.handleEvent events
-        q <-
-          either (fail . show) pure
-            $ mkTransactionQuery Nothing (Just fromD) (Just toD) False False
-        results <- listTransactions tvar (Set.singleton acctA) q
+        let filt = mkTransactionFilter Nothing (Just (Range (Just fromD) (Just toD))) Nothing Nothing
+        (_, results) <- listTransactions tvar (Set.singleton acctA) filt (Page defaultLimit 0)
         pure $ all (\(_, td) -> td.date >= fromD && td.date <= toD) results

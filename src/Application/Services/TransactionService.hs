@@ -50,7 +50,7 @@ import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
-import Application.ReadModels.Transaction (TransactionData (..), TransactionQuery)
+import Application.ReadModels.Transaction (TransactionData (..), TransactionFilter)
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import qualified Application.Services.ConfigurationService as ConfigurationService
@@ -71,6 +71,7 @@ import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
+import Domain.Core.Page (Page)
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
@@ -212,9 +213,10 @@ getTransaction transactionUuid = runExceptT $ do
 -- docs/specs/2026-04-18-list-transactions-endpoint-design.md §4).
 listTransactions ::
   UserId ->
-  TransactionQuery ->
-  AppM [(TransactionId, TransactionData)]
-listTransactions userId query = do
+  TransactionFilter ->
+  Page ->
+  AppM (Int, [(TransactionId, TransactionData)])
+listTransactions userId filt page = do
   logDebug $ "Listing transactions for user " <> displayShow userId
   accountRM <- view accountReadModelL
   accessible <- AccountRM.getAccessibleAccounts accountRM userId
@@ -222,10 +224,10 @@ listTransactions userId query = do
   if Set.null visible
     then do
       logDebug "User has no accessible accounts; returning empty list"
-      pure []
+      pure (0, [])
     else do
       readModel <- view transactionReadModelL
-      ReadModel.listTransactions readModel visible query
+      ReadModel.listTransactions readModel visible filt page
 
 -- | Initiate an income transfer (External -> Regular account).
 --

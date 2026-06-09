@@ -68,6 +68,8 @@ library
       Domain.Configuration.Projection
       Domain.Core
       Domain.Core.Errors
+      Domain.Core.Page
+      Domain.Core.Range
       Domain.Core.Types
       Domain.Events
       Domain.ExchangeRate.Events
@@ -121,6 +123,7 @@ library
       Web.API.UserAPI
       Web.ErrorMapping
       Web.Middleware.Auth
+      Web.Query
       Web.Server
       Web.Types
       Web.Validation
@@ -279,9 +282,9 @@ test-suite backend-test
       Application.ReadModels.BalanceAsOfJoinSpec
       Application.ReadModels.ExchangeRatePropertySpec
       Application.ReadModels.ExchangeRateSpec
+      Application.ReadModels.TransactionFilterSpec
       Application.ReadModels.TransactionListPropertySpec
       Application.ReadModels.TransactionListSpec
-      Application.ReadModels.TransactionQuerySpec
       Application.Services.AccountServiceIntegrationSpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
@@ -314,6 +317,8 @@ test-suite backend-test
       Domain.Core.AllocationPropertySpec
       Domain.Core.CurrencyNumericSpec
       Domain.Core.DeriveTransactionKindSpec
+      Domain.Core.PageSpec
+      Domain.Core.RangeSpec
       Domain.Core.TransactionTypePropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
@@ -329,6 +334,7 @@ test-suite backend-test
       Domain.Transaction.EventsSpec
       Domain.Transaction.LabelsAndCategorySpec
       Domain.Transaction.LabelsProjectionSpec
+      Domain.Transaction.StatusKindSpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
@@ -373,6 +379,7 @@ test-suite backend-test
       Web.API.TransactionAllocationsAPISpec
       Web.API.TransactionAPISpec
       Web.API.TransactionLabelsAPISpec
+      Web.QuerySpec
       Paths_backend
   hs-source-dirs:
       test

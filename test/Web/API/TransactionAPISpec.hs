@@ -30,15 +30,16 @@
 -- in-flight state at the HTTP layer in tests.  This case is tested at the
 -- pure handler level in 'Domain.Transaction.CancellationCommandHandlerSpec'.
 --
--- GET /api/transactions ?includeCancelled cases:
---   (no param)              cancelled tx absent from response
---   ?includeCancelled=true  cancelled tx present with status = "Cancelled"
---   ?includeCancelled=false cancelled tx absent (same as default)
+-- GET /api/transactions ?status cases (absent = all statuses):
+--   (no param)            cancelled/failed txs PRESENT (behaviour flip)
+--   ?status=cancelled     only cancelled, carries status = "Cancelled"
+--   ?status=failed        only failed, carries status = "Failed"
+--   ?status=completed     cancelled/failed absent
+--   ?status=bogus         400 (unknown token)
 --
--- GET /api/transactions ?includeFailed cases:
---   (no param)              failed tx absent from response
---   ?includeFailed=true     failed tx present with status = "Failed"
---   ?includeFailed=false    failed tx absent (same as default)
+-- GET /api/transactions pagination cases:
+--   ?limit=&offset=       slice the result; totalCount = all matches; echoed
+--   ?limit=0              400 (out of range)
 module Web.API.TransactionAPISpec (spec) where
 
 import qualified Application.Services.AccountService as AccountService
@@ -112,13 +113,15 @@ spec = do
             Right body -> do
               body.transactions `shouldBe` []
               body.totalCount `shouldBe` 0
+              body.limit `shouldBe` 50
+              body.offset `shouldBe` 0
 
-      it "returns 400 when from > to" $ do
+      it "returns 400 when dateFrom > dateTo" $ do
         token <- liftIO generateTestToken
         resp <-
           request
             "GET"
-            "/api/transactions?from=2026-04-18T00:00:00Z&to=2026-04-10T00:00:00Z"
+            "/api/transactions?dateFrom=2026-04-18T00:00:00Z&dateTo=2026-04-10T00:00:00Z"
             [bearerHeader token]
             ""
         liftIO $ do
@@ -130,12 +133,22 @@ spec = do
           case eitherDecode (simpleBody resp) :: Either String ValidationErrorResponse of
             Left err -> expectationFailure $ "400 body is not a ValidationErrorResponse: " <> err
             Right env ->
-              Map.lookup "query" env.fieldErrors
+              Map.lookup "date" env.fieldErrors
                 `shouldBe` Just "from must be <= to"
 
       it "returns 400 when accountId is not a UUID" $ do
         token <- liftIO generateTestToken
         resp <- getJSONAuth "/api/transactions?accountId=not-a-uuid" token
+        liftIO $ simpleStatus resp `shouldBe` status400
+
+      it "returns 400 for an unknown status token" $ do
+        token <- liftIO generateTestToken
+        resp <- request "GET" "/api/transactions?status=bogus" [bearerHeader token] ""
+        liftIO $ simpleStatus resp `shouldBe` status400
+
+      it "returns 400 for limit=0" $ do
+        token <- liftIO generateTestToken
+        resp <- request "GET" "/api/transactions?limit=0" [bearerHeader token] ""
         liftIO $ simpleStatus resp `shouldBe` status400
 
       it "returns 200 + empty list when accountId is unknown / forbidden" $ do
@@ -294,121 +307,90 @@ spec = do
       simpleStatus resp `shouldBe` status400
 
   -- ---------------------------------------------------------------------------
-  -- GET /api/transactions ?includeCancelled
+  -- GET /api/transactions ?status  (IN-filter; absent = all statuses)
   -- ---------------------------------------------------------------------------
 
-  describe "GET /api/transactions ?includeCancelled" $ do
-    it "excludes cancelled transactions by default (no param)" $ do
-      seed <- mkSeed createTestAppEnvWithProcessManager "include-cancelled-default@test.com"
-      token <- seedToken seed
-      txId <- seedTransfer seed
-      -- Cancel the transaction via the service
-      _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
-      -- Query without includeCancelled param
-      let path = encodeUtf8 $ "/api/transactions?accountId=" <> uuidText (unAccountId seed.seedAccount)
-      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
-      simpleStatus resp `shouldBe` status200
-      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
-        Left err -> expectationFailure $ "bad JSON: " <> err
-        Right body ->
-          let txIds = map (.id) body.transactions
-           in txIds `shouldNotContain` [unTransactionId txId]
+  describe "GET /api/transactions ?status" $ do
+    let acctPath seed extra =
+          encodeUtf8
+            $ "/api/transactions?accountId="
+            <> uuidText (unAccountId seed.seedAccount)
+            <> extra
+        decodeBody resp f =
+          case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
+            Left err -> expectationFailure $ "bad JSON: " <> err
+            Right body -> f body
 
-    it "includes cancelled transactions with status Cancelled when ?includeCancelled=true" $ do
-      seed <- mkSeed createTestAppEnvWithProcessManager "include-cancelled-true@test.com"
+    it "includes cancelled transactions by default (no status param)" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "status-default-cancelled@test.com"
       token <- seedToken seed
       txId <- seedTransfer seed
       _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
+      resp <- httpRequest seed.seedApp "GET" (acctPath seed "") (authHeaders token) ""
+      simpleStatus resp `shouldBe` status200
+      decodeBody resp $ \body ->
+        map (.id) body.transactions `shouldContain` [unTransactionId txId]
+
+    it "status=cancelled returns the cancelled tx with status Cancelled" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "status-cancelled@test.com"
+      token <- seedToken seed
+      txId <- seedTransfer seed
+      _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
+      resp <- httpRequest seed.seedApp "GET" (acctPath seed "&status=cancelled") (authHeaders token) ""
+      simpleStatus resp `shouldBe` status200
+      decodeBody resp $ \body -> do
+        map (.id) body.transactions `shouldContain` [unTransactionId txId]
+        case List.find (\t -> t.id == unTransactionId txId) body.transactions of
+          Nothing -> expectationFailure "cancelled tx not found"
+          Just t -> t.status `shouldBe` "Cancelled"
+
+    it "status=completed excludes a cancelled tx" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "status-completed-excl@test.com"
+      token <- seedToken seed
+      txId <- seedTransfer seed
+      _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
+      resp <- httpRequest seed.seedApp "GET" (acctPath seed "&status=completed") (authHeaders token) ""
+      simpleStatus resp `shouldBe` status200
+      decodeBody resp $ \body ->
+        map (.id) body.transactions `shouldNotContain` [unTransactionId txId]
+
+    it "status=failed returns the failed tx with status Failed" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "status-failed@test.com"
+      token <- seedToken seed
+      txId <- seedFailedTransfer seed
+      resp <- httpRequest seed.seedApp "GET" (acctPath seed "&status=failed") (authHeaders token) ""
+      simpleStatus resp `shouldBe` status200
+      decodeBody resp $ \body -> do
+        map (.id) body.transactions `shouldContain` [unTransactionId txId]
+        case List.find (\t -> t.id == unTransactionId txId) body.transactions of
+          Nothing -> expectationFailure "failed tx not found"
+          Just t -> t.status `shouldBe` "Failed"
+
+  -- ---------------------------------------------------------------------------
+  -- GET /api/transactions pagination
+  -- ---------------------------------------------------------------------------
+
+  describe "GET /api/transactions pagination" $ do
+    it "slices by limit/offset; totalCount is the full match count; echoes limit/offset" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "pagination-slice@test.com"
+      token <- seedToken seed
+      _ <- seedTransfer seed
+      _ <- seedTransfer seed
+      _ <- seedTransfer seed
       let path =
             encodeUtf8
               $ "/api/transactions?accountId="
               <> uuidText (unAccountId seed.seedAccount)
-              <> "&includeCancelled=true"
+              <> "&limit=2&offset=0"
       resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
       simpleStatus resp `shouldBe` status200
       case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
         Left err -> expectationFailure $ "bad JSON: " <> err
         Right body -> do
-          let txIds = map (.id) body.transactions
-          txIds `shouldContain` [unTransactionId txId]
-          -- The cancelled transaction carries status = "Cancelled"
-          case List.find (\t -> t.id == unTransactionId txId) body.transactions of
-            Nothing -> expectationFailure "cancelled tx not found in inclusive list"
-            Just t -> t.status `shouldBe` "Cancelled"
-
-    it "excludes cancelled transactions when ?includeCancelled=false (same as default)" $ do
-      seed <- mkSeed createTestAppEnvWithProcessManager "include-cancelled-false@test.com"
-      token <- seedToken seed
-      txId <- seedTransfer seed
-      _ <- runAppM seed.seedEnv (TransactionService.cancelTransaction seed.seedUserId txId)
-      let path =
-            encodeUtf8
-              $ "/api/transactions?accountId="
-              <> uuidText (unAccountId seed.seedAccount)
-              <> "&includeCancelled=false"
-      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
-      simpleStatus resp `shouldBe` status200
-      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
-        Left err -> expectationFailure $ "bad JSON: " <> err
-        Right body ->
-          let txIds = map (.id) body.transactions
-           in txIds `shouldNotContain` [unTransactionId txId]
-
-  -- ---------------------------------------------------------------------------
-  -- GET /api/transactions ?includeFailed
-  -- ---------------------------------------------------------------------------
-
-  describe "GET /api/transactions ?includeFailed" $ do
-    it "excludes failed transactions by default (no param)" $ do
-      seed <- mkSeed createTestAppEnvWithProcessManager "include-failed-default@test.com"
-      token <- seedToken seed
-      txId <- seedFailedTransfer seed
-      let path = encodeUtf8 $ "/api/transactions?accountId=" <> uuidText (unAccountId seed.seedAccount)
-      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
-      simpleStatus resp `shouldBe` status200
-      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
-        Left err -> expectationFailure $ "bad JSON: " <> err
-        Right body ->
-          let txIds = map (.id) body.transactions
-           in txIds `shouldNotContain` [unTransactionId txId]
-
-    it "includes failed transactions with status Failed when ?includeFailed=true" $ do
-      seed <- mkSeed createTestAppEnvWithProcessManager "include-failed-true@test.com"
-      token <- seedToken seed
-      txId <- seedFailedTransfer seed
-      let path =
-            encodeUtf8
-              $ "/api/transactions?accountId="
-              <> uuidText (unAccountId seed.seedAccount)
-              <> "&includeFailed=true"
-      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
-      simpleStatus resp `shouldBe` status200
-      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
-        Left err -> expectationFailure $ "bad JSON: " <> err
-        Right body -> do
-          let txIds = map (.id) body.transactions
-          txIds `shouldContain` [unTransactionId txId]
-          -- The failed transaction carries status = "Failed"
-          case List.find (\t -> t.id == unTransactionId txId) body.transactions of
-            Nothing -> expectationFailure "failed tx not found in inclusive list"
-            Just t -> t.status `shouldBe` "Failed"
-
-    it "excludes failed transactions when ?includeFailed=false (same as default)" $ do
-      seed <- mkSeed createTestAppEnvWithProcessManager "include-failed-false@test.com"
-      token <- seedToken seed
-      txId <- seedFailedTransfer seed
-      let path =
-            encodeUtf8
-              $ "/api/transactions?accountId="
-              <> uuidText (unAccountId seed.seedAccount)
-              <> "&includeFailed=false"
-      resp <- httpRequest seed.seedApp "GET" path (authHeaders token) ""
-      simpleStatus resp `shouldBe` status200
-      case eitherDecode (simpleBody resp) :: Either String TransactionListResponse of
-        Left err -> expectationFailure $ "bad JSON: " <> err
-        Right body ->
-          let txIds = map (.id) body.transactions
-           in txIds `shouldNotContain` [unTransactionId txId]
+          length body.transactions `shouldBe` 2
+          body.totalCount `shouldBe` 3
+          body.limit `shouldBe` 2
+          body.offset `shouldBe` 0
 
 -- -----------------------------------------------------------------------------
 -- Helpers

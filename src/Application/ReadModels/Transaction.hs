@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 -- |
 -- Module      : Application.ReadModels.Transaction
@@ -33,14 +32,9 @@ module Application.ReadModels.Transaction
     TransactionReadModel,
 
     -- * Query Types
-    TransactionQuery,
-    mkTransactionQuery,
-    emptyTransactionQuery,
-    queryAccountId,
-    queryFrom,
-    queryTo,
-    queryIncludeCancelled,
-    queryIncludeFailed,
+    TransactionFilter (..),
+    mkTransactionFilter,
+    emptyTransactionFilter,
 
     -- * Read Model Creation
     createTransactionReadModel,
@@ -64,6 +58,7 @@ import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVa
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.List (sortBy)
+import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -71,6 +66,8 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime (..))
+import Domain.Core.Page (Page (..))
+import Domain.Core.Range (Range, within)
 import Domain.Core.Types (AccountId, Allocation (..), DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransactionType (..), allocationsOf, mkTransactionIdSafe, replaceAllocations)
 import Domain.Models
   ( AccountingEvent
@@ -89,7 +86,7 @@ import Domain.Models
       ),
   )
 import qualified Domain.Transaction.Events
-import Domain.Transaction.Projection (TransactionStatus (Cancelled, Completed, Failed, Pending))
+import Domain.Transaction.Projection (StatusKind, TransactionStatus (Cancelled, Completed, Failed, Pending), statusKind)
 import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
 import GHC.Generics (Generic)
 import Infrastructure.Eventium (AccountingReadModelHandler)
@@ -140,75 +137,35 @@ data TransactionReadModel
 -- Query Types
 -- -----------------------------------------------------------------------------
 
--- | Filter spec for 'listTransactions'.
---
--- The data constructor is deliberately hidden; build values via
--- 'mkTransactionQuery' (which enforces the 'from' <= 'to' invariant) or
--- 'emptyTransactionQuery' (no filters). Read fields via 'queryAccountId',
--- 'queryFrom', 'queryTo'.
-data TransactionQuery = TransactionQuery
-  { qAccountId :: Maybe AccountId,
-    qFrom :: Maybe UTCTime,
-    qTo :: Maybe UTCTime,
-    qIncludeCancelled :: Bool,
-    qIncludeFailed :: Bool
+-- | Standardized transaction query filter. Each field is an optional
+-- constraint; 'Nothing' means "no constraint on this field". Build values via
+-- 'mkTransactionFilter' or 'emptyTransactionFilter'; read fields via dot access.
+data TransactionFilter = TransactionFilter
+  { accountId :: Maybe AccountId,
+    -- | Inclusive business-date range. Named 'dateRange' (not 'date') to
+    -- avoid a 'DuplicateRecordFields' collision with 'TransactionData.date'.
+    dateRange :: Maybe (Range UTCTime),
+    -- | Status set (IN). Named 'statuses' (not 'status') to avoid a collision
+    -- with 'TransactionData.status'.
+    statuses :: Maybe (NonEmpty StatusKind),
+    label :: Maybe (NonEmpty LabelId)
   }
   deriving (Show, Eq)
 
--- | Build a 'TransactionQuery'. Fails with a human-readable message when
--- both bounds are present and 'from' > 'to'.
-mkTransactionQuery ::
+-- | Assemble a filter. Cross-field validation (date @from <= to@) is the
+-- caller's responsibility via 'Domain.Core.Range.mkRange' at the boundary.
+mkTransactionFilter ::
   Maybe AccountId ->
-  Maybe UTCTime ->
-  Maybe UTCTime ->
-  Bool ->
-  Bool ->
-  Either Text TransactionQuery
-mkTransactionQuery acct mFrom mTo includeCancelled includeFailed =
-  case (mFrom, mTo) of
-    (Just f, Just t)
-      | f > t ->
-          Left "from must be <= to"
-    _ ->
-      Right
-        TransactionQuery
-          { qAccountId = acct,
-            qFrom = mFrom,
-            qTo = mTo,
-            qIncludeCancelled = includeCancelled,
-            qIncludeFailed = includeFailed
-          }
+  Maybe (Range UTCTime) ->
+  Maybe (NonEmpty StatusKind) ->
+  Maybe (NonEmpty LabelId) ->
+  TransactionFilter
+mkTransactionFilter a d s l =
+  TransactionFilter {accountId = a, dateRange = d, statuses = s, label = l}
 
--- | Query that matches every transaction (all filters unset).
-emptyTransactionQuery :: TransactionQuery
-emptyTransactionQuery =
-  TransactionQuery
-    { qAccountId = Nothing,
-      qFrom = Nothing,
-      qTo = Nothing,
-      qIncludeCancelled = False,
-      qIncludeFailed = False
-    }
-
--- | Account filter, if any.
-queryAccountId :: TransactionQuery -> Maybe AccountId
-queryAccountId q = q.qAccountId
-
--- | Lower bound on the transaction's business timestamp, inclusive.
-queryFrom :: TransactionQuery -> Maybe UTCTime
-queryFrom q = q.qFrom
-
--- | Upper bound on the transaction's business timestamp, inclusive.
-queryTo :: TransactionQuery -> Maybe UTCTime
-queryTo q = q.qTo
-
--- | Whether cancelled transactions should be included in query results.
-queryIncludeCancelled :: TransactionQuery -> Bool
-queryIncludeCancelled q = q.qIncludeCancelled
-
--- | Whether failed transactions should be included in query results.
-queryIncludeFailed :: TransactionQuery -> Bool
-queryIncludeFailed q = q.qIncludeFailed
+-- | A filter with no constraints (every visible transaction matches).
+emptyTransactionFilter :: TransactionFilter
+emptyTransactionFilter = TransactionFilter Nothing Nothing Nothing Nothing
 
 -- -----------------------------------------------------------------------------
 -- Read Model Creation
@@ -449,54 +406,59 @@ transactionExists readModelTVar transactionId = do
   model <- liftIO $ readTVarIO readModelTVar
   return $ Map.member transactionId model.transactions
 
--- | List transactions visible to the caller, filtered by 'TransactionQuery'.
+-- | List transactions visible to the caller, filtered by 'TransactionFilter'
+-- and paginated by 'Page'. Returns @(totalMatches, pageSlice)@ where
+-- @totalMatches@ counts all matches before slicing.
 --
--- Semantics (see docs/specs/2026-04-18-list-transactions-endpoint-design.md):
+-- Semantics (see docs/specs/2026-06-09-transaction-query-language-design.md):
 --
 --  1. Keep entries where at least one of sourceAccountId/targetAccountId is
 --     in the visible set (access-control precondition supplied by the
 --     service).
---  2. If the query carries an accountId, require the same id to appear on
---     source or target. An accountId outside the visible set therefore
---     naturally produces zero matches.
---  3. Apply inclusive from/to bounds to 'TransactionData.date', which is
---     the transaction's business timestamp ('TransactionPostingInitiated.at').
---  4. Sort by date descending; ties are broken by TransactionId.
+--  2. Apply each present filter field; absent fields impose no constraint.
+--     Date bounds apply (inclusive) to 'TransactionData.date', the business
+--     timestamp; @status@ matches by 'StatusKind'; @label@ matches by set
+--     overlap.
+--  3. Sort by date descending (ties broken by TransactionId), count, then
+--     slice by @offset@/@limit@. This maps directly onto a future
+--     @COUNT(*)@ + @ORDER BY .. OFFSET .. LIMIT@ DB query.
 listTransactions ::
   (MonadIO m) =>
   TVar TransactionReadModel ->
   Set AccountId ->
-  TransactionQuery ->
-  m [(TransactionId, TransactionData)]
-listTransactions readModelTVar visible query = do
+  TransactionFilter ->
+  Page ->
+  m (Int, [(TransactionId, TransactionData)])
+listTransactions readModelTVar visible filt page = do
   model <- liftIO $ readTVarIO readModelTVar
   let matches =
         [ (txId, td)
         | (txId, td) <- Map.toList model.transactions,
           isVisible td,
-          isVisibleByStatus td,
           matchesAccount td,
-          matchesFrom td,
-          matchesTo td
+          matchesDate td,
+          matchesStatus td,
+          matchesLabel td
         ]
-  pure $ sortBy descendingByDate matches
+      sorted = sortBy descendingByDate matches
+      total = length sorted
+      slice = take page.limit (drop page.offset sorted)
+  pure (total, slice)
   where
     isVisible td =
       Set.member td.sourceAccountId visible
         || Set.member td.targetAccountId visible
-    isVisibleByStatus td = case td.status of
-      Cancelled -> query.qIncludeCancelled
-      Failed _ -> query.qIncludeFailed
-      _ -> True
-    matchesAccount td = case query.qAccountId of
+    matchesAccount td = case filt.accountId of
       Nothing -> True
       Just a -> td.sourceAccountId == a || td.targetAccountId == a
-    matchesFrom td = case query.qFrom of
-      Nothing -> True
-      Just f -> td.date >= f
-    matchesTo td = case query.qTo of
-      Nothing -> True
-      Just t' -> td.date <= t'
+    matchesDate td = maybe True (\r -> within r td.date) filt.dateRange
+    matchesStatus td =
+      maybe True (\ks -> statusKind td.status `elem` ks) filt.statuses
+    matchesLabel td =
+      maybe
+        True
+        (not . Set.disjoint td.labels . Set.fromList . NE.toList)
+        filt.label
     descendingByDate (idA, a) (idB, b) =
       compare b.date a.date <> compare idA idB
 
