@@ -379,7 +379,9 @@ data AdjustBalanceRequest = AdjustBalanceRequest
   { targetBalance :: Double,
     currency :: Text,
     date :: UTCTime,
-    reason :: Text
+    -- Stored as the synthetic adjustment transaction's description. Named
+    -- @description@ for consistency with the income/expense/transfer DTOs.
+    description :: Text
   }
   deriving (Show, Eq, Generic)
 

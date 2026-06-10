@@ -117,13 +117,13 @@ pastTime = UTCTime (fromGregorian 2020 1 1) (secondsToDiffTime 0)
 
 -- | Build the JSON body for a set-balance request.
 adjustBody :: Double -> Text -> UTCTime -> Text -> LBS.ByteString
-adjustBody balance cur at reason =
+adjustBody balance cur at description =
   encode
     $ object
       [ "targetBalance" .= balance,
         "currency" .= cur,
         "date" .= at,
-        "reason" .= reason
+        "description" .= description
       ]
 
 -- | PUT to PUT /api/accounts/:id/balance.

@@ -353,7 +353,7 @@ adjustBalanceHandler user accountUuid req = do
       accountId
       amount
       req.date
-      req.reason
+      req.description
   case result of
     Right (txId, txData) -> pure $ fromTransactionData txId txData
     Left err -> throwDomainError err
