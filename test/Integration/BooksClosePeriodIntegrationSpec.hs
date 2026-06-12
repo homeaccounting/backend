@@ -21,7 +21,7 @@
 -- See @docs\/plans\/2026-05-20-editable-transaction-metadata.md@ Task 10.
 module Integration.BooksClosePeriodIntegrationSpec (spec) where
 
-import Data.Aeson (eitherDecode, encode, object, (.=))
+import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import qualified Data.ByteString.Lazy as LBS
 import Data.Time (UTCTime)
 import Domain.Core.Types
@@ -75,9 +75,17 @@ incomeBody seed description at =
   encode
     $ object
       [ "accountId" .= uuidText (unAccountId seed.seedAccount),
-        "amount" .= (25 :: Double),
         "currency" .= ("USD" :: Text),
-        "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+        "allocations"
+          .= object
+            [ "incomes"
+                .= [ object
+                       [ "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                         "amount" .= (25 :: Double)
+                       ]
+                   ],
+              "expenses" .= ([] :: [Value])
+            ],
         "description" .= description,
         "date" .= at,
         "labels" .= ([] :: [Text])

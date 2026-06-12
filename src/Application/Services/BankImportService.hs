@@ -43,7 +43,6 @@ import qualified Application.Services.ConfigurationService as ConfigurationServi
 import qualified Application.Services.TransactionService as TransactionService
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Data.Aeson (ToJSON)
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime, utctDay)
@@ -60,6 +59,8 @@ import Domain.Core.Types
     UserId,
     currencyFromNumericCode,
     mkAllocation,
+    mkExpenseAllocations,
+    mkIncomeAllocations,
     mkMoney,
     moneyCurrency,
     unEntryName,
@@ -413,7 +414,11 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
     Left err -> do
       lift $ logWarn $ "Allocation construction failed for tx " <> display tx.externalId <> ": " <> displayShow err
       throwE err
-  let allocations = NE.singleton allocation
+  -- The single resolved allocation goes into the bucket matching the flow
+  -- direction: income categories on income, expense categories on expense.
+  let allocations = case direction of
+        ClassifiedIncome -> mkIncomeAllocations (allocation :| [])
+        ClassifiedExpense -> mkExpenseAllocations (allocation :| [])
       (sourceAccId, targetAccId, transactionType) =
         classifyEndpoints localAccId externalAccId direction allocations
   -- Resolve per-leg amounts and the historical exchange rate exactly like the

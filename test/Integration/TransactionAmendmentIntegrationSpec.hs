@@ -17,7 +17,7 @@ import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.Services.TransactionService as TransactionService
-import Data.Aeson (Value, eitherDecode, encode, object, (.=))
+import Data.Aeson (ToJSON, Value, eitherDecode, encode, object, (.=))
 import qualified Data.Set as Set
 import Domain.Core.Types
   ( AccountId,
@@ -105,6 +105,19 @@ amendBody ::
   Double ->
   LByteString
 amendBody newSrc newTgt newSrcAmt newTgtAmt =
+  amendBodyWithAllocs newSrc newTgt newSrcAmt newTgtAmt (Nothing :: Maybe Value)
+
+-- | 'amendBody' carrying an explicit two-bucket allocations payload — required
+-- when the amended kind stays categorised (Income/Expense).
+amendBodyWithAllocs ::
+  (ToJSON a) =>
+  AccountId ->
+  AccountId ->
+  Double ->
+  Double ->
+  Maybe a ->
+  LByteString
+amendBodyWithAllocs newSrc newTgt newSrcAmt newTgtAmt mAllocs =
   encode
     $ object
       [ "sourceAccountId" .= uuidText (unAccountId newSrc),
@@ -113,8 +126,17 @@ amendBody newSrc newTgt newSrcAmt newTgtAmt =
         "sourceCurrency" .= ("USD" :: Text),
         "targetAmount" .= newTgtAmt,
         "targetCurrency" .= ("USD" :: Text),
-        "exchangeRate" .= (Nothing :: Maybe Double)
+        "exchangeRate" .= (Nothing :: Maybe Double),
+        "newAllocations" .= mAllocs
       ]
+
+-- | Two-bucket allocations JSON with a single income slice.
+incomeAllocsJson :: Text -> Double -> Value
+incomeAllocsJson categoryUuid amt =
+  object
+    [ "incomes" .= [object ["categoryId" .= categoryUuid, "amount" .= object ["amount" .= amt, "currency" .= ("USD" :: Text)]]],
+      "expenses" .= ([] :: [Value])
+    ]
 
 balanceOf :: AppEnv -> AccountId -> IO Rational
 balanceOf env aid = do
@@ -136,7 +158,13 @@ spec = describe "Integration / TransferAmendment" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "amend-amount@test.com"
     token <- seedToken seed
     (txId, td) <- seedIncome seed seed.seedAccount 100
-    let body = amendBody td.sourceAccountId td.targetAccountId 150 150
+    let body =
+          amendBodyWithAllocs
+            td.sourceAccountId
+            td.targetAccountId
+            150
+            150
+            (Just (incomeAllocsJson (uuidText (unDictionaryEntryId seed.seedCategory)) 150))
     resp <-
       httpRequest seed.seedApp "PUT" (txPathBy txId <> "/amendment") (authHeaders token) body
     shouldHaveStatus resp status200
@@ -182,7 +210,13 @@ spec = describe "Integration / TransferAmendment" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "amend-audit@test.com"
     token <- seedToken seed
     (txId, td) <- seedIncome seed seed.seedAccount 100
-    let body = amendBody td.sourceAccountId td.targetAccountId 200 200
+    let body =
+          amendBodyWithAllocs
+            td.sourceAccountId
+            td.targetAccountId
+            200
+            200
+            (Just (incomeAllocsJson (uuidText (unDictionaryEntryId seed.seedCategory)) 200))
     putResp <-
       httpRequest seed.seedApp "PUT" (txPathBy txId <> "/amendment") (authHeaders token) body
     shouldHaveStatus putResp status200
@@ -231,18 +265,9 @@ spec = describe "Integration / TransferAmendment" $ do
     -- Resolve the user's External account to use as new source (Income leg).
     externalAccId <- userExternalAccountId seed.seedEnv seed.seedUserId
     -- Build amendment: new source = External, new target = seedAccount → Income kind.
-    -- Provide newAllocations with one income-category entry.
-    -- Allocation JSON: { "categoryId": <uuid>, "amount": { "amount": <n>, "currency": <c> } }
-    let allocJson =
-          [ object
-              [ "categoryId" .= uuidText (unDictionaryEntryId seed.seedCategory),
-                "amount"
-                  .= object
-                    [ "amount" .= (100 :: Double),
-                      "currency" .= ("USD" :: Text)
-                    ]
-              ]
-          ]
+    -- Provide newAllocations with one income-category entry in the income bucket.
+    -- Allocations JSON: { "incomes": [{ "categoryId": <uuid>, "amount": { "amount": <n>, "currency": <c> } }], "expenses": [] }
+    let allocJson = incomeAllocsJson (uuidText (unDictionaryEntryId seed.seedCategory)) 100
         body =
           encode
             $ object

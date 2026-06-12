@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.5.1
+version:        0.5.2
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -294,6 +294,7 @@ test-suite backend-test
       Application.Services.ConfigurationServiceIntegrationSpec
       Application.Services.ConfigurationServiceInUseSpec
       Application.Services.ConfigurationServiceSpec
+      Application.Services.ContraExpenseIntegrationSpec
       Application.Services.CrossKindAmendmentSpec
       Application.Services.ExchangeRatePublisherSpec
       Application.Services.InternalSpec

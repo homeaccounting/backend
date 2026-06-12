@@ -40,11 +40,13 @@ import Domain.Core.Types
     TransactionId,
     TransactionType (..),
     UserId,
+    allAllocations,
     kindOf,
+    mkAllocations,
     mkExpense,
     mkIncome,
     moneyCurrency,
-    sumAllocationsUnchecked,
+    unMoney,
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
@@ -78,7 +80,7 @@ import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
 import Testkit.Generators
   ( genAccountId,
-    genAllocationsSummingTo,
+    genAllocationListSummingTo,
     genCurrency,
     genPositiveMoneyIn,
     genTransactionId,
@@ -90,6 +92,10 @@ import Prelude (last)
 -- -----------------------------------------------------------------------------
 -- Fixtures
 -- -----------------------------------------------------------------------------
+
+-- | Sum of every allocation amount across both buckets, as a 'Rational'.
+allocationSum :: Allocations -> Rational
+allocationSum a = sum [unMoney m | Allocation _ m <- allAllocations a]
 
 txId :: TransactionId
 txId = unsafeTransactionId (UUID.fromWords 88 0 0 0)
@@ -146,8 +152,8 @@ projectAmendments extra =
 -- | Generator for a 'TransactionAmendmentCompleted' targeting the fixture 'txId'.
 --
 -- The event carries a handler-computed 'newAllocations'. In real use the
--- handler rescales the prior allocations against the new categorised
--- amount; for property purposes we reuse the seed allocations (same kind),
+-- caller supplies explicit allocations with the amendment (no rescaling
+-- occurs); for property purposes we reuse the seed allocations (same kind),
 -- which is what the projection now applies via 'replaceAllocations'.
 genCompleted :: Gen TransactionAmendmentCompleted
 genCompleted = do
@@ -222,8 +228,8 @@ spec = describe "Transaction amendment projection" $ do
               (tx ^. #targetAmount) === c.newTargetAmount,
               (tx ^. #exchangeRate) === c.newExchangeRate,
               -- 'transactionType' kind is preserved across amendments; for
-              -- categorised seeds the allocations are auto-rescaled to
-              -- the new categorised side so the sum stays consistent.
+              -- categorised seeds the caller supplies explicit allocations
+              -- so the sum matches the new categorised total.
               kindOf (tx ^. #transactionType) === kindOf seedTransactionType,
               (tx ^. #amendmentInProgress) === False
             ]
@@ -280,8 +286,8 @@ spec = describe "Transaction amendment projection" $ do
       $ forAll genCrossKindAmendInputs
       $ \(_seed, cmd) ->
         case cmd.newTransactionType of
-          Income allocs -> sumAllocationsUnchecked allocs === cmd.newTargetAmount
-          Expense allocs -> sumAllocationsUnchecked allocs === cmd.newSourceAmount
+          Income allocs -> allocationSum allocs === unMoney cmd.newTargetAmount
+          Expense allocs -> allocationSum allocs === unMoney cmd.newSourceAmount
           _ -> property True
 
     prop "(3) allocation currency matches relevant leg"
@@ -292,12 +298,12 @@ spec = describe "Transaction amendment projection" $ do
             property
               $ all
                 (\(Allocation _cid m) -> moneyCurrency m == moneyCurrency cmd.newTargetAmount)
-                (NE.toList allocs)
+                (allAllocations allocs)
           Expense allocs ->
             property
               $ all
                 (\(Allocation _cid m) -> moneyCurrency m == moneyCurrency cmd.newSourceAmount)
-                (NE.toList allocs)
+                (allAllocations allocs)
           _ -> property True
 
 -- -----------------------------------------------------------------------------
@@ -352,16 +358,12 @@ genConsistentTransactionType srcAmt tgtAmt =
     -- previous fallback hid Income/Expense allocation failures by
     -- collapsing them onto the trivially-true Transfer branch.
     buildIncome = do
-      mAllocs <- genAllocationsSummingTo tgtAmt
-      case mAllocs of
-        Just allocs -> case mkIncome tgtAmt allocs of
-          Right tt -> pure tt
-          Left _ -> discard
-        Nothing -> discard
+      incs <- genAllocationListSummingTo tgtAmt
+      case mkAllocations incs [] >>= mkIncome tgtAmt of
+        Right tt -> pure tt
+        Left _ -> discard
     buildExpense = do
-      mAllocs <- genAllocationsSummingTo srcAmt
-      case mAllocs of
-        Just allocs -> case mkExpense srcAmt allocs of
-          Right tt -> pure tt
-          Left _ -> discard
-        Nothing -> discard
+      exps <- genAllocationListSummingTo srcAmt
+      case mkAllocations [] exps >>= mkExpense srcAmt of
+        Right tt -> pure tt
+        Left _ -> discard

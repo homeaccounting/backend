@@ -25,7 +25,7 @@ import Application.ReadModels.Account (balanceAsOf)
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TxRM
 import Application.ReadModels.User (UserData (..), getUser)
-import Data.Aeson (eitherDecode, encode, object, (.=))
+import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import Domain.Core.Types
@@ -105,9 +105,17 @@ createIncome seed token description at = do
         encode
           $ object
             [ "accountId" .= uuidText (unAccountId seed.seedAccount),
-              "amount" .= (25 :: Double),
               "currency" .= ("USD" :: Text),
-              "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+              "allocations"
+                .= object
+                  [ "incomes"
+                      .= [ object
+                             [ "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                               "amount" .= (25 :: Double)
+                             ]
+                         ],
+                    "expenses" .= ([] :: [Value])
+                  ],
               "description" .= description,
               "date" .= at,
               "labels" .= ([] :: [Text])

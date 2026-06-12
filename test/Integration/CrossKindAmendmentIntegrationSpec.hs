@@ -133,7 +133,7 @@ amendBodyWithAllocations ::
   AccountId ->
   AccountId ->
   Double ->
-  Maybe [Value] ->
+  Maybe Value ->
   LBS.ByteString
 amendBodyWithAllocations newSrc newTgt newAmt mAllocs =
   encode
@@ -170,15 +170,19 @@ spec = describe "Integration / CrossKindAmendment" $ do
     -- Amendment: swap to Expense (seedAccount → External).
     -- Regular → External = ExpenseKind.
     let allocJson =
-          [ object
-              [ "categoryId" .= uuidText (unDictionaryEntryId catRent),
-                "amount"
-                  .= object
-                    [ "amount" .= (100 :: Double),
-                      "currency" .= ("USD" :: Text)
-                    ]
-              ]
-          ]
+          object
+            [ "incomes" .= ([] :: [Value]),
+              "expenses"
+                .= [ object
+                       [ "categoryId" .= uuidText (unDictionaryEntryId catRent),
+                         "amount"
+                           .= object
+                             [ "amount" .= (100 :: Double),
+                               "currency" .= ("USD" :: Text)
+                             ]
+                       ]
+                   ]
+            ]
         body =
           amendBodyWithAllocations
             seed.seedAccount

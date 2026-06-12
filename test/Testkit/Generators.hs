@@ -43,6 +43,7 @@ module Testkit.Generators
     genExchangeRate,
     genPositiveRational,
     genAllocationsSummingTo,
+    genAllocationListSummingTo,
     partitionMoneyExact,
     genIdentityAmendInputs,
 
@@ -55,9 +56,7 @@ where
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.Ratio ((%))
-import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time (UTCTime (..))
@@ -378,73 +377,78 @@ genEmail = do
 instance Arbitrary Allocation where
   arbitrary = Allocation <$> arbitrary <*> genPositiveMoney
 
--- | Generate a list of allocations all sharing the given currency,
--- partitioning the total amount across them. The last allocation
--- absorbs the rounding residual so the sum equals 'total' exactly.
---
--- Returns 'Nothing' if 'total' is not strictly positive (would
--- violate the per-allocation positivity invariant).
-genAllocationsSummingTo :: Money -> Gen (Maybe Allocations)
-genAllocationsSummingTo total
-  | not (moneyIsPositive total) = pure Nothing
-  | otherwise = do
-      n <- choose (1, 4 :: Int)
-      cids <- vectorOf n genDictionaryEntryId
-      -- Build n-1 random positive slices, then place the residual on the last.
-      let cur = moneyCurrency total
-          totalRat = unMoney total
-      pure (partitionMoneyExact totalRat cur cids)
-
--- | Deterministic helper used by 'genAllocationsSummingTo' and by
--- callers that already chose the category ids and the total.
---
--- For 'n' category ids, splits the total into 'n' equal slices (using
--- the underlying 'Rational'), then bumps the last slice by the rounding
--- residual. The result is 'Just' iff each resulting slice is strictly
--- positive. (For 'total > 0' and 'n <= 4' this is always 'Just'.)
+-- | Deterministic helper: split a total into positive allocations summing
+-- exactly to it, one per supplied category id, with the rounding residual
+-- placed on the first slice. Empty category list yields an empty list.
 partitionMoneyExact ::
   Rational ->
   Currency ->
   [DictionaryEntryId] ->
-  Maybe Allocations
-partitionMoneyExact _ _ [] = Nothing
-partitionMoneyExact totalRat cur (c : cs)
-  | totalRat <= 0 = Nothing
-  | otherwise =
-      let n = 1 + length cs
-          slice = totalRat / fromIntegral n
-          residual = totalRat - slice * fromIntegral n
-          firstAlloc = Allocation c (unsafeMoney cur (slice + residual))
-          rest = fmap (\ci -> Allocation ci (unsafeMoney cur slice)) cs
-       in if slice > 0
-            then Just (firstAlloc :| rest)
-            else Nothing
+  [Allocation]
+partitionMoneyExact _ _ [] = []
+partitionMoneyExact totalRat cur (c : cs) =
+  let n = 1 + length cs
+      slice = totalRat / fromIntegral n
+      residual = totalRat - slice * fromIntegral n
+   in Allocation c (unsafeMoney cur (slice + residual))
+        : fmap (\ci -> Allocation ci (unsafeMoney cur slice)) cs
+
+-- | Generate a non-empty list of positive allocations summing exactly to
+-- 'moneyTotal', all sharing the moneyTotal's currency.
+genAllocationListSummingTo :: Money -> Gen [Allocation]
+genAllocationListSummingTo moneyTotal = do
+  n <- choose (1, 4 :: Int)
+  cids <- vectorOf n genDictionaryEntryId
+  pure (partitionMoneyExact (unMoney moneyTotal) (moneyCurrency moneyTotal) cids)
+
+-- | Generate a two-bucket 'Allocations' record whose combined slices sum
+-- exactly to 'moneyTotal' (all in the income bucket). 'Nothing' when 'moneyTotal'
+-- is not strictly positive.
+genAllocationsSummingTo :: Money -> Gen (Maybe Allocations)
+genAllocationsSummingTo moneyTotal
+  | not (moneyIsPositive moneyTotal) = pure Nothing
+  | otherwise = do
+      incs <- genAllocationListSummingTo moneyTotal
+      pure (either (const Nothing) Just (mkAllocations incs []))
 
 -- -----------------------------------------------------------------------------
 -- Transfer Type Generators
 -- -----------------------------------------------------------------------------
 
 -- | Generate a valid TransactionType. Income / Expense are constructed via
--- their smart constructors with allocations that satisfy the invariants;
--- generation falls back to Transfer / Adjustment if no positive amount
--- could be produced.
+-- their smart constructors with two-bucket allocations that satisfy the
+-- invariants; generation falls back to Transfer / Adjustment if no positive
+-- amount could be produced or a constructor rejected the shape.
 genTransactionType :: Gen TransactionType
 genTransactionType =
-  oneof
-    [ buildCategorised mkIncome,
-      buildCategorised mkExpense,
-      pure Transfer,
-      pure Adjustment
-    ]
+  oneof [buildIncome, buildExpense, pure Transfer, pure Adjustment]
   where
-    buildCategorised mk = do
-      total <- genPositiveMoney
-      mAllocs <- genAllocationsSummingTo total
-      case mAllocs of
-        Just allocs -> case mk total allocs of
-          Right tt -> pure tt
-          Left _ -> pure Transfer
-        Nothing -> pure Transfer
+    buildIncome = do
+      incTotal <- genPositiveMoney
+      -- optionally carve a contra-expense slice out of the income total
+      mixed <- arbitrary
+      (incs, exps) <-
+        if mixed
+          then do
+            let cur = moneyCurrency incTotal
+                t = unMoney incTotal
+                incPart = t * 3 / 4
+                expPart = t - incPart
+            ic <- genDictionaryEntryId
+            ec <- genDictionaryEntryId
+            pure ([Allocation ic (unsafeMoney cur incPart)], [Allocation ec (unsafeMoney cur expPart)])
+          else do
+            i <- genAllocationListSummingTo incTotal
+            pure (i, [])
+      case mkAllocations incs exps >>= mkIncome incTotal of
+        Right tt -> pure tt
+        Left _ -> pure Transfer
+    buildExpense = do
+      expTotal <- genPositiveMoney
+      exps <- genAllocationListSummingTo expTotal
+      case mkAllocations [] exps >>= mkExpense expTotal of
+        Right tt -> pure tt
+        Left _ -> pure Transfer
 
 instance Arbitrary TransactionType where
   arbitrary = genTransactionType

@@ -17,9 +17,15 @@ module Domain.Transaction.AmendmentCommandHandlerSpec (spec) where
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
+    Allocation (..),
+    Currency (..),
+    DictionaryEntryId,
     TransactionId,
     TransactionType (..),
     UserId,
+    mkMixedAllocations,
+    unsafeDictionaryEntryId,
+    unsafeMoney,
     unsafeTransactionId,
     unsafeUserId,
   )
@@ -28,6 +34,7 @@ import Domain.Transaction.CommandHandler
     TransactionError (..),
     handleTransactionCommand,
   )
+import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
   ( AmendTransaction (..),
     CompleteTransactionAmendment (..),
@@ -70,6 +77,13 @@ altSrcId = mockAccountId (UUID.fromWords 30 0 0 0)
 
 altTgtId :: AccountId
 altTgtId = mockAccountId (UUID.fromWords 40 0 0 0)
+
+-- | Category IDs used for contra-income allocation fixtures.
+incomeCat :: DictionaryEntryId
+incomeCat = unsafeDictionaryEntryId (UUID.fromWords 50 0 0 0)
+
+expenseCat :: DictionaryEntryId
+expenseCat = unsafeDictionaryEntryId (UUID.fromWords 51 0 0 0)
 
 -- | A completed transaction (no amendment in progress).
 completedTx :: Transaction
@@ -236,6 +250,34 @@ spec = do
                 }
       handleTransactionCommand completedTx zeroTgtCmd
         `shouldBe` Left AmendTransferToZeroAmount
+
+    -- The $40 income + $160 expense sum to $200 (== newSourceAmount), so
+    -- checkAllocationsAgainst passes first; the contra-income guard then fires.
+    --
+    -- WHY it would fail if the guard were removed: without the
+    --   "if null allocs.incomes then Right () else Left ContraIncomeNotSupported"
+    -- branch, the handler would emit a Right [TransactionAmendmentInitiated...]
+    -- instead of Left ContraIncomeNotSupported.
+    it "rejected when newTransactionType is Expense with a non-empty incomes bucket (ContraIncomeNotSupported)" $ do
+      let contraAllocs =
+            mkMixedAllocations
+              (Allocation incomeCat (unsafeMoney USD 40) :| [])
+              (Allocation expenseCat (unsafeMoney USD 160) :| [])
+          contraAmendCmd =
+            AmendTransactionTransactionCommand
+              AmendTransaction
+                { transactionId = txId,
+                  newSourceAccountId = altSrcId,
+                  newTargetAccountId = altTgtId,
+                  newSourceAmount = mockMoney 200,
+                  newTargetAmount = mockMoney 200,
+                  newExchangeRate = Nothing,
+                  newAllocations = Nothing,
+                  newTransactionType = Expense contraAllocs,
+                  amendedBy = amendedBy
+                }
+      handleTransactionCommand completedTx contraAmendCmd
+        `shouldBe` Left TxCh.ContraIncomeNotSupported
 
   describe "CompleteTransactionAmendment" $ do
     it "rejected when no amendment is in progress with NoAmendmentInProgress"

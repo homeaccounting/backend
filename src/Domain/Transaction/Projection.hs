@@ -51,14 +51,13 @@ where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
-import qualified Data.List.NonEmpty as NE
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransactionType, UserId, mkAccountId, mkAllocation, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
+import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransactionType, UserId, mkAccountId, mkAllocation, mkAllocations, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -226,7 +225,7 @@ deriveJSON defaultOptions ''Transaction
 -- magnitudes.
 defaultTransactionType :: TransactionType
 defaultTransactionType =
-  case mkIncome placeholderUnit (NE.singleton placeholderAlloc) of
+  case mkAllocations [placeholderAlloc] [] >>= mkIncome placeholderUnit of
     Right tt -> tt
     Left err -> error ("transactionDefault: mkIncome should never fail: " <> show err)
   where

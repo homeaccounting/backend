@@ -52,6 +52,8 @@ module Web.Types
     AccountListResponse (..),
 
     -- * Transaction Request DTOs
+    CategoryAmount (..),
+    AllocationsRequest (..),
     IncomeRequest (..),
     ExpenseRequest (..),
     AdjustBalanceRequest (..),
@@ -99,9 +101,7 @@ import Application.ReadModels.Account (AccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.=))
 import Data.Bifunctor (first)
-import Data.Foldable (toList)
 import Data.List (sort)
-import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.Set (Set)
@@ -114,8 +114,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), Allocation (..), Allocations, AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), Allocation (..), Allocations, AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allAllocations, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
 
@@ -329,13 +328,41 @@ instance FromJSON AccountListResponse
 --  "description": "Rent payment"
 -- }
 -- @
+-- | One category slice as sent by the create API (Double-based, like the
+-- rest of the create DTOs).
+data CategoryAmount = CategoryAmount
+  { category :: UUID,
+    amount :: Double
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON CategoryAmount
+
+instance FromJSON CategoryAmount
+
+-- | Two-bucket allocations on a create request. For income both buckets
+-- may be populated (the expenses bucket is a reimbursement); for expense
+-- the incomes bucket must be empty (enforced downstream by mkExpense →
+-- ContraIncomeNotSupported).
+data AllocationsRequest = AllocationsRequest
+  { incomes :: [CategoryAmount],
+    expenses :: [CategoryAmount]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AllocationsRequest
+
+instance FromJSON AllocationsRequest
+
 -- | Request to record an income transaction (External -> Regular account).
+--
+-- The categorised total is the sum of the allocation slices across both
+-- buckets — there is no separate @amount@ field.
 data IncomeRequest
   = IncomeRequest
   { accountId :: UUID,
-    amount :: Double,
     currency :: Text,
-    category :: Text,
+    allocations :: AllocationsRequest,
     description :: Text,
     date :: Maybe UTCTime,
     labels :: Maybe [UUID]
@@ -347,12 +374,14 @@ instance ToJSON IncomeRequest
 instance FromJSON IncomeRequest
 
 -- | Request to record an expense transaction (Regular -> External account).
+--
+-- The categorised total is the sum of the allocation slices. The incomes
+-- bucket must be empty (a contra-income expense is unsupported).
 data ExpenseRequest
   = ExpenseRequest
   { accountId :: UUID,
-    amount :: Double,
     currency :: Text,
-    category :: Text,
+    allocations :: AllocationsRequest,
     description :: Text,
     date :: Maybe UTCTime,
     labels :: Maybe [UUID]
@@ -989,7 +1018,7 @@ transactionTypeAllocationsText tt = case allocationsOf tt of
   Nothing -> []
   Just allocs ->
     [ T.pack $ UUID.toString $ unDictionaryEntryId a.categoryId
-    | a <- toList allocs
+    | a <- allAllocations allocs
     ]
 
 -- | First allocation's category UUID for a 'TransactionType', if any.

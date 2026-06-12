@@ -41,17 +41,14 @@ module Domain.Transaction.CommandHandler
   )
 where
 
-import qualified Data.List.NonEmpty as NE
 import Domain.Core.Types
   ( Allocation (..),
-    Allocations,
-    Currency,
-    Money,
+    Allocations (..),
+    Money (..),
     TransactionType (..),
-    allSameCurrency,
+    allAllocations,
     allocationsOf,
     moneyCurrency,
-    sumAllocationsUnchecked,
     unAccountId,
     unMoney,
   )
@@ -91,6 +88,12 @@ data TransactionError
     AllocationAmountNotPositive
   | -- | An allocation's currency differs from the categorised side's.
     AllocationCurrencyMismatch
+  | -- | An Expense transaction carries a non-empty income bucket —
+    -- contra-income is not supported.
+    ContraIncomeNotSupported
+  | -- | Allocation payload has both buckets empty; at least one allocation
+    -- is required on a categorised transaction.
+    AllocationsEmpty
   | -- | AmendTransaction payload referenced the same account on both legs.
     AmendTransferToSameAccountPair
   | -- | AmendTransaction payload carried a zero source or target amount.
@@ -190,7 +193,9 @@ handleTransactionCommand transaction (InitiateTransactionTransactionCommand Init
                   -- assembling a 'TransactionType' directly.
                   case transactionType of
                     Income allocs -> checkAllocationsAgainst targetAmount allocs
-                    Expense allocs -> checkAllocationsAgainst sourceAmount allocs
+                    Expense allocs ->
+                      checkAllocationsAgainst sourceAmount allocs
+                        *> (if null allocs.incomes then Right () else Left ContraIncomeNotSupported)
                     Transfer -> Right ()
                     Adjustment -> Right ()
                   Right
@@ -253,9 +258,16 @@ handleTransactionCommand transaction (SetTransactionAllocationsTransactionComman
       case allocationsOf (transaction ^. #transactionType) of
         Nothing ->
           Left CannotSetAllocationsOnUncategorisedTransaction
-        Just existingAllocs -> do
-          let existingTotal = sumAllocationsUnchecked existingAllocs
+        Just _ -> do
+          existingTotal <- case transaction.transactionType of
+            Income _ -> Right transaction.targetAmount
+            Expense _ -> Right transaction.sourceAmount
+            _ -> Left CannotSetAllocationsOnUncategorisedTransaction
           checkAllocationsAgainst existingTotal newAllocations
+          -- preserve the contra rule: an Expense must not gain an income bucket
+          _ <- case transaction.transactionType of
+            Expense _ | not (null newAllocations.incomes) -> Left ContraIncomeNotSupported
+            _ -> Right ()
           Right
             [ TransactionAllocationsChangedTransactionEvent
                 TransactionAllocationsChanged
@@ -310,7 +322,9 @@ handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTr
           -- circuits and is returned; Right () proceeds.
           case newTransactionType of
             Income allocs -> checkAllocationsAgainst newTargetAmount allocs
-            Expense allocs -> checkAllocationsAgainst newSourceAmount allocs
+            Expense allocs ->
+              checkAllocationsAgainst newSourceAmount allocs
+                *> (if null allocs.incomes then Right () else Left ContraIncomeNotSupported)
             Transfer -> Right ()
             Adjustment -> Left CannotAmendToAdjustmentKind
           Right
@@ -400,28 +414,15 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
 -- 'Domain.Core.Types' already enforce these — the re-check covers
 -- direct constructions bypassing them).
 checkAllocationsAgainst :: Money -> Allocations -> Either TransactionError ()
-checkAllocationsAgainst expected allocs =
-  checkCurrency *> checkSum *> checkPositive
+checkAllocationsAgainst expected a =
+  checkNotEmpty *> checkCurrency *> checkSum *> checkPositive
   where
-    expectedCurrency :: Currency
+    xs = allAllocations a
     expectedCurrency = moneyCurrency expected
-
-    checkCurrency :: Either TransactionError ()
-    checkCurrency =
-      if allSameCurrency expectedCurrency allocs
-        then Right ()
-        else Left AllocationCurrencyMismatch
-
-    checkSum :: Either TransactionError ()
-    checkSum =
-      if sumAllocationsUnchecked allocs == expected
-        then Right ()
-        else Left AllocationsDoNotSumToTotal
-
-    checkPositive :: Either TransactionError ()
-    checkPositive = case NE.filter (\(Allocation _ m) -> unMoney m <= 0) allocs of
-      [] -> Right ()
-      _ -> Left AllocationAmountNotPositive
+    checkNotEmpty = if null xs then Left AllocationsEmpty else Right ()
+    checkCurrency = if all (\x -> x.amount.currency == expectedCurrency) xs then Right () else Left AllocationCurrencyMismatch
+    checkSum = if Money (sum (fmap (\x -> x.amount.amount) xs)) expectedCurrency == expected then Right () else Left AllocationsDoNotSumToTotal
+    checkPositive = if all (\x -> unMoney x.amount > 0) xs then Right () else Left AllocationAmountNotPositive
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

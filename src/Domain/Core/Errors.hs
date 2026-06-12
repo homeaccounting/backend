@@ -97,6 +97,13 @@ data DomainError
     AllocationAmountNotPositive
   | -- | An allocation's currency differs from the categorised side's currency.
     AllocationCurrencyMismatch
+  | -- | A transaction direction carries a category allocation it must not:
+    --   an `Expense` (outbound) transaction with a non-empty income bucket
+    --   would be contra-income, which is unsupported.
+    ContraIncomeNotSupported
+  | -- | `mkAllocations` rejected a payload with both buckets empty —
+    --   a categorised transaction must carry at least one allocation.
+    AllocationsEmpty
   | -- | 'SetTransactionAllocations' or 'AmendTransaction' issued with a
     --   @newTransactionType@ whose kind differs from the existing transaction's.
     --   Recategorising across the kind boundary is a delete-and-repost
@@ -250,6 +257,10 @@ renderDomainError err = case err of
     "Each allocation amount must be positive"
   AllocationCurrencyMismatch ->
     "All allocations must share the categorised currency"
+  ContraIncomeNotSupported ->
+    "An expense cannot carry income allocations (contra-income is not supported)"
+  AllocationsEmpty ->
+    "A categorised transaction must carry at least one allocation"
   CannotChangeKindOfCategorisedTransaction ->
     "Cannot change Income/Expense/Transfer/Adjustment via allocation edit; delete and repost instead"
   CannotSetAllocationsOnUncategorisedTransaction ->

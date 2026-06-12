@@ -68,7 +68,7 @@ import Data.Text (Text)
 import Data.Time (UTCTime (..))
 import Domain.Core.Page (Page (..))
 import Domain.Core.Range (Range, within)
-import Domain.Core.Types (AccountId, Allocation (..), DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransactionType (..), allocationsOf, mkTransactionIdSafe, replaceAllocations)
+import Domain.Core.Types (AccountId, Allocation (..), DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransactionType (..), allAllocations, allocationsOf, mkTransactionIdSafe, replaceAllocations)
 import Domain.Models
   ( AccountingEvent
       ( TransactionAllocationsChangedEvent,
@@ -504,4 +504,4 @@ findReferencingTransactions readModelTVar entryId = do
     referencesInAllocations :: TransactionType -> Bool
     referencesInAllocations tt = case allocationsOf tt of
       Nothing -> False
-      Just allocs -> any (\(Allocation cid _) -> cid == entryId) (NE.toList allocs)
+      Just allocs -> any (\(Allocation cid _) -> cid == entryId) (allAllocations allocs)

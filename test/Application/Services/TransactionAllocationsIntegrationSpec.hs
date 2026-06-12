@@ -16,9 +16,9 @@
 --   3. 'setTransactionAllocations' re-splits the same total across
 --      three categories (300 + 300 + 400);
 --   4. read model again reflects the new three-category shape;
---   5. 'amendTransaction' bumps the categorised amount; the projection
---      auto-rescales the three allocations proportionally so the sum
---      continues to equal the new categorised total.
+--   5. 'amendTransaction' bumps the categorised amount with explicit
+--      allocations summing to the new total; the projection stores them
+--      verbatim so the sum continues to equal the new categorised total.
 --
 -- The test exercises the full event-sourced loop: each step writes
 -- events to the in-memory store, and the read model + projection are
@@ -35,21 +35,21 @@ import Application.Services.ConfigurationService
     seedDefaultConfiguration,
   )
 import qualified Application.Services.TransactionService as TransactionService
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
     Allocation (..),
+    Allocations (..),
     Currency (..),
     DictionaryEntryId,
-    Money,
+    Money (..),
     TransactionId,
     TransactionType (..),
     UserId,
+    allAllocations,
     allocationsOf,
-    sumAllocationsUnchecked,
     unsafeEntryName,
     unsafeMoney,
   )
@@ -131,11 +131,13 @@ ccy = USD
 money :: Rational -> Money
 money = unsafeMoney ccy
 
--- | Helper: assert the categorised total of the projected TransactionType.
+-- | Helper: the categorised total of the projected TransactionType,
+-- summing all allocation slices against the known fixture currency.
+-- Uncategorised types yield a zero total (no slices).
 categorisedTotal :: TransactionType -> Money
 categorisedTotal tt = case allocationsOf tt of
-  Just xs -> sumAllocationsUnchecked xs
-  Nothing -> error "categorisedTotal: uncategorised TransactionType"
+  Just allocs -> Money (sum [a.amount.amount | a <- allAllocations allocs]) ccy
+  Nothing -> Money 0 ccy
 
 -- | Helper: confirm a configuration was actually cloned (sanity check).
 -- Catches the case where 'addExpense' silently mutates the default
@@ -160,15 +162,18 @@ sanityCheckCloned h = do
 
 spec :: Spec
 spec = describe "Application.Services / allocations round-trip" $ do
-  it "register expense -> set allocations -> amend amount rescales allocations" $ do
+  it "register expense -> set allocations -> amend amount with explicit allocations" $ do
     h <- setupHarness "allocations-round-trip@test.com"
     sanityCheckCloned h
 
     -- Step 1: register an Expense with TWO allocations: 800 + 200 = 1000 UAH.
     let total1 = money 1000
         allocs1 =
-          Allocation h.harnessGroceries (money 800)
-            :| [Allocation h.harnessRestaurants (money 200)]
+          Allocations
+            []
+            [ Allocation h.harnessGroceries (money 800),
+              Allocation h.harnessRestaurants (money 200)
+            ]
     initResult <-
       runAppM h.harnessEnv
         $ TransactionService.initiateExpense
@@ -185,17 +190,19 @@ spec = describe "Application.Services / allocations round-trip" $ do
     afterCreate <- getTransactionType h txId
     case afterCreate of
       Expense xs -> do
-        NE.toList xs `shouldBe` NE.toList allocs1
+        xs `shouldBe` allocs1
         categorisedTotal afterCreate `shouldBe` total1
       other -> expectationFailure $ "expected Expense after create, got " <> show other
 
     -- Step 3: set new allocations splitting the same 1000 UAH across THREE
     -- categories: 300 + 300 + 400.
     let allocs2 =
-          Allocation h.harnessGroceries (money 300)
-            :| [ Allocation h.harnessRestaurants (money 300),
-                 Allocation h.harnessSnacks (money 400)
-               ]
+          Allocations
+            []
+            [ Allocation h.harnessGroceries (money 300),
+              Allocation h.harnessRestaurants (money 300),
+              Allocation h.harnessSnacks (money 400)
+            ]
     setResult <-
       runAppM h.harnessEnv
         $ TransactionService.setTransactionAllocations h.harnessUser txId allocs2
@@ -205,14 +212,22 @@ spec = describe "Application.Services / allocations round-trip" $ do
     afterSet <- getTransactionType h txId
     case afterSet of
       Expense xs -> do
-        NE.toList xs `shouldBe` NE.toList allocs2
+        xs `shouldBe` allocs2
         categorisedTotal afterSet `shouldBe` total1
       other -> expectationFailure $ "expected Expense after set, got " <> show other
 
     -- Step 5: Amend the source amount (categorised side for Expense) from
-    -- 1000 -> 2000 UAH. The projection auto-rescales every allocation by 2x.
+    -- 1000 -> 2000 UAH. Amendments no longer auto-rescale — the caller must
+    -- supply explicit allocations summing to the new total.
     td <- getTransaction h txId
     let newTotal = money 2000
+        newAllocs =
+          Allocations
+            []
+            [ Allocation h.harnessGroceries (money 600),
+              Allocation h.harnessRestaurants (money 600),
+              Allocation h.harnessSnacks (money 800)
+            ]
         amend =
           AmendTransaction
             { transactionId = txId,
@@ -221,7 +236,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
               newSourceAmount = newTotal,
               newTargetAmount = newTotal,
               newExchangeRate = Nothing,
-              newAllocations = Nothing,
+              newAllocations = Just newAllocs,
               newTransactionType = Transfer,
               amendedBy = h.harnessUser
             }
@@ -230,16 +245,10 @@ spec = describe "Application.Services / allocations round-trip" $ do
         $ TransactionService.amendTransaction h.harnessUser txId amend
     _ <- unwrap "amendTransaction" amendResult
 
-    -- Step 6: GET shows allocations rescaled to keep the ratio (3:3:4) but
-    -- summing to the new 2000 UAH total.
+    -- Step 6: GET shows the explicit allocations summing to 2000 UAH.
     afterAmend <- getTransactionType h txId
     case afterAmend of
       Expense xs -> do
-        let expectedRescaled =
-              Allocation h.harnessGroceries (money 600)
-                :| [ Allocation h.harnessRestaurants (money 600),
-                     Allocation h.harnessSnacks (money 800)
-                   ]
-        NE.toList xs `shouldBe` NE.toList expectedRescaled
+        xs `shouldBe` newAllocs
         categorisedTotal afterAmend `shouldBe` newTotal
       other -> expectationFailure $ "expected Expense after amend, got " <> show other

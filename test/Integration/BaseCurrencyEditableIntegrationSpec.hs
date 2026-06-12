@@ -14,7 +14,7 @@
 -- which is itself the gate for 'ChangeBaseCurrency'.
 module Integration.BaseCurrencyEditableIntegrationSpec (spec) where
 
-import Data.Aeson (eitherDecode, encode, object, (.=))
+import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import qualified Data.ByteString.Lazy as LBS
 import Data.Time (UTCTime)
 import Domain.Core.Types
@@ -50,9 +50,17 @@ incomeBody seed description at =
   encode
     $ object
       [ "accountId" .= uuidText (unAccountId seed.seedAccount),
-        "amount" .= (25 :: Double),
         "currency" .= ("USD" :: Text),
-        "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+        "allocations"
+          .= object
+            [ "incomes"
+                .= [ object
+                       [ "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                         "amount" .= (25 :: Double)
+                       ]
+                   ],
+              "expenses" .= ([] :: [Value])
+            ],
         "description" .= description,
         "date" .= at,
         "labels" .= ([] :: [Text])
@@ -77,9 +85,9 @@ spec = describe "Integration / BaseCurrencyEditable" $ do
     (seed, token) <- freshSeed "base-currency-editable-after-income@test.com"
 
     -- Sanity: starts True.
-    before <- httpRequest seed.seedApp "GET" configPath (authHeaders token) ""
-    simpleStatus before `shouldBe` status200
-    beforeCfg <- decodeConfig before
+    beforeResp <- httpRequest seed.seedApp "GET" configPath (authHeaders token) ""
+    simpleStatus beforeResp `shouldBe` status200
+    beforeCfg <- decodeConfig beforeResp
     beforeCfg.baseCurrencyEditable `shouldBe` True
 
     -- Post an income. Income flows External -> Regular, which credits the
@@ -93,7 +101,7 @@ spec = describe "Integration / BaseCurrencyEditable" $ do
         (incomeBody seed "Seed income" (utc 2026 4 1))
     simpleStatus incomeResp `shouldBe` status200
 
-    after <- httpRequest seed.seedApp "GET" configPath (authHeaders token) ""
-    simpleStatus after `shouldBe` status200
-    afterCfg <- decodeConfig after
+    afterResp <- httpRequest seed.seedApp "GET" configPath (authHeaders token) ""
+    simpleStatus afterResp `shouldBe` status200
+    afterCfg <- decodeConfig afterResp
     afterCfg.baseCurrencyEditable `shouldBe` False

@@ -38,6 +38,7 @@ module Testkit.Helpers
     -- * Allocation Helpers
     partitionMoney,
     singletonAllocation,
+    expenseSingletonAllocation,
     singletonIncome,
     singletonExpense,
   )
@@ -223,6 +224,9 @@ fromLeft' (Right val) = error $ "fromLeft' called on Right: " <> show val
 -- assigned to 'c', 'c1', 'c2'. For non-positive 'total' the function
 -- raises 'error', so callers (typically property generators) must
 -- guard with 'moneyIsPositive' first.
+-- | The slices are placed in the @expenses@ bucket, which satisfies both
+-- 'mkIncome' (both buckets allowed) and 'mkExpense' (empty income bucket
+-- required) — so the same fixture works for either constructor.
 partitionMoney :: Money -> NonEmpty DictionaryEntryId -> Allocations
 partitionMoney total (c :| cs)
   | not (moneyIsPositive total) =
@@ -235,16 +239,23 @@ partitionMoney total (c :| cs)
           residual = totalRat - slice * fromIntegral n
           firstAlloc = Allocation c (unsafeMoney cur (slice + residual))
           rest = fmap (\ci -> Allocation ci (unsafeMoney cur slice)) cs
-       in firstAlloc :| rest
+       in mkExpenseAllocations (firstAlloc :| rest)
 
--- | Build a degenerate length-1 'NonEmpty Allocation' for a single
--- category and amount. Useful in tests that pre-date the multi-category
--- design and merely need any valid categorised 'TransactionType'.
+-- | Build a degenerate single-allocation 'Allocations' for one category
+-- and amount, placed in the @incomes@ bucket. Useful for income paths in
+-- tests that pre-date the multi-category design. For expense-side fixtures
+-- use 'expenseSingletonAllocation' (the buckets must match the category's
+-- dictionary on dictionary-validated paths).
 --
 -- The amount is taken as-is — callers are responsible for ensuring it
 -- is strictly positive.
 singletonAllocation :: DictionaryEntryId -> Money -> Allocations
-singletonAllocation c m = Allocation c m :| []
+singletonAllocation c m = mkIncomeAllocations (Allocation c m :| [])
+
+-- | Single-allocation 'Allocations' in the @expenses@ bucket — the
+-- expense-side counterpart of 'singletonAllocation'.
+expenseSingletonAllocation :: DictionaryEntryId -> Money -> Allocations
+expenseSingletonAllocation c m = mkExpenseAllocations (Allocation c m :| [])
 
 -- | Build an 'Income' 'TransactionType' with a single allocation. The
 -- amount supplied IS the categorised total (degenerate length-1
@@ -263,6 +274,6 @@ singletonIncome c m =
 -- semantics as 'singletonIncome'.
 singletonExpense :: DictionaryEntryId -> Money -> TransactionType
 singletonExpense c m =
-  case mkExpense m (singletonAllocation c m) of
+  case mkExpense m (expenseSingletonAllocation c m) of
     Right tt -> tt
     Left err -> error ("singletonExpense: " <> show err)

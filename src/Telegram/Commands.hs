@@ -63,8 +63,6 @@ import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTele
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateTransfer)
 import qualified Application.Services.TransactionService as TransactionService
-import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import Data.Time (addUTCTime, getCurrentTime)
 import qualified Data.UUID as UUID
@@ -84,6 +82,8 @@ import Domain.Core.Types
     defaultCash,
     mkAllocation,
     mkDictionaryEntryId,
+    mkExpenseAllocations,
+    mkIncomeAllocations,
     mkMoney,
     moneyCurrency,
     parseCurrency,
@@ -558,7 +558,7 @@ handleIncomeDescription botState telegramId chatId cat money description = do
                 logError $ "Income failed (invalid allocation): " <> displayShow allocErr
                 sendMsg chatId $ "Income recording failed: " <> tshow allocErr
               Right alloc -> do
-                let allocations = NE.singleton alloc
+                let allocations = mkIncomeAllocations (alloc :| [])
                 result <- initiateIncome userId accountId money allocations Set.empty description Nothing
                 case result of
                   Left err -> do
@@ -631,7 +631,7 @@ handleExpenseDescription botState telegramId chatId cat money description = do
                 logError $ "Expense failed (invalid allocation): " <> displayShow allocErr
                 sendMsg chatId $ "Expense recording failed: " <> tshow allocErr
               Right alloc -> do
-                let allocations = NE.singleton alloc
+                let allocations = mkExpenseAllocations (alloc :| [])
                 result <- initiateExpense userId accountId money allocations Set.empty description Nothing
                 case result of
                   Left err -> do

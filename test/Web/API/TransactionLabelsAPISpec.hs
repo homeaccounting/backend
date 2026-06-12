@@ -13,7 +13,7 @@
 -- rationale.
 module Web.API.TransactionLabelsAPISpec (spec) where
 
-import Data.Aeson (eitherDecode, encode, object, (.=))
+import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import qualified Data.Set as Set
 import qualified Data.UUID.V4 as UUID4
 import Domain.Core.Types
@@ -56,9 +56,17 @@ spec = describe "Transaction labels HTTP endpoints" $ do
             encode
               $ object
                 [ "accountId" .= uuidText (unAccountId seed.seedAccount),
-                  "amount" .= (50 :: Double),
                   "currency" .= ("USD" :: Text),
-                  "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                  "allocations"
+                    .= object
+                      [ "incomes"
+                          .= [ object
+                                 [ "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                                   "amount" .= (50 :: Double)
+                                 ]
+                             ],
+                        "expenses" .= ([] :: [Value])
+                      ],
                   "description" .= ("Paycheck" :: Text),
                   "date" .= (Nothing :: Maybe Text),
                   "labels"
@@ -87,9 +95,17 @@ spec = describe "Transaction labels HTTP endpoints" $ do
             encode
               $ object
                 [ "accountId" .= uuidText (unAccountId seed.seedAccount),
-                  "amount" .= (50 :: Double),
                   "currency" .= ("USD" :: Text),
-                  "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                  "allocations"
+                    .= object
+                      [ "incomes"
+                          .= [ object
+                                 [ "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                                   "amount" .= (50 :: Double)
+                                 ]
+                             ],
+                        "expenses" .= ([] :: [Value])
+                      ],
                   "description" .= ("Paycheck" :: Text),
                   "date" .= (Nothing :: Maybe Text),
                   "labels" .= [uuidText alien]

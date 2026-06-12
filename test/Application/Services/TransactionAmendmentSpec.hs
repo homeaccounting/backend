@@ -137,7 +137,8 @@ spec = describe "TransactionService.amendTransaction" $ do
 
       let cmd =
             (amendCmd original.sourceAccountId original.targetAccountId 100 100 fx.userId)
-              { transactionId = txId
+              { transactionId = txId,
+                newAllocations = Just (incomeAllocs fx (unsafeMoney Core.USD 100))
               }
       result <- runAppM env (amendTransaction fx.userId txId cmd)
       case result of
@@ -167,7 +168,8 @@ spec = describe "TransactionService.amendTransaction" $ do
 
       let cmd =
             (amendCmd original.sourceAccountId original.targetAccountId 150 150 fx.userId)
-              { transactionId = txId
+              { transactionId = txId,
+                newAllocations = Just (incomeAllocs fx (unsafeMoney Core.USD 150))
               }
       result <- runAppM env (amendTransaction fx.userId txId cmd)
       case result of
@@ -176,7 +178,7 @@ spec = describe "TransactionService.amendTransaction" $ do
           td.targetAmount `shouldBe` unsafeMoney Core.USD 150
           td.amendmentCount `shouldBe` 1
           -- The categorised side (target for Income) went from 100 -> 150,
-          -- so the single allocation is rescaled proportionally to 150 USD.
+          -- so the explicit allocation now totals 150 USD.
           td.transactionType `shouldBe` Income (incomeAllocs fx (unsafeMoney Core.USD 150))
         Left err -> expectationFailure $ "expected Right, got: " <> show err
 
@@ -237,7 +239,8 @@ spec = describe "TransactionService.amendTransaction" $ do
       -- subtype changes within Regular are allowed.
       let cmd =
             (amendCmd bankWallet original.targetAccountId 25 25 fx.userId)
-              { transactionId = txId
+              { transactionId = txId,
+                newAllocations = Just (expenseAllocs fx (unsafeMoney Core.USD 25))
               }
       result <- runAppM env (amendTransaction fx.userId txId cmd)
       case result of

@@ -32,7 +32,6 @@ import Application.Services.AuthorizationService (AccountAccessResult (..), Acco
 import Application.Services.Internal (guardE, liftMaybeM)
 import Control.Monad.Trans.Except (runExceptT)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Maybe (mapMaybe)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( TransactionId,
@@ -69,7 +68,6 @@ import Domain.Transaction.Events
     TransactionPostingInitiated,
   )
 import Eventium (EventStoreReader (..), StreamEvent (..), VersionedStreamEvent, allEvents)
-import GHC.Generics (Generic)
 import Infrastructure.App
   ( AppM,
     HasReadModel (..),

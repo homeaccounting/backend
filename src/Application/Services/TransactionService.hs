@@ -62,10 +62,7 @@ import Application.Services.Internal
     runTransactionCmd,
   )
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
@@ -76,8 +73,7 @@ import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     Allocation (..),
-    Allocations,
-    CategoryId,
+    Allocations (..),
     Currency,
     DictionaryEntryId,
     DictionaryId,
@@ -88,7 +84,6 @@ import Domain.Core.Types
     TransactionKind (..),
     TransactionType (..),
     UserId,
-    allocationsOf,
     convert,
     deriveTransactionKind,
     exchangeRateValue,
@@ -98,8 +93,6 @@ import Domain.Core.Types
     mkIncome,
     mkTransactionId,
     moneyCurrency,
-    rescaleAllocations,
-    sumAllocationsUnchecked,
     unDictionaryEntryId,
     unTransactionId,
   )
@@ -266,8 +259,8 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
         (AccountRM.getAccount accountRM externalAccId)
     let srcCurrency = moneyCurrency sourceData.balance
         tgtCurrency = moneyCurrency targetData.balance
-    -- Validate each allocation references a known income category.
-    ExceptT (validateAllocationsAgainstDictionary userId IncomeKind allocations)
+    -- Validate each allocation references a known category in its bucket.
+    ExceptT (validateAllocationsAgainstDictionary userId allocations)
     -- Income: user provides amount in target (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency False Nothing
@@ -326,8 +319,8 @@ initiateExpense userId sourceAccountId amount allocations labels description may
         (AccountRM.getAccount accountRM externalAccId)
     let srcCurrency = moneyCurrency sourceData.balance
         tgtCurrency = moneyCurrency targetData.balance
-    -- Validate each allocation references a known expense category.
-    ExceptT (validateAllocationsAgainstDictionary userId ExpenseKind allocations)
+    -- Validate each allocation references a known category in its bucket.
+    ExceptT (validateAllocationsAgainstDictionary userId allocations)
     -- Expense: user provides amount in source (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True Nothing
@@ -475,7 +468,6 @@ setTransactionAllocations userId transactionId newAllocations = runExceptT $ do
   ExceptT
     ( validateAllocationsAgainstDictionary
         userId
-        (kindOf transaction.transactionType)
         newAllocations
     )
   let cmd =
@@ -692,16 +684,6 @@ validateLabels userId labels
         [] -> pure ()
         (eid : _) -> throwE (LabelNotFound (tshow (unDictionaryEntryId eid)))
 
--- | Check whether a category id is present in the given dictionary.
-categoryExists ::
-  UserId ->
-  DictionaryId ->
-  CategoryId ->
-  AppM (Either DomainError Bool)
-categoryExists userId dictId entryId = runExceptT $ do
-  cfg <- ExceptT (ConfigurationService.getConfigurationForUser userId)
-  pure (Set.member entryId (dictionaryEntryIds dictId cfg))
-
 -- | Enforce Editor+ access on one of the transaction's accounts and
 -- return the matching 'TransactionData' on success. Missing
 -- transactions surface as 'NotFound'.
@@ -760,17 +742,18 @@ isIdentityAmend td cmd =
     == cmd.newTransactionType
 
 -- | Synthesise the full new 'TransactionType' for an 'AmendTransaction'
--- from the derived kind, the existing transaction's type, and the
--- caller-supplied 'newAllocations'.
+-- from the derived kind and the caller-supplied 'newAllocations'.
 --
--- Per the spec §"Service layer" truth table:
+-- Amount-changing amendments no longer rescale existing allocations:
+-- the caller must supply explicit 'newAllocations' for categorised
+-- kinds, validated and constructed via the 'mkIncome' / 'mkExpense'
+-- smart constructors (which anchor sum/currency to the new amount and
+-- enforce the contra rule on expense).
 --
---   * 'Just allocs' + Income / Expense kind: validate categories and
---     build 'Income allocs' / 'Expense allocs'.
+--   * 'Just allocs' + Income / Expense kind: validate categories then
+--     build via 'mkIncome' / 'mkExpense' against the new amount.
 --   * 'Just _' + Transfer kind: reject 'AllocationsNotAllowedForTransferKind'.
---   * 'Nothing' + Income / Expense kind, same kind as existing: rescale
---     existing allocations against the new categorised amount.
---   * 'Nothing' + Income / Expense kind, kind changed: reject
+--   * 'Nothing' + Income / Expense kind: reject
 --     'AllocationsRequiredForCategorisedKind'.
 --   * 'Nothing' + Transfer kind: 'Transfer'.
 --   * Anything + AdjustmentKind: defensive reject
@@ -781,36 +764,18 @@ synthesiseAmendmentTransactionType ::
   TransactionType ->
   AmendTransaction ->
   AppM (Either DomainError TransactionType)
-synthesiseAmendmentTransactionType userId derivedKind existingTT cmd = runExceptT $ do
-  case (cmd.newAllocations, derivedKind) of
+synthesiseAmendmentTransactionType userId derivedKind _existingTT cmd = runExceptT
+  $ case (cmd.newAllocations, derivedKind) of
     (Just allocs, IncomeKind) -> do
-      ExceptT (validateAllocationsAgainstDictionary userId IncomeKind allocs)
-      pure (Income allocs)
+      ExceptT (validateAllocationsAgainstDictionary userId allocs)
+      ExceptT (pure (mkIncome cmd.newTargetAmount allocs))
     (Just allocs, ExpenseKind) -> do
-      ExceptT (validateAllocationsAgainstDictionary userId ExpenseKind allocs)
-      pure (Expense allocs)
+      ExceptT (validateAllocationsAgainstDictionary userId allocs)
+      ExceptT (pure (mkExpense cmd.newSourceAmount allocs))
     (Just _, TransferKind) -> throwE AllocationsNotAllowedForTransferKind
     (Just _, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
-    (Nothing, IncomeKind)
-      | kindOf existingTT == IncomeKind,
-        Just oldAllocs <- allocationsOf existingTT ->
-          let oldTotal = sumAllocationsUnchecked oldAllocs
-              rescaled =
-                if oldTotal /= cmd.newTargetAmount
-                  then rescaleAllocations oldTotal cmd.newTargetAmount oldAllocs
-                  else oldAllocs
-           in pure (Income rescaled)
-      | otherwise -> throwE AllocationsRequiredForCategorisedKind
-    (Nothing, ExpenseKind)
-      | kindOf existingTT == ExpenseKind,
-        Just oldAllocs <- allocationsOf existingTT ->
-          let oldTotal = sumAllocationsUnchecked oldAllocs
-              rescaled =
-                if oldTotal /= cmd.newSourceAmount
-                  then rescaleAllocations oldTotal cmd.newSourceAmount oldAllocs
-                  else oldAllocs
-           in pure (Expense rescaled)
-      | otherwise -> throwE AllocationsRequiredForCategorisedKind
+    (Nothing, IncomeKind) -> throwE AllocationsRequiredForCategorisedKind
+    (Nothing, ExpenseKind) -> throwE AllocationsRequiredForCategorisedKind
     (Nothing, TransferKind) -> pure Transfer
     (Nothing, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
 
@@ -960,6 +925,10 @@ translateTransactionError (CommandRejected TxCh.AllocationAmountNotPositive) =
   AllocationAmountNotPositive
 translateTransactionError (CommandRejected TxCh.AllocationCurrencyMismatch) =
   AllocationCurrencyMismatch
+translateTransactionError (CommandRejected TxCh.ContraIncomeNotSupported) =
+  ContraIncomeNotSupported
+translateTransactionError (CommandRejected TxCh.AllocationsEmpty) =
+  AllocationsEmpty
 translateTransactionError (CommandRejected TxCh.AmendTransferToSameAccountPair) =
   CannotAmendToSameAccountPair
 translateTransactionError (CommandRejected TxCh.AmendTransferToZeroAmount) =
@@ -992,34 +961,31 @@ dictionaryEntryIds dictId cfg =
 -- | Pick the dictionary id matching the current transfer type. Internal
 -- transfers and adjustments have no category and return 'Nothing'.
 pickCategoryDict :: TransactionType -> Maybe DictionaryId
-pickCategoryDict tt = pickCategoryDictForKind (kindOf tt)
-
--- | Pick the dictionary id matching a 'TransactionKind'.
-pickCategoryDictForKind :: TransactionKind -> Maybe DictionaryId
-pickCategoryDictForKind IncomeKind = Just ConfigurationService.incomeCategoryDictId
-pickCategoryDictForKind ExpenseKind = Just ConfigurationService.expenseCategoryDictId
-pickCategoryDictForKind TransferKind = Nothing
-pickCategoryDictForKind AdjustmentKind = Nothing
+pickCategoryDict tt = case kindOf tt of
+  IncomeKind -> Just ConfigurationService.incomeCategoryDictId
+  ExpenseKind -> Just ConfigurationService.expenseCategoryDictId
+  TransferKind -> Nothing
+  AdjustmentKind -> Nothing
 
 -- | Verify every allocation's 'categoryId' exists in the dictionary that
--- matches the supplied 'TransactionKind'. The handler enforces sum, currency
--- and positivity invariants; this only covers the side that depends on
--- user configuration. Caller is responsible for ensuring the kind is
--- categorised (Income/Expense); other kinds short-circuit to 'Right ()'.
+-- matches its bucket: income-bucket categories against the income
+-- dictionary, expense-bucket categories against the expense dictionary.
+-- The handler enforces sum, currency and positivity invariants; this only
+-- covers the side that depends on user configuration. Kind-agnostic — the
+-- contra/empty rules live in the smart constructors and handler.
 validateAllocationsAgainstDictionary ::
   UserId ->
-  TransactionKind ->
   Allocations ->
   AppM (Either DomainError ())
-validateAllocationsAgainstDictionary userId kind allocs =
-  case pickCategoryDictForKind kind of
-    Nothing -> pure (Right ())
-    Just dictId -> runExceptT $ do
-      cfg <- ExceptT (ConfigurationService.getConfigurationForUser userId)
-      let known = dictionaryEntryIds dictId cfg
-      case filter (\a -> not (Set.member a.categoryId known)) (NE.toList allocs) of
-        [] -> pure ()
-        (bad : _) -> throwE (CategoryNotFound (tshow (unDictionaryEntryId bad.categoryId)))
+validateAllocationsAgainstDictionary userId a = runExceptT $ do
+  cfg <- ExceptT (ConfigurationService.getConfigurationForUser userId)
+  let incomeKnown = dictionaryEntryIds ConfigurationService.incomeCategoryDictId cfg
+      expenseKnown = dictionaryEntryIds ConfigurationService.expenseCategoryDictId cfg
+      badIncome = filter (\x -> not (Set.member x.categoryId incomeKnown)) a.incomes
+      badExpense = filter (\x -> not (Set.member x.categoryId expenseKnown)) a.expenses
+  case badIncome <> badExpense of
+    [] -> pure ()
+    (bad : _) -> throwE (CategoryNotFound (tshow (unDictionaryEntryId bad.categoryId)))
 
 -- | Resolve cross-currency amounts and initiate a transfer.
 --

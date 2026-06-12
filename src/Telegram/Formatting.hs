@@ -26,7 +26,6 @@ module Telegram.Formatting
 where
 
 import Application.ReadModels.Transaction (TransactionData (..))
-import Data.Foldable (toList)
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -41,6 +40,7 @@ import Domain.Core.Types
     Money,
     TransactionId,
     TransactionType (..),
+    allAllocations,
     moneyCurrency,
     unMoney,
   )
@@ -94,7 +94,7 @@ formatTransactionLine entryNames (_txId, td) =
               Just name -> name <> ": " <> amtText
               Nothing -> amtText
       withAllocations kind allocs =
-        let parts = fmap formatAllocation (toList allocs)
+        let parts = fmap formatAllocation (allAllocations allocs)
          in case parts of
               [] -> kind
               xs -> kind <> " \xB7 " <> T.intercalate ", " xs
@@ -108,6 +108,7 @@ formatTransactionLine entryNames (_txId, td) =
         Completed -> ""
         Pending -> "  [Pending]"
         Failed reason -> "  [Failed: " <> reason <> "]"
+        Cancelled -> "  [Cancelled]"
       desc =
         if T.null td.description
           then ""

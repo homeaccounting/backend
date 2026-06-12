@@ -16,6 +16,7 @@ import Domain.Core.Types
     Currency (..),
     TransactionId,
     TransactionType (..),
+    mkIncomeAllocations,
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -69,7 +70,7 @@ completedIncome =
     & #status
     .~ Completed
     & #transactionType
-    .~ Income (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| [])
+    .~ Income (mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| []))
     & #description
     .~ "Original"
     & #at
@@ -94,7 +95,7 @@ mkInitiated =
       description = "",
       by = transactionDefault ^. #initiatedBy,
       at = t0,
-      transactionType = Income (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| []),
+      transactionType = Income (mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| [])),
       externalTransactionId = Nothing,
       labels = Set.empty
     }

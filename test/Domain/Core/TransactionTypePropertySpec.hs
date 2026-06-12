@@ -29,7 +29,8 @@ import Testkit.Generators (genPositiveMoneyIn)
 import Testkit.Helpers (partitionMoney)
 
 -- | Build a valid (positive total, allocations) pair that satisfies the
--- smart-constructor invariants.
+-- smart-constructor invariants. All slices live in the @expenses@ bucket
+-- (an empty @incomes@ bucket is valid for both 'mkIncome' and 'mkExpense').
 genValid :: Gen (Money, Allocations)
 genValid = do
   cur <- arbitrary
@@ -61,38 +62,26 @@ spec = describe "TransactionType" $ do
 
     prop "rejects allocations whose sum does not equal total" $
       forAll genValid $ \(total, allocs) ->
-        let bumped = case NE.uncons allocs of
-              (Allocation cid m, rest) ->
-                Allocation cid (unsafeMoney (moneyCurrency m) (unMoney m + 1))
-                  NE.:| maybe [] NE.toList rest
+        let bumped = perturbExpenses (\m -> unsafeMoney (moneyCurrency m) (unMoney m + 1)) allocs
          in expectValidationField "allocations" (mkIncome total bumped)
 
     prop "rejects allocations with currency mismatch" $
       forAll genValid $ \(total, allocs) ->
         let cur = moneyCurrency total
             other = head [c | c <- [minBound .. maxBound], c /= cur]
-            mismatched = case NE.uncons allocs of
-              (Allocation cid m, rest) ->
-                Allocation cid (unsafeMoney other (unMoney m))
-                  NE.:| maybe [] NE.toList rest
+            mismatched = perturbExpenses (unsafeMoney other . unMoney) allocs
          in expectValidationField "currency" (mkIncome total mismatched)
 
     prop "rejects allocations with non-positive amount" $
       forAll genValid $ \(total, allocs) ->
         let cur = moneyCurrency total
-            zeroed = case NE.uncons allocs of
-              (Allocation cid _, rest) ->
-                Allocation cid (unsafeMoney cur 0)
-                  NE.:| maybe [] NE.toList rest
+            zeroed = perturbExpenses (\_ -> unsafeMoney cur 0) allocs
          in expectValidationField "amount" (mkIncome total zeroed)
 
-  describe "allocationsOf / categorisedAmount / isCategorised / kindOf" $ do
+  describe "allocationsOf / isCategorised / kindOf" $ do
     prop "allocationsOf is Just iff kindOf is IncomeKind or ExpenseKind" $ \tt ->
       isJust (allocationsOf tt)
         === (kindOf tt == IncomeKind || kindOf tt == ExpenseKind)
-
-    prop "categorisedAmount equals sum of allocations when defined" $ \tt ->
-      categorisedAmount tt === fmap sumAllocationsUnchecked (allocationsOf tt)
 
     prop "isCategorised matches allocationsOf" $ \tt ->
       isCategorised tt === isJust (allocationsOf tt)
@@ -100,7 +89,9 @@ spec = describe "TransactionType" $ do
     prop "kindOf is total (every constructor maps to some kind)" $ \tt ->
       kindOf tt `seq` True
 
-  describe "allSameCurrency" $ do
-    prop "holds for any TransactionType returned by the smart constructors" $
-      forAll genValid $ \(total, allocs) ->
-        allSameCurrency (moneyCurrency total) allocs
+-- | Apply a money-transform to the first allocation of the @expenses@
+-- bucket (where 'genValid' places its slices), leaving the rest intact.
+perturbExpenses :: (Money -> Money) -> Allocations -> Allocations
+perturbExpenses f a = case a.expenses of
+  (Allocation cid m : rest) -> a {expenses = Allocation cid (f m) : rest}
+  [] -> a

@@ -28,7 +28,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as Set
 import Domain.Core.Types
   ( Allocation (..),
-    Allocations,
+    Allocations (..),
     Currency (..),
     unDictionaryEntryId,
     unTransactionId,
@@ -71,8 +71,11 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       secondCat <- addIncomeCategory seed "Bonus"
       -- Replace with a 10 + 15 split summing to the original 25 USD.
       let newAllocs =
-            Allocation seed.seedCategory (unsafeMoney USD 10)
-              :| [Allocation secondCat (unsafeMoney USD 15)]
+            Allocations
+              [ Allocation seed.seedCategory (unsafeMoney USD 10),
+                Allocation secondCat (unsafeMoney USD 15)
+              ]
+              []
       let path =
             encodeUtf8
               $ "/api/transactions/"
@@ -105,7 +108,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       txId <- seedIncomeTransaction seed Set.empty
       -- Seed transaction is 25 USD; submit a 10 USD allocation only.
       let bad =
-            Allocation seed.seedCategory (unsafeMoney USD 10) :| []
+            Allocations [Allocation seed.seedCategory (unsafeMoney USD 10)] []
       let path =
             encodeUtf8
               $ "/api/transactions/"
@@ -122,7 +125,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       token <- seedToken seed
       txId <- seedTransfer seed
       let bad =
-            Allocation seed.seedCategory (unsafeMoney USD 10) :| []
+            Allocations [Allocation seed.seedCategory (unsafeMoney USD 10)] []
       let path =
             encodeUtf8
               $ "/api/transactions/"
@@ -141,7 +144,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       token <- seedToken seed
       txId <- seedIncomeTransaction seed Set.empty
       let body =
-            Allocation seed.seedCategory (unsafeMoney USD 25) :| []
+            Allocations [Allocation seed.seedCategory (unsafeMoney USD 25)] []
       let path =
             encodeUtf8
               $ "/api/transactions/"

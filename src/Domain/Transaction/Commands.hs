@@ -256,9 +256,8 @@ data ChangeTransactionDate = ChangeTransactionDate
 --
 -- @newAllocations@ semantics:
 --
---   * 'Nothing', kind unchanged (Income\/Expense): service rescales
---     existing allocations against the new categorised amount.
---   * 'Nothing', kind changing into Income\/Expense: rejected with
+--   * 'Nothing', kind = Income\/Expense (whether unchanged or newly
+--     derived): caller must supply allocations; rejected with
 --     'AllocationsRequiredForCategorisedKind'.
 --   * 'Nothing', kind = Transfer: pure 'Transfer'.
 --   * 'Just allocs', kind = Income\/Expense: 'Income allocs' or

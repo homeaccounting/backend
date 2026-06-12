@@ -18,6 +18,7 @@
 module Domain.Transaction.CommandHandlerPropertySpec (spec) where
 
 import Data.Either (isLeft)
+import Data.List.NonEmpty (nonEmpty)
 import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -268,7 +269,10 @@ validationSpec = describe "Validation Properties" $ do
 -- the categorised side), and from a default mock amount otherwise.
 completedTxWithType :: AccountId -> AccountId -> TransactionType -> Transaction
 completedTxWithType fromId toId tt =
-  let amt = fromMaybe (mockMoney 100) (categorisedAmount tt)
+  let amt = case allocationsOf tt >>= (nonEmpty . allAllocations) of
+        Just xs@(first :| _) ->
+          Money (sum [a.amount.amount | a <- toList xs]) (moneyCurrency first.amount)
+        Nothing -> mockMoney 100
    in applyEvents
         [ TransactionPostingInitiatedTransactionEvent
             $ TransactionPostingInitiated

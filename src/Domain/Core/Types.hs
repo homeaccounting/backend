@@ -108,17 +108,17 @@ module Domain.Core.Types
     mkIncome,
     mkExpense,
     allocationsOf,
-    categorisedAmount,
     isCategorised,
     validateAllocations,
-    sumAllocationsUnchecked,
-    allSameCurrency,
-    rescaleAllocations,
-    rescaleTransactionType,
     replaceAllocations,
     Allocation (..),
     mkAllocation,
-    Allocations,
+    Allocations (..),
+    mkAllocations,
+    mkIncomeAllocations,
+    mkExpenseAllocations,
+    mkMixedAllocations,
+    allAllocations,
 
     -- * OAuth Types
     OAuthProvider (..),
@@ -144,8 +144,7 @@ import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int64)
-import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NE
+import Data.List.NonEmpty (NonEmpty (..), toList)
 import Data.Map.Strict (Map)
 import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
@@ -989,9 +988,50 @@ mkAllocation cid m
           "Allocation amount must be positive"
           (T.pack (show (unMoney m)))
 
--- | A non-empty list of allocations — the categorised side of an
--- Income/Expense transaction.
-type Allocations = NonEmpty Allocation
+-- | The categorised side of a transaction, split into two buckets by the
+-- dictionary the categories come from. The contra effect (a reimbursement
+-- reducing an expense category) is derived from bucket + flow direction —
+-- never a negative amount. Build via 'mkIncomeAllocations' /
+-- 'mkExpenseAllocations' (single-bucket totals), 'mkMixedAllocations'
+-- (both buckets), or 'mkAllocations' (dynamic, from possibly-empty lists).
+data Allocations = Allocations
+  { incomes :: [Allocation], -- categories from the income-category dict
+    expenses :: [Allocation] -- categories from the expense-category dict
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON Allocations
+
+instance FromJSON Allocations
+
+-- | All allocations regardless of bucket — the categorised lines as a flat list.
+allAllocations :: Allocations -> [Allocation]
+allAllocations a = a.incomes <> a.expenses
+
+-- | Smart constructor. Enforces only the cross-bucket structural invariant
+-- (not both empty); per-allocation positivity, currency, and sum-vs-total
+-- are checked against an anchor amount by 'validateAllocations' /
+-- 'mkIncome' / 'mkExpense'. Kind-agnostic by design — directional rules
+-- (no contra-income) live in the constructors/handler.
+mkAllocations :: [Allocation] -> [Allocation] -> Either DomainError Allocations
+mkAllocations incs exps
+  | null incs && null exps = Left AllocationsEmpty
+  | otherwise = Right (Allocations incs exps)
+
+-- | Allocations entirely in the income bucket (expense bucket empty).
+-- Total: 'NonEmpty' guarantees the not-both-empty invariant, so — unlike
+-- the fallible 'mkAllocations' — this returns 'Allocations' directly.
+mkIncomeAllocations :: NonEmpty Allocation -> Allocations
+mkIncomeAllocations xs = Allocations (toList xs) []
+
+-- | Allocations entirely in the expense bucket (income bucket empty). Total.
+mkExpenseAllocations :: NonEmpty Allocation -> Allocations
+mkExpenseAllocations xs = Allocations [] (toList xs)
+
+-- | Allocations spanning both buckets (income earnings + expense
+-- reimbursements), e.g. a salary transfer bundling a rent reimbursement. Total.
+mkMixedAllocations :: NonEmpty Allocation -> NonEmpty Allocation -> Allocations
+mkMixedAllocations incs exps = Allocations (toList incs) (toList exps)
 
 -- | Type of transfer operation.
 --
@@ -1053,32 +1093,9 @@ allocationsOf (Expense xs) = Just xs
 allocationsOf Transfer = Nothing
 allocationsOf Adjustment = Nothing
 
--- | Sum of allocation amounts (= categorised total) where defined.
---   Uses 'sumAllocationsUnchecked' — safe here because allocations inside
---   a 'TransactionType' have already passed the smart-constructor currency
---   check at construction time.
-categorisedAmount :: TransactionType -> Maybe Money
-categorisedAmount = fmap sumAllocationsUnchecked . allocationsOf
-
 -- | True for Income / Expense; False for Transfer / Adjustment.
 isCategorised :: TransactionType -> Bool
 isCategorised = isJust . allocationsOf
-
--- | Sum of allocation amounts, assuming all share a currency.
--- The caller must validate currency equality first (see 'validateAllocations').
--- We fold the underlying 'Rational' so the helper is total — sidestepping
--- 'addMoney's currency-mismatch 'Either'.
-
-{-@ reflect sumAllocationsUnchecked @-}
-sumAllocationsUnchecked :: Allocations -> Money
-sumAllocationsUnchecked xs =
-  Money
-    (sum (fmap (\a -> a.amount.amount) xs))
-    (NE.head xs).amount.currency
-
--- | True when every allocation's currency equals the given currency.
-allSameCurrency :: Currency -> Allocations -> Bool
-allSameCurrency c = all (\a -> a.amount.currency == c)
 
 -- | Validate an allocation list against an expected categorised total.
 --
@@ -1091,83 +1108,35 @@ validateAllocations ::
   Money ->
   Allocations ->
   Either DomainError ()
-validateAllocations expectedTotal allocs =
-  checkPositive *> checkCurrency *> checkSum
+validateAllocations expectedTotal a =
+  checkNotEmpty *> checkPositive *> checkCurrency *> checkSum
   where
-    expectedCurrency :: Currency
+    xs = allAllocations a
     expectedCurrency = expectedTotal.currency
 
-    checkPositive :: Either DomainError ()
-    checkPositive = case NE.filter (\a -> a.amount.amount <= 0) allocs of
+    checkNotEmpty
+      | null xs = Left AllocationsEmpty
+      | otherwise = Right ()
+
+    checkPositive = case filter (\x -> x.amount.amount <= 0) xs of
       [] -> Right ()
       (bad : _) ->
         Left . ValidationErr $
-          mkValidationError
-            "amount"
-            "Allocation amount must be positive"
-            (T.pack (show bad.amount.amount))
+          mkValidationError "amount" "Allocation amount must be positive" (T.pack (show bad.amount.amount))
 
-    checkCurrency :: Either DomainError ()
-    checkCurrency =
-      case NE.filter (\a -> a.amount.currency /= expectedCurrency) allocs of
-        [] -> Right ()
-        (bad : _) ->
-          Left . ValidationErr $
-            mkValidationError
-              "currency"
-              "All allocations must share the categorised currency"
-              (T.pack (show bad.amount.currency))
+    checkCurrency = case filter (\x -> x.amount.currency /= expectedCurrency) xs of
+      [] -> Right ()
+      (bad : _) ->
+        Left . ValidationErr $
+          mkValidationError "currency" "All allocations must share the categorised currency" (T.pack (show bad.amount.currency))
 
-    checkSum :: Either DomainError ()
     checkSum =
-      let s = sumAllocationsUnchecked allocs
+      let s = Money (sum (fmap (\x -> x.amount.amount) xs)) expectedCurrency
        in if s == expectedTotal
             then Right ()
             else
               Left . ValidationErr $
-                mkValidationError
-                  "allocations"
-                  "Sum of allocations must equal categorised amount"
-                  (T.pack (show s.amount))
-
--- | Rescale a non-empty allocation list so its sum equals @newTotal@,
--- preserving the original ratio. Uses exact 'Rational' arithmetic.
---
--- Precondition: the existing allocations sum to @oldTotal@ and
--- @oldTotal /= 0@. The helper is total — it does not re-check the
--- precondition — because it is called from projections where the
--- invariant is known to hold from the smart constructor at
--- construction time.
---
--- The currency of each allocation is preserved (allocations within a
--- 'TransactionType' all share a currency by construction).
-rescaleAllocations ::
-  -- | Old categorised total (sum of existing allocations).
-  Money ->
-  -- | New categorised total.
-  Money ->
-  Allocations ->
-  Allocations
-rescaleAllocations oldTotal newTotal = fmap rescale
-  where
-    factor :: Rational
-    factor = newTotal.amount / oldTotal.amount
-
-    rescale :: Allocation -> Allocation
-    rescale a =
-      Allocation
-        { categoryId = a.categoryId,
-          amount = Money (a.amount.amount * factor) a.amount.currency
-        }
-
--- | Apply 'rescaleAllocations' to the categorised side of a 'TransactionType'.
--- 'Transfer' and 'Adjustment' pass through unchanged.
-rescaleTransactionType :: Money -> Money -> TransactionType -> TransactionType
-rescaleTransactionType oldTotal newTotal tt = case tt of
-  Income xs -> Income (rescaleAllocations oldTotal newTotal xs)
-  Expense xs -> Expense (rescaleAllocations oldTotal newTotal xs)
-  Transfer -> Transfer
-  Adjustment -> Adjustment
+                mkValidationError "allocations" "Sum of allocations must equal categorised amount" (T.pack (show s.amount))
 
 -- | Replace the allocations payload of a categorised 'TransactionType'.
 --
@@ -1187,23 +1156,30 @@ replaceAllocations new tt = case tt of
 -- The categorised amount is the transaction's target-side amount
 -- (the side credited by the income). The allocations must:
 --
---   * be non-empty (enforced by the 'NonEmpty' type)
+--   * carry at least one slice across both buckets ('AllocationsEmpty')
 --   * each have @amount > 0@
---   * all share the same 'Currency' as @categorisedAmount@
---   * sum to @categorisedAmount@
+--   * all share the same 'Currency' as the categorised total
+--   * sum to the categorised total
+--
+-- Both buckets may be populated: a non-empty @expenses@ bucket is a
+-- reimbursement (contra-expense), which is allowed on income.
 mkIncome :: Money -> Allocations -> Either DomainError TransactionType
-mkIncome categorisedTotal allocs = do
-  validateAllocations categorisedTotal allocs
-  pure (Income allocs)
+mkIncome categorisedTotal a = do
+  validateAllocations categorisedTotal a
+  pure (Income a)
 
 -- | Construct an Expense 'TransactionType'.
 --
 -- The categorised amount is the transaction's source-side amount
--- (the side debited by the expense). Same invariants as 'mkIncome'.
+-- (the side debited by the expense). Same invariants as 'mkIncome',
+-- plus the directional contra rule: the @incomes@ bucket must be empty
+-- (a contra-income expense is unsupported → 'ContraIncomeNotSupported').
 mkExpense :: Money -> Allocations -> Either DomainError TransactionType
-mkExpense categorisedTotal allocs = do
-  validateAllocations categorisedTotal allocs
-  pure (Expense allocs)
+mkExpense categorisedTotal a = do
+  validateAllocations categorisedTotal a
+  if null a.incomes
+    then pure (Expense a)
+    else Left ContraIncomeNotSupported
 
 -- -----------------------------------------------------------------------------
 -- OAuth Types

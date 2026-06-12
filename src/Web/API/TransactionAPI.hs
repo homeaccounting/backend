@@ -56,17 +56,16 @@ module Web.API.TransactionAPI
   )
 where
 
-import Application.ReadModels.Transaction (TransactionData (..), mkTransactionFilter)
+import Application.ReadModels.Transaction (mkTransactionFilter)
 import Application.Services.TransactionHistoryService (TransactionHistory)
 import qualified Application.Services.TransactionHistoryService as TransactionHistoryService
 import qualified Application.Services.TransactionService as TransactionService
-import qualified Data.List.NonEmpty as NE
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Page (Page (..), mkPage)
 import Domain.Core.Range (mkRange)
-import Domain.Core.Types (TransactionType (..), mkAccountId, mkAllocation, mkDictionaryEntryId, mkTransactionId, parseCurrency)
+import Domain.Core.Types (Allocation (..), Allocations, Currency, Money (..), TransactionType (..), allAllocations, mkAccountId, mkAllocation, mkAllocations, mkDictionaryEntryId, mkTransactionId, parseCurrency, unsafeDictionaryEntryId)
 import Domain.Transaction.Commands (AmendTransaction (..))
 import Domain.Transaction.Projection (StatusKind)
 import Infrastructure.App (AppM)
@@ -76,7 +75,9 @@ import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Query (CommaSep (..))
 import Web.Types
-  ( AmendTransactionRequest (..),
+  ( AllocationsRequest (..),
+    AmendTransactionRequest (..),
+    CategoryAmount (..),
     ChangeTransactionDateRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ExpenseRequest (..),
@@ -87,7 +88,6 @@ import Web.Types
     TransactionResponse,
     TransferRequest (..),
     fromTransactionData,
-    parseCategoryId,
     parseLabelIds,
     parseOptionalExchangeRate,
     toDomainMoney,
@@ -231,21 +231,28 @@ transactionServer =
 -- Handlers (thin HTTP adapters)
 -- -----------------------------------------------------------------------------
 
+-- | Map the two request buckets into a validated domain 'Allocations' plus
+-- the derived categorised total (sum of all slices in the request currency).
+buildAllocations :: Currency -> AllocationsRequest -> Either DomainError (Money, Allocations)
+buildAllocations cur req = do
+  incs <- traverse (toAlloc cur) req.incomes
+  exps <- traverse (toAlloc cur) req.expenses
+  allocs <- mkAllocations incs exps
+  let total = Money (sum [a.amount.amount | a <- allAllocations allocs]) cur
+  pure (total, allocs)
+  where
+    toAlloc c ca = mkAllocation (unsafeDictionaryEntryId ca.category) (toDomainMoney c ca.amount)
+
 -- | Handler for POST /api/transactions/income - Record an income transaction.
 incomeHandler :: AuthenticatedUser -> IncomeRequest -> AppM TransactionResponse
 incomeHandler user request = do
   let userId = user.userId
   validateDateNotInFuture request.date
-  categoryEntryId <- validateField "category" $ parseCategoryId request.category
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
-  let money = toDomainMoney cur request.amount
-  allocation <- case mkAllocation categoryEntryId money of
-    Right a -> pure a
-    Left err -> throwDomainError err
-  let allocations = NE.singleton allocation
+  (total, allocations) <- either throwDomainError pure (buildAllocations cur request.allocations)
   labelSet <- validateField "labels" $ parseLabelIds request.labels
-  result <- TransactionService.initiateIncome userId accountId money allocations labelSet request.description request.date
+  result <- TransactionService.initiateIncome userId accountId total allocations labelSet request.description request.date
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -255,16 +262,11 @@ expenseHandler :: AuthenticatedUser -> ExpenseRequest -> AppM TransactionRespons
 expenseHandler user request = do
   let userId = user.userId
   validateDateNotInFuture request.date
-  categoryEntryId <- validateField "category" $ parseCategoryId request.category
   accountId <- validateField "accountId" $ mkAccountId request.accountId
   cur <- validateField "currency" $ parseCurrency request.currency
-  let money = toDomainMoney cur request.amount
-  allocation <- case mkAllocation categoryEntryId money of
-    Right a -> pure a
-    Left err -> throwDomainError err
-  let allocations = NE.singleton allocation
+  (total, allocations) <- either throwDomainError pure (buildAllocations cur request.allocations)
   labelSet <- validateField "labels" $ parseLabelIds request.labels
-  result <- TransactionService.initiateExpense userId accountId money allocations labelSet request.description request.date
+  result <- TransactionService.initiateExpense userId accountId total allocations labelSet request.description request.date
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err

@@ -260,6 +260,26 @@ mapDomainError AllocationCurrencyMismatch =
               details = Nothing
             }
     }
+mapDomainError ContraIncomeNotSupported =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "An expense cannot carry income allocations (contra-income is not supported)",
+              code = "CONTRA_INCOME_NOT_SUPPORTED",
+              details = Nothing
+            }
+    }
+mapDomainError AllocationsEmpty =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "A categorised transaction must carry at least one allocation",
+              code = "ALLOCATIONS_EMPTY",
+              details = Nothing
+            }
+    }
 mapDomainError CannotChangeKindOfCategorisedTransaction =
   err400
     { errBody =
