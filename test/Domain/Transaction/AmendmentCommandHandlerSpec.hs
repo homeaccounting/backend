@@ -131,7 +131,7 @@ validAmendCmd =
         newExchangeRate = Nothing,
         newAllocations = Nothing,
         newTransactionType = Transfer,
-        amendedBy = amendedBy
+        by = amendedBy
       }
 
 -- | Valid 'CompleteTransactionAmendment' saga command.
@@ -146,7 +146,7 @@ validCompleteAmendCmd =
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
         newTransactionType = Transfer,
-        amendedBy = amendedBy
+        by = amendedBy
       }
 
 -- | Valid 'FailTransactionAmendment' saga command.
@@ -175,7 +175,7 @@ spec = do
                   newSourceAmount = evtSrcAmt,
                   newTargetAmount = evtTgtAmt,
                   newExchangeRate = evtRate,
-                  amendedBy = evtAmendedBy,
+                  by = evtAmendedBy,
                   transactionId = _
                 }
             ] -> do
@@ -212,7 +212,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
-                  amendedBy = amendedBy
+                  by = amendedBy
                 }
       handleTransactionCommand completedTx sameAccountCmd
         `shouldBe` Left AmendTransferToSameAccountPair
@@ -229,7 +229,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
-                  amendedBy = amendedBy
+                  by = amendedBy
                 }
       handleTransactionCommand completedTx zeroSrcCmd
         `shouldBe` Left AmendTransferToZeroAmount
@@ -246,7 +246,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
-                  amendedBy = amendedBy
+                  by = amendedBy
                 }
       handleTransactionCommand completedTx zeroTgtCmd
         `shouldBe` Left AmendTransferToZeroAmount
@@ -274,7 +274,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Expense contraAllocs,
-                  amendedBy = amendedBy
+                  by = amendedBy
                 }
       handleTransactionCommand completedTx contraAmendCmd
         `shouldBe` Left TxCh.ContraIncomeNotSupported
@@ -297,7 +297,7 @@ spec = do
                   newTargetAmount = _,
                   newExchangeRate = _,
                   newTransactionType = _,
-                  amendedBy = _
+                  by = _
                 }
             ] -> do
             evtSrc `shouldBe` altSrcId

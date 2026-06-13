@@ -97,7 +97,7 @@ buildAmend txId src tgt srcAmt tgtAmt mAllocs uid =
       newExchangeRate = Nothing,
       newAllocations = mAllocs,
       newTransactionType = Transfer, -- placeholder; overwritten by service
-      amendedBy = uid
+      by = uid
     }
 
 -- | Seed a fresh env, register a user with default configuration,

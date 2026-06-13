@@ -140,7 +140,7 @@ mkCancellationInitiated =
     ( TransactionCancellationInitiatedEvent
         TransactionCancellationInitiated
           { transactionId = txId,
-            cancelledBy = userId_
+            by = userId_
           }
     )
 
@@ -184,7 +184,7 @@ mkCancellationCompleted =
     ( TransactionCancellationCompletedEvent
         TransactionCancellationCompleted
           { transactionId = txId,
-            cancelledBy = userId_
+            by = userId_
           }
     )
 
@@ -235,7 +235,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
                     newTargetAmount = m 140,
                     newExchangeRate = Nothing,
                     newTransactionType = Transfer,
-                    amendedBy = userId_
+                    by = userId_
                   }
             )
 
@@ -263,13 +263,13 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
 
   -- Test case 3: TransactionCancellationInitiatedEvent creates saga entry and emits two commands
   describe "TransactionCancellationInitiated" $ do
-    it "creates a cancellations entry with both flags False and the cancelledBy field" $ do
+    it "creates a cancellations entry with both flags False and the by field" $ do
       let st = runProjection [seedInitiated, mkCancellationInitiated]
       case Map.lookup txId (st ^. #cancellations) of
         Nothing -> expectationFailure "Expected cancellations entry"
         Just c -> do
           c.transactionId `shouldBe` txId
-          c.cancelledBy `shouldBe` userId_
+          c.by `shouldBe` userId_
           c.sourceReversed `shouldBe` False
           c.targetReversed `shouldBe` False
 
@@ -321,7 +321,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
         [IssueCommand txTarget (CompleteTransactionCancellationCommand complete) _] -> do
           txTarget `shouldBe` unTransactionId txId
           complete.transactionId `shouldBe` txId
-          complete.cancelledBy `shouldBe` userId_
+          complete.by `shouldBe` userId_
         _ -> expectationFailure "Expected one CompleteTransactionCancellation effect"
 
   -- Test case 6: Reversal order independence
@@ -347,7 +347,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
         [IssueCommand txTarget (CompleteTransactionCancellationCommand complete) _] -> do
           txTarget `shouldBe` unTransactionId txId
           complete.transactionId `shouldBe` txId
-          complete.cancelledBy `shouldBe` userId_
+          complete.by `shouldBe` userId_
         _ -> expectationFailure "Expected CompleteTransactionCancellation on second reversal"
 
     it "debit then credit: only the second reversal emits the completion command" $ do
@@ -399,7 +399,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
               ( TransactionCancellationInitiatedEvent
                   TransactionCancellationInitiated
                     { transactionId = txId,
-                      cancelledBy = userId_
+                      by = userId_
                     }
               )
           st = handleTransactionCancellationEvent empty_ unknownEvent
@@ -441,7 +441,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
             ( TransactionCancellationInitiatedEvent
                 TransactionCancellationInitiated
                   { transactionId = tx2Id,
-                    cancelledBy = userId_
+                    by = userId_
                   }
             )
         debitReversed2 =

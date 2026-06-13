@@ -298,7 +298,7 @@ data AmendTransaction = AmendTransaction
     -- allocations). Web handler initialises to 'Transfer'; the
     -- service layer always overwrites before dispatch.
     newTransactionType :: TransactionType,
-    amendedBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -325,7 +325,7 @@ data CompleteTransactionAmendment = CompleteTransactionAmendment
     -- | Full new 'TransactionType' synthesised by the service layer.
     newTransactionType :: TransactionType,
     -- | User who amended the transfer.
-    amendedBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -360,7 +360,7 @@ data CancelTransaction = CancelTransaction
   { -- | The transaction being cancelled.
     transactionId :: TransactionId,
     -- | User who initiated the cancellation (for audit trail).
-    cancelledBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -368,7 +368,7 @@ data CancelTransaction = CancelTransaction
 --
 -- Issued by the @TransactionCancellationManager@ once both reversal events
 -- have landed. Accepted iff @cancellationInProgress = True@ on the aggregate.
--- The @cancelledBy@ field is an audit echo — the saga carries it from the
+-- The @by@ field is an audit echo — the saga carries it from the
 -- initiating 'CancelTransaction' so the resulting event is self-contained
 -- for read-model replay.
 --
@@ -378,7 +378,7 @@ data CompleteTransactionCancellation = CompleteTransactionCancellation
   { -- | The transaction being cancelled.
     transactionId :: TransactionId,
     -- | User who initiated the cancellation (echoed from the saga state).
-    cancelledBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 

@@ -385,7 +385,7 @@ amendTransactionHandler user rawId req = do
             -- in TransactionService.amendTransaction before dispatch. The
             -- DTO does not expose this field; it's service-internal.
             newTransactionType = Transfer,
-            amendedBy = user.userId
+            by = user.userId
           }
   result <- TransactionService.amendTransaction user.userId transactionId cmd
   case result of

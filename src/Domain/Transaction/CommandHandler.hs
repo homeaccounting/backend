@@ -337,7 +337,7 @@ handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTr
                     newTargetAmount = newTargetAmount,
                     newExchangeRate = newExchangeRate,
                     newTransactionType = newTransactionType,
-                    amendedBy = amendedBy
+                    by = by
                   }
             ]
     _ -> Left CannotEditUncompletedTransaction
@@ -360,7 +360,7 @@ handleTransactionCommand transaction (CompleteTransactionAmendmentTransactionCom
                 newTargetAmount = newTargetAmount,
                 newExchangeRate = newExchangeRate,
                 newTransactionType = newTransactionType,
-                amendedBy = amendedBy
+                by = by
               }
         ]
 -- Handle FailTransactionAmendment command
@@ -385,7 +385,7 @@ handleTransactionCommand transaction (CancelTransactionTransactionCommand Cancel
             [ TransactionCancellationInitiatedTransactionEvent
                 TransactionCancellationInitiated
                   { transactionId = transactionId,
-                    cancelledBy = cancelledBy
+                    by = by
                   }
             ]
     Cancelled -> Left TransactionAlreadyCancelled
@@ -399,7 +399,7 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
         [ TransactionCancellationCompletedTransactionEvent
             TransactionCancellationCompleted
               { transactionId = transactionId,
-                cancelledBy = cancelledBy
+                by = by
               }
         ]
 

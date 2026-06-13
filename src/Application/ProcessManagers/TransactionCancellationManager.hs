@@ -89,7 +89,7 @@ data TransactionCancellationData = TransactionCancellationData
   { -- | The transaction being cancelled.
     transactionId :: TransactionId,
     -- | User who requested the cancellation (echoed onto the completion command).
-    cancelledBy :: UserId,
+    by :: UserId,
     -- | True once 'AccountDebitReversed' matching this 'transactionId' lands.
     sourceReversed :: Bool,
     -- | True once 'AccountCreditReversed' matching this 'transactionId' lands.
@@ -133,7 +133,7 @@ handleTransactionCancellationEvent manager (StreamEvent _ _ _ (TransactionCancel
         % at evt.transactionId
         ?~ TransactionCancellationData
           { transactionId = evt.transactionId,
-            cancelledBy = evt.cancelledBy,
+            by = evt.by,
             sourceReversed = False,
             targetReversed = False
           }
@@ -182,7 +182,7 @@ completeIfReady manager txId =
                   ( CompleteTransactionCancellationTransactionCommand
                       CompleteTransactionCancellation
                         { transactionId = txId,
-                          cancelledBy = c.cancelledBy
+                          by = c.by
                         }
                   )
               )

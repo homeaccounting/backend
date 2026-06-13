@@ -6,7 +6,7 @@ This directory contains Architecture Decision Records documenting significant te
 
 | ID | Title | Status | Date |
 |----|-------|--------|------|
-| — | No decisions recorded yet | — | — |
+| [001](./001-event-field-naming.md) | Event field naming convention | Accepted | 2026-06-13 |
 
 ## ADR Format
 

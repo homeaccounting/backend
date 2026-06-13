@@ -238,7 +238,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
               newExchangeRate = Nothing,
               newAllocations = Just newAllocs,
               newTransactionType = Transfer,
-              amendedBy = h.harnessUser
+              by = h.harnessUser
             }
     amendResult <-
       runAppM h.harnessEnv

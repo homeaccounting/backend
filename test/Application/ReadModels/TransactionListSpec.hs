@@ -132,7 +132,7 @@ mkCancelledEvent txId =
     ( TransactionCancellationCompletedEvent
         TransactionCancellationCompleted
           { transactionId = txId,
-            cancelledBy = mockUserId (UUID.fromWords 9 0 0 0)
+            by = mockUserId (UUID.fromWords 9 0 0 0)
           }
     )
 

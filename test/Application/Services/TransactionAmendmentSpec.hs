@@ -107,7 +107,7 @@ amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
       newExchangeRate = Nothing,
       newAllocations = Nothing,
       newTransactionType = Transfer,
-      amendedBy = uid
+      by = uid
     }
 
 -- -----------------------------------------------------------------------------

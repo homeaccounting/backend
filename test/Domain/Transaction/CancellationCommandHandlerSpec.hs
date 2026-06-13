@@ -136,7 +136,7 @@ validCancelCmd =
   CancelTransactionTransactionCommand
     CancelTransaction
       { transactionId = txId,
-        cancelledBy = cancelledBy
+        by = cancelledBy
       }
 
 -- | Saga-internal 'CompleteTransactionCancellation' command.
@@ -145,7 +145,7 @@ validCompleteCancelCmd =
   CompleteTransactionCancellationTransactionCommand
     CompleteTransactionCancellation
       { transactionId = txId,
-        cancelledBy = cancelledBy
+        by = cancelledBy
       }
 
 -- | Minimal valid 'AmendTransaction' command (different accounts, non-zero amounts).
@@ -159,7 +159,7 @@ validAmendCmd =
         newSourceAmount = mockMoney 200,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
-        amendedBy = amendedBy
+        by = amendedBy
       }
 
 -- | 'AmendTransaction' with the same account on both legs — should be rejected.
@@ -173,7 +173,7 @@ sameAccountAmendCmd =
         newSourceAmount = mockMoney 200,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
-        amendedBy = amendedBy
+        by = amendedBy
       }
 
 -- | 'AmendTransaction' with zero source amount — should be rejected.
@@ -187,7 +187,7 @@ zeroSourceAmendCmd =
         newSourceAmount = mockMoney 0,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
-        amendedBy = amendedBy
+        by = amendedBy
       }
 
 -- | 'ChangeTransactionDescription' command — used for Cancelled-state regression.
@@ -222,7 +222,7 @@ spec = do
           [ TransactionCancellationInitiatedTransactionEvent
               TransactionCancellationInitiated
                 { transactionId = evtTxId,
-                  cancelledBy = evtCancelledBy
+                  by = evtCancelledBy
                 }
             ] -> do
             evtTxId `shouldBe` txId
@@ -262,7 +262,7 @@ spec = do
           [ TransactionCancellationCompletedTransactionEvent
               TransactionCancellationCompleted
                 { transactionId = evtTxId,
-                  cancelledBy = evtCancelledBy
+                  by = evtCancelledBy
                 }
             ] -> do
             evtTxId `shouldBe` txId

@@ -159,7 +159,7 @@ mkAmendInitiated newSrcA newTgtA newSrcAmt newTgtAmt =
             newTargetAmount = newTgtAmt,
             newExchangeRate = Nothing,
             newTransactionType = Transfer,
-            amendedBy = userId_
+            by = userId_
           }
     )
 
@@ -180,7 +180,7 @@ mkAmendInitiatedKind newSrcA newTgtA newSrcAmt newTgtAmt kind =
             newTargetAmount = newTgtAmt,
             newExchangeRate = Nothing,
             newTransactionType = kind,
-            amendedBy = userId_
+            by = userId_
           }
     )
 

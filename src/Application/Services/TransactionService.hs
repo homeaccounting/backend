@@ -625,7 +625,7 @@ cancelTransaction userId transactionId = runExceptT $ do
     ( dispatchAndAwaitCancellation
         transactionId
         ( CancelTransactionTransactionCommand
-            CancelTransaction {transactionId = transactionId, cancelledBy = userId}
+            CancelTransaction {transactionId = transactionId, by = userId}
         )
     )
 

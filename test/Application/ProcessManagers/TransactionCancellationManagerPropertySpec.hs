@@ -141,7 +141,7 @@ mkCancellationInitiatedFor txUuid txId cancelledBy_ =
     ( TransactionCancellationInitiatedEvent
         TransactionCancellationInitiated
           { transactionId = txId,
-            cancelledBy = cancelledBy_
+            by = cancelledBy_
           }
     )
 
@@ -199,7 +199,7 @@ mkCancellationCompletedFor txUuid txId cancelledBy_ =
     ( TransactionCancellationCompletedEvent
         TransactionCancellationCompleted
           { transactionId = txId,
-            cancelledBy = cancelledBy_
+            by = cancelledBy_
           }
     )
 

@@ -171,7 +171,7 @@ genCompleted = do
         newTargetAmount = newTgtAmt,
         newExchangeRate = newRate,
         newTransactionType = seedTransactionType,
-        amendedBy = amendedByU
+        by = amendedByU
       }
 
 -- | Newtype wrapper to provide 'Arbitrary' for 'TransactionAmendmentCompleted'
@@ -194,7 +194,7 @@ toInitiated c =
       newTargetAmount = c.newTargetAmount,
       newExchangeRate = c.newExchangeRate,
       newTransactionType = c.newTransactionType,
-      amendedBy = c.amendedBy
+      by = c.by
     }
 
 -- | Saga event pair for a single amendment: Initiated then Completed.
@@ -339,7 +339,7 @@ genCrossKindAmendInputs = do
             newExchangeRate = Nothing,
             newAllocations = Nothing,
             newTransactionType = newTT,
-            amendedBy = uid
+            by = uid
           }
   pure (seed, cmd)
 

@@ -160,7 +160,7 @@ initiatedEvt =
   TransactionCancellationInitiatedTransactionEvent
     TransactionCancellationInitiated
       { transactionId = txId,
-        cancelledBy = cancelledByU
+        by = cancelledByU
       }
 
 completedEvt :: TransactionEvent
@@ -168,7 +168,7 @@ completedEvt =
   TransactionCancellationCompletedTransactionEvent
     TransactionCancellationCompleted
       { transactionId = txId,
-        cancelledBy = cancelledByU
+        by = cancelledByU
       }
 
 -- | A transaction that has reached the 'Cancelled' terminal state.
@@ -187,7 +187,7 @@ genCancelTransaction = do
     $ CancelTransactionTransactionCommand
       CancelTransaction
         { transactionId = txId,
-          cancelledBy = uid
+          by = uid
         }
 
 -- | Generator for a 'CompleteTransactionCancellation' command using an arbitrary user.
@@ -198,7 +198,7 @@ genCompleteTransactionCancellation = do
     $ CompleteTransactionCancellationTransactionCommand
       CompleteTransactionCancellation
         { transactionId = txId,
-          cancelledBy = uid
+          by = uid
         }
 
 -- | Generator for either cancellation command.
@@ -242,7 +242,7 @@ genAmendmentInitiatedEvt = do
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
           newTransactionType = Transfer,
-          amendedBy = uid
+          by = uid
         }
 
 -- | Generator for a 'TransactionAmendmentCompleted' event with arbitrary
@@ -265,7 +265,7 @@ genAmendmentCompletedEvt = do
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
           newTransactionType = seedTransactionType,
-          amendedBy = uid
+          by = uid
         }
 
 -- | Newtype wrapper for 'TransactionEvent'.  Covers all projection arms that
@@ -325,13 +325,13 @@ spec = describe "Transaction cancellation handler and projection" $ do
             TransactionCancellationInitiatedTransactionEvent
               TransactionCancellationInitiated
                 { transactionId = tid,
-                  cancelledBy = uid
+                  by = uid
                 }
           completedE =
             TransactionCancellationCompletedTransactionEvent
               TransactionCancellationCompleted
                 { transactionId = tid,
-                  cancelledBy = uid
+                  by = uid
                 }
           afterInit = applyEventsTo completedBase [initiatedE]
           afterFull = applyEventsTo completedBase [initiatedE, completedE]

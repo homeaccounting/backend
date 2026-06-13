@@ -86,7 +86,7 @@ amendment s t sa ta =
       newTargetAmount = ta,
       newExchangeRate = Nothing,
       newTransactionType = Transfer,
-      amendedBy = userId_
+      by = userId_
     }
 
 -- | Net signed effect of the diff result on a given account.

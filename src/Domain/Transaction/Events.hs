@@ -225,7 +225,7 @@ data TransactionAmendmentInitiated = TransactionAmendmentInitiated
     -- | Synthesised full new 'TransactionType' (kind ⊕ allocations).
     newTransactionType :: TransactionType,
     -- | User who amended the transfer.
-    amendedBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -255,7 +255,7 @@ data TransactionAmendmentCompleted = TransactionAmendmentCompleted
     -- | Full new 'TransactionType' synthesised by the service layer.
     newTransactionType :: TransactionType,
     -- | User who amended the transfer.
-    amendedBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -281,7 +281,7 @@ data TransactionCancellationInitiated = TransactionCancellationInitiated
   { -- | The transaction being cancelled.
     transactionId :: TransactionId,
     -- | User who requested the cancellation.
-    cancelledBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 
@@ -293,7 +293,7 @@ data TransactionCancellationCompleted = TransactionCancellationCompleted
   { -- | The transaction that was cancelled.
     transactionId :: TransactionId,
     -- | User who requested the cancellation (preserved for audit trail).
-    cancelledBy :: UserId
+    by :: UserId
   }
   deriving (Show, Eq)
 

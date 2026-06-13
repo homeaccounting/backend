@@ -148,7 +148,7 @@ data TransactionAmendmentData = TransactionAmendmentData
     newExchangeRate :: Maybe ExchangeRate,
     -- | Synthesised full new 'TransactionType' (kind ⊕ allocations).
     newTransactionType :: TransactionType,
-    amendedBy :: UserId,
+    by :: UserId,
     -- | Snapshot of the @at@ business timestamp used on every reversal leg.
     at :: UTCTime,
     -- | Saga lifecycle state.
@@ -280,7 +280,7 @@ handleTransactionAmendmentEvent manager (StreamEvent _ _ _ (TransactionAmendment
                 newTargetAmount = evt.newTargetAmount,
                 newExchangeRate = evt.newExchangeRate,
                 newTransactionType = evt.newTransactionType,
-                amendedBy = evt.amendedBy,
+                by = evt.by,
                 at = postings.at,
                 phase = initialPhase mDebit rest
               }
@@ -389,7 +389,7 @@ completeEffect amend =
                 newTargetAmount = amend.newTargetAmount,
                 newExchangeRate = amend.newExchangeRate,
                 newTransactionType = amend.newTransactionType,
-                amendedBy = amend.amendedBy
+                by = amend.by
               }
         )
     )

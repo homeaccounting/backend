@@ -524,6 +524,6 @@ genIdentityAmendInputs = do
             newExchangeRate = mRate,
             newAllocations = Nothing,
             newTransactionType = tt,
-            amendedBy = uid
+            by = uid
           }
   pure (td, cmd)
