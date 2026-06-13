@@ -429,30 +429,31 @@ unlinkOAuthAccountSpec = describe "UnlinkOAuthAccount Command" $ do
             testOAuthIdentity `elem` (updatedUser ^. #oauthIdentities) `shouldBe` False
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
-  context "Given user with only OAuth login" $ do
-    describe "When attempting to unlink OAuth" $ do
-      it "Then ignores command (would leave user without login)" $ do
-        -- Create user with only OAuth
+  context "Given a registered user whose only login method is OAuth" $ do
+    describe "When attempting to unlink that OAuth identity" $ do
+      it "Then rejects with CannotRemoveLastLoginMethod" $ do
+        -- A user with exactly one login method: a single OAuth identity, no
+        -- password and no Telegram. Built by registering via Telegram, linking
+        -- OAuth, then unlinking Telegram — leaving OAuth as the sole method.
         let oauthOnlyUser =
-              latestProjection
-                userProjection
-                [ UserRegisteredUserEvent
-                    $ UserRegistered
-                      { email = "oauth@example.com",
-                        passwordHash = testPasswordHash,
+              applyEvents
+                [ UserRegisteredViaTelegramUserEvent
+                    $ UserRegisteredViaTelegram
+                      { identity = testTelegramIdentity,
                         externalAccountId = testExternalAccountId
-                      }
+                      },
+                  OAuthAccountLinkedUserEvent
+                    $ OAuthAccountLinked
+                      { identity = testOAuthIdentity
+                      },
+                  TelegramAccountUnlinkedUserEvent TelegramAccountUnlinked
                 ]
-        -- This user has password + no OAuth yet, so we need a different test
-        -- Actually, we need to test that when loginMethodCount <= 1, we reject
-        -- For a user with only OAuth (no password), we can't create that state
-        -- through normal commands since RegisterUser requires password.
-        -- So we test with a user that has password + OAuth but would be left with
-        -- password only (which is fine).
-        -- The real test for "only one login method" is when we try to remove
-        -- the last method, which would be covered by UnlinkTelegramAccount
-        pendingWith
-          "OAuth-only users not supported through standard registration"
+        let command =
+              UnlinkOAuthAccountUserCommand
+                $ UnlinkOAuthAccount
+                  { identity = testOAuthIdentity
+                  }
+        handleUserCommand oauthOnlyUser command `shouldBe` Left CannotRemoveLastLoginMethod
 
 -- -----------------------------------------------------------------------------
 -- UnlinkTelegramAccount Tests
