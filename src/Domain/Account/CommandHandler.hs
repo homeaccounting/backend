@@ -51,7 +51,7 @@ import qualified Data.Text as T
 import Domain.Account.Commands
 import Domain.Account.Events
 import Domain.Account.Projection
-import Domain.Core.Types (AccountSubtype (..), AccountType (..), moneyCurrency, unMoney, unsafeMoney)
+import Domain.Core.Types (AccountStatus (..), AccountSubtype (..), AccountType (..), moneyCurrency, unMoney, unsafeMoney)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
@@ -80,6 +80,9 @@ data AccountError
   | AccountCurrencyLocked
   | NegativeInitialBalanceExceedsOverdraftLimit
   | AccountNameUnchanged
+  | ExternalAccountCannotBeClosed
+  | AccountAlreadyClosed
+  | AccountAlreadyOpen
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -288,6 +291,21 @@ handleAccountCommand account (RenameAccountAccountCommand RenameAccount {..})
                 by = renamedBy
               }
         ]
+-- Handle CloseAccount command (owner-only deactivation)
+handleAccountCommand account (CloseAccountAccountCommand (CloseAccount {by = actor}))
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | account ^. #accountType == External = Left ExternalAccountCannotBeClosed
+  | not (isOwner actor account) = Left NotAccountOwner
+  | account ^. #status == Closed = Left AccountAlreadyClosed
+  | otherwise =
+      Right [AccountClosedAccountEvent AccountClosed {by = actor}]
+-- Handle ReopenAccount command (owner-only reactivation)
+handleAccountCommand account (ReopenAccountAccountCommand (ReopenAccount {by = actor}))
+  | T.null (account ^. #name) = Left AccountDoesNotExist
+  | not (isOwner actor account) = Left NotAccountOwner
+  | account ^. #status == Opened = Left AccountAlreadyOpen
+  | otherwise =
+      Right [AccountReopenedAccountEvent AccountReopened {by = actor}]
 -- Handle CreditAccount command (internal, issued by TransactionPostingManager saga)
 handleAccountCommand account (CreditAccountAccountCommand CreditAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist

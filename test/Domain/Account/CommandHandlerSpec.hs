@@ -22,12 +22,14 @@ module Domain.Account.CommandHandlerSpec (spec) where
 import Data.Either (isLeft)
 import Domain.Account
 import Domain.Account.CommandHandler
-import Domain.Account.Commands (CreditAccount (..), DebitAccount (..), RenameAccount (..), SetOverdraftLimit (..))
+import Domain.Account.Commands (CloseAccount (..), CreditAccount (..), DebitAccount (..), RenameAccount (..), ReopenAccount (..), SetOverdraftLimit (..))
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
+    AccountClosed (..),
     AccountCreated (..),
     AccountRenamed (..),
+    AccountReopened (..),
   )
 import Domain.Core.Types
 import Eventium (latestProjection)
@@ -46,6 +48,8 @@ spec = do
   currencyMismatchSpec
   setOverdraftLimitSpec
   renameAccountSpec
+  closeAccountSpec
+  reopenAccountSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -760,3 +764,107 @@ renameAccountSpec = describe "RenameAccount Command" $ do
             renamed.newName `shouldBe` "Checking"
             renamed.by `shouldBe` testOwnerId
           other -> expectationFailure $ "Expected single AccountRenamed event, got: " ++ show other
+
+-- -----------------------------------------------------------------------------
+-- Close / Reopen Account Fixtures
+-- -----------------------------------------------------------------------------
+
+-- | A regular account that has been closed by its owner.
+closedAccount :: Account
+closedAccount =
+  applyEvents
+    [ AccountCreatedAccountEvent
+        $ AccountCreated "Test Account" (mockMoney 1000) testOwnerId (Regular defaultCash) (Just (mockMoney 0)),
+      AccountClosedAccountEvent (AccountClosed {by = testOwnerId})
+    ]
+
+-- -----------------------------------------------------------------------------
+-- CloseAccount Tests
+-- -----------------------------------------------------------------------------
+
+closeAccountSpec :: Spec
+closeAccountSpec = describe "CloseAccount Command" $ do
+  context "Given an open regular account with an owner" $ do
+    describe "When the owner closes it" $ do
+      it "Then emits AccountClosed and the projected status is Closed" $ do
+        let account = regularAccountWithOwner testOwnerId
+            command = CloseAccountAccountCommand (CloseAccount {by = testOwnerId})
+        case handleAccountCommand account command of
+          Right events -> do
+            events `shouldBe` [AccountClosedAccountEvent (AccountClosed {by = testOwnerId})]
+            (applyEvents events ^. #status) `shouldBe` Closed
+          Left err -> expectationFailure $ "expected success, got " <> show err
+
+    describe "When a non-owner closes it" $ do
+      it "Then rejects with NotAccountOwner" $ do
+        let account = regularAccountWithOwner testOwnerId
+            command = CloseAccountAccountCommand (CloseAccount {by = testEditorId})
+        handleAccountCommand account command `shouldBe` Left NotAccountOwner
+
+    describe "When it is already closed" $ do
+      it "Then rejects with AccountAlreadyClosed" $ do
+        let command = CloseAccountAccountCommand (CloseAccount {by = testOwnerId})
+        handleAccountCommand closedAccount command `shouldBe` Left AccountAlreadyClosed
+
+  context "Given an External account" $ do
+    describe "When the owner tries to close it" $ do
+      it "Then rejects with ExternalAccountCannotBeClosed" $ do
+        let account = externalAccountWithOwner testOwnerId
+            command = CloseAccountAccountCommand (CloseAccount {by = testOwnerId})
+        handleAccountCommand account command `shouldBe` Left ExternalAccountCannotBeClosed
+
+  context "Given a non-existent account" $ do
+    describe "When anyone tries to close it" $ do
+      it "Then rejects with AccountDoesNotExist" $ do
+        let command = CloseAccountAccountCommand (CloseAccount {by = testOwnerId})
+        handleAccountCommand emptyAccount command `shouldBe` Left AccountDoesNotExist
+
+-- -----------------------------------------------------------------------------
+-- ReopenAccount Tests
+-- -----------------------------------------------------------------------------
+
+reopenAccountSpec :: Spec
+reopenAccountSpec = describe "ReopenAccount Command" $ do
+  context "Given a closed account" $ do
+    describe "When the owner reopens it" $ do
+      it "Then emits AccountReopened and the projected status is Opened" $ do
+        let command = ReopenAccountAccountCommand (ReopenAccount {by = testOwnerId})
+        case handleAccountCommand closedAccount command of
+          Right events -> do
+            events `shouldBe` [AccountReopenedAccountEvent (AccountReopened {by = testOwnerId})]
+            -- Apply on top of the closed stream to confirm the round-trip.
+            ( applyEvents
+                [ AccountCreatedAccountEvent
+                    (AccountCreated "Test Account" (mockMoney 1000) testOwnerId (Regular defaultCash) (Just (mockMoney 0))),
+                  AccountClosedAccountEvent (AccountClosed {by = testOwnerId}),
+                  AccountReopenedAccountEvent (AccountReopened {by = testOwnerId})
+                ]
+                ^. #status
+              )
+              `shouldBe` Opened
+          Left err -> expectationFailure $ "expected success, got " <> show err
+
+    describe "When a non-owner reopens it" $ do
+      it "Then rejects with NotAccountOwner" $ do
+        let command = ReopenAccountAccountCommand (ReopenAccount {by = testEditorId})
+        handleAccountCommand closedAccount command `shouldBe` Left NotAccountOwner
+
+  context "Given an already-open regular account" $ do
+    describe "When the owner reopens it" $ do
+      it "Then rejects with AccountAlreadyOpen" $ do
+        let account = regularAccountWithOwner testOwnerId
+            command = ReopenAccountAccountCommand (ReopenAccount {by = testOwnerId})
+        handleAccountCommand account command `shouldBe` Left AccountAlreadyOpen
+
+  context "Given an External account (never closable, so always Opened)" $ do
+    describe "When the owner reopens it" $ do
+      it "Then rejects with AccountAlreadyOpen" $ do
+        let account = externalAccountWithOwner testOwnerId
+            command = ReopenAccountAccountCommand (ReopenAccount {by = testOwnerId})
+        handleAccountCommand account command `shouldBe` Left AccountAlreadyOpen
+
+  context "Given a non-existent account" $ do
+    describe "When anyone tries to reopen it" $ do
+      it "Then rejects with AccountDoesNotExist" $ do
+        let command = ReopenAccountAccountCommand (ReopenAccount {by = testOwnerId})
+        handleAccountCommand emptyAccount command `shouldBe` Left AccountDoesNotExist

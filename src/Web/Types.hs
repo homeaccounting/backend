@@ -114,7 +114,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountSubtype (..), AccountType (..), Allocation (..), Allocations, AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allAllocations, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations, AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allAllocations, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
 
@@ -257,6 +257,7 @@ data AccountResponse
     currency :: Text,
     overdraftLimit :: Maybe Double,
     subtype :: Maybe Value,
+    status :: Text,
     version :: Int
   }
   deriving (Show, Eq, Generic)
@@ -784,8 +785,14 @@ fromAccountData accountId AccountData {..} =
       subtype = case accountType of
         Regular at -> Just (fromAccountSubtype at)
         External -> Nothing,
+      status = fromAccountStatus status,
       version = version
     }
+
+-- | Converts AccountStatus to Text representation.
+fromAccountStatus :: AccountStatus -> Text
+fromAccountStatus Opened = "Opened"
+fromAccountStatus Closed = "Closed"
 
 -- | Convert an AccountSubtypeRequest DTO to a domain AccountSubtype.
 toAccountSubtype :: AccountSubtypeRequest -> Either Text AccountSubtype

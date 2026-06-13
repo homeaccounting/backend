@@ -42,6 +42,8 @@ module Domain.Account.Commands
     RenameAccount (..),
     ReverseAccountDebit (..),
     ReverseAccountCredit (..),
+    CloseAccount (..),
+    ReopenAccount (..),
   )
 where
 
@@ -71,7 +73,9 @@ accountCommands =
     ''ChangeAccountCurrency,
     ''RenameAccount,
     ''ReverseAccountDebit,
-    ''ReverseAccountCredit
+    ''ReverseAccountCredit,
+    ''CloseAccount,
+    ''ReopenAccount
   ]
 
 -- -----------------------------------------------------------------------------
@@ -283,6 +287,24 @@ data ReverseAccountCredit = ReverseAccountCredit
   }
   deriving (Show, Eq)
 
+-- | Command to close (deactivate) an account.
+--
+-- Owner-only. External accounts cannot be closed. Rejected if already closed.
+data CloseAccount = CloseAccount
+  { -- | User issuing the close (must be the Owner).
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Command to reopen a previously-closed account.
+--
+-- Owner-only. Rejected if the account is already open.
+data ReopenAccount = ReopenAccount
+  { -- | User issuing the reopen (must be the Owner).
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all commands
 deriveJSON defaultOptions ''CreateAccount
 deriveJSON defaultOptions ''ShareAccount
@@ -295,3 +317,5 @@ deriveJSON defaultOptions ''ChangeAccountCurrency
 deriveJSON defaultOptions ''RenameAccount
 deriveJSON defaultOptions ''ReverseAccountDebit
 deriveJSON defaultOptions ''ReverseAccountCredit
+deriveJSON defaultOptions ''CloseAccount
+deriveJSON defaultOptions ''ReopenAccount

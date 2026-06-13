@@ -33,6 +33,8 @@ module Application.Services.AccountService
     renameAccount,
     setAccountSubtype,
     adjustAccountBalance,
+    closeAccount,
+    reopenAccount,
   )
 where
 
@@ -57,8 +59,10 @@ import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands
-  ( CreateAccount,
+  ( CloseAccount (..),
+    CreateAccount,
     RenameAccount (..),
+    ReopenAccount (..),
     RevokeAccountAccess (..),
     SetAccountSubtype (..),
     SetOverdraftLimit (..),
@@ -311,6 +315,30 @@ setAccountSubtype requestingUserId accountUuid newType = runExceptT $ do
           SetAccountSubtype {subtype = newType, setBy = requestingUserId}
   runAccountCmd id accountUuid cmd
   lift $ logInfo "Account type set successfully"
+
+-- | Close (deactivate) an account. Owner-only; enforced by the domain handler.
+closeAccount ::
+  UserId ->
+  UUID ->
+  AppM (Either DomainError ())
+closeAccount requestingUserId accountUuid = runExceptT $ do
+  lift $ logInfo $ "Closing account: " <> displayShow accountUuid
+  _ <- liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  let cmd = CloseAccountAccountCommand CloseAccount {by = requestingUserId}
+  runAccountCmd id accountUuid cmd
+  lift $ logInfo "Account closed successfully"
+
+-- | Reopen a previously-closed account. Owner-only; enforced by the domain handler.
+reopenAccount ::
+  UserId ->
+  UUID ->
+  AppM (Either DomainError ())
+reopenAccount requestingUserId accountUuid = runExceptT $ do
+  lift $ logInfo $ "Reopening account: " <> displayShow accountUuid
+  _ <- liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
+  let cmd = ReopenAccountAccountCommand ReopenAccount {by = requestingUserId}
+  runAccountCmd id accountUuid cmd
+  lift $ logInfo "Account reopened successfully"
 
 -- -----------------------------------------------------------------------------
 -- Balance adjustment

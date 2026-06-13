@@ -40,6 +40,8 @@ module Domain.Account.Events
     AccountRenamed (..),
     AccountDebitReversed (..),
     AccountCreditReversed (..),
+    AccountClosed (..),
+    AccountReopened (..),
   )
 where
 
@@ -69,7 +71,9 @@ accountEvents =
     ''AccountCurrencyChanged,
     ''AccountRenamed,
     ''AccountDebitReversed,
-    ''AccountCreditReversed
+    ''AccountCreditReversed,
+    ''AccountClosed,
+    ''AccountReopened
   ]
 
 -- -----------------------------------------------------------------------------
@@ -248,6 +252,20 @@ data AccountCreditReversed = AccountCreditReversed
   }
   deriving (Show, Eq)
 
+-- | Event emitted when an account is closed (deactivated) by its owner.
+data AccountClosed = AccountClosed
+  { -- | User who closed the account (the Owner).
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when a previously-closed account is reopened by its owner.
+data AccountReopened = AccountReopened
+  { -- | User who reopened the account (the Owner).
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
 -- Derive JSON instances for all events
 deriveJSON defaultOptions ''AccountCreated
 deriveJSON defaultOptions ''AccountAccessGranted
@@ -260,3 +278,5 @@ deriveJSON defaultOptions ''AccountCurrencyChanged
 deriveJSON defaultOptions ''AccountRenamed
 deriveJSON defaultOptions ''AccountDebitReversed
 deriveJSON defaultOptions ''AccountCreditReversed
+deriveJSON defaultOptions ''AccountClosed
+deriveJSON defaultOptions ''AccountReopened

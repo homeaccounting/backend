@@ -24,8 +24,8 @@ import Data.Either (fromRight, isLeft)
 import qualified Data.Text as T
 import Domain.Account
 import Domain.Account.CommandHandler
-import Domain.Account.Commands (DebitAccount (..), SetOverdraftLimit (..))
-import Domain.Account.Events (AccountAccessGranted (..), AccountAccessRevoked (..), AccountCreated (..))
+import Domain.Account.Commands (CloseAccount (..), DebitAccount (..), ReopenAccount (..), SetOverdraftLimit (..))
+import Domain.Account.Events (AccountAccessGranted (..), AccountAccessRevoked (..), AccountClosed (..), AccountCreated (..), AccountRenamed (..), AccountReopened (..))
 import Domain.Core.Types
 import Eventium (latestProjection)
 import Optics ((&), (.~), (^.))
@@ -41,6 +41,7 @@ spec = do
   determinismSpec
   invariantSpec
   businessRuleSpec
+  closeReopenSpec
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -371,6 +372,71 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                   $ DebitAccount amt txId
               result = handleAccountCommand account command
            in result === Left CurrencyMismatch
+
+-- -----------------------------------------------------------------------------
+-- Close / Reopen Properties
+-- -----------------------------------------------------------------------------
+
+closeReopenSpec :: Spec
+closeReopenSpec = describe "Close / Reopen Properties" $ do
+  describe "Round-trip: close then reopen" $ do
+    it "Then status returns to Opened for any open regular account"
+      $ property
+      $ \(ownerId :: UserId) (acctName :: Text) (balance :: Money) ->
+        not (T.null acctName) ==>
+          let baseEvents =
+                [ AccountCreatedAccountEvent
+                    $ AccountCreated acctName balance ownerId (Regular defaultCash) (Just (mockMoney 0))
+                ]
+              account = applyEvents baseEvents
+              closeCmd = CloseAccountAccountCommand (CloseAccount {by = ownerId})
+              closeEvents = fromRight [] (handleAccountCommand account closeCmd)
+              accountAfterClose = applyEvents (baseEvents <> closeEvents)
+              reopenCmd = ReopenAccountAccountCommand (ReopenAccount {by = ownerId})
+              reopenEvents = fromRight [] (handleAccountCommand accountAfterClose reopenCmd)
+              finalAccount = applyEvents (baseEvents <> closeEvents <> reopenEvents)
+           in finalAccount ^. #status === Opened
+
+  describe "Idempotency-as-rejection: closing an already-closed account" $ do
+    it "Then returns AccountAlreadyClosed"
+      $ property
+      $ \(ownerId :: UserId) ->
+        let baseEvents =
+              [ AccountCreatedAccountEvent
+                  $ AccountCreated "Test" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0)),
+                AccountClosedAccountEvent (AccountClosed {by = ownerId})
+              ]
+            account = applyEvents baseEvents
+            closeCmd = CloseAccountAccountCommand (CloseAccount {by = ownerId})
+         in handleAccountCommand account closeCmd === Left AccountAlreadyClosed
+
+  describe "Status unaffected by unrelated events" $ do
+    it "Then renaming an open account leaves status as Opened"
+      $ property
+      $ \(ownerId :: UserId) (newName :: Text) ->
+        not (T.null newName) ==>
+          let baseEvents =
+                [ AccountCreatedAccountEvent
+                    $ AccountCreated "Original" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0))
+                ]
+              renameEvent =
+                AccountRenamedAccountEvent (AccountRenamed {newName = newName, by = ownerId})
+              account = applyEvents (baseEvents <> [renameEvent])
+           in account ^. #status === Opened
+
+    it "Then renaming a closed account leaves status as Closed"
+      $ property
+      $ \(ownerId :: UserId) (newName :: Text) ->
+        not (T.null newName) ==>
+          let baseEvents =
+                [ AccountCreatedAccountEvent
+                    $ AccountCreated "Original" (mockMoney 1000) ownerId (Regular defaultCash) (Just (mockMoney 0)),
+                  AccountClosedAccountEvent (AccountClosed {by = ownerId})
+                ]
+              renameEvent =
+                AccountRenamedAccountEvent (AccountRenamed {newName = newName, by = ownerId})
+              account = applyEvents (baseEvents <> [renameEvent])
+           in account ^. #status === Closed
 
 -- -----------------------------------------------------------------------------
 -- Arbitrary Instances for Domain Types

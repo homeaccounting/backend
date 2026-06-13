@@ -23,6 +23,8 @@
 --   DELETE /api/accounts/:id/access/:userId - Revoke user's access
 --   PUT    /api/accounts/:id/overdraft-limit - Set overdraft limit
 --   PUT    /api/accounts/:id/name    - Rename account
+--   POST   /api/accounts/:id/close   - Close (deactivate) an account
+--   POST   /api/accounts/:id/reopen  - Reopen a closed account
 --
 -- Handler Responsibilities (HTTP concerns only):
 --   1. Extract data from HTTP request (path params, body, auth)
@@ -53,6 +55,8 @@ module Web.API.AccountAPI
     setAccountSubtypeHandler,
     adjustBalanceHandler,
     renameAccountHandler,
+    closeAccountHandler,
+    reopenAccountHandler,
   )
 where
 
@@ -167,6 +171,20 @@ type AccountAPI =
       :> "balance"
       :> ReqBody '[JSON] AdjustBalanceRequest
       :> Put '[JSON] TransactionResponse
+    -- POST /api/accounts/:id/close - Close (deactivate) an account (owner only)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "accounts"
+      :> Capture "id" UUID
+      :> "close"
+      :> Post '[JSON] NoContent
+    -- POST /api/accounts/:id/reopen - Reopen a closed account (owner only)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "accounts"
+      :> Capture "id" UUID
+      :> "reopen"
+      :> Post '[JSON] NoContent
 
 -- -----------------------------------------------------------------------------
 -- Request Types
@@ -224,6 +242,8 @@ accountServer =
     :<|> setAccountSubtypeHandler
     :<|> renameAccountHandler
     :<|> adjustBalanceHandler
+    :<|> closeAccountHandler
+    :<|> reopenAccountHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers (thin HTTP adapters)
@@ -356,4 +376,20 @@ adjustBalanceHandler user accountUuid req = do
       req.description
   case result of
     Right (txId, txData) -> pure $ fromTransactionData txId txData
+    Left err -> throwDomainError err
+
+-- | Handler for POST /api/accounts/:id/close - Close (deactivate) an account.
+closeAccountHandler :: AuthenticatedUser -> UUID -> AppM NoContent
+closeAccountHandler user accountUuid = do
+  result <- AccountService.closeAccount user.userId accountUuid
+  case result of
+    Right () -> return NoContent
+    Left err -> throwDomainError err
+
+-- | Handler for POST /api/accounts/:id/reopen - Reopen a closed account.
+reopenAccountHandler :: AuthenticatedUser -> UUID -> AppM NoContent
+reopenAccountHandler user accountUuid = do
+  result <- AccountService.reopenAccount user.userId accountUuid
+  case result of
+    Right () -> return NoContent
     Left err -> throwDomainError err

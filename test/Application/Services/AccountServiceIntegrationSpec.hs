@@ -17,17 +17,19 @@ import Application.ReadModels.Account (AccountData (..), getAccount)
 import qualified Application.ReadModels.ExchangeRate as ExchangeRateRM
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.User as UserRM
-import Application.Services.AccountService (adjustAccountBalance, createAccount, shareAccount)
+import Application.Services.AccountService (adjustAccountBalance, closeAccount, createAccount, reopenAccount, shareAccount)
 import Application.Services.AuthService (AuthResult (..), register)
 import qualified Application.Services.ConfigurationService as ConfigurationService
+import Data.Either (isLeft)
 import Data.Ratio ((%))
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian, getCurrentTime, utctDay)
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
-import Domain.Account.Commands (CreateAccount (..), CreditAccount (..))
+import Domain.Account.Commands (CloseAccount (..), CreateAccount (..), CreditAccount (..), ReopenAccount (..))
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
   ( AccountId,
+    AccountStatus (..),
     AccountType (..),
     Currency (..),
     Money,
@@ -64,37 +66,45 @@ import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 -- -----------------------------------------------------------------------------
 
 spec :: Spec
-spec = describe "AccountService.adjustAccountBalance" $ do
-  it
-    "applies a positive delta as External -> Regular and records the Adjustment transaction"
-    positiveDeltaSpec
-  it
-    "applies a negative delta within overdraft as Regular -> External"
-    negativeDeltaSpec
-  it
-    "backdate: balanceAsOf(D) == targetBalance and future credits ride on top"
-    backdateSpec
-  it
-    "rejects when the account is External"
-    rejectExternalSpec
-  it
-    "rejects when target balance currency does not match account currency"
-    rejectCurrencyMismatchSpec
-  it
-    "rejects when at > now"
-    rejectFutureDateSpec
-  it
-    "rejects when delta is zero"
-    rejectZeroDeltaSpec
-  it
-    "rejects when negative delta would exceed overdraft (saga FailTransactionPosting)"
-    rejectOverdraftSpec
-  it
-    "rejects when caller has Viewer role"
-    rejectViewerSpec
-  it
-    "handles cross-currency by passing through resolveAndInitiate (USD External, EUR account)"
-    crossCurrencySpec
+spec = describe "AccountService" $ do
+  describe "adjustAccountBalance" $ do
+    it
+      "applies a positive delta as External -> Regular and records the Adjustment transaction"
+      positiveDeltaSpec
+    it
+      "applies a negative delta within overdraft as Regular -> External"
+      negativeDeltaSpec
+    it
+      "backdate: balanceAsOf(D) == targetBalance and future credits ride on top"
+      backdateSpec
+    it
+      "rejects when the account is External"
+      rejectExternalSpec
+    it
+      "rejects when target balance currency does not match account currency"
+      rejectCurrencyMismatchSpec
+    it
+      "rejects when at > now"
+      rejectFutureDateSpec
+    it
+      "rejects when delta is zero"
+      rejectZeroDeltaSpec
+    it
+      "rejects when negative delta would exceed overdraft (saga FailTransactionPosting)"
+      rejectOverdraftSpec
+    it
+      "rejects when caller has Viewer role"
+      rejectViewerSpec
+    it
+      "handles cross-currency by passing through resolveAndInitiate (USD External, EUR account)"
+      crossCurrencySpec
+  describe "close/reopen" $ do
+    it
+      "reports Closed status in the read model after a close, and Opened after reopen"
+      closeReopenStatusSpec
+    it
+      "closeAccount then reopenAccount round-trips the status via the service layer"
+      serviceCloseReopenSpec
 
 -- -----------------------------------------------------------------------------
 -- Test fixtures
@@ -453,3 +463,42 @@ creditAccountAt env accountId atTime amt = do
             transactionId = txId
           }
   pure ()
+
+closeReopenStatusSpec :: Expectation
+closeReopenStatusSpec = do
+  (env, userId, accountId) <- setupUserWithAccount USD 100
+  let uuid = unAccountId accountId
+      apply = applyAccountCommand env.eventStoreWriter env.eventStoreReader id uuid
+
+  -- Newly created accounts are Opened.
+  m0 <- getAccount env.accountReadModel accountId
+  fmap (.status) m0 `shouldBe` Just Opened
+
+  -- Close, then confirm the read model reports Closed.
+  _ <- apply (CloseAccountAccountCommand (CloseAccount {by = userId}))
+  m1 <- getAccount env.accountReadModel accountId
+  fmap (.status) m1 `shouldBe` Just Closed
+
+  -- Reopen, then confirm it flips back to Opened.
+  _ <- apply (ReopenAccountAccountCommand (ReopenAccount {by = userId}))
+  m2 <- getAccount env.accountReadModel accountId
+  fmap (.status) m2 `shouldBe` Just Opened
+
+serviceCloseReopenSpec :: Expectation
+serviceCloseReopenSpec = do
+  (env, userId, accountId) <- setupUserWithAccount USD 100
+  let uuid = unAccountId accountId
+
+  closed <- runAppM env $ closeAccount userId uuid
+  closed `shouldBe` Right ()
+  m1 <- getAccount env.accountReadModel accountId
+  fmap (.status) m1 `shouldBe` Just Closed
+
+  -- Closing again is rejected by the domain (collapses to a generic AccountError).
+  closedAgain <- runAppM env $ closeAccount userId uuid
+  closedAgain `shouldSatisfy` isLeft
+
+  reopened <- runAppM env $ reopenAccount userId uuid
+  reopened `shouldBe` Right ()
+  m2 <- getAccount env.accountReadModel accountId
+  fmap (.status) m2 `shouldBe` Just Opened

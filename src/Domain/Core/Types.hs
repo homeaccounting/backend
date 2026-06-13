@@ -99,6 +99,7 @@ module Domain.Core.Types
     AccountType (..),
     AccountRole (..),
     AccountAccess (..),
+    AccountStatus (..),
 
     -- * Transfer Types
     TransactionType (..),
@@ -932,6 +933,21 @@ data AccountAccess = AccountAccess
 instance ToJSON AccountAccess
 
 instance FromJSON AccountAccess
+
+-- | Lifecycle status of an account.
+--
+-- Accounts are 'Opened' on creation. An owner may close (deactivate) an
+-- account to hide it from the default UI; reopening restores it to 'Opened'.
+-- Closing is a pure visibility label and imposes no behavioural restrictions
+-- (see the account-close design spec).
+data AccountStatus
+  = Opened
+  | Closed
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AccountStatus
+
+instance FromJSON AccountStatus
 
 -- -----------------------------------------------------------------------------
 -- Transfer Types

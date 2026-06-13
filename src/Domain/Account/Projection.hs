@@ -52,6 +52,7 @@ import qualified Data.UUID as UUID
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
+    AccountClosed (..),
     AccountCreated (..),
     AccountCreditReversed (..),
     AccountCredited (..),
@@ -59,6 +60,7 @@ import Domain.Account.Events
     AccountDebitReversed (..),
     AccountDebited (..),
     AccountRenamed (..),
+    AccountReopened (..),
     AccountSubtypeSet (..),
     OverdraftLimitSet (..),
     accountEvents,
@@ -66,6 +68,7 @@ import Domain.Account.Events
 import Domain.Core.Types
   ( AccountAccess (..),
     AccountRole (..),
+    AccountStatus (..),
     AccountType (..),
     Money,
     UserId,
@@ -124,7 +127,9 @@ data Account = Account
     -- | Overdraft limit. Nothing = unlimited, Just limit = max negative balance
     overdraftLimit :: Maybe Money,
     -- | Whether the account has had any debit or credit transactions
-    hasTransactions :: Bool
+    hasTransactions :: Bool,
+    -- | Lifecycle status. Opened on creation; flipped by Close/Reopen.
+    status :: AccountStatus
   }
   deriving (Show, Eq)
 
@@ -151,7 +156,8 @@ accountDefault = case mkDefaultMoney 0 of
         accountType = Regular defaultCash,
         accessList = [],
         overdraftLimit = Just m,
-        hasTransactions = False
+        hasTransactions = False,
+        status = Opened
       }
   Left _ -> error "accountDefault: mkDefaultMoney 0 should never fail"
 
@@ -250,6 +256,8 @@ handleAccountEvent account (AccountCreatedAccountEvent created) =
         .~ [AccountAccess ownerId Owner]
         & #overdraftLimit
         .~ created.overdraftLimit
+        & #status
+        .~ Opened
 handleAccountEvent account (AccountAccessGrantedAccountEvent AccountAccessGranted {..}) =
   -- Add or update user access in the access list
   -- If user already has access, replace their role
@@ -297,6 +305,10 @@ handleAccountEvent account (AccountCurrencyChangedAccountEvent AccountCurrencyCh
    in account & #balance .~ newBalance
 handleAccountEvent account (AccountRenamedAccountEvent AccountRenamed {..}) =
   account & #name .~ newName
+handleAccountEvent account (AccountClosedAccountEvent _) =
+  account & #status .~ Closed
+handleAccountEvent account (AccountReopenedAccountEvent _) =
+  account & #status .~ Opened
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

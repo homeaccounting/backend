@@ -64,12 +64,14 @@ import Data.UUID (UUID)
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
+    AccountClosed (..),
     AccountCreated (..),
     AccountCreditReversed (..),
     AccountCredited (..),
     AccountDebitReversed (..),
     AccountDebited (..),
     AccountRenamed (..),
+    AccountReopened (..),
     AccountSubtypeSet (..),
     OverdraftLimitSet (..),
   )
@@ -77,6 +79,7 @@ import Domain.Core.Types
   ( AccountAccess (..),
     AccountId,
     AccountRole (..),
+    AccountStatus (..),
     AccountType (..),
     Money,
     TransactionId,
@@ -126,6 +129,8 @@ data AccountData = AccountData
     -- domain aggregate's @hasTransactions@ in 'Domain.Account.Projection'
     -- and is the precondition for 'ChangeAccountCurrency'.
     hasTransactions :: Bool,
+    -- | Lifecycle status. Opened on creation; flipped by Close/Reopen events.
+    status :: AccountStatus,
     -- | Version number from event stream for optimistic concurrency
     version :: Int
   }
@@ -250,6 +255,7 @@ processEvent accounts globalEvent =
                         accessList = [initialAccess],
                         overdraftLimit = evt.overdraftLimit,
                         hasTransactions = False,
+                        status = Opened,
                         version = 1
                       }
                     accounts
@@ -389,6 +395,22 @@ processEvent accounts globalEvent =
                         version = account.version + 1
                       }
                 )
+                accountId
+                accounts
+        AccountClosedEvent _ ->
+          case mkAccountIdSafe streamUuid of
+            Nothing -> accounts
+            Just accountId ->
+              Map.adjust
+                (\account -> account {status = Closed, version = account.version + 1})
+                accountId
+                accounts
+        AccountReopenedEvent _ ->
+          case mkAccountIdSafe streamUuid of
+            Nothing -> accounts
+            Just accountId ->
+              Map.adjust
+                (\account -> account {status = Opened, version = account.version + 1})
                 accountId
                 accounts
         _ -> accounts -- Ignore other events (AccountDebitRejected, etc.)

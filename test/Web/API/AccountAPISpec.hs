@@ -5,14 +5,14 @@
 
 -- |
 -- Module      : Web.API.AccountAPISpec
--- Description : PUT /api/accounts/:id/balance
+-- Description : Account HTTP endpoints — balance adjustment and close/reopen
 --
--- Exercises the endpoint through the full Servant stack via per-test seeded
+-- Exercises endpoints through the full Servant stack via per-test seeded
 -- environments.  Each test registers a fresh user, creates an account, and
 -- drives requests through 'Testkit.TransactionEditFixture.httpRequest' so
 -- the in-memory event store is in a clean state.
 --
--- Error → HTTP mapping verified (per 'Web.ErrorMapping.mapDomainError'):
+-- PUT /api/accounts/:id/balance — error → HTTP mapping verified:
 --   200  happy path: positive adjustment recorded and response matches
 --   400  Viewer role rejection (AccountError → 400)
 --   400  currency mismatch (ValidationErr → 400)
@@ -20,6 +20,9 @@
 --   400  zero delta / target equals current balance (ValidationErr → 400)
 --   400  External account (ValidationErr → 400)
 --   404  unknown account (NotFound → 404)
+--
+-- POST /api/accounts/:id/close and /reopen:
+--   200  close then reopen round-trips; GET reflects status change each step
 module Web.API.AccountAPISpec (spec) where
 
 import Application.ReadModels.User (UserData (..), getUser)
@@ -44,7 +47,8 @@ import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.TransactionEditFixture (authHeaders, httpRequest)
 import Web.Server (buildApplication)
 import Web.Types
-  ( ErrorResponse (..),
+  ( AccountResponse (..),
+    ErrorResponse (..),
     TransactionResponse (..),
     ValidationErrorResponse (..),
   )
@@ -54,26 +58,30 @@ import Web.Types
 -- -----------------------------------------------------------------------------
 
 spec :: Spec
-spec = describe "PUT /api/accounts/:id/balance" $ do
-  it
-    "returns 200 with the resulting transaction for a positive adjustment"
-    happyPathSpec
+spec = do
+  describe "PUT /api/accounts/:id/balance" $ do
+    it
+      "returns 200 with the resulting transaction for a positive adjustment"
+      happyPathSpec
 
-  it "returns 400 when caller has Viewer role" viewerRejectionSpec
+    it "returns 400 when caller has Viewer role" viewerRejectionSpec
 
-  it "returns 404 when account does not exist" accountNotFoundSpec
+    it "returns 404 when account does not exist" accountNotFoundSpec
 
-  it
-    "returns 400 when targetBalance currency does not match"
-    currencyMismatchSpec
+    it
+      "returns 400 when targetBalance currency does not match"
+      currencyMismatchSpec
 
-  it "returns 400 when date is in the future" futureDateSpec
+    it "returns 400 when date is in the future" futureDateSpec
 
-  it
-    "returns 400 when delta is zero (target equals current balance)"
-    zeroDeltaSpec
+    it
+      "returns 400 when delta is zero (target equals current balance)"
+      zeroDeltaSpec
 
-  it "returns 400 when account is External" externalAccountSpec
+    it "returns 400 when account is External" externalAccountSpec
+
+  describe "POST /api/accounts/:id/close and /reopen" $ do
+    it "closes then reopens, reporting status on GET" closeReopenEndpointSpec
 
 -- -----------------------------------------------------------------------------
 -- Fixture
@@ -247,3 +255,33 @@ externalAccountSpec = do
     Left err -> expectationFailure $ "400 body is not a ValidationErrorResponse: " <> err
     Right ve ->
       Map.lookup "accountType" ve.fieldErrors `shouldNotBe` Nothing
+
+-- | 200/200: close then reopen round-trips via the HTTP layer, and GET
+-- reflects the status change on each step.
+closeReopenEndpointSpec :: IO ()
+closeReopenEndpointSpec = do
+  f <- mkFixture "close-endpoint@test.com"
+  let accPath seg = encodeUtf8 $ "/api/accounts/" <> T.pack (UUID.toString f.fAccountUuid) <> seg
+      getAcc = httpRequest f.fApp "GET" (accPath "") (authHeaders f.fToken) ""
+      postAction seg = httpRequest f.fApp "POST" (accPath seg) (authHeaders f.fToken) ""
+      decodeAccount resp = case eitherDecode (simpleBody resp) :: Either String AccountResponse of
+        Right ar -> pure ar
+        Left err -> fail ("AccountResponse decode failed: " <> err)
+
+  -- Precondition: a freshly created account is Opened.
+  before <- getAcc
+  simpleStatus before `shouldBe` status200
+  arBefore <- decodeAccount before
+  arBefore.status `shouldBe` "Opened"
+
+  -- Close -> 200, and the account now reports Closed.
+  closed <- postAction "/close"
+  simpleStatus closed `shouldBe` status200
+  arAfterClose <- decodeAccount =<< getAcc
+  arAfterClose.status `shouldBe` "Closed"
+
+  -- Reopen -> 200, and the account reports Opened again.
+  reopened <- postAction "/reopen"
+  simpleStatus reopened `shouldBe` status200
+  arAfterReopen <- decodeAccount =<< getAcc
+  arAfterReopen.status `shouldBe` "Opened"
