@@ -16,9 +16,11 @@
 -- already hold an 'AppEnv' and want a plain 'IO' setup helper.
 module Testkit.Fixtures
   ( registerUser,
-    createRegularAccount,
+    createAccount,
+    createDefaultAccount,
     firstDictionaryEntry,
     seedDefaultAndRegister,
+    seedExchangeRates,
     userExternalAccountId,
     MetadataFixture (..),
     setupMetadataFixture,
@@ -28,8 +30,9 @@ module Testkit.Fixtures
 where
 
 import qualified Application.ReadModels.Configuration as ConfigRM
+import Application.ReadModels.ExchangeRate (handleExchangeRateEvents)
 import Application.ReadModels.User (UserData (..), getUser)
-import Application.Services.AccountService (createAccount)
+import qualified Application.Services.AccountService as AccountService
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( expenseCategoryDictId,
@@ -37,9 +40,12 @@ import Application.Services.ConfigurationService
     seedDefaultConfiguration,
   )
 import qualified Data.Map.Strict as Map
+import Data.Time (getCurrentTime, utctDay)
+import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Types
   ( AccountId,
+    AccountSubtype,
     AccountType (..),
     Allocation (..),
     Allocations,
@@ -53,8 +59,13 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
+import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
+import Domain.Models (AccountingEvent (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
+import Testkit.Helpers (mockExchangeRate)
 
 -- | Register a user via 'AuthService.register' and return the resulting 'UserId'.
 --
@@ -67,27 +78,50 @@ registerUser env email = do
     Left err -> fail $ "registerUser " <> show email <> " failed: " <> show err
     Right auth -> pure auth.userId
 
--- | Create a 'Regular Cash' account with a 5000 USD starting balance and no
--- overdraft.
---
--- This matches the shape used by the integration specs that just need
--- "an account to attach a transaction to". Specs that need a different
--- 'AccountType' or initial balance should call 'createAccount' directly.
-createRegularAccount :: AppEnv -> UserId -> Text -> IO AccountId
-createRegularAccount env uid accName = do
+-- | Create a 'Regular' account with the given subtype, currency, and starting
+-- balance. The single account-creation primitive; the wrappers below are thin
+-- specialisations. (External accounts are auto-created per user — resolve one
+-- via 'userExternalAccountId' rather than creating it here.)
+createAccount ::
+  AppEnv -> UserId -> Text -> AccountSubtype -> Core.Currency -> Rational -> IO AccountId
+createAccount env uid accName subtype currency balance = do
   res <-
     runAppM env
-      $ createAccount
+      $ AccountService.createAccount
       $ CreateAccount
         { name = accName,
-          initialBalance = unsafeMoney Core.USD 5000,
+          initialBalance = unsafeMoney currency balance,
           createdBy = uid,
-          accountType = Regular defaultCash,
+          accountType = Regular subtype,
           overdraftLimit = Nothing
         }
   case res of
-    Left err -> fail $ "createRegularAccount " <> show accName <> " failed: " <> show err
+    Left err -> fail $ "createAccount " <> show accName <> " failed: " <> show err
     Right (aid, _) -> pure aid
+
+-- | A 'Regular Cash' account with a 5000 USD starting balance — the common
+-- "an account to attach a transaction to" case.
+createDefaultAccount :: AppEnv -> UserId -> Text -> IO AccountId
+createDefaultAccount env uid accName = createAccount env uid accName defaultCash Core.USD 5000
+
+-- | Publish a set of @(source, target, rate)@ exchange rates into the env's
+-- exchange-rate read model, dated today, exactly as the provider feed would.
+-- Lets cross-currency flows (create and amendment) resolve their non-base leg.
+seedExchangeRates :: AppEnv -> [(Core.Currency, Core.Currency, Rational)] -> IO ()
+seedExchangeRates env rates = do
+  today <- utctDay <$> getCurrentTime
+  let rateMap = Map.fromList [((s, t), mockExchangeRate s t r) | (s, t, r) <- rates]
+      payload =
+        ExchangeRatesPublishedEvent
+          ExchangeRatesPublished
+            { provider = env.config.exchangeRate.provider,
+              rates = rateMap,
+              at = today
+            }
+      versioned = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
+      global :: GlobalStreamEvent AccountingEvent
+      global = StreamEvent () 0 (emptyMetadata mempty) versioned
+  (handleExchangeRateEvents env.exchangeRateReadModel).handleEvent [global]
 
 -- | Resolve the user's auto-created External account id. Fails the test
 -- if the user is missing from the read model.
@@ -160,7 +194,7 @@ setupMetadataFixture env email = do
   uid <- seedDefaultAndRegister env email
   incomeCat <- firstDictionaryEntry env uid incomeCategoryDictId
   expenseCat <- firstDictionaryEntry env uid expenseCategoryDictId
-  accId <- createRegularAccount env uid "Wallet"
+  accId <- createDefaultAccount env uid "Wallet"
   pure
     MetadataFixture
       { userId = uid,

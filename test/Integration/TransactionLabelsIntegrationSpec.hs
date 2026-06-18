@@ -59,7 +59,7 @@ import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import qualified RIO.List as List
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
+import Testkit.Fixtures (createDefaultAccount, firstDictionaryEntry, registerUser)
 import Testkit.Helpers (expenseSingletonAllocation)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
@@ -79,7 +79,7 @@ setupHarness email = do
   env <- createTestAppEnvWithProcessManager
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
-  accId <- createRegularAccount env uid "Wallet"
+  accId <- createDefaultAccount env uid "Wallet"
   categoryId <- firstDictionaryEntry env uid expenseCategoryDictId
   pure
     Harness

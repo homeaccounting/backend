@@ -39,7 +39,7 @@ import RIO
 import Test.Hspec
 import Testkit.Fixtures
   ( MetadataFixture (..),
-    createRegularAccount,
+    createDefaultAccount,
     expenseAllocs,
     incomeAllocs,
     registerUser,
@@ -112,7 +112,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
     it "rejects edits while the transaction is still Pending" $ do
       env <- createTestAppEnv
       fx <- setupMetadataFixture env "desc-pending@test.com"
-      otherAccId <- createRegularAccount env fx.userId "Other"
+      otherAccId <- createDefaultAccount env fx.userId "Other"
 
       create <-
         runAppM env
@@ -237,7 +237,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
     it "rejects edits while the transaction is still Pending" $ do
       env <- createTestAppEnv
       fx <- setupMetadataFixture env "date-pending@test.com"
-      otherAccId <- createRegularAccount env fx.userId "Other"
+      otherAccId <- createDefaultAccount env fx.userId "Other"
 
       create <-
         runAppM env
@@ -323,7 +323,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
     it "rejects backdated initiateTransfer in a closed period" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "create-transfer-closed@test.com"
-      otherAccId <- createRegularAccount env fx.userId "Other"
+      otherAccId <- createDefaultAccount env fx.userId "Other"
 
       let cutoff = utc 2026 3 31
       closeResult <- runAppM env (closeBooksThrough fx.userId cutoff)

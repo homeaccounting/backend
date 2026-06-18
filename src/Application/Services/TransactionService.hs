@@ -587,7 +587,39 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
           existingTT
           amendCmd
       )
-  let dispatched = amendCmd {newTransactionType = newTT}
+  -- Resolve the leg amounts against the *actual* account currencies, mirroring
+  -- the create flow (initiateIncome/Expense/Transfer). The client supplies one
+  -- meaningful amount on the Regular leg; the External (or cross-currency
+  -- counter-) leg is derived here via the ECB rate so each leg matches its
+  -- account's currency. Without this, a cross-kind amendment into a
+  -- non-base-currency account posts a leg in the wrong currency and the saga
+  -- rejects it with 'CurrencyMismatch' (surfaced as InsufficientFundsForAmendment).
+  -- The anchor is the Regular leg the user entered: source for Expense/Transfer,
+  -- target for Income. A client-supplied rate (if any) overrides the lookup.
+  let srcCurrency = moneyCurrency newSrcAcc.balance
+      tgtCurrency = moneyCurrency newTgtAcc.balance
+      (anchorAmount, anchorIsSource) = case derivedKind of
+        IncomeKind -> (amendCmd.newTargetAmount, False)
+        _ -> (amendCmd.newSourceAmount, True)
+      maybeUserRate = exchangeRateValue <$> amendCmd.newExchangeRate
+      rateDay = utctDay transaction.date
+  (resolvedSrc, resolvedTgt, resolvedRate) <-
+    ExceptT
+      ( resolveAmounts
+          anchorAmount
+          srcCurrency
+          tgtCurrency
+          anchorIsSource
+          maybeUserRate
+          rateDay
+      )
+  let dispatched =
+        amendCmd
+          { newTransactionType = newTT,
+            newSourceAmount = resolvedSrc,
+            newTargetAmount = resolvedTgt,
+            newExchangeRate = resolvedRate
+          }
   if isIdentityAmend transaction dispatched
     then pure transaction
     else

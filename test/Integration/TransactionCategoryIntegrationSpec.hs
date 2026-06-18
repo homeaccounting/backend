@@ -54,7 +54,7 @@ import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import qualified RIO.List as List
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
+import Testkit.Fixtures (createDefaultAccount, firstDictionaryEntry, registerUser)
 import Testkit.Helpers (singletonAllocation, singletonIncome)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
@@ -74,7 +74,7 @@ setupHarness email = do
   env <- createTestAppEnvWithProcessManager
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
-  accId <- createRegularAccount env uid "Wallet"
+  accId <- createDefaultAccount env uid "Wallet"
   startingCategory <- firstDictionaryEntry env uid incomeCategoryDictId
   pure
     Harness
@@ -105,7 +105,7 @@ seedIncome h categoryId = do
 
 seedTransfer :: Harness -> IO TransactionId
 seedTransfer h = do
-  other <- createRegularAccount h.harnessEnv h.harnessUser "Other"
+  other <- createDefaultAccount h.harnessEnv h.harnessUser "Other"
   res <-
     runAppM h.harnessEnv
       $ TransactionService.initiateTransfer

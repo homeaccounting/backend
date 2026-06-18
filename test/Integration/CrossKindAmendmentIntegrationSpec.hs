@@ -44,7 +44,7 @@ import Network.Wai.Test (SResponse (..), simpleBody, simpleStatus)
 import RIO
 import qualified RIO.Text as T
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount, userExternalAccountId)
+import Testkit.Fixtures (createDefaultAccount, userExternalAccountId)
 import Testkit.Helpers (singletonAllocation)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.TransactionEditFixture
@@ -201,7 +201,7 @@ spec = describe "Integration / CrossKindAmendment" $ do
   it "cross-kind amendment preserves externalTransactionId in the bank-import index" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "cross-kind-extid@test.com"
     token <- seedToken seed
-    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    walletB <- createDefaultAccount seed.seedEnv seed.seedUserId "WalletB"
     let extIdText = "mono-xyz-123"
     -- Seed Income with externalTransactionId set.
     txId <- seedIncomeWithExtId seed seed.seedAccount 100 extIdText
@@ -232,7 +232,7 @@ spec = describe "Integration / CrossKindAmendment" $ do
   it "cross-kind amendment bumps amendmentCount to 1 and history has all key events" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "cross-kind-audit@test.com"
     token <- seedToken seed
-    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    walletB <- createDefaultAccount seed.seedEnv seed.seedUserId "WalletB"
     -- Seed Income (External → seedAccount, 100 USD).
     (txId, _) <- seedIncome seed seed.seedAccount 100
     -- Amend: Income → Transfer (seedAccount → walletB).

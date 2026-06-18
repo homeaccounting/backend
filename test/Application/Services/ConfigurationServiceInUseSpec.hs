@@ -54,7 +54,7 @@ import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount)
+import Testkit.Fixtures (createDefaultAccount)
 import Testkit.Helpers (singletonExpense, singletonIncome)
 import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
 
@@ -226,8 +226,8 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
       Right eid -> pure eid
 
     -- Two accounts are required to initiate an internal transfer.
-    src <- createRegularAccount env userId "Source"
-    tgt <- createRegularAccount env userId "Target"
+    src <- createDefaultAccount env userId "Source"
+    tgt <- createDefaultAccount env userId "Target"
 
     -- Initiate a transfer that carries the label, then cancel it.
     txResult <-

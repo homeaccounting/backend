@@ -62,7 +62,7 @@ import Network.Wai (Application)
 import qualified Network.Wai as Wai
 import Network.Wai.Test (SRequest (..), SResponse (..), defaultRequest, runSession, setPath, srequest)
 import RIO
-import Testkit.Fixtures (createRegularAccount, firstDictionaryEntry, registerUser)
+import Testkit.Fixtures (createDefaultAccount, firstDictionaryEntry, registerUser)
 import Testkit.Helpers (singletonAllocation)
 import Web.Server (buildApplication)
 
@@ -89,7 +89,7 @@ mkSeed mkEnv email = do
   labelA <- addLabel env uid "kids"
   labelB <- addLabel env uid "school"
   categoryId <- firstDictionaryEntry env uid incomeCategoryDictId
-  accId <- createRegularAccount env uid "Wallet"
+  accId <- createDefaultAccount env uid "Wallet"
   pure
     Seed
       { seedApp = buildApplication env,
@@ -166,7 +166,7 @@ seedIncomeTransaction seed labels = do
 -- internal transfer between the seeded account and a fresh second one.
 seedTransfer :: Seed -> IO TransactionId
 seedTransfer seed = do
-  other <- createRegularAccount seed.seedEnv seed.seedUserId "Other"
+  other <- createDefaultAccount seed.seedEnv seed.seedUserId "Other"
   res <-
     runAppM seed.seedEnv
       $ TransactionService.initiateTransfer

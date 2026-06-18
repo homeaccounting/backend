@@ -21,7 +21,6 @@ module Application.Services.TransactionAmendmentSpec (spec) where
 
 import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.Transaction (TransactionData (..))
-import Application.Services.AccountService (createAccount)
 import Application.Services.ConfigurationService (closeBooksThrough)
 import Application.Services.TransactionService
   ( amendTransaction,
@@ -30,15 +29,15 @@ import Application.Services.TransactionService
     initiateTransfer,
   )
 import qualified Data.Set as Set
-import Domain.Account.Commands (CreateAccount (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
-    AccountType (..),
     TransactionType (..),
     UserId,
     defaultBankAccount,
+    defaultCash,
+    moneyCurrency,
     unMoney,
     unsafeMoney,
   )
@@ -49,10 +48,13 @@ import RIO
 import Test.Hspec
 import Testkit.Fixtures
   ( MetadataFixture (..),
-    createRegularAccount,
+    createAccount,
+    createDefaultAccount,
     expenseAllocs,
     incomeAllocs,
+    seedExchangeRates,
     setupMetadataFixture,
+    userExternalAccountId,
   )
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.Time (utc)
@@ -67,25 +69,6 @@ balanceUsd env aid = do
   case m of
     Just acc -> pure (unMoney acc.balance)
     Nothing -> fail "balanceUsd: account not found"
-
--- | Create a Regular account with a specific subtype, bypassing the
--- shared fixture (which defaults to Cash).
-createRegularAccountWithSubtype ::
-  AppEnv -> UserId -> Text -> AccountSubtype -> IO AccountId
-createRegularAccountWithSubtype env uid name_ subtype = do
-  res <-
-    runAppM env
-      $ createAccount
-      $ CreateAccount
-        { name = name_,
-          initialBalance = unsafeMoney Core.USD 1000,
-          createdBy = uid,
-          accountType = Regular subtype,
-          overdraftLimit = Nothing
-        }
-  case res of
-    Right (aid, _) -> pure aid
-    Left err -> fail $ "createRegularAccountWithSubtype failed: " <> show err
 
 bankSubtype :: AccountSubtype
 bankSubtype = defaultBankAccount
@@ -187,7 +170,7 @@ spec = describe "TransactionService.amendTransaction" $ do
     $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "amend-same@test.com"
-      walletB <- createRegularAccount env fx.userId "WalletB"
+      walletB <- createDefaultAccount env fx.userId "WalletB"
       transfer <-
         runAppM env
           $ initiateTransfer
@@ -219,7 +202,7 @@ spec = describe "TransactionService.amendTransaction" $ do
       fx <- setupMetadataFixture env "amend-subtype@test.com"
       -- The seeded regularAccount is Cash; create a Bank-subtype Regular.
       bankWallet <-
-        createRegularAccountWithSubtype env fx.userId "BankWallet" bankSubtype
+        createAccount env fx.userId "BankWallet" bankSubtype Core.USD 1000
       create <-
         runAppM env
           $ initiateExpense
@@ -289,8 +272,8 @@ spec = describe "TransactionService.amendTransaction" $ do
     $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "amend-source-swap@test.com"
-      walletB <- createRegularAccount env fx.userId "WalletB"
-      walletC <- createRegularAccount env fx.userId "WalletC"
+      walletB <- createDefaultAccount env fx.userId "WalletB"
+      walletC <- createDefaultAccount env fx.userId "WalletC"
 
       transfer <-
         runAppM env
@@ -325,3 +308,52 @@ spec = describe "TransactionService.amendTransaction" $ do
       walletC_After <- balanceUsd env walletC
       walletA_After `shouldBe` (walletA_BeforeAmend + 50)
       walletC_After `shouldBe` (walletC_BeforeAmend - 50)
+
+  describe "Cross-currency cross-kind amendment"
+    $ it "resolves the External leg into the External account's currency (regression: convert to Income in a non-base account)"
+    $ do
+      env <- createTestAppEnvWithProcessManager
+      -- Base currency is USD, so the user's External account is USD. Seed both
+      -- rate directions so the create (UAH->USD) and the amendment (USD->UAH)
+      -- can each resolve their cross-currency leg.
+      seedExchangeRates env [(Core.USD, Core.UAH, 40), (Core.UAH, Core.USD, 1 / 40)]
+      fx <- setupMetadataFixture env "amend-fx@test.com"
+      uahAcc <- createAccount env fx.userId "Hryvnia" defaultCash Core.UAH 1000
+      -- Seed a ₴200 expense in the UAH account; its External leg is resolved to USD.
+      create <-
+        runAppM env
+          $ initiateExpense
+            fx.userId
+            uahAcc
+            (unsafeMoney Core.UAH 200)
+            (expenseAllocs fx (unsafeMoney Core.UAH 200))
+            Set.empty
+            "Groceries"
+            Nothing
+      txId <- case create of
+        Right (tid, _) -> pure tid
+        Left err -> fail $ "initiateExpense failed: " <> show err
+      ext <- userExternalAccountId env fx.userId
+      -- Convert Expense -> Income exactly as the web client builds the payload:
+      -- both legs in the regular (UAH) currency, no rate, income allocations.
+      -- The service must re-resolve the External (USD) leg via the ECB rate;
+      -- before the fix this failed with CurrencyMismatch (surfaced as
+      -- InsufficientFundsForAmendment).
+      let cmd =
+            (amendCmd ext uahAcc 200 200 fx.userId)
+              { transactionId = txId,
+                newSourceAmount = unsafeMoney Core.UAH 200,
+                newTargetAmount = unsafeMoney Core.UAH 200,
+                newAllocations = Just (incomeAllocs fx (unsafeMoney Core.UAH 200))
+              }
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
+      case result of
+        Left err -> expectationFailure $ "amend should succeed, got: " <> show err
+        Right td -> do
+          td.sourceAccountId `shouldBe` ext
+          td.targetAccountId `shouldBe` uahAcc
+          -- External (source) leg now carries USD; the Regular (target) leg keeps
+          -- UAH; a cross-currency rate is recorded.
+          moneyCurrency td.sourceAmount `shouldBe` Core.USD
+          moneyCurrency td.targetAmount `shouldBe` Core.UAH
+          td.exchangeRate `shouldSatisfy` isJust

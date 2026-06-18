@@ -70,7 +70,7 @@ import Testkit.AppEnv (mkApp)
 import Testkit.Auth (generateTestToken)
 import Testkit.Fixtures
   ( MetadataFixture (..),
-    createRegularAccount,
+    createDefaultAccount,
     registerUser,
     setupMetadataFixture,
   )
@@ -204,7 +204,7 @@ spec = do
       runAppM env ConfigurationService.seedDefaultConfiguration
       ownerId <- registerUser env "delete-viewer-owner@test.com"
       viewerId <- registerUser env "delete-viewer-viewer@test.com"
-      accId <- createRegularAccount env ownerId "Wallet"
+      accId <- createDefaultAccount env ownerId "Wallet"
       -- Share with Viewer role
       shareRes <-
         runAppM env
@@ -217,7 +217,7 @@ spec = do
         Left err -> expectationFailure $ "shareAccount failed: " <> show err
         Right () -> pure ()
       -- Initiate a transfer so there is a transaction to cancel
-      otherAccId <- createRegularAccount env ownerId "Other"
+      otherAccId <- createDefaultAccount env ownerId "Other"
       txRes <-
         runAppM env
           $ TransactionService.initiateTransfer
@@ -245,8 +245,8 @@ spec = do
     it "returns 409 when TX date is in a closed accounting period" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "delete-books-owner@test.com"
-      src <- createRegularAccount env fx.userId "Src"
-      tgt <- createRegularAccount env fx.userId "Tgt"
+      src <- createDefaultAccount env fx.userId "Src"
+      tgt <- createDefaultAccount env fx.userId "Tgt"
       -- Backdated transfer
       let txDate = utc 2026 3 15
       txRes <-
@@ -403,7 +403,7 @@ spec = do
 -- status = Failed.
 seedFailedTransfer :: Seed -> IO TransactionId
 seedFailedTransfer seed = do
-  other <- createRegularAccount seed.seedEnv seed.seedUserId "Failed-Other"
+  other <- createDefaultAccount seed.seedEnv seed.seedUserId "Failed-Other"
   res <-
     runAppM seed.seedEnv
       $ TransactionService.initiateTransfer

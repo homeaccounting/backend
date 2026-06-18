@@ -42,7 +42,7 @@ import Network.Wai (Application)
 import Network.Wai.Test (SResponse (..))
 import RIO
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount, registerUser)
+import Testkit.Fixtures (createDefaultAccount, registerUser)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.TransactionEditFixture (authHeaders, httpRequest)
 import Web.Server (buildApplication)
@@ -100,7 +100,7 @@ mkFixture :: Text -> IO Fixture
 mkFixture email = do
   env <- createTestAppEnvWithProcessManager
   uid <- registerUser env email
-  accId <- createRegularAccount env uid "Wallet"
+  accId <- createDefaultAccount env uid "Wallet"
   tok <- mintToken uid email
   pure
     Fixture
@@ -228,7 +228,7 @@ futureDateSpec = do
 zeroDeltaSpec :: IO ()
 zeroDeltaSpec = do
   f <- mkFixture "adjust-zero@test.com"
-  -- 'createRegularAccount' seeds the account with 5000 USD; sending 5000 is a no-op.
+  -- 'createDefaultAccount' seeds the account with 5000 USD; sending 5000 is a no-op.
   let body = adjustBody 5000.0 "USD" pastTime "No-op"
   resp <- putBalance f f.fAccountUuid body
   simpleStatus resp `shouldBe` status400

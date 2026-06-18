@@ -66,7 +66,7 @@ import RIO
 import Test.Hspec
 import Testkit.Fixtures
   ( MetadataFixture (..),
-    createRegularAccount,
+    createDefaultAccount,
     setupMetadataFixture,
   )
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
@@ -136,8 +136,8 @@ setupCancelFixture :: Text -> IO CancelFixture
 setupCancelFixture email = do
   env <- createTestAppEnvWithProcessManager
   fx <- setupMetadataFixture env email
-  src <- createRegularAccount env fx.userId "Source"
-  tgt <- createRegularAccount env fx.userId "Target"
+  src <- createDefaultAccount env fx.userId "Source"
+  tgt <- createDefaultAccount env fx.userId "Target"
   pure
     CancelFixture
       { cfEnv = env,
@@ -306,8 +306,8 @@ booksCloseSpec =
     it "rejects cancellation when the TX date is in a closed period" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "cancel-books-close@test.com"
-      src <- createRegularAccount env fx.userId "Src"
-      tgt <- createRegularAccount env fx.userId "Tgt"
+      src <- createDefaultAccount env fx.userId "Src"
+      tgt <- createDefaultAccount env fx.userId "Tgt"
 
       -- Initiate a backdated transfer inside the period we'll close
       let txDate = utc 2026 3 15
@@ -347,8 +347,8 @@ authorizationSpec =
     it "rejects cancellation by a user with no access to the transaction's accounts" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupMetadataFixture env "cancel-auth@test.com"
-      src <- createRegularAccount env fx.userId "Src"
-      tgt <- createRegularAccount env fx.userId "Tgt"
+      src <- createDefaultAccount env fx.userId "Src"
+      tgt <- createDefaultAccount env fx.userId "Tgt"
 
       (txId, _td) <- seedTransfer env fx.userId src tgt 100
 

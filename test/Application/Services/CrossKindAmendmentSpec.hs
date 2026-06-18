@@ -63,7 +63,7 @@ import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (forAll, (===))
 import Testkit.Fixtures
   ( MetadataFixture (..),
-    createRegularAccount,
+    createDefaultAccount,
     incomeAllocs,
     setupMetadataFixture,
     userExternalAccountId,
@@ -117,7 +117,7 @@ setupCrossKindFixture email = do
   env <- createTestAppEnvWithProcessManager
   runAppM env seedDefaultConfiguration
   fx <- setupMetadataFixture env email
-  accB <- createRegularAccount env fx.userId "WalletB"
+  accB <- createDefaultAccount env fx.userId "WalletB"
   extId <- userExternalAccountId env fx.userId
   pure
     CrossKindFixture

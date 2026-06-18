@@ -34,7 +34,7 @@ import Network.HTTP.Types (Status, status200, status409)
 import Network.Wai.Test (SResponse (..))
 import RIO
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount, userExternalAccountId)
+import Testkit.Fixtures (createDefaultAccount, userExternalAccountId)
 import Testkit.Helpers (singletonAllocation)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.TransactionEditFixture
@@ -175,7 +175,7 @@ spec = describe "Integration / TransferAmendment" $ do
   it "PUT /:id/amendment — same-account-pair payload returns 409" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "amend-same@test.com"
     token <- seedToken seed
-    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    walletB <- createDefaultAccount seed.seedEnv seed.seedUserId "WalletB"
     (txId, _td) <- seedTransfer seed seed.seedAccount walletB 50
     -- Both legs set to walletB — same-account-pair guard fires.
     let body = amendBody walletB walletB 50 50
@@ -186,8 +186,8 @@ spec = describe "Integration / TransferAmendment" $ do
   it "PUT /:id/amendment — source-account swap restores old source and debits new source" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "amend-source-swap@test.com"
     token <- seedToken seed
-    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
-    walletC <- createRegularAccount seed.seedEnv seed.seedUserId "WalletC"
+    walletB <- createDefaultAccount seed.seedEnv seed.seedUserId "WalletB"
+    walletC <- createDefaultAccount seed.seedEnv seed.seedUserId "WalletC"
 
     (txId, _td) <- seedTransfer seed seed.seedAccount walletB 50
     walletA_Before <- balanceOf seed.seedEnv seed.seedAccount
@@ -233,7 +233,7 @@ spec = describe "Integration / TransferAmendment" $ do
     token <- seedToken seed
     -- Seed a second Regular account; the income → transfer amendment
     -- requires both legs to be Regular accounts.
-    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    walletB <- createDefaultAccount seed.seedEnv seed.seedUserId "WalletB"
     (txId, _) <- seedIncome seed seed.seedAccount 100
     -- Amend: Income (External → seedAccount) → Transfer (seedAccount → walletB).
     -- Both accounts are Regular so derivedKind = TransferKind.
@@ -259,7 +259,7 @@ spec = describe "Integration / TransferAmendment" $ do
   it "PUT /:id/amendment with newAllocations supplied performs Transfer → Income kind change" $ do
     seed <- mkSeed createTestAppEnvWithProcessManager "amend-transfer-to-income@test.com"
     token <- seedToken seed
-    walletB <- createRegularAccount seed.seedEnv seed.seedUserId "WalletB"
+    walletB <- createDefaultAccount seed.seedEnv seed.seedUserId "WalletB"
     -- Seed a Transfer (seedAccount → walletB).
     (txId, _) <- seedTransfer seed seed.seedAccount walletB 100
     -- Resolve the user's External account to use as new source (Income leg).

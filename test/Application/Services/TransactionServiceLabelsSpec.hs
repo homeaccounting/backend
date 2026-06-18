@@ -90,7 +90,7 @@ setupFixture env email = do
     expectEntry "addDictionaryEntry labelB"
       =<< runAppM env (addDictionaryEntry uid labelsDictId (unsafeEntryName "school"))
   categoryId <- firstIncomeCategory env uid
-  accId <- createRegularAccount env uid "Wallet"
+  accId <- createDefaultAccount env uid "Wallet"
   pure
     Fixture
       { userId = uid,
@@ -133,8 +133,8 @@ firstIncomeCategory env uid = do
         Just d -> Map.keys d.entries
         Nothing -> []
 
-createRegularAccount :: AppEnv -> UserId -> Text -> IO AccountId
-createRegularAccount env uid accName = do
+createDefaultAccount :: AppEnv -> UserId -> Text -> IO AccountId
+createDefaultAccount env uid accName = do
   res <-
     runAppM env
       $ createAccount
@@ -237,7 +237,7 @@ spec = describe "TransactionService / labels" $ do
       -- guard kicks in.
       env <- createTestAppEnv
       fx <- setupFixture env "set-labels-pending@test.com"
-      otherAccId <- createRegularAccount env fx.userId "Other"
+      otherAccId <- createDefaultAccount env fx.userId "Other"
 
       create <-
         runAppM env
@@ -353,7 +353,7 @@ spec = describe "TransactionService / labels" $ do
     it "refuses to change the allocations on an internal transfer" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupFixture env "set-alloc-internal@test.com"
-      accB <- createRegularAccount env fx.userId "Other"
+      accB <- createDefaultAccount env fx.userId "Other"
 
       create <-
         runAppM env

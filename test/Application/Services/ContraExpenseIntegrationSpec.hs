@@ -57,7 +57,7 @@ import Domain.Core.Types
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount, registerUser)
+import Testkit.Fixtures (createDefaultAccount, registerUser)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
@@ -78,7 +78,7 @@ setupHarness email = do
   env <- createTestAppEnvWithProcessManager
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
-  accId <- createRegularAccount env uid "Wallet USD"
+  accId <- createDefaultAccount env uid "Wallet USD"
 
   salaryId <- addIncomeEntry env uid "CE-Salary"
   rentId <- addExpenseEntry env uid "CE-Rent"

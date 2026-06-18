@@ -57,7 +57,7 @@ import Domain.Transaction.Commands (AmendTransaction (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
-import Testkit.Fixtures (createRegularAccount, registerUser)
+import Testkit.Fixtures (createDefaultAccount, registerUser)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 
 -- -----------------------------------------------------------------------------
@@ -82,7 +82,7 @@ setupHarness email = do
   env <- createTestAppEnvWithProcessManager
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
-  accId <- createRegularAccount env uid "Wallet USD"
+  accId <- createDefaultAccount env uid "Wallet USD"
 
   groceriesId <- addExpense env uid "IT-Groceries"
   restaurantsId <- addExpense env uid "IT-Restaurants"
