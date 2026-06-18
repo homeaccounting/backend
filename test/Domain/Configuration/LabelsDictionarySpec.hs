@@ -46,7 +46,9 @@ seedConfig dictId =
       banking = emptyBankingConfiguration,
       createdBy = System,
       isCreated = True,
-      booksClosedThrough = Nothing
+      booksClosedThrough = Nothing,
+      defaultIncomeCategory = Nothing,
+      defaultExpenseCategory = Nothing
     }
 
 spec :: Spec

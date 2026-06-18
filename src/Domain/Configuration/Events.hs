@@ -28,8 +28,8 @@ module Domain.Configuration.Events
     DictionaryEntryAdded (..),
     DictionaryEntryRenamed (..),
     DictionaryEntryRemoved (..),
-    BankingDefaultIncomeCategorySet (..),
-    BankingDefaultExpenseCategorySet (..),
+    DefaultIncomeCategorySet (..),
+    DefaultExpenseCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     BooksClosedThroughSet (..),
     BankConnectionAdded (..),
@@ -80,8 +80,8 @@ configurationEvents =
     ''DictionaryEntryAdded,
     ''DictionaryEntryRenamed,
     ''DictionaryEntryRemoved,
-    ''BankingDefaultIncomeCategorySet,
-    ''BankingDefaultExpenseCategorySet,
+    ''DefaultIncomeCategorySet,
+    ''DefaultExpenseCategorySet,
     ''BankingMccExpenseCategoryMapSet,
     ''BooksClosedThroughSet,
     ''BankConnectionAdded,
@@ -152,14 +152,14 @@ data DictionaryEntryRemoved = DictionaryEntryRemoved
   }
   deriving (Show, Eq)
 
--- | Event emitted when the banking default income category is set.
-data BankingDefaultIncomeCategorySet = BankingDefaultIncomeCategorySet
+-- | Event emitted when the default income category is set.
+data DefaultIncomeCategorySet = DefaultIncomeCategorySet
   { categoryId :: CategoryId
   }
   deriving (Show, Eq)
 
--- | Event emitted when the banking default expense category is set.
-data BankingDefaultExpenseCategorySet = BankingDefaultExpenseCategorySet
+-- | Event emitted when the default expense category is set.
+data DefaultExpenseCategorySet = DefaultExpenseCategorySet
   { categoryId :: CategoryId
   }
   deriving (Show, Eq)
@@ -251,8 +251,8 @@ deriveJSON defaultOptions ''DefaultCurrencyChanged
 deriveJSON defaultOptions ''DictionaryEntryAdded
 deriveJSON defaultOptions ''DictionaryEntryRenamed
 deriveJSON defaultOptions ''DictionaryEntryRemoved
-deriveJSON defaultOptions ''BankingDefaultIncomeCategorySet
-deriveJSON defaultOptions ''BankingDefaultExpenseCategorySet
+deriveJSON defaultOptions ''DefaultIncomeCategorySet
+deriveJSON defaultOptions ''DefaultExpenseCategorySet
 deriveJSON defaultOptions ''BankingMccExpenseCategoryMapSet
 deriveJSON defaultOptions ''BooksClosedThroughSet
 deriveJSON defaultOptions ''BankConnectionAdded

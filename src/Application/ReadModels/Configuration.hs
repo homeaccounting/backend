@@ -56,9 +56,9 @@ import Domain.Configuration.Events
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
     BankConnectionTokenChanged (..),
-    BankingDefaultExpenseCategorySet (..),
-    BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
+    DefaultExpenseCategorySet (..),
+    DefaultIncomeCategorySet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
     ConfigurationCreated (..),
@@ -69,11 +69,12 @@ import Domain.Configuration.Events
   )
 import Domain.Configuration.Projection
   ( BankConnection (..),
-    BankingConfiguration (connections, defaultExpenseCategory, defaultIncomeCategory, mccExpenseCategoryMap),
+    BankingConfiguration (connections, mccExpenseCategoryMap),
     emptyBankingConfiguration,
   )
 import Domain.Core.Types
-  ( ConfigurationId,
+  ( CategoryId,
+    ConfigurationId,
     CreatedBy,
     Currency,
     DictionaryEntryId,
@@ -105,6 +106,10 @@ data ConfigurationData = ConfigurationData
     dictionaries :: Map DictionaryId DictionaryData,
     -- | Banking-specific configuration
     banking :: BankingConfiguration,
+    -- | Default category for income transactions when none is inferred from MCC
+    defaultIncomeCategory :: Maybe CategoryId,
+    -- | Default category for expense transactions when none is inferred from MCC
+    defaultExpenseCategory :: Maybe CategoryId,
     -- | Advance-only books-closed-through cutoff. 'Nothing' means no cutoff
     -- has been set (the books are fully open). Folded from
     -- 'BooksClosedThroughSet'.
@@ -218,6 +223,8 @@ processConfigurationEvent configurations globalEvent =
                     defaultCurrency = evt.defaultCurrency,
                     dictionaries = Map.empty,
                     banking = emptyBankingConfiguration,
+                    defaultIncomeCategory = Nothing,
+                    defaultExpenseCategory = Nothing,
                     booksClosedThrough = Nothing,
                     createdBy = evt.createdBy,
                     version = 1
@@ -304,27 +311,27 @@ processConfigurationEvent configurations globalEvent =
                 )
                 configId
                 configurations
-        BankingDefaultIncomeCategorySetEvent evt ->
+        DefaultIncomeCategorySetEvent evt ->
           case mkConfigurationIdSafe streamUuid of
             Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
                     config
-                      { banking = config.banking {defaultIncomeCategory = Just evt.categoryId},
+                      { defaultIncomeCategory = Just evt.categoryId,
                         version = config.version + 1
                       }
                 )
                 configId
                 configurations
-        BankingDefaultExpenseCategorySetEvent evt ->
+        DefaultExpenseCategorySetEvent evt ->
           case mkConfigurationIdSafe streamUuid of
             Nothing -> configurations
             Just configId ->
               Map.adjust
                 ( \config ->
                     config
-                      { banking = config.banking {defaultExpenseCategory = Just evt.categoryId},
+                      { defaultExpenseCategory = Just evt.categoryId,
                         version = config.version + 1
                       }
                 )

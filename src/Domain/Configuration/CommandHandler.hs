@@ -16,9 +16,9 @@
 --   - AddDictionaryEntry: Configuration must exist, no duplicate entry names in same dictionary
 --   - RenameDictionaryEntry: Configuration must exist, dictionary and entry must exist, no duplicate names
 --   - RemoveDictionaryEntry: Configuration must exist, dictionary and entry must exist, cannot remove last entry,
---       cannot remove entry set as banking default or referenced by MCC map
---   - SetBankingDefaultIncomeCategory: Category must exist in income-category dictionary
---   - SetBankingDefaultExpenseCategory: Category must exist in expense-category dictionary
+--       cannot remove entry set as global default or referenced by MCC map
+--   - SetDefaultIncomeCategory: Category must exist in income-category dictionary
+--   - SetDefaultExpenseCategory: Category must exist in expense-category dictionary
 --   - SetBankingMccExpenseCategoryMap: All map values must exist in expense-category dictionary
 module Domain.Configuration.CommandHandler
   ( -- * Command Sum Type
@@ -63,7 +63,7 @@ data ConfigurationError
   | DuplicateEntryName
   | CannotRemoveLastEntry
   | EntryNotInDictionary
-  | EntryIsBankingDefault
+  | EntryIsGlobalDefault
   | EntryIsInMccMap
   | -- | 'CloseBooksThrough' would rewind (or leave unchanged) the cutoff.
     -- The cutoff is advance-only: @attempted@ must be strictly greater than
@@ -138,11 +138,11 @@ requireEntryIn dictId entryId config =
       | any (\e -> e.entryId == entryId) dict.entries -> Right ()
       | otherwise -> Left EntryNotInDictionary
 
--- | Check if an entry is currently set as a banking default category.
-isBankingDefault :: CategoryId -> Configuration -> Bool
-isBankingDefault eid config =
-  config.banking.defaultIncomeCategory == Just eid
-    || config.banking.defaultExpenseCategory == Just eid
+-- | Check if an entry is currently set as a global default category.
+isGlobalDefault :: CategoryId -> Configuration -> Bool
+isGlobalDefault eid config =
+  config.defaultIncomeCategory == Just eid
+    || config.defaultExpenseCategory == Just eid
 
 -- | Check if an entry is referenced as a value in the banking MCC expense category map.
 isInMccMap :: CategoryId -> Configuration -> Bool
@@ -246,7 +246,7 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
   | not (dictionaryExists dictionaryId config) = Left DictionaryNotFound
   | not (entryExists entryId dictionaryId config) = Left EntryNotFound
   | wouldEmptyRequiredDictionary dictionaryId config = Left CannotRemoveLastEntry
-  | isBankingDefault entryId config = Left EntryIsBankingDefault
+  | isGlobalDefault entryId config = Left EntryIsGlobalDefault
   | isInMccMap entryId config = Left EntryIsInMccMap
   | otherwise =
       Right
@@ -256,21 +256,21 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
                 entryId = entryId
               }
         ]
--- Handle SetBankingDefaultIncomeCategory command
-handleConfigurationCommand config (SetBankingDefaultIncomeCategoryConfigurationCommand SetBankingDefaultIncomeCategory {..}) = do
+-- Handle SetDefaultIncomeCategory command
+handleConfigurationCommand config (SetDefaultIncomeCategoryConfigurationCommand SetDefaultIncomeCategory {..}) = do
   requireEntryIn incomeCategoryDictId categoryId config
   Right
-    [ BankingDefaultIncomeCategorySetConfigurationEvent
-        BankingDefaultIncomeCategorySet
+    [ DefaultIncomeCategorySetConfigurationEvent
+        DefaultIncomeCategorySet
           { categoryId = categoryId
           }
     ]
--- Handle SetBankingDefaultExpenseCategory command
-handleConfigurationCommand config (SetBankingDefaultExpenseCategoryConfigurationCommand SetBankingDefaultExpenseCategory {..}) = do
+-- Handle SetDefaultExpenseCategory command
+handleConfigurationCommand config (SetDefaultExpenseCategoryConfigurationCommand SetDefaultExpenseCategory {..}) = do
   requireEntryIn expenseCategoryDictId categoryId config
   Right
-    [ BankingDefaultExpenseCategorySetConfigurationEvent
-        BankingDefaultExpenseCategorySet
+    [ DefaultExpenseCategorySetConfigurationEvent
+        DefaultExpenseCategorySet
           { categoryId = categoryId
           }
     ]

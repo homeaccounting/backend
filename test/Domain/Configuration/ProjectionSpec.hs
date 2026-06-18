@@ -28,10 +28,10 @@ import Domain.Configuration.Events
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
     BankConnectionTokenChanged (..),
-    BankingDefaultExpenseCategorySet (..),
-    BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
+    DefaultExpenseCategorySet (..),
+    DefaultIncomeCategorySet (..),
   )
 import Domain.Core.Types
 import Eventium (latestProjection)
@@ -63,8 +63,8 @@ configurationDefaultSpec =
   describe "configurationDefault" $ do
     it "has an empty banking configuration" $ do
       let b = configurationDefault.banking
-      b.defaultIncomeCategory `shouldBe` Nothing
-      b.defaultExpenseCategory `shouldBe` Nothing
+      configurationDefault.defaultIncomeCategory `shouldBe` Nothing
+      configurationDefault.defaultExpenseCategory `shouldBe` Nothing
       b.mccExpenseCategoryMap `shouldBe` Map.empty
 
 -- -----------------------------------------------------------------------------
@@ -361,27 +361,27 @@ dictionaryEntryRemovedSpec = describe "DictionaryEntryRemoved event" $ do
 
 bankingProjectionSpec :: Spec
 bankingProjectionSpec = describe "banking projection" $ do
-  it "BankingDefaultIncomeCategorySet sets the income slot" $ do
+  it "DefaultIncomeCategorySet sets the income slot" $ do
     let config =
           applyEvents
             [ createdEvent,
-              BankingDefaultIncomeCategorySetConfigurationEvent
-                BankingDefaultIncomeCategorySet
+              DefaultIncomeCategorySetConfigurationEvent
+                DefaultIncomeCategorySet
                   { categoryId = testEntryId1
                   }
             ]
-    config.banking.defaultIncomeCategory `shouldBe` Just testEntryId1
+    config.defaultIncomeCategory `shouldBe` Just testEntryId1
 
-  it "BankingDefaultExpenseCategorySet sets the expense slot" $ do
+  it "DefaultExpenseCategorySet sets the expense slot" $ do
     let config =
           applyEvents
             [ createdEvent,
-              BankingDefaultExpenseCategorySetConfigurationEvent
-                BankingDefaultExpenseCategorySet
+              DefaultExpenseCategorySetConfigurationEvent
+                DefaultExpenseCategorySet
                   { categoryId = testEntryId2
                   }
             ]
-    config.banking.defaultExpenseCategory `shouldBe` Just testEntryId2
+    config.defaultExpenseCategory `shouldBe` Just testEntryId2
 
   it "BankingMccExpenseCategoryMapSet replaces the mcc map wholesale" $ do
     let m1 = Map.singleton "5411" testEntryId1

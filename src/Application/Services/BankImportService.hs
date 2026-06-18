@@ -206,8 +206,8 @@ resolveCategory ::
   Either DomainError (CategoryId, CategoryResolution)
 resolveCategory banking cfg direction maybeMcc =
   let (dictId, deflt) = case direction of
-        ClassifiedIncome -> (incomeCategoryDictId, banking.defaultIncomeCategory)
-        ClassifiedExpense -> (expenseCategoryDictId, banking.defaultExpenseCategory)
+        ClassifiedIncome -> (incomeCategoryDictId, cfg.defaultIncomeCategory)
+        ClassifiedExpense -> (expenseCategoryDictId, cfg.defaultExpenseCategory)
       dictEntries =
         maybe Map.empty (.entries) (Map.lookup dictId cfg.dictionaries)
       mccHit = case direction of

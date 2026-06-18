@@ -29,10 +29,10 @@ import Domain.Configuration.Events
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
     BankConnectionTokenChanged (..),
-    BankingDefaultExpenseCategorySet (..),
-    BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
+    DefaultExpenseCategorySet (..),
+    DefaultIncomeCategorySet (..),
     DictionaryEntryAdded (..),
   )
 import Domain.Core.Types
@@ -52,8 +52,8 @@ spec = do
   addDictionaryEntrySpec
   renameDictionaryEntrySpec
   removeDictionaryEntrySpec
-  setBankingDefaultIncomeCategorySpec
-  setBankingDefaultExpenseCategorySpec
+  setDefaultIncomeCategorySpec
+  setDefaultExpenseCategorySpec
   setBankingMccExpenseCategoryMapSpec
   removeDictionaryEntryBankingGuardSpec
   addBankConnectionSpec
@@ -240,8 +240,8 @@ configWithDefaultIncomeCategory =
             entryId = testCategoryId2,
             name = mockEntryName "Freelance"
           },
-      BankingDefaultIncomeCategorySetConfigurationEvent
-        BankingDefaultIncomeCategorySet
+      DefaultIncomeCategorySetConfigurationEvent
+        DefaultIncomeCategorySet
           { categoryId = testCategoryId1
           }
     ]
@@ -269,8 +269,8 @@ configWithDefaultExpenseCategory =
             entryId = testCategoryId2,
             name = mockEntryName "Transport"
           },
-      BankingDefaultExpenseCategorySetConfigurationEvent
-        BankingDefaultExpenseCategorySet
+      DefaultExpenseCategorySetConfigurationEvent
+        DefaultExpenseCategorySet
           { categoryId = testCategoryId1
           }
     ]
@@ -705,18 +705,18 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
         result `shouldBe` Left ConfigurationNotCreated
 
 -- -----------------------------------------------------------------------------
--- SetBankingDefaultIncomeCategory Tests
+-- SetDefaultIncomeCategory Tests
 -- -----------------------------------------------------------------------------
 
-setBankingDefaultIncomeCategorySpec :: Spec
-setBankingDefaultIncomeCategorySpec = describe "SetBankingDefaultIncomeCategory Command" $ do
+setDefaultIncomeCategorySpec :: Spec
+setDefaultIncomeCategorySpec = describe "SetDefaultIncomeCategory Command" $ do
   context "Given config whose income-category dictionary does NOT contain the categoryId" $ do
-    describe "When issuing SetBankingDefaultIncomeCategory" $ do
+    describe "When issuing SetDefaultIncomeCategory" $ do
       it "Then returns an error" $ do
         let config = configWithExpenseEntry -- has expense entry, NOT income entry for testCategoryId1
         let command =
-              SetBankingDefaultIncomeCategoryConfigurationCommand
-                SetBankingDefaultIncomeCategory
+              SetDefaultIncomeCategoryConfigurationCommand
+                SetDefaultIncomeCategory
                   { categoryId = testUnknownCategoryId
                   }
         let result = handleConfigurationCommand config command
@@ -724,12 +724,12 @@ setBankingDefaultIncomeCategorySpec = describe "SetBankingDefaultIncomeCategory 
         result `shouldSatisfy` isLeft
 
   context "Given config whose income-category dictionary contains the categoryId" $ do
-    describe "When issuing SetBankingDefaultIncomeCategory" $ do
-      it "Then emits BankingDefaultIncomeCategorySet event" $ do
+    describe "When issuing SetDefaultIncomeCategory" $ do
+      it "Then emits DefaultIncomeCategorySet event" $ do
         let config = configWithIncomeEntry
         let command =
-              SetBankingDefaultIncomeCategoryConfigurationCommand
-                SetBankingDefaultIncomeCategory
+              SetDefaultIncomeCategoryConfigurationCommand
+                SetDefaultIncomeCategory
                   { categoryId = testCategoryId1
                   }
         let result = handleConfigurationCommand config command
@@ -738,24 +738,24 @@ setBankingDefaultIncomeCategorySpec = describe "SetBankingDefaultIncomeCategory 
           Right events -> do
             length events `shouldBe` 1
             case head events of
-              BankingDefaultIncomeCategorySetConfigurationEvent evt ->
+              DefaultIncomeCategorySetConfigurationEvent evt ->
                 evt.categoryId `shouldBe` testCategoryId1
-              _ -> expectationFailure "Expected BankingDefaultIncomeCategorySet event"
+              _ -> expectationFailure "Expected DefaultIncomeCategorySet event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
 -- -----------------------------------------------------------------------------
--- SetBankingDefaultExpenseCategory Tests
+-- SetDefaultExpenseCategory Tests
 -- -----------------------------------------------------------------------------
 
-setBankingDefaultExpenseCategorySpec :: Spec
-setBankingDefaultExpenseCategorySpec = describe "SetBankingDefaultExpenseCategory Command" $ do
+setDefaultExpenseCategorySpec :: Spec
+setDefaultExpenseCategorySpec = describe "SetDefaultExpenseCategory Command" $ do
   context "Given config whose expense-category dictionary does NOT contain the categoryId" $ do
-    describe "When issuing SetBankingDefaultExpenseCategory" $ do
+    describe "When issuing SetDefaultExpenseCategory" $ do
       it "Then returns an error" $ do
         let config = configWithIncomeEntry -- has income entry, NOT expense entry for unknown id
         let command =
-              SetBankingDefaultExpenseCategoryConfigurationCommand
-                SetBankingDefaultExpenseCategory
+              SetDefaultExpenseCategoryConfigurationCommand
+                SetDefaultExpenseCategory
                   { categoryId = testUnknownCategoryId
                   }
         let result = handleConfigurationCommand config command
@@ -763,12 +763,12 @@ setBankingDefaultExpenseCategorySpec = describe "SetBankingDefaultExpenseCategor
         result `shouldSatisfy` isLeft
 
   context "Given config whose expense-category dictionary contains the categoryId" $ do
-    describe "When issuing SetBankingDefaultExpenseCategory" $ do
-      it "Then emits BankingDefaultExpenseCategorySet event" $ do
+    describe "When issuing SetDefaultExpenseCategory" $ do
+      it "Then emits DefaultExpenseCategorySet event" $ do
         let config = configWithExpenseEntry
         let command =
-              SetBankingDefaultExpenseCategoryConfigurationCommand
-                SetBankingDefaultExpenseCategory
+              SetDefaultExpenseCategoryConfigurationCommand
+                SetDefaultExpenseCategory
                   { categoryId = testCategoryId1
                   }
         let result = handleConfigurationCommand config command
@@ -777,9 +777,9 @@ setBankingDefaultExpenseCategorySpec = describe "SetBankingDefaultExpenseCategor
           Right events -> do
             length events `shouldBe` 1
             case head events of
-              BankingDefaultExpenseCategorySetConfigurationEvent evt ->
+              DefaultExpenseCategorySetConfigurationEvent evt ->
                 evt.categoryId `shouldBe` testCategoryId1
-              _ -> expectationFailure "Expected BankingDefaultExpenseCategorySet event"
+              _ -> expectationFailure "Expected DefaultExpenseCategorySet event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
 -- -----------------------------------------------------------------------------
@@ -848,9 +848,9 @@ setBankingMccExpenseCategoryMapSpec = describe "SetBankingMccExpenseCategoryMap 
 
 removeDictionaryEntryBankingGuardSpec :: Spec
 removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking guard" $ do
-  context "Given entry set as banking.defaultIncomeCategory" $ do
+  context "Given entry set as the global defaultIncomeCategory" $ do
     describe "When removing that entry" $ do
-      it "Then returns an error" $ do
+      it "Then returns EntryIsGlobalDefault" $ do
         let config = configWithDefaultIncomeCategory
         let command =
               RemoveDictionaryEntryConfigurationCommand
@@ -860,9 +860,9 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
                   }
         let result = handleConfigurationCommand config command
 
-        result `shouldSatisfy` isLeft
+        result `shouldBe` Left EntryIsGlobalDefault
 
-  context "Given entry set as banking.defaultExpenseCategory" $ do
+  context "Given entry set as the global defaultExpenseCategory" $ do
     describe "When removing that entry" $ do
       it "Then returns an error" $ do
         let config = configWithDefaultExpenseCategory
@@ -914,8 +914,8 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
                         entryId = testCategoryId2,
                         name = mockEntryName "Transport"
                       },
-                  BankingDefaultExpenseCategorySetConfigurationEvent
-                    BankingDefaultExpenseCategorySet
+                  DefaultExpenseCategorySetConfigurationEvent
+                    DefaultExpenseCategorySet
                       { categoryId = testCategoryId1
                       }
                 ]

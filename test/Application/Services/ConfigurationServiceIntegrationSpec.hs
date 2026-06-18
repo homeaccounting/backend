@@ -31,7 +31,6 @@ import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreditAccount (..))
-import Domain.Configuration.Projection (BankingConfiguration (defaultIncomeCategory))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( CreatedBy (..),
@@ -355,11 +354,11 @@ dictionaryCRUDSpec =
                   case incomeDict of
                     Nothing -> expectationFailure "Income dictionary not found"
                     Just dict -> do
-                      -- The cloned config has banking.defaultIncomeCategory set (from seed).
-                      -- Removal is rejected for any entry that is a banking default OR when
+                      -- The cloned config has defaultIncomeCategory set (from seed).
+                      -- Removal is rejected for any entry that is a global default OR when
                       -- it is the last entry. We remove all non-default entries, then verify
-                      -- the banking-default entry also cannot be removed.
-                      let bankingDefaultId = config.banking.defaultIncomeCategory
+                      -- the global-default entry also cannot be removed.
+                      let bankingDefaultId = config.defaultIncomeCategory
                           allEntries = Map.keys dict.entries
                           nonDefaultEntries = filter (\eid -> Just eid /= bankingDefaultId) allEntries
                       -- Remove all non-default entries (all should succeed)

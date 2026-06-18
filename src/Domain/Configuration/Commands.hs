@@ -21,8 +21,8 @@ module Domain.Configuration.Commands
     AddDictionaryEntry (..),
     RenameDictionaryEntry (..),
     RemoveDictionaryEntry (..),
-    SetBankingDefaultIncomeCategory (..),
-    SetBankingDefaultExpenseCategory (..),
+    SetDefaultIncomeCategory (..),
+    SetDefaultExpenseCategory (..),
     SetBankingMccExpenseCategoryMap (..),
     CloseBooksThrough (..),
     AddBankConnection (..),
@@ -73,8 +73,8 @@ configurationCommands =
     ''AddDictionaryEntry,
     ''RenameDictionaryEntry,
     ''RemoveDictionaryEntry,
-    ''SetBankingDefaultIncomeCategory,
-    ''SetBankingDefaultExpenseCategory,
+    ''SetDefaultIncomeCategory,
+    ''SetDefaultExpenseCategory,
     ''SetBankingMccExpenseCategoryMap,
     ''CloseBooksThrough,
     ''AddBankConnection,
@@ -161,14 +161,14 @@ data RemoveDictionaryEntry = RemoveDictionaryEntry
   }
   deriving (Show, Eq)
 
--- | Command to set the banking default category for imported income transactions.
-data SetBankingDefaultIncomeCategory = SetBankingDefaultIncomeCategory
+-- | Command to set the default category for imported income transactions.
+data SetDefaultIncomeCategory = SetDefaultIncomeCategory
   { categoryId :: CategoryId
   }
   deriving (Show, Eq)
 
--- | Command to set the banking default category for imported expense transactions.
-data SetBankingDefaultExpenseCategory = SetBankingDefaultExpenseCategory
+-- | Command to set the default category for imported expense transactions.
+data SetDefaultExpenseCategory = SetDefaultExpenseCategory
   { categoryId :: CategoryId
   }
   deriving (Show, Eq)
@@ -287,8 +287,8 @@ deriveJSON defaultOptions ''ChangeDefaultCurrency
 deriveJSON defaultOptions ''AddDictionaryEntry
 deriveJSON defaultOptions ''RenameDictionaryEntry
 deriveJSON defaultOptions ''RemoveDictionaryEntry
-deriveJSON defaultOptions ''SetBankingDefaultIncomeCategory
-deriveJSON defaultOptions ''SetBankingDefaultExpenseCategory
+deriveJSON defaultOptions ''SetDefaultIncomeCategory
+deriveJSON defaultOptions ''SetDefaultExpenseCategory
 deriveJSON defaultOptions ''SetBankingMccExpenseCategoryMap
 deriveJSON defaultOptions ''CloseBooksThrough
 deriveJSON defaultOptions ''AddBankConnection

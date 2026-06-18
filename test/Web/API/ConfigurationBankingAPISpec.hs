@@ -80,17 +80,17 @@ unknownUUID = UUID.fromWords 0xDEAD 0xBEEF 0 1
 
 spec :: Spec
 spec = do
-  updateBankingSpec
+  updateDefaultsSpec
   updateBankingMccMapSpec
   getBankingInResponseSpec
 
 -- -----------------------------------------------------------------------------
--- PUT /api/users/me/configuration/banking
+-- PUT /api/users/me/configuration/defaults
 -- -----------------------------------------------------------------------------
 
-updateBankingSpec :: Spec
-updateBankingSpec =
-  describe "PUT /api/users/me/configuration/banking"
+updateDefaultsSpec :: Spec
+updateDefaultsSpec =
+  describe "PUT /api/users/me/configuration/defaults"
     $ with mkAppSeeded
     $ do
       it "returns 200 with updated defaultIncomeCategory when valid UUID supplied" $ do
@@ -99,15 +99,15 @@ updateBankingSpec =
         resp <-
           request
             "PUT"
-            "/api/users/me/configuration/banking"
+            "/api/users/me/configuration/defaults"
             (jsonAuthHeaders tok)
             body
         liftIO $ do
           simpleStatus resp `shouldBe` status200
-          case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
-            Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
-            Right dto ->
-              dto.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
+          case eitherDecode (simpleBody resp) :: Either String ConfigurationResponse of
+            Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
+            Right cfg ->
+              cfg.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
 
       it "returns 200 with updated defaultExpenseCategory when valid UUID supplied" $ do
         tok <- registerAndGetToken
@@ -115,15 +115,15 @@ updateBankingSpec =
         resp <-
           request
             "PUT"
-            "/api/users/me/configuration/banking"
+            "/api/users/me/configuration/defaults"
             (jsonAuthHeaders tok)
             body
         liftIO $ do
           simpleStatus resp `shouldBe` status200
-          case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
-            Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
-            Right dto ->
-              dto.defaultExpenseCategory `shouldBe` Just expenseOtherUUID
+          case eitherDecode (simpleBody resp) :: Either String ConfigurationResponse of
+            Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
+            Right cfg ->
+              cfg.defaultExpenseCategory `shouldBe` Just expenseOtherUUID
 
       it "returns 200 with no state change for empty body {}" $ do
         tok <- registerAndGetToken
@@ -131,20 +131,19 @@ updateBankingSpec =
         resp <-
           request
             "PUT"
-            "/api/users/me/configuration/banking"
+            "/api/users/me/configuration/defaults"
             (jsonAuthHeaders tok)
             body
         liftIO $ do
           simpleStatus resp `shouldBe` status200
-          case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
-            Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
-            Right dto -> do
-              -- The seeded configuration has banking defaults populated, and clone-on-write
-              -- carries them forward.  An empty PUT body makes no changes, so the returned
-              -- DTO must still reflect the seeded values.
-              dto.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
-              dto.defaultExpenseCategory `shouldBe` Just expenseOtherUUID
-              Map.null dto.mccExpenseCategoryMap `shouldBe` False
+          case eitherDecode (simpleBody resp) :: Either String ConfigurationResponse of
+            Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
+            Right cfg -> do
+              -- The seeded configuration has the global defaults populated, and
+              -- clone-on-write carries them forward.  An empty PUT body makes no
+              -- changes, so the returned config must still reflect the seeded values.
+              cfg.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
+              cfg.defaultExpenseCategory `shouldBe` Just expenseOtherUUID
 
       it "returns 400 when income category UUID is not in the income-category dictionary" $ do
         tok <- registerAndGetToken
@@ -152,7 +151,7 @@ updateBankingSpec =
         resp <-
           request
             "PUT"
-            "/api/users/me/configuration/banking"
+            "/api/users/me/configuration/defaults"
             (jsonAuthHeaders tok)
             body
         liftIO $ do
@@ -169,7 +168,7 @@ updateBankingSpec =
         resp <-
           request
             "PUT"
-            "/api/users/me/configuration/banking"
+            "/api/users/me/configuration/defaults"
             (jsonAuthHeaders tok)
             body
         liftIO $ do
@@ -179,12 +178,23 @@ updateBankingSpec =
             Right errResp ->
               errResp.code `shouldBe` "CONFIGURATION_ERROR"
 
+      it "returns 400 when the income category UUID is malformed" $ do
+        tok <- registerAndGetToken
+        let body = encode $ object ["defaultIncomeCategory" .= ("not-a-uuid" :: Text)]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/defaults"
+            (jsonAuthHeaders tok)
+            body
+        liftIO $ simpleStatus resp `shouldBe` status400
+
       it "returns 401 when no JWT is provided" $ do
         let body = encode $ object ["defaultIncomeCategory" .= incomeOtherUUID]
         resp <-
           request
             "PUT"
-            "/api/users/me/configuration/banking"
+            "/api/users/me/configuration/defaults"
             [(hContentType, "application/json")]
             body
         liftIO $ simpleStatus resp `shouldBe` status401
@@ -278,17 +288,17 @@ getBankingInResponseSpec =
   describe "GET /api/users/me/configuration"
     $ with mkAppSeeded
     $ do
-      it "returns a banking section with defaultIncomeCategory after a PUT" $ do
+      it "returns a top-level defaultIncomeCategory after a PUT to /defaults" $ do
         tok <- registerAndGetToken
         -- Set the income default via PUT
         let putBody = encode $ object ["defaultIncomeCategory" .= incomeOtherUUID]
         _ <-
           request
             "PUT"
-            "/api/users/me/configuration/banking"
+            "/api/users/me/configuration/defaults"
             (jsonAuthHeaders tok)
             putBody
-        -- Now GET and verify the banking field is populated
+        -- Now GET and verify the top-level field is populated
         resp <-
           request
             "GET"
@@ -300,4 +310,4 @@ getBankingInResponseSpec =
           case eitherDecode (simpleBody resp) :: Either String ConfigurationResponse of
             Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
             Right cfg ->
-              cfg.banking.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
+              cfg.defaultIncomeCategory `shouldBe` Just incomeOtherUUID

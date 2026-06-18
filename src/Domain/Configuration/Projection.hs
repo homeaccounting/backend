@@ -16,7 +16,7 @@ module Domain.Configuration.Projection
     Configuration (..),
 
     -- * Banking Sub-record
-    BankingConfiguration (defaultIncomeCategory, defaultExpenseCategory, mccExpenseCategoryMap, connections),
+    BankingConfiguration (mccExpenseCategoryMap, connections),
     emptyBankingConfiguration,
 
     -- * Bank Connections
@@ -50,9 +50,9 @@ import Domain.Configuration.Events
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
     BankConnectionTokenChanged (..),
-    BankingDefaultExpenseCategorySet (..),
-    BankingDefaultIncomeCategorySet (..),
     BankingMccExpenseCategoryMapSet (..),
+    DefaultExpenseCategorySet (..),
+    DefaultIncomeCategorySet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
     ConfigurationCreated (..),
@@ -87,11 +87,7 @@ import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 -- main 'Configuration' record stays readable. The field is empty on every
 -- projection that has not yet received any banking events.
 data BankingConfiguration = BankingConfiguration
-  { -- | Default category for income transactions when none is inferred from MCC
-    defaultIncomeCategory :: !(Maybe CategoryId),
-    -- | Default category for expense transactions when none is inferred from MCC
-    defaultExpenseCategory :: !(Maybe CategoryId),
-    -- | Mapping from MCC codes to expense category IDs for automatic categorisation
+  { -- | Mapping from MCC codes to expense category IDs for automatic categorisation
     mccExpenseCategoryMap :: !(Map MCC CategoryId),
     -- | Configured bank connections, keyed by connection ID
     connections :: !(Map BankConnectionId BankConnection)
@@ -121,9 +117,7 @@ data BankConnection = BankConnection
 emptyBankingConfiguration :: BankingConfiguration
 emptyBankingConfiguration =
   BankingConfiguration
-    { defaultIncomeCategory = Nothing,
-      defaultExpenseCategory = Nothing,
-      mccExpenseCategoryMap = Map.empty,
+    { mccExpenseCategoryMap = Map.empty,
       connections = Map.empty
     }
 
@@ -155,7 +149,11 @@ data Configuration = Configuration
     isCreated :: Bool,
     -- | Books-closed-through cutoff. 'Nothing' until 'CloseBooksThrough' has
     -- been accepted at least once. Advances monotonically.
-    booksClosedThrough :: Maybe UTCTime
+    booksClosedThrough :: Maybe UTCTime,
+    -- | Default category for income transactions when none is inferred from MCC
+    defaultIncomeCategory :: !(Maybe CategoryId),
+    -- | Default category for expense transactions when none is inferred from MCC
+    defaultExpenseCategory :: !(Maybe CategoryId)
   }
   deriving (Show, Eq)
 
@@ -172,7 +170,9 @@ configurationDefault =
       banking = emptyBankingConfiguration,
       createdBy = System,
       isCreated = False,
-      booksClosedThrough = Nothing
+      booksClosedThrough = Nothing,
+      defaultIncomeCategory = Nothing,
+      defaultExpenseCategory = Nothing
     }
 
 -- -----------------------------------------------------------------------------
@@ -231,7 +231,9 @@ handleConfigurationEvent Configuration {..} (BaseCurrencyChangedConfigurationEve
       banking = banking,
       createdBy = createdBy,
       isCreated = isCreated,
-      booksClosedThrough = booksClosedThrough
+      booksClosedThrough = booksClosedThrough,
+      defaultIncomeCategory = defaultIncomeCategory,
+      defaultExpenseCategory = defaultExpenseCategory
     }
 handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfigurationEvent evt) =
   Configuration
@@ -241,7 +243,9 @@ handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfiguration
       banking = banking,
       createdBy = createdBy,
       isCreated = isCreated,
-      booksClosedThrough = booksClosedThrough
+      booksClosedThrough = booksClosedThrough,
+      defaultIncomeCategory = defaultIncomeCategory,
+      defaultExpenseCategory = defaultExpenseCategory
     }
 handleConfigurationEvent config (DictionaryEntryAddedConfigurationEvent DictionaryEntryAdded {..}) =
   let newEntry = DictionaryEntry {entryId = entryId, name = name}
@@ -272,10 +276,10 @@ handleConfigurationEvent config (DictionaryEntryRemovedConfigurationEvent Dictio
           dictionaryId
           config.dictionaries
    in config {dictionaries = updatedDicts}
-handleConfigurationEvent config (BankingDefaultIncomeCategorySetConfigurationEvent evt) =
-  config {banking = config.banking {defaultIncomeCategory = Just evt.categoryId}}
-handleConfigurationEvent config (BankingDefaultExpenseCategorySetConfigurationEvent evt) =
-  config {banking = config.banking {defaultExpenseCategory = Just evt.categoryId}}
+handleConfigurationEvent config (DefaultIncomeCategorySetConfigurationEvent evt) =
+  config {defaultIncomeCategory = Just evt.categoryId}
+handleConfigurationEvent config (DefaultExpenseCategorySetConfigurationEvent evt) =
+  config {defaultExpenseCategory = Just evt.categoryId}
 handleConfigurationEvent config (BankingMccExpenseCategoryMapSetConfigurationEvent evt) =
   config {banking = config.banking {mccExpenseCategoryMap = evt.mapping}}
 handleConfigurationEvent config (BooksClosedThroughSetConfigurationEvent evt) =

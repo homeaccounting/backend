@@ -81,9 +81,9 @@ seedBankingDefaultsSpec =
       case maybeConfig of
         Nothing -> expectationFailure "Default configuration not found in read model"
         Just cfg -> do
-          cfg.banking.defaultIncomeCategory
+          cfg.defaultIncomeCategory
             `shouldBe` Just income.other.entryId
-          cfg.banking.defaultExpenseCategory
+          cfg.defaultExpenseCategory
             `shouldBe` Just expense.other.entryId
           cfg.banking.mccExpenseCategoryMap
             `shouldBe` defaultMccExpenseCategoryMap
@@ -122,9 +122,9 @@ cloneBankingDefaultsSpec =
                 Nothing -> expectationFailure "Cloned configuration not found in read model"
                 Just clonedCfg -> do
                   -- Banking defaults must have been carried over from the source
-                  clonedCfg.banking.defaultIncomeCategory
+                  clonedCfg.defaultIncomeCategory
                     `shouldBe` Just income.other.entryId
-                  clonedCfg.banking.defaultExpenseCategory
+                  clonedCfg.defaultExpenseCategory
                     `shouldBe` Just expense.other.entryId
                   clonedCfg.banking.mccExpenseCategoryMap
                     `shouldBe` defaultMccExpenseCategoryMap

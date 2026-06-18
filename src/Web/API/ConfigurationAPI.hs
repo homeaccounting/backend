@@ -18,7 +18,8 @@
 --   GET    /api/users/me/configuration                                       - Get my configuration
 --   PUT    /api/users/me/configuration/base-currency                         - Update base currency
 --   PUT    /api/users/me/configuration/default-currency                      - Update default currency
---   PUT    /api/users/me/configuration/banking                               - Update banking defaults
+--   PUT    /api/users/me/configuration/banking                               - Update banking config (MCC map)
+--   PUT    /api/users/me/configuration/defaults                              - Update global default categories
 --   PUT    /api/users/me/configuration/books-close                           - Close books through a cutoff
 --   GET    /api/users/me/configuration/dictionaries/:dictId                  - List dictionary entries
 --   POST   /api/users/me/configuration/dictionaries/:dictId/entries          - Add entry
@@ -37,6 +38,7 @@ module Web.API.ConfigurationAPI
     DictionaryEntryResponse (..),
     ChangeCurrencyRequest (..),
     UpdateBankingRequest (..),
+    UpdateDefaultsRequest (..),
     CloseBooksThroughRequest (..),
     AddEntryRequest (..),
     AddEntryResponse (..),
@@ -135,6 +137,15 @@ type ConfigurationAPI =
       :> "banking"
       :> ReqBody '[JSON] UpdateBankingRequest
       :> Put '[JSON] BankingConfigurationDTO
+    -- PUT /api/users/me/configuration/defaults - Update global default categories (partial)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "defaults"
+      :> ReqBody '[JSON] UpdateDefaultsRequest
+      :> Put '[JSON] ConfigurationResponse
     -- PUT /api/users/me/configuration/books-close - Close books through a cutoff
     :<|> AuthProtect "jwt"
       :> "api"
@@ -249,9 +260,7 @@ type ConfigurationAPI =
 
 -- | Projection of BankingConfiguration for wire transport.
 data BankingConfigurationDTO = BankingConfigurationDTO
-  { defaultIncomeCategory :: Maybe UUID,
-    defaultExpenseCategory :: Maybe UUID,
-    mccExpenseCategoryMap :: Map Text UUID,
+  { mccExpenseCategoryMap :: Map Text UUID,
     -- | Configured bank connections (secrets never serialised).
     connections :: [BankConnectionDTO]
   }
@@ -303,9 +312,7 @@ bankProviderText Monobank = "monobank"
 toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
 toBankingDTO b =
   BankingConfigurationDTO
-    { defaultIncomeCategory = unDictionaryEntryId <$> b.defaultIncomeCategory,
-      defaultExpenseCategory = unDictionaryEntryId <$> b.defaultExpenseCategory,
-      mccExpenseCategoryMap = Map.map unDictionaryEntryId b.mccExpenseCategoryMap,
+    { mccExpenseCategoryMap = Map.map unDictionaryEntryId b.mccExpenseCategoryMap,
       connections = map toBankConnectionDTO (Map.elems b.connections)
     }
 
@@ -315,6 +322,10 @@ data ConfigurationResponse = ConfigurationResponse
     defaultCurrency :: Text,
     dictionaries :: Map Text DictionaryResponse,
     banking :: BankingConfigurationDTO,
+    -- | Global default category for imported income transactions.
+    defaultIncomeCategory :: Maybe UUID,
+    -- | Global default category for imported expense transactions.
+    defaultExpenseCategory :: Maybe UUID,
     booksClosedThrough :: Maybe UTCTime,
     -- | Whether the user's base currency can still be changed. False once any
     -- transaction has posted against the user's External account (which anchors
@@ -398,16 +409,27 @@ instance FromJSON RenameEntryRequest
 -- | Partial-update request body for PUT /api/users/me/configuration/banking.
 --
 -- Absent or null fields mean no change; present value sets the field.
-data UpdateBankingRequest = UpdateBankingRequest
-  { defaultIncomeCategory :: Maybe UUID,
-    defaultExpenseCategory :: Maybe UUID,
-    mccExpenseCategoryMap :: Maybe (Map Text UUID)
+newtype UpdateBankingRequest = UpdateBankingRequest
+  { mccExpenseCategoryMap :: Maybe (Map Text UUID)
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON UpdateBankingRequest
 
 instance FromJSON UpdateBankingRequest
+
+-- | Partial-update body for PUT /api/users/me/configuration/defaults.
+-- Set-only: a present UUID sets the field; absent OR null means "no change"
+-- (matching the existing banking-defaults semantics — there is no clear path).
+data UpdateDefaultsRequest = UpdateDefaultsRequest
+  { defaultIncomeCategory :: Maybe UUID,
+    defaultExpenseCategory :: Maybe UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON UpdateDefaultsRequest
+
+instance FromJSON UpdateDefaultsRequest
 
 -- | Body for @PUT \/api\/users\/me\/configuration\/books-close@ — sets the
 -- inclusive books-closed cutoff to the supplied UTC instant.
@@ -481,6 +503,7 @@ configurationServer =
     :<|> changeBaseCurrencyHandler
     :<|> changeDefaultCurrencyHandler
     :<|> updateBankingHandler
+    :<|> updateDefaultsHandler
     :<|> closeBooksThroughHandler
     :<|> listDictionaryHandler
     :<|> addEntryHandler
@@ -533,20 +556,6 @@ updateBankingHandler :: AuthenticatedUser -> UpdateBankingRequest -> AppM Bankin
 updateBankingHandler user req = do
   let uid = user.userId
 
-  forM_ req.defaultIncomeCategory $ \uuid -> do
-    cid <- validateFieldCtx "defaultIncomeCategory" (tshow uuid) (mkDictionaryEntryId uuid)
-    result <- ConfigService.setBankingDefaultIncomeCategory uid cid
-    case result of
-      Left err -> throwDomainError err
-      Right () -> pure ()
-
-  forM_ req.defaultExpenseCategory $ \uuid -> do
-    cid <- validateFieldCtx "defaultExpenseCategory" (tshow uuid) (mkDictionaryEntryId uuid)
-    result <- ConfigService.setBankingDefaultExpenseCategory uid cid
-    case result of
-      Left err -> throwDomainError err
-      Right () -> pure ()
-
   forM_ req.mccExpenseCategoryMap $ \rawMap -> do
     newMap <-
       Map.traverseWithKey
@@ -561,6 +570,37 @@ updateBankingHandler user req = do
   case result of
     Left err -> throwDomainError err
     Right configData -> pure (toBankingDTO configData.banking)
+
+-- | Handler for PUT /api/users/me/configuration/defaults
+--
+-- Partial update of the global default categories: absent (or null) fields are
+-- left unchanged; present values are validated and applied via the
+-- Configuration service. Set-only — there is no clear path.
+updateDefaultsHandler :: AuthenticatedUser -> UpdateDefaultsRequest -> AppM ConfigurationResponse
+updateDefaultsHandler user req = do
+  let uid = user.userId
+
+  forM_ req.defaultIncomeCategory $ \uuid -> do
+    cid <- validateFieldCtx "defaultIncomeCategory" (tshow uuid) (mkDictionaryEntryId uuid)
+    result <- ConfigService.setDefaultIncomeCategory uid cid
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  forM_ req.defaultExpenseCategory $ \uuid -> do
+    cid <- validateFieldCtx "defaultExpenseCategory" (tshow uuid) (mkDictionaryEntryId uuid)
+    result <- ConfigService.setDefaultExpenseCategory uid cid
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  result <- ConfigService.getConfigurationForUser uid
+  case result of
+    Left err -> throwDomainError err
+    Right configData -> do
+      editable <- computeBaseCurrencyEditable uid
+      featureEnabled <- computeBankingFeatureEnabled
+      pure (toConfigurationResponse editable featureEnabled configData)
 
 -- | Handler for PUT /api/users/me/configuration/books-close
 --
@@ -751,6 +791,8 @@ toConfigurationResponse editable featureEnabled configData =
         Map.mapKeys unDictionaryId
           $ Map.map toDictionaryResponse configData.dictionaries,
       banking = toBankingDTO configData.banking,
+      defaultIncomeCategory = unDictionaryEntryId <$> configData.defaultIncomeCategory,
+      defaultExpenseCategory = unDictionaryEntryId <$> configData.defaultExpenseCategory,
       booksClosedThrough = configData.booksClosedThrough,
       baseCurrencyEditable = editable,
       bankingFeatureEnabled = featureEnabled
