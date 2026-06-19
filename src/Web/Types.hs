@@ -66,6 +66,8 @@ module Web.Types
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
+    AllocationResponse (..),
+    AllocationsResponse (..),
     TransactionListResponse (..),
     TransactionStatusResponse (..),
 
@@ -103,7 +105,7 @@ import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), 
 import Data.Bifunctor (first)
 import Data.List (sort)
 import Data.Map.Strict (Map)
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -114,7 +116,9 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations, AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allAllocations, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+-- 'allAllocations' removed: response now surfaces buckets directly via
+-- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
 import GHC.Generics (Generic)
 
@@ -518,6 +522,38 @@ instance FromJSON AmendTransactionRequest
 -- Transaction Response DTOs
 -- -----------------------------------------------------------------------------
 
+-- | A single categorised allocation slice in a transaction response.
+--
+-- Mirrors the domain 'Allocation' (see @Domain.Core.Types@): the
+-- 'categoryId' is the dictionary entry UUID rendered as text, and
+-- 'amount' reuses the domain 'Money' JSON instance
+-- (@{ "amount": <number>, "currency": <text> }@).
+data AllocationResponse = AllocationResponse
+  { categoryId :: Text,
+    amount :: Money
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AllocationResponse
+
+instance FromJSON AllocationResponse
+
+-- | The two-bucket allocations surfaced in a transaction response.
+--
+-- Mirrors the domain 'Allocations' shape: 'incomes' carries earnings
+-- categories and 'expenses' carries expense / reimbursement categories.
+-- For uncategorised transfer types ('Transfer' / 'Adjustment') both
+-- buckets are empty.
+data AllocationsResponse = AllocationsResponse
+  { incomes :: [AllocationResponse],
+    expenses :: [AllocationResponse]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AllocationsResponse
+
+instance FromJSON AllocationsResponse
+
 -- | Response containing transaction details.
 --
 -- Fields:
@@ -568,7 +604,7 @@ data TransactionResponse
     status :: Text,
     failureReason :: Maybe Text,
     transactionType :: Text,
-    category :: Maybe Text,
+    allocations :: AllocationsResponse,
     date :: Text,
     labels :: [UUID],
     -- | Count of completed amendments on this transaction. Always @0@
@@ -946,7 +982,7 @@ fromTransactionData txId TransactionData {..} =
         Failed failReason -> Just failReason
         _ -> Nothing,
       transactionType = transactionTypeToText transactionType,
-      category = transactionTypeCategoryText transactionType,
+      allocations = allocationsResponseOf transactionType,
       date = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" date,
       labels = sort [unDictionaryEntryId eid | eid <- Set.toList labels],
       amendmentCount = amendmentCount
@@ -978,7 +1014,7 @@ fromTransaction txId tx =
         Failed failReason -> Just failReason
         _ -> Nothing,
       transactionType = transactionTypeToText tx.transactionType,
-      category = transactionTypeCategoryText tx.transactionType,
+      allocations = allocationsResponseOf tx.transactionType,
       date = "",
       labels = sort [unDictionaryEntryId eid | eid <- Set.toList tx.labels],
       amendmentCount = tx.amendmentCount
@@ -1015,27 +1051,26 @@ transactionTypeToText (Expense _) = "expense"
 transactionTypeToText Transfer = "transfer"
 transactionTypeToText Adjustment = "adjustment"
 
--- | Extract category UUIDs from a 'TransactionType' as text.
+-- | Build the two-bucket 'AllocationsResponse' for a 'TransactionType'.
 --
--- Returns the list of all allocation category ids for categorised
--- ('Income' / 'Expense') transfer types, in their original order. For
--- non-categorised types ('Transfer', 'Adjustment') the list is empty.
-transactionTypeAllocationsText :: TransactionType -> [Text]
-transactionTypeAllocationsText tt = case allocationsOf tt of
-  Nothing -> []
-  Just allocs ->
-    [ T.pack $ UUID.toString $ unDictionaryEntryId a.categoryId
-    | a <- allAllocations allocs
-    ]
-
--- | First allocation's category UUID for a 'TransactionType', if any.
---
--- Preserved as a transitional accessor for the legacy single-category
--- 'TransactionResponse.category' JSON field. The response shape will
--- be widened to a list in a follow-up; until then we surface the head
--- of the allocation list for categorised transactions.
-transactionTypeCategoryText :: TransactionType -> Maybe Text
-transactionTypeCategoryText tt = listToMaybe (transactionTypeAllocationsText tt)
+-- Categorised types ('Income' / 'Expense') surface their full
+-- @incomes@ / @expenses@ buckets, preserving slice order and converting
+-- each domain 'Allocation' to an 'AllocationResponse' (category UUID as
+-- text, amount reusing the domain 'Money' JSON instance). Non-categorised
+-- types ('Transfer' / 'Adjustment') yield empty buckets.
+allocationsResponseOf :: TransactionType -> AllocationsResponse
+allocationsResponseOf tt = case allocationsOf tt of
+  Nothing -> AllocationsResponse [] []
+  Just (Allocations incs exps) ->
+    AllocationsResponse
+      (map toAllocationResponse incs)
+      (map toAllocationResponse exps)
+  where
+    toAllocationResponse (Allocation cid amt) =
+      AllocationResponse
+        { categoryId = T.pack $ UUID.toString $ unDictionaryEntryId cid,
+          amount = amt
+        }
 
 -- -----------------------------------------------------------------------------
 -- Category Parsing
