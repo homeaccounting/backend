@@ -212,8 +212,7 @@ listTransactions ::
 listTransactions userId filt page = do
   logDebug $ "Listing transactions for user " <> displayShow userId
   accountRM <- view accountReadModelL
-  accessible <- AccountRM.getAccessibleAccounts accountRM userId
-  let visible = Set.fromList [aid | (aid, _, _) <- accessible]
+  visible <- AccountRM.getAccessibleAccountIds accountRM userId
   if Set.null visible
     then do
       logDebug "User has no accessible accounts; returning empty list"

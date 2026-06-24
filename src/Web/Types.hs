@@ -71,6 +71,13 @@ module Web.Types
     TransactionListResponse (..),
     TransactionStatusResponse (..),
 
+    -- * Reporting Response DTOs
+    CategorySpend (..),
+    SpendingByCategoryResponse (..),
+    IncomeVsExpenseResponse (..),
+    AccountNetWorth (..),
+    NetWorthResponse (..),
+
     -- * Error Response DTOs
     ErrorResponse (..),
     ValidationErrorResponse (..),
@@ -666,6 +673,68 @@ data TransactionStatusResponse
 instance ToJSON TransactionStatusResponse
 
 instance FromJSON TransactionStatusResponse
+
+-- -----------------------------------------------------------------------------
+-- Reporting Response DTOs
+-- -----------------------------------------------------------------------------
+
+-- | Net spend for one expense category over the requested period, in the
+-- base currency. May be <= 0 when reimbursements exceed spend.
+data CategorySpend = CategorySpend
+  { categoryId :: Text,
+    total :: Money
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON CategorySpend
+
+instance FromJSON CategorySpend
+
+-- | GET /api/reports/spending-by-category
+data SpendingByCategoryResponse = SpendingByCategoryResponse
+  { categories :: [CategorySpend],
+    total :: Money
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SpendingByCategoryResponse
+
+instance FromJSON SpendingByCategoryResponse
+
+-- | GET /api/reports/income-vs-expense (all amounts in base currency)
+data IncomeVsExpenseResponse = IncomeVsExpenseResponse
+  { income :: Money,
+    expense :: Money,
+    net :: Money
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON IncomeVsExpenseResponse
+
+instance FromJSON IncomeVsExpenseResponse
+
+-- | One owned account's contribution to net worth.
+data AccountNetWorth = AccountNetWorth
+  { accountId :: UUID,
+    balance :: Money,
+    baseBalance :: Money
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AccountNetWorth
+
+instance FromJSON AccountNetWorth
+
+-- | GET /api/reports/net-worth
+data NetWorthResponse = NetWorthResponse
+  { accounts :: [AccountNetWorth],
+    total :: Money
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON NetWorthResponse
+
+instance FromJSON NetWorthResponse
 
 -- -----------------------------------------------------------------------------
 -- Error Response DTOs

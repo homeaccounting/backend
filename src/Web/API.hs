@@ -43,6 +43,7 @@ module Web.API
     module Web.API.ConfigurationAPI,
     module Web.API.TelegramWebhookAPI,
     module Web.API.BankingAPI,
+    module Web.API.ReportingAPI,
   )
 where
 
@@ -53,6 +54,7 @@ import Web.API.AccountAPI
 import Web.API.AuthAPI
 import Web.API.BankingAPI
 import Web.API.ConfigurationAPI
+import Web.API.ReportingAPI
 import Web.API.TelegramWebhookAPI
 import Web.API.TransactionAPI
 import Web.API.UserAPI
@@ -81,6 +83,7 @@ type API =
     :<|> ConfigurationAPI
     :<|> TelegramWebhookAPI
     :<|> BankingAPI
+    :<|> ReportingAPI
 
 -- | Proxy for the combined API.
 api :: Proxy API
@@ -104,3 +107,4 @@ server =
     :<|> configurationServer
     :<|> telegramWebhookServer
     :<|> bankingServer
+    :<|> reportingServer

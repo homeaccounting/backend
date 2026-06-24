@@ -43,6 +43,7 @@ module Application.ReadModels.Account
     getAccountForUser,
     getAllAccounts,
     getAccessibleAccounts,
+    getAccessibleAccountIds,
     getUserRegularAccounts,
     accountExists,
     balanceAsOf,
@@ -58,6 +59,8 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
@@ -85,6 +88,7 @@ import Domain.Core.Types
     TransactionId,
     UserId,
     addMoney,
+    isRegular,
     mkAccountIdSafe,
     subtractMoney,
     unAccountId,
@@ -508,6 +512,21 @@ getAccessibleAccounts readModelTVar userId = do
         ]
   return accessibleAccounts
 
+-- | The set of account ids a user can see (any role grants visibility).
+--
+-- A thin projection over 'getAccessibleAccounts' that discards the data and
+-- role, keeping only the ids as a 'Set' for membership tests. Callers that
+-- only need "is this account visible to the user?" should prefer this over
+-- rebuilding the set from 'getAccessibleAccounts' at each site.
+getAccessibleAccountIds ::
+  (MonadIO m) =>
+  TVar AccountReadModel ->
+  UserId ->
+  m (Set AccountId)
+getAccessibleAccountIds readModelTVar userId = do
+  accessible <- getAccessibleAccounts readModelTVar userId
+  return $ Set.fromList [accountId | (accountId, _, _) <- accessible]
+
 -- | Retrieves a user's regular (non-External) accounts as (AccountId, name, balance) triples.
 --
 -- Filters accounts where the user is the creator and the account type is RegularAccount.
@@ -529,9 +548,6 @@ getUserRegularAccounts readModelTVar userId = do
       acc.createdBy == userId,
       isRegular acc.accountType
     ]
-  where
-    isRegular (Regular _) = True
-    isRegular External = False
 
 -- | Checks if an account exists in the read model.
 --

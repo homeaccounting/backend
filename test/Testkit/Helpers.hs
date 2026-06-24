@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -26,6 +27,17 @@ module Testkit.Helpers
     mockPasswordHash,
     mockExchangeRate,
 
+    -- * Index-Based Id Builders
+    mockAccountIdN,
+    mockCategoryIdN,
+    mockTransactionIdN,
+    mockUserIdN,
+
+    -- * Read-Model Fixture Builders
+    fixtureTime,
+    mockAccountData,
+    mockTransactionData,
+
     -- * Test Assertions
     shouldBeRight,
     shouldBeLeft,
@@ -44,11 +56,16 @@ module Testkit.Helpers
   )
 where
 
+import Application.ReadModels.Account (AccountData (..))
+import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Data.ByteString as BS
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.UUID (UUID)
+import qualified Data.UUID as UUID
 import Domain.Core.Types
+import Domain.Transaction.Projection (TransactionStatus (..))
 import RIO
+import RIO.Time (UTCTime (..), fromGregorian)
 import Test.Hspec
 
 -- -----------------------------------------------------------------------------
@@ -145,6 +162,85 @@ mockPasswordHash = PasswordHash
 -- ExchangeRate {source = UAH, target = USD, rate = ...}
 mockExchangeRate :: Currency -> Currency -> Rational -> ExchangeRate
 mockExchangeRate = unsafeExchangeRate
+
+-- -----------------------------------------------------------------------------
+-- Index-Based Id Builders
+-- -----------------------------------------------------------------------------
+
+-- These build deterministic ids from a small 'Word32' index. Each entity type
+-- occupies a distinct UUID word position so that, e.g., @mockAccountIdN 1@ and
+-- @mockTransactionIdN 1@ never share an underlying UUID. Prefer these over
+-- re-deriving @unsafe*Id . UUID.fromWords@ helpers inside individual specs.
+
+-- | An 'AccountId' built from an index (occupies UUID word 0).
+mockAccountIdN :: Word32 -> AccountId
+mockAccountIdN n = unsafeAccountId (UUID.fromWords n 0 0 0)
+
+-- | A 'CategoryId' built from an index (occupies UUID word 1).
+mockCategoryIdN :: Word32 -> CategoryId
+mockCategoryIdN n = unsafeDictionaryEntryId (UUID.fromWords 0 n 0 0)
+
+-- | A 'TransactionId' built from an index (occupies UUID word 2).
+mockTransactionIdN :: Word32 -> TransactionId
+mockTransactionIdN n = unsafeTransactionId (UUID.fromWords 0 0 n 0)
+
+-- | A 'UserId' built from an index (occupies UUID word 3).
+mockUserIdN :: Word32 -> UserId
+mockUserIdN n = unsafeUserId (UUID.fromWords 0 0 0 n)
+
+-- -----------------------------------------------------------------------------
+-- Read-Model Fixture Builders
+-- -----------------------------------------------------------------------------
+
+-- | A fixed timestamp (2026-06-01T00:00:00Z) used as the default date for
+-- read-model fixtures. Tests that exercise date windows can override the
+-- 'date' field with a record update.
+fixtureTime :: UTCTime
+fixtureTime = UTCTime (fromGregorian 2026 6 1) 0
+
+-- | Build an 'AccountData' read-model row from its owner, type, status and
+-- balance. Non-distinguishing fields take inert defaults (name @"fixture"@,
+-- empty access list, no overdraft, no transactions, version 1).
+mockAccountData :: UserId -> AccountType -> AccountStatus -> Money -> AccountData
+mockAccountData owner ty st bal =
+  AccountData
+    { name = "fixture",
+      balance = bal,
+      createdBy = owner,
+      accountType = ty,
+      accessList = mempty,
+      overdraftLimit = Nothing,
+      hasTransactions = False,
+      status = st,
+      version = 1
+    }
+
+-- | Build a 'TransactionData' read-model row from its legs, optional exchange
+-- rate and categorised type. Status defaults to 'Completed', date to
+-- 'fixtureTime', and the remaining descriptive fields to inert defaults;
+-- override with record updates where a test needs a specific value.
+mockTransactionData ::
+  AccountId ->
+  AccountId ->
+  Money ->
+  Money ->
+  Maybe ExchangeRate ->
+  TransactionType ->
+  TransactionData
+mockTransactionData src tgt srcAmt tgtAmt rate tt =
+  TransactionData
+    { sourceAccountId = src,
+      targetAccountId = tgt,
+      sourceAmount = srcAmt,
+      targetAmount = tgtAmt,
+      exchangeRate = rate,
+      description = "fixture",
+      status = Completed,
+      transactionType = tt,
+      date = fixtureTime,
+      labels = mempty,
+      amendmentCount = 0
+    }
 
 -- -----------------------------------------------------------------------------
 -- Test Assertions

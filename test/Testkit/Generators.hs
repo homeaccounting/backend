@@ -45,6 +45,7 @@ module Testkit.Generators
     genAllocationsSummingTo,
     genAllocationListSummingTo,
     partitionMoneyExact,
+    genTransactionData,
     genIdentityAmendInputs,
 
     -- * Arbitrary Instances
@@ -67,7 +68,9 @@ import Domain.Core.Types
 import Domain.Transaction.Commands (AmendTransaction (..))
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
 import RIO
+import qualified RIO.NonEmpty as NE
 import Test.QuickCheck
+import Testkit.Helpers (mockTransactionData)
 
 -- -----------------------------------------------------------------------------
 -- Currency Generators
@@ -484,6 +487,93 @@ instance Arbitrary Day where
   shrink day = [addDays (-1) day, addDays 1 day]
 
 -- -----------------------------------------------------------------------------
+-- Transaction Generators
+-- -----------------------------------------------------------------------------
+
+-- | The kind of transaction to build: a single-bucket Income, a single-bucket
+-- Expense, a mixed (two-bucket) Income carrying both an income bucket and a
+-- contra-expense (reimbursement) bucket, an uncategorised Transfer, or an
+-- Adjustment.
+data TxnShape
+  = ShIncome
+  | ShExpense
+  | ShMixedIncome
+  | ShTransfer
+  | ShAdjustment
+  deriving (Show, Eq, Enum, Bounded)
+
+-- | Generate an internally-consistent 'TransactionData' across all kinds.
+--
+-- For categorised kinds (Income / Expense) the allocations across both buckets
+-- sum exactly to the regular (user-account) leg, and the external (base) leg
+-- equals @regular * rate@ — so reporting aggregations over the result are
+-- well-defined and exact. @exchangeRate@ is 'Nothing' iff the regular and base
+-- currencies coincide (same-currency txn), in which case the two legs are
+-- equal. A 'ShMixedIncome' populates BOTH buckets so the reimbursement / contra
+-- path is exercised. Transfer and Adjustment carry no allocations and use
+-- matching legs with no rate.
+--
+-- Record assembly (status, date, descriptive defaults) is delegated to
+-- 'mockTransactionData'; only the leg / allocation invariants live here. Used
+-- by both the reporting and transaction-amendment specs.
+genTransactionData :: Gen TransactionData
+genTransactionData = do
+  shape <- elements [minBound .. maxBound]
+  regCur <- genCurrency
+  baseCur <- genCurrency
+  src <- genAccountId
+  tgt <- genAccountId
+  case shape of
+    ShTransfer -> uncategorised src tgt regCur Transfer
+    ShAdjustment -> uncategorised src tgt regCur Adjustment
+    _ -> do
+      -- Build the allocation buckets and the regular-leg total they sum to.
+      -- genAllocationListSummingTo on a strictly-positive total always yields a
+      -- non-empty list; 'discard' covers the unreachable empty case totally.
+      (allocs, regTotal) <- case shape of
+        ShExpense -> do
+          total <- genPositiveMoneyIn regCur
+          exps <- maybe discard pure . NE.nonEmpty =<< genAllocationListSummingTo total
+          pure (mkExpenseAllocations exps, total)
+        ShMixedIncome -> do
+          incSub <- genPositiveMoneyIn regCur
+          expSub <- genPositiveMoneyIn regCur
+          incs <- maybe discard pure . NE.nonEmpty =<< genAllocationListSummingTo incSub
+          exps <- maybe discard pure . NE.nonEmpty =<< genAllocationListSummingTo expSub
+          -- Regular leg = income bucket total + contra-expense bucket total.
+          let total = unsafeMoney regCur (unMoney incSub + unMoney expSub)
+          pure (mkMixedAllocations incs exps, total)
+        _ -> do
+          total <- genPositiveMoneyIn regCur
+          incs <- maybe discard pure . NE.nonEmpty =<< genAllocationListSummingTo total
+          pure (mkIncomeAllocations incs, total)
+      let isIncome = shape /= ShExpense
+      (mRate, extTotal) <- legRate regCur baseCur regTotal
+      let tt = if isIncome then Income allocs else Expense allocs
+          -- Place legs so externalLeg/regularLeg resolve correctly per kind:
+          --   Expense: source=regular, target=external
+          --   Income : source=external, target=regular
+          (srcAmt, tgtAmt) =
+            if isIncome
+              then (extTotal, regTotal)
+              else (regTotal, extTotal)
+      pure (mockTransactionData src tgt srcAmt tgtAmt mRate tt)
+  where
+    -- An uncategorised txn (Transfer / Adjustment): equal legs, no rate.
+    uncategorised src tgt cur tt = do
+      amt <- genPositiveMoneyIn cur
+      pure (mockTransactionData src tgt amt amt Nothing tt)
+    -- Same currency => identity (rate Nothing, legs equal). Otherwise a
+    -- positive rate carries the regular leg into the base currency.
+    legRate regCur baseCur regTotal
+      | regCur == baseCur = pure (Nothing, regTotal)
+      | otherwise = do
+          ratio <- choose (1, 100000 :: Integer)
+          let er = unsafeExchangeRate regCur baseCur (fromInteger ratio)
+              extAmt = unMoney regTotal * fromInteger ratio
+          pure (Just er, unsafeMoney baseCur extAmt)
+
+-- -----------------------------------------------------------------------------
 -- Cross-kind Amendment Generators
 -- -----------------------------------------------------------------------------
 
@@ -492,38 +582,19 @@ instance Arbitrary Day where
 -- so the predicate is guaranteed to return 'True'.
 genIdentityAmendInputs :: Gen (TransactionData, AmendTransaction)
 genIdentityAmendInputs = do
-  srcId <- genAccountId
-  tgtId <- genAccountId
-  srcAmt <- genPositiveMoney
-  tgtAmt <- genPositiveMoney
-  mRate <- oneof [pure Nothing, Just <$> genExchangeRate]
-  tt <- genTransactionType
+  td <- genTransactionData
   txId <- genTransactionId
   uid <- genUserId
-  let td =
-        TransactionData
-          { sourceAccountId = srcId,
-            targetAccountId = tgtId,
-            sourceAmount = srcAmt,
-            targetAmount = tgtAmt,
-            exchangeRate = mRate,
-            description = "identity-seed",
-            status = Completed,
-            transactionType = tt,
-            date = UTCTime (fromGregorian 2024 1 1) 0,
-            labels = Set.empty,
-            amendmentCount = 0
-          }
-      cmd =
+  let cmd =
         AmendTransaction
           { transactionId = txId,
-            newSourceAccountId = srcId,
-            newTargetAccountId = tgtId,
-            newSourceAmount = srcAmt,
-            newTargetAmount = tgtAmt,
-            newExchangeRate = mRate,
+            newSourceAccountId = td.sourceAccountId,
+            newTargetAccountId = td.targetAccountId,
+            newSourceAmount = td.sourceAmount,
+            newTargetAmount = td.targetAmount,
+            newExchangeRate = td.exchangeRate,
             newAllocations = Nothing,
-            newTransactionType = tt,
+            newTransactionType = td.transactionType,
             by = uid
           }
   pure (td, cmd)

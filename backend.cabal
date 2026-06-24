@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.5.2
+version:        0.5.3
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -47,6 +47,7 @@ library
       Application.Services.ConfigurationService
       Application.Services.ExchangeRatePublisher
       Application.Services.Internal
+      Application.Services.ReportingService
       Application.Services.TransactionHistoryService
       Application.Services.TransactionService
       Application.Services.UserService
@@ -118,6 +119,7 @@ library
       Web.API.BankingAPI
       Web.API.ConfigurationAPI
       Web.API.InfoAPI
+      Web.API.ReportingAPI
       Web.API.TelegramWebhookAPI
       Web.API.TransactionAPI
       Web.API.UserAPI
@@ -298,6 +300,8 @@ test-suite backend-test
       Application.Services.CrossKindAmendmentSpec
       Application.Services.ExchangeRatePublisherSpec
       Application.Services.InternalSpec
+      Application.Services.ReportingServicePropertySpec
+      Application.Services.ReportingServiceSpec
       Application.Services.TransactionAllocationsIntegrationSpec
       Application.Services.TransactionAmendmentSpec
       Application.Services.TransactionHistoryServiceSpec
@@ -352,6 +356,7 @@ test-suite backend-test
       Integration.BooksClosePeriodIntegrationSpec
       Integration.CrossKindAmendmentIntegrationSpec
       Integration.ExchangeRatePersistenceSpec
+      Integration.ReportingWorkflowIntegrationSpec
       Integration.TransactionAmendmentIntegrationSpec
       Integration.TransactionCancellationIntegrationSpec
       Integration.TransactionCategoryIntegrationSpec
@@ -381,6 +386,7 @@ test-suite backend-test
       Web.API.TransactionAPISpec
       Web.API.TransactionLabelsAPISpec
       Web.QuerySpec
+      Web.ReportingResponseSpec
       Paths_backend
   hs-source-dirs:
       test

@@ -97,6 +97,8 @@ module Domain.Core.Types
     defaultAsset,
     defaultLoan,
     AccountType (..),
+    isRegular,
+    isExternal,
     AccountRole (..),
     AccountAccess (..),
     AccountStatus (..),
@@ -894,6 +896,17 @@ data AccountType
   = Regular AccountSubtype
   | External
   deriving (Show, Eq, Generic)
+
+-- | True for user-created 'Regular' accounts (those that carry an
+-- 'AccountSubtype'); False for the system-managed 'External' account.
+isRegular :: AccountType -> Bool
+isRegular (Regular _) = True
+isRegular External = False
+
+-- | True for the system-managed 'External' account; the complement of
+-- 'isRegular'.
+isExternal :: AccountType -> Bool
+isExternal = not . isRegular
 
 instance ToJSON AccountType where
   toJSON External = toJSON ("External" :: Text)

@@ -51,6 +51,7 @@ module Application.ReadModels.Transaction
 
     -- * Helper Functions
     transactionToMap,
+    touchesVisible,
   )
 where
 
@@ -434,7 +435,7 @@ listTransactions readModelTVar visible filt page = do
   let matches =
         [ (txId, td)
         | (txId, td) <- Map.toList model.transactions,
-          isVisible td,
+          touchesVisible visible td,
           matchesAccount td,
           matchesDate td,
           matchesStatus td,
@@ -445,9 +446,6 @@ listTransactions readModelTVar visible filt page = do
       slice = take page.limit (drop page.offset sorted)
   pure (total, slice)
   where
-    isVisible td =
-      Set.member td.sourceAccountId visible
-        || Set.member td.targetAccountId visible
     matchesAccount td = case filt.accountId of
       Nothing -> True
       Just a -> td.sourceAccountId == a || td.targetAccountId == a
@@ -478,6 +476,14 @@ transactionToMap ::
   TVar TransactionReadModel ->
   m (Map TransactionId TransactionData)
 transactionToMap = getAllTransactions
+
+-- | Whether a transaction touches at least one account in the visible set,
+-- on either its source or target leg. This is the access-control visibility
+-- predicate shared by 'listTransactions' and the reporting aggregations.
+touchesVisible :: Set AccountId -> TransactionData -> Bool
+touchesVisible visible td =
+  Set.member td.sourceAccountId visible
+    || Set.member td.targetAccountId visible
 
 -- | Count transactions that reference the given dictionary entry id, either
 -- as a label (via 'TransactionData.labels') or as the categorised
