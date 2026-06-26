@@ -38,7 +38,7 @@ import Domain.Core.Types
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Commands (InitiateTransaction (..))
-import Infrastructure.App (HasBankImportReadModel (..), runAppM)
+import Infrastructure.App (runAppM)
 import Network.HTTP.Types (Status, status200)
 import Network.Wai.Test (SResponse (..), simpleBody, simpleStatus)
 import RIO
@@ -46,7 +46,7 @@ import qualified RIO.Text as T
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, userExternalAccountId)
 import Testkit.Helpers (singletonAllocation)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Testkit.TransactionEditFixture
   ( Seed (..),
     addExpenseCategory,
@@ -207,8 +207,7 @@ spec = describe "Integration / CrossKindAmendment" $ do
     txId <- seedIncomeWithExtId seed seed.seedAccount 100 extIdText
     -- Verify the external ID is indexed before amendment.
     let extId = unsafeExternalTransactionId extIdText
-    bankImportRM <- runAppM seed.seedEnv $ view bankImportReadModelL
-    importedBefore <- isImported bankImportRM extId
+    importedBefore <- runDbIn seed.seedEnv $ isImported extId
     importedBefore `shouldBe` True
     -- Amend: Income (External → seedAccount) → Transfer (seedAccount → walletB).
     let body =
@@ -223,7 +222,7 @@ spec = describe "Integration / CrossKindAmendment" $ do
     tr <- decodeTx resp
     tr.transactionType `shouldBe` "transfer"
     -- The externalTransactionId index must still map to this transaction.
-    importedAfter <- isImported bankImportRM extId
+    importedAfter <- runDbIn seed.seedEnv $ isImported extId
     importedAfter `shouldBe` True
 
   -- -------------------------------------------------------------------------

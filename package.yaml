@@ -161,6 +161,9 @@ tests:
       - hspec-wai >= 0.11 && < 0.12
       - hspec-wai-json >= 0.11 && < 0.12
       - eventium-testkit >= 0.3.2 && < 0.4.0
+      # SQLite-backed harness for persistent read-model tests (in-memory DB).
+      - eventium-sqlite >= 0.3.2 && < 0.4.0
+      - persistent-sqlite >= 2.13 && < 2.15
       - vector >= 0.12 && < 0.14
     build-tools:
       - hspec-discover

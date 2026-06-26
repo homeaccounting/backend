@@ -17,10 +17,10 @@
 module Application.Services.BankImportServiceSpec (spec) where
 
 import Application.ReadModels.BankImportReadModel
-  ( BankImportReadModel,
-    createBankImportReadModel,
+  ( bankImportProjectionName,
     handleBankImportEvents,
     isImported,
+    resetBankImport,
   )
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
@@ -33,6 +33,7 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import Database.Persist (insert_)
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Configuration.Defaults
   ( DefaultEntry (..),
@@ -60,14 +61,19 @@ import Domain.Transaction.Events
   ( TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
   )
-import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
-import Infrastructure.App (AppEnv (..), HasReadModel (..), runAppM)
+import Eventium (Codec (..), EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
+import Eventium.ProjectionCache.Postgresql (postgresqlCheckpointStore)
+import Eventium.Store.Postgresql (jsonStringCodec)
+import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)
+import Infrastructure.App (AppEnv (..), HasReadModel (..), runAppM, runDb)
 import Infrastructure.Banking.Provider
   ( BankAccountId,
     BankProvider (..),
     BankTransaction (..),
     TransactionClassification (..),
   )
+import Infrastructure.Eventium (accountingGlobalEventStoreReader)
+import Infrastructure.Eventium.Backfill (backfillReadModel, rebuildReadModelTables)
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
@@ -81,7 +87,7 @@ import Testkit.Helpers
     singletonExpense,
     singletonIncome,
   )
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Test Data
@@ -551,17 +557,58 @@ spec = describe "BankImportService" $ do
       let txId = mockTransactionId (UUID.fromWords 7 0 0 0)
           extId = unsafeExternalTransactionId "tx-fails-later"
 
-      rm <- createBankImportReadModel
+      -- The test AppEnv carries a migrated SQLite pool; drive the persistent
+      -- read model's own handler through it (mirroring production).
+      env <- createTestAppEnvWithProcessManager
 
       -- TransactionPostingInitiated carrying the external id records the mapping.
-      feedBankImportEvents rm [mkInitiatedEvent txId (Just extId) 0]
-      imported1 <- isImported rm extId
+      feedBankImportEvents env [mkInitiatedEvent txId (Just extId) 0]
+      imported1 <- runDbIn env $ isImported extId
       imported1 `shouldBe` True
 
       -- A later TransactionPostingFailed on the SAME stream must NOT evict it.
-      feedBankImportEvents rm [mkFailedEvent txId 1]
-      imported2 <- isImported rm extId
+      feedBankImportEvents env [mkFailedEvent txId 1]
+      imported2 <- runDbIn env $ isImported extId
       imported2 `shouldBe` True
+
+  -- Foundation: the reusable backfill/rebuild path replays the event log into
+  -- the persistent table. We insert events straight into the store (bypassing
+  -- the live in-transaction handler), simulating pre-existing history before the
+  -- projection existed, then drive the foundation functions.
+  describe "bank-import backfill + rebuild" $ do
+    it "backfills the dedup table from the event log; re-running is idempotent" $ do
+      env <- createTestAppEnvWithProcessManager
+      let tx1 = mockTransactionId (UUID.fromWords 11 0 0 0)
+          tx2 = mockTransactionId (UUID.fromWords 12 0 0 0)
+          ext1 = unsafeExternalTransactionId "bf-1"
+          ext2 = unsafeExternalTransactionId "bf-2"
+          cp = postgresqlCheckpointStore bankImportProjectionName
+          gr = accountingGlobalEventStoreReader defaultSqlEventStoreConfig
+      storeInitiatedEvent env tx1 ext1
+      storeInitiatedEvent env tx2 ext2
+      -- Not yet projected (direct insert bypassed the live handler).
+      notYet <- runDbIn env $ isImported ext1
+      notYet `shouldBe` False
+      applied <- backfillReadModel env.dbPool gr cp handleBankImportEvents 100
+      applied `shouldBe` 2
+      runDbIn env (isImported ext1) `shouldReturn` True
+      runDbIn env (isImported ext2) `shouldReturn` True
+      -- Idempotent: nothing past the checkpoint on a second pass.
+      applied2 <- backfillReadModel env.dbPool gr cp handleBankImportEvents 100
+      applied2 `shouldBe` 0
+
+    it "rebuild truncates and replays to identical state" $ do
+      env <- createTestAppEnvWithProcessManager
+      let tx1 = mockTransactionId (UUID.fromWords 13 0 0 0)
+          ext1 = unsafeExternalTransactionId "rb-1"
+          cp = postgresqlCheckpointStore bankImportProjectionName
+          gr = accountingGlobalEventStoreReader defaultSqlEventStoreConfig
+      storeInitiatedEvent env tx1 ext1
+      _ <- backfillReadModel env.dbPool gr cp handleBankImportEvents 100
+      runDbIn env (isImported ext1) `shouldReturn` True
+      total <- rebuildReadModelTables env.dbPool resetBankImport gr cp handleBankImportEvents 100
+      total `shouldBe` 1
+      runDbIn env (isImported ext1) `shouldReturn` True
 
 -- -----------------------------------------------------------------------------
 -- Event construction for the read-model dedup test
@@ -572,16 +619,15 @@ spec = describe "BankImportService" $ do
 -- processEvent reads back via unpackGlobalEvent.
 -- -----------------------------------------------------------------------------
 
--- | Drive the bank-import read model's own event handler in IO. The explicit
--- IO signature pins the otherwise-ambiguous @MonadIO m@ on
--- 'handleBankImportEvents'.
+-- | Drive the persistent bank-import read model's own event handler against the
+-- test AppEnv's SQLite pool (mirroring the production in-transaction apply).
 feedBankImportEvents ::
-  TVar BankImportReadModel ->
+  AppEnv ->
   [GlobalStreamEvent AccountingEvent] ->
   IO ()
-feedBankImportEvents rm events =
-  let EventHandler runHandler = handleBankImportEvents rm
-   in runHandler events
+feedBankImportEvents env events =
+  let EventHandler runHandler = handleBankImportEvents
+   in runDbIn env $ runHandler events
 
 mkInitiatedEvent ::
   TransactionId ->
@@ -612,6 +658,30 @@ mkInitiatedEvent txId mExtId seqNo =
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
+
+-- | Insert a 'TransactionPostingInitiated' straight into the event store
+-- (bypassing the live publisher), so backfill/rebuild have pre-existing history
+-- to replay. The global sequence number is assigned by the store on insert.
+storeInitiatedEvent :: AppEnv -> TransactionId -> ExternalTransactionId -> IO ()
+storeInitiatedEvent env txId extId =
+  let payload =
+        TransactionPostingInitiatedEvent
+          TransactionPostingInitiated
+            { sourceAccountId = mockAccountId (UUID.fromWords 1 0 0 0),
+              targetAccountId = mockAccountId (UUID.fromWords 2 0 0 0),
+              sourceAmount = mockMoneyWith UAH 100,
+              targetAmount = mockMoneyWith UAH 100,
+              exchangeRate = Nothing,
+              description = "seed",
+              by = mockUserId (UUID.fromWords 9 0 0 0),
+              at = testTime,
+              transactionType = Transfer,
+              externalTransactionId = Just extId,
+              labels = Set.empty
+            }
+   in runAppM env
+        $ runDb
+        $ insert_ (SqlEvent (unTransactionId txId) 0 (jsonStringCodec.encode payload) Nothing)
 
 mkFailedEvent ::
   TransactionId ->

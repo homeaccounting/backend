@@ -68,8 +68,8 @@ import Domain.Core.Types
 import Domain.Transaction.Commands (InitiateTransaction (..))
 import Infrastructure.App
   ( AppM,
-    HasBankImportReadModel (..),
     HasReadModel (..),
+    runDb,
     withUserLock,
   )
 import Infrastructure.Banking.Provider
@@ -298,8 +298,7 @@ importTransaction ::
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
 importTransaction provider userId accountLink tx = do
-  bankImportRM <- view bankImportReadModelL
-  alreadyImported <- isImported bankImportRM tx.externalId
+  alreadyImported <- runDb $ isImported tx.externalId
   if alreadyImported
     then do
       logDebug $ "Skipping already-imported transaction: " <> display tx.externalId

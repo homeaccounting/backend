@@ -40,6 +40,7 @@ module Infrastructure.Eventium
     -- * Event Store Creation
     accountingEventStoreReader,
     accountingEventStoreWriter,
+    accountingEventStoreWriterWithRaw,
     accountingVersionedEventStoreReader,
     accountingGlobalEventStoreReader,
 
@@ -241,9 +242,24 @@ accountingEventStoreWriter ::
   AccountingProcessManagerFactory (SqlPersistT m) ->
   [AccountingEventHandler (SqlPersistT m)] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
-accountingEventStoreWriter config pmFactory extraHandlers =
-  let rawWriter = postgresqlTaggedEventStoreWriter config
-      globalReader = accountingGlobalEventStoreReader config
+accountingEventStoreWriter config =
+  accountingEventStoreWriterWithRaw (postgresqlTaggedEventStoreWriter config) config
+
+-- | Like 'accountingEventStoreWriter' but with the raw (pre-publishing) tagged
+-- writer supplied explicitly, decoupling the wiring from the SQL backend.
+-- Production passes @postgresqlTaggedEventStoreWriter config@; tests pass the
+-- SQLite raw writer, so both exercise the identical synchronous-publisher /
+-- in-transaction-projection wiring.
+accountingEventStoreWriterWithRaw ::
+  forall m entity.
+  (MonadIO m, PersistEntity entity, PersistEntityBackend entity ~ SqlBackend) =>
+  AccountingTaggedEventStoreWriter (SqlPersistT m) ->
+  SqlEventStoreConfig entity JSONString ->
+  AccountingProcessManagerFactory (SqlPersistT m) ->
+  [AccountingEventHandler (SqlPersistT m)] ->
+  AccountingTaggedEventStoreWriter (SqlPersistT m)
+accountingEventStoreWriterWithRaw rawWriter config pmFactory extraHandlers =
+  let globalReader = accountingGlobalEventStoreReader config
       versionedReader = accountingVersionedEventStoreReader config
       combinedHandler =
         eventLoggerHandler

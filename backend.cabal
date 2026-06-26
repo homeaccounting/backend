@@ -37,6 +37,7 @@ library
       Application.ReadModels.BankImportReadModel
       Application.ReadModels.Configuration
       Application.ReadModels.ExchangeRate
+      Application.ReadModels.Persist
       Application.ReadModels.Transaction
       Application.ReadModels.User
       Application.Services
@@ -100,7 +101,9 @@ library
       Infrastructure.Config
       Infrastructure.Crypto.SecretBox
       Infrastructure.Database
+      Infrastructure.Database.Orphans
       Infrastructure.Eventium
+      Infrastructure.Eventium.Backfill
       Infrastructure.Eventium.GlobalEvent
       Infrastructure.ExchangeRate.ECB
       Infrastructure.ExchangeRate.NBU
@@ -347,6 +350,7 @@ test-suite backend-test
       Infrastructure.Banking.ProviderSpec
       Infrastructure.ConfigSpec
       Infrastructure.Crypto.SecretBoxSpec
+      Infrastructure.Database.OrphansSpec
       Infrastructure.ExchangeRate.NBUIntegrationSpec
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
@@ -422,6 +426,7 @@ test-suite backend-test
     , eventium-memory >=0.3.2 && <0.4.0
     , eventium-postgresql >=0.3.2 && <0.4.0
     , eventium-sql-common >=0.3.2 && <0.4.0
+    , eventium-sqlite >=0.3.2 && <0.4.0
     , eventium-testkit >=0.3.2 && <0.4.0
     , hashable ==1.4.*
     , hspec >=2.10 && <2.12
@@ -438,6 +443,7 @@ test-suite backend-test
     , optics-th ==0.4.*
     , persistent >=2.13 && <2.15
     , persistent-postgresql ==2.13.*
+    , persistent-sqlite >=2.13 && <2.15
     , postgresql-simple >=0.6 && <0.8
     , rio >=0.1.22 && <0.2
     , safe ==0.3.*

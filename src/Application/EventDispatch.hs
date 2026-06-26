@@ -20,11 +20,6 @@ import Application.ReadModels.Account
     createAccountReadModel,
     handleAccountEvents,
   )
-import Application.ReadModels.BankImportReadModel
-  ( BankImportReadModel,
-    createBankImportReadModel,
-    handleBankImportEvents,
-  )
 import Application.ReadModels.Configuration
   ( ConfigurationReadModel,
     createConfigurationReadModel,
@@ -48,13 +43,15 @@ import Application.ReadModels.User
 import Infrastructure.Eventium (AccountingReadModelHandler)
 import RIO
 
--- | Combined in-memory read-model state for all bounded contexts.
+-- | Combined in-memory read-model state for the bounded contexts that are still
+-- projected into memory. BankImport has migrated to a persistent (SQL) read
+-- model and is wired separately (see 'Application.ReadModels.BankImportReadModel'
+-- and the event-store writer in @app/Main.hs@).
 data ReadModels = ReadModels
   { account :: TVar AccountReadModel,
     transaction :: TVar TransactionReadModel,
     user :: TVar UserReadModel,
     configuration :: TVar ConfigurationReadModel,
-    bankImport :: TVar BankImportReadModel,
     exchangeRate :: TVar ExchangeRateReadModel
   }
 
@@ -65,7 +62,6 @@ createReadModels = do
   transactionRM <- createTransactionReadModel
   userRM <- createUserReadModel
   configRM <- createConfigurationReadModel
-  bankImportRM <- createBankImportReadModel
   exchangeRateRM <- createExchangeRateReadModel
   pure
     ReadModels
@@ -73,7 +69,6 @@ createReadModels = do
         transaction = transactionRM,
         user = userRM,
         configuration = configRM,
-        bankImport = bankImportRM,
         exchangeRate = exchangeRateRM
       }
 
@@ -88,6 +83,5 @@ fromReadModels rms =
       handleTransactionEvents rms.transaction,
       handleUserEvents rms.user,
       handleConfigurationEvents rms.configuration,
-      handleBankImportEvents rms.bankImport,
       handleExchangeRateEvents rms.exchangeRate
     ]

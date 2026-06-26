@@ -67,6 +67,9 @@ module Infrastructure.Database
     defaultSqlEventStoreConfig,
     SqlEventStoreConfig,
 
+    -- * Persistent action type
+    SqlIO,
+
     -- * Helper Functions
     buildConnectionString,
 
@@ -95,8 +98,10 @@ import Database.Persist.Postgresql
     runMigration,
     runSqlPool,
   )
+import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Sql (SqlEventStoreConfig, defaultSqlEventStoreConfig, migrateSqlEvent)
 import qualified Infrastructure.Config as Config
+import Infrastructure.Database.Orphans ()
 
 -- -----------------------------------------------------------------------------
 -- Database Configuration
@@ -279,6 +284,10 @@ createConnectionPoolNoLogging config = do
 runDbDirect :: ConnectionPool -> SqlPersistT IO a -> IO a
 runDbDirect = flip runSqlPool
 
+-- | A persistent action run directly in 'IO' — the base monad SQL read models
+-- and the backfill machinery use. Avoids repeating @SqlPersistT IO@.
+type SqlIO = SqlPersistT IO
+
 -- | Run a database operation with logging (low-level).
 --
 -- This is a low-level function for initialization code.
@@ -352,17 +361,14 @@ runMigrations :: (MonadIO m) => SqlPersistT m ()
 runMigrations = do
   -- Run eventium event store migration
   void $ runMigration migrateSqlEvent
+  -- Projection checkpoints (eventium): per read-model catch-up watermark.
+  void $ runMigration migrateProjectionSnapshot
 
--- NOTE: Read models are currently implemented as in-memory TVars
--- (AccountReadModel, TransactionReadModel).
--- This provides fast queries but requires rebuilding on restart.
---
--- If you need durable read models, add persistent-based migrations here:
--- Example:
---   void $ runMigration migrateAccount
---   void $ runMigration migrateTransaction
---
--- See Application.ReadModels.* for current in-memory implementations.
+-- NOTE: Persistent read-model table migrations (e.g. 'migrateBankImport') are
+-- Application-layer artifacts and are run from the composition root
+-- (@app/Main.hs@), since Infrastructure must not import Application. Remaining
+-- read models (Account, Transaction, User, Configuration, ExchangeRate) are
+-- still in-memory TVars rebuilt on restart.
 
 -- | Get the default SQL event store configuration.
 --

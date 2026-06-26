@@ -85,6 +85,8 @@ import Application.EventDispatch
   )
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
+import Application.ReadModels.BankImportReadModel (handleBankImportEvents)
+import Application.ReadModels.Persist (initializePersistentReadModels)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
@@ -294,7 +296,12 @@ initializeEnvironment logFunc config versionInfo = do
                 wireProcessManager transactionCancellationProcessManager
               ]
           )
-          (map liftIOEventHandler readModelHandlers)
+          -- Persistent (SQL) read models run their apply directly in the
+          -- writer's SqlPersistT transaction; in-memory (TVar) models are
+          -- IO handlers lifted into it.
+          ( createReadModelHandlersFrom handleBankImportEvents
+              ++ map liftIOEventHandler readModelHandlers
+          )
       sqlReader = accountingVersionedEventStoreReader eventStoreConfig
       sqlGlobalReader = accountingGlobalEventStoreReader eventStoreConfig
       -- Lift to IO by running through the connection pool
@@ -303,11 +310,20 @@ initializeEnvironment logFunc config versionInfo = do
       globalReader = liftGlobalReader pool sqlGlobalReader
   logInfo "Event store configured with read model handlers"
 
-  -- 4b. Replay historical events into read models
+  -- 4b. Replay historical events into the in-memory read models.
   -- Must run before server/bot starts to avoid concurrent writes to TVars.
   logInfo "Replaying historical events into read models..."
   eventCount <- liftIO $ replayWith globalReader handlers
   logInfo $ "Read models populated from event store (" <> displayShow eventCount <> " events)"
+
+  -- 4c. Persistent (SQL) read models: migrate tables, then bring them up to date
+  -- (or rebuild those named in REBUILD_READ_MODELS). Their live updates commit in
+  -- the event-append transaction; this is the one-time backfill / bounded boot
+  -- catch-up / on-demand rebuild path.
+  logInfo "Migrating + catching up persistent read models..."
+  appliedCounts <- liftIO $ initializePersistentReadModels pool sqlGlobalReader
+  forM_ appliedCounts $ \(name, applied) ->
+    logInfo $ "Persistent read model '" <> display name <> "' up to date (" <> displayShow applied <> " events applied)"
 
   -- 5. Auth configurations (loaded from YAML config)
   logInfo "Auth configurations loaded from config file"
@@ -369,8 +385,7 @@ initializeEnvironment logFunc config versionInfo = do
 
   let bankingEnv' =
         BankingEnv
-          { bankImportReadModel = readModels.bankImport,
-            bankImportLocks = bankImportLocksVar,
+          { bankImportLocks = bankImportLocksVar,
             httpManager = httpManager,
             bankingKeyRing = bankingKeyRing',
             -- Pure factory: dispatches on the connection's provider enum and

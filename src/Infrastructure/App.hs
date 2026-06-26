@@ -91,7 +91,6 @@ module Infrastructure.App
     HasExchangeRateReadModel (..),
     HasVersionInfo (..),
     HasBankingEnv (..),
-    HasBankImportReadModel (..),
     HasBankImportLocks (..),
     HasHttpManager (..),
     HasBankingKeyRing (..),
@@ -121,7 +120,6 @@ where
 -- Local imports
 import Application.LinkCodeStore (LinkCodeStore)
 import Application.ReadModels.Account (AccountReadModel)
-import Application.ReadModels.BankImportReadModel (BankImportReadModel)
 import Application.ReadModels.Configuration (ConfigurationReadModel)
 import Application.ReadModels.ExchangeRate (ExchangeRateReadModel)
 import Application.ReadModels.Transaction (TransactionReadModel)
@@ -248,9 +246,7 @@ data AppEnv = AppEnv
 -- injection without leaking the full 'AppEnv' — the grouping is purely
 -- organisational.
 data BankingEnv = BankingEnv
-  { -- | Bank import dedup read model (STM).
-    bankImportReadModel :: !(TVar BankImportReadModel),
-    -- | Per-user bank-import serialization locks (STM). Holds the set of
+  { -- | Per-user bank-import serialization locks (STM). Holds the set of
     -- 'UserId' values whose bank import is currently in flight.
     bankImportLocks :: !(TVar (Set.Set UserId)),
     -- | HTTP client manager (shared, for bank API calls).
@@ -553,16 +549,6 @@ instance HasBankingEnv AppEnv where
 
 instance HasBankingEnv BankingEnv where
   bankingEnvL = id
-
--- | Type class for environments that have bank import read model.
-class HasBankImportReadModel env where
-  bankImportReadModelL :: Lens' env (TVar BankImportReadModel)
-
-instance HasBankImportReadModel AppEnv where
-  bankImportReadModelL = bankingEnvL . bankImportReadModelL
-
-instance HasBankImportReadModel BankingEnv where
-  bankImportReadModelL = lens (.bankImportReadModel) (\x y -> x {bankImportReadModel = y})
 
 -- | Type class for environments that have the per-user bank-import lock set.
 --

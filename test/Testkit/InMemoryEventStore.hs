@@ -29,6 +29,9 @@ module Testkit.InMemoryEventStore
     createTestAppEnvWithProcessManager,
     createInMemoryEventStores,
 
+    -- * Database helpers
+    runDbIn,
+
     -- * Event Store Components
     InMemoryEventStores (..),
   )
@@ -37,11 +40,15 @@ where
 import Application.EventDispatch (ReadModels (..), createReadModels, fromReadModels)
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
+import Application.ReadModels.BankImportReadModel (handleBankImportEvents, migrateBankImport)
 import Application.ReadModels.User ()
-import Control.Concurrent.STM (atomically)
+import Control.Monad.Logger (LoggingT, runNoLoggingT)
 import qualified Data.Set as Set
+import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
+import Database.Persist.Sqlite (createSqlitePool)
 import Domain.Models (AccountingEvent)
-import Eventium (Codec (..), EventStoreReader (..), EventStoreWriter (..), TaggedEvent (..), processManagerEventHandler, publishingTaggedCodecEventStoreWriter, synchronousPublisher)
+import Eventium (EventStoreReader (..))
+import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Memory
   ( EventMap,
     emptyEventMap,
@@ -49,8 +56,9 @@ import Eventium.Store.Memory
     tvarEventStoreWriter,
     tvarGlobalEventStoreReader,
   )
-import Eventium.Store.Postgresql (JSONString, jsonStringCodec)
-import Infrastructure.App (AppEnv (..), BankingEnv (..), bankingKeyRingFromConfig)
+import Eventium.Store.Sql (migrateSqlEvent)
+import Eventium.Store.Sqlite (sqliteTaggedEventStoreWriter)
+import Infrastructure.App (AppEnv (..), BankingEnv (..), bankingKeyRingFromConfig, runAppM, runDb)
 import Infrastructure.Auth.JWT (defaultJWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
@@ -71,13 +79,21 @@ import Infrastructure.Config
     ProcessManagerConfig (..),
     ServerConfig (..),
   )
+import Infrastructure.Database (defaultSqlEventStoreConfig, runDbDirect)
 import Infrastructure.Eventium
   ( AccountingGlobalEventStoreReader,
-    AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
     AccountingVersionedEventStoreWriter,
-    commandDispatcher,
+    accountingEventStoreWriterWithRaw,
+    accountingGlobalEventStoreReader,
+    accountingVersionedEventStoreReader,
     createReadModelHandlersFrom,
+    liftGlobalReader,
+    liftIOEventHandler,
+    liftTaggedWriter,
+    liftVersionedReader,
+    wireProcessManager,
+    wireProcessManagers,
   )
 import Infrastructure.Version (VersionInfo (..))
 import Network.HTTP.Client (defaultManagerSettings, newManager)
@@ -136,6 +152,11 @@ createInMemoryEventStores = do
         inMemoryEventMap = eventMapVar
       }
 
+-- | Run a persistent action against a test 'AppEnv's (SQLite) pool. Shorthand
+-- for the widely-repeated @runAppM env . runDb@ pattern in DB-backed specs.
+runDbIn :: AppEnv -> SqlPersistT (LoggingT IO) a -> IO a
+runDbIn env = runAppM env . runDb
+
 -- -----------------------------------------------------------------------------
 -- Test Environment Creation
 -- -----------------------------------------------------------------------------
@@ -177,29 +198,46 @@ mkAppEnv withProcessManager = do
   let logFunc = mkLogFunc $ \_callStack _source _level msg ->
         hPutBuilder stderr (getUtf8Builder (msg <> "\n"))
 
-  stores <- createInMemoryEventStores
+  -- Real in-memory SQLite backend (pool size 1 so the single connection — and
+  -- thus the in-memory DB — persists for the life of the AppEnv). This makes
+  -- 'runDb' work and lets persistent read models be projected in the same
+  -- transaction as the event append, exactly as in production.
+  pool <- runNoLoggingT (createSqlitePool ":memory:" 1)
+  runDbDirect pool $ do
+    _ <- runMigrationSilent migrateSqlEvent
+    _ <- runMigrationSilent migrateProjectionSnapshot
+    _ <- runMigrationSilent migrateBankImport
+    pure ()
+
   readModels <- createReadModels
   let handlers = fromReadModels readModels
       readModelHandlers = createReadModelHandlersFrom handlers
+      eventStoreConfig = defaultSqlEventStoreConfig
 
-  let baseWriter = liftSTMWriter stores.inMemoryWriter
-      reader = liftSTMReader stores.inMemoryReader
-      globalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
-
-      -- CRITICAL: Read model handlers FIRST, then process manager LAST.
-      -- See accountingEventStoreWriter for the depth-first dispatch explanation.
-      pmHandler = processManagerEventHandler transferProcessManager globalReader (commandDispatcher writer reader)
-      amendPmHandler = processManagerEventHandler transferAmendmentProcessManager globalReader (commandDispatcher writer reader)
-      cancelPmHandler = processManagerEventHandler transactionCancellationProcessManager globalReader (commandDispatcher writer reader)
-      combinedHandler =
+      pmFactory =
         if withProcessManager
-          then mconcat readModelHandlers <> pmHandler <> amendPmHandler <> cancelPmHandler
-          else mconcat readModelHandlers
-      writer =
-        publishingTaggedCodecEventStoreWriter
-          (jsonStringCodec :: Codec AccountingEvent JSONString)
-          (decodingTaggedWriter baseWriter)
-          (synchronousPublisher combinedHandler)
+          then
+            wireProcessManagers
+              [ wireProcessManager transferProcessManager,
+                wireProcessManager transferAmendmentProcessManager,
+                wireProcessManager transactionCancellationProcessManager
+              ]
+          else wireProcessManagers []
+
+      -- Same wiring as production (synchronous publisher; SQL read models apply
+      -- in the writer transaction, in-memory ones via liftIOEventHandler), but
+      -- with the SQLite raw writer.
+      sqlWriter =
+        accountingEventStoreWriterWithRaw
+          (sqliteTaggedEventStoreWriter eventStoreConfig)
+          eventStoreConfig
+          pmFactory
+          ( createReadModelHandlersFrom handleBankImportEvents
+              ++ map liftIOEventHandler readModelHandlers
+          )
+      writer = liftTaggedWriter pool sqlWriter
+      reader = liftVersionedReader pool (accountingVersionedEventStoreReader eventStoreConfig)
+      globalReader = liftGlobalReader pool (accountingGlobalEventStoreReader eventStoreConfig)
 
       config = testAppConfig
       testVersionInfo = VersionInfo {appVersion = "0.0.0-test", commit = "test"}
@@ -217,7 +255,7 @@ mkAppEnv withProcessManager = do
       { logFunc = logFunc,
         config = config,
         databaseConfig = config.database,
-        dbPool = error "Database pool should not be accessed in in-memory tests! Use event store abstractions instead.",
+        dbPool = pool,
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
@@ -234,8 +272,7 @@ mkAppEnv withProcessManager = do
         versionInfo = testVersionInfo,
         bankingEnv =
           BankingEnv
-            { bankImportReadModel = readModels.bankImport,
-              bankImportLocks = bankImportLocksVar,
+            { bankImportLocks = bankImportLocksVar,
               httpManager = testHttpManager,
               bankingKeyRing = testBankingKeyRing,
               -- Default factory mirrors production (dispatches on the
@@ -323,55 +360,3 @@ testAppConfig =
             tokenEncKey = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
           }
     }
-
--- -----------------------------------------------------------------------------
--- STM to IO Lifting
--- -----------------------------------------------------------------------------
-
--- | Lift an STM event store writer to IO.
---
--- Wraps each write operation with `atomically` to ensure transactional
--- semantics are preserved when running in IO.
-liftSTMWriter ::
-  AccountingVersionedEventStoreWriter STM ->
-  AccountingVersionedEventStoreWriter IO
-liftSTMWriter (EventStoreWriter stmWrite) =
-  EventStoreWriter $ \uuid expectedVersion events ->
-    atomically $ stmWrite uuid expectedVersion events
-
--- | Lift an STM event store reader to IO.
---
--- Wraps each read operation with `atomically`.
-liftSTMReader ::
-  AccountingVersionedEventStoreReader STM ->
-  AccountingVersionedEventStoreReader IO
-liftSTMReader (EventStoreReader stmRead) =
-  EventStoreReader $ \range ->
-    atomically $ stmRead range
-
--- | Lift an STM global event store reader to IO.
---
--- Wraps each global read operation with `atomically`.
-liftSTMGlobalReader ::
-  AccountingGlobalEventStoreReader STM ->
-  AccountingGlobalEventStoreReader IO
-liftSTMGlobalReader (EventStoreReader stmRead) =
-  EventStoreReader $ \range ->
-    atomically $ stmRead range
-
--- -----------------------------------------------------------------------------
--- Tagged Writer Adapter (test-only)
--- -----------------------------------------------------------------------------
-
--- | Adapt a versioned (domain-event) writer to accept TaggedEvent by decoding
--- each payload through a Codec. Used for in-memory test stores that natively
--- store domain events but need a tagged writer interface.
-decodingTaggedWriter ::
-  (Monad m) =>
-  AccountingVersionedEventStoreWriter m ->
-  AccountingTaggedEventStoreWriter m
-decodingTaggedWriter (EventStoreWriter write) =
-  EventStoreWriter $ \uuid expectedVersion taggedEvents ->
-    case traverse (jsonStringCodec.decode . (.payload)) taggedEvents of
-      Nothing -> error "decodingTaggedWriter: codec decode failure"
-      Just events -> write uuid expectedVersion events
