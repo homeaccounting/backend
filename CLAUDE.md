@@ -148,7 +148,7 @@ cabal test all --test-option='--rerun'
 
 - **Formatter**: ormolu (mandatory, no manual overrides)
 - **Linter**: hlint — no suppressions allowed without explicit approval and documented rationale
-- **GHC warnings**: `-Wall -Wcompat -Widentities -Wincomplete-record-updates -Wredundant-constraints`. CI builds use `-Werror` via `cabal build -fci`
+- **GHC warnings**: `-Wall -Wcompat -Widentities -Wincomplete-record-updates -Wredundant-constraints`. `-Werror` is enforced via the `ci` Cabal flag (`-fci`). CI runs `cabal build all -j -fci` and `cabal test all -j -fci`, and the local `just build` / `just test` gates pass `-fci` to match. Note: the incremental `.o` cache can mask `-Werror` regressions on a warm build — `just rebuild` (clean + `-fci` build) for a definitive check
 - **Required extensions**: `NoImplicitPrelude`, `StrictData`, `GADTs`, `KindSignatures`, `DataKinds`, `TypeFamilies`, `NoFieldSelectors`, `DuplicateRecordFields`, `OverloadedRecordDot`
 - Never export data constructors or field selectors directly — use smart constructors and accessor functions
 - Total functions only; no partial functions

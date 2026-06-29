@@ -95,9 +95,9 @@ jobs:
           hlint --git
 
       - name: Build accounting project
-        run: |          
+        run: |
           cabal update
-          cabal build all -j
+          cabal build all -j -fci
 
       - name: Wait for Postgres to be ready
         env:
@@ -118,7 +118,7 @@ jobs:
 
       - name: Run test suites
         run: |
-          cabal test all -j --test-show-details=direct --enable-tests
+          cabal test all -j -fci --test-show-details=direct --enable-tests
 
   build-image:
     name: Build & Push Docker Image

@@ -12,10 +12,10 @@ hpack:
     hpack
     @echo "✓ Done"
 
-# Build the project
+# Build the project (-fci enables -Werror, matching CI)
 build: hpack
     @echo "Building accounting backend..."
-    cabal build
+    cabal build all -fci
     @echo "✓ Build complete"
 
 # Run the server with dev config
@@ -28,10 +28,10 @@ run-config CONFIG:
     @echo "Starting accounting backend with {{CONFIG}}..."
     CONFIG_PATH={{CONFIG}} cabal run backend
 
-# Run test suite
+# Run test suite (-fci enables -Werror, matching CI)
 test:
     @echo "Running tests..."
-    cabal test --test-show-details=direct --enable-tests
+    cabal test all -fci --test-show-details=direct --enable-tests
 
 # Run tests with coverage
 test-coverage:
