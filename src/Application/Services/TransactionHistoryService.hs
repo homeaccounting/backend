@@ -72,6 +72,7 @@ import Infrastructure.App
   ( AppM,
     HasReadModel (..),
     eventStoreReaderL,
+    runDb,
   )
 import RIO
 
@@ -137,9 +138,8 @@ getTransactionHistory userId transactionId = runExceptT $ do
       (NotFound "Transaction" (tshow transactionId))
       (liftIO (ReadModel.getTransaction txnRM transactionId))
   -- Access: caller has any role on either the current source or target.
-  accountRM <- lift (view accountReadModelL)
-  mSrc <- liftIO (AccountRM.getAccount accountRM transaction.sourceAccountId)
-  mTgt <- liftIO (AccountRM.getAccount accountRM transaction.targetAccountId)
+  mSrc <- lift (runDb (AccountRM.getAccount transaction.sourceAccountId))
+  mTgt <- lift (runDb (AccountRM.getAccount transaction.targetAccountId))
   let toAuthData acc =
         AccountAuthData
           { createdBy = acc.createdBy,

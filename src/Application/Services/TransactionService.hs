@@ -135,6 +135,7 @@ import Infrastructure.App
     HasExchangeRateReadModel (..),
     HasReadModel (..),
     eventStoreReaderL,
+    runDb,
   )
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
@@ -211,8 +212,7 @@ listTransactions ::
   AppM (Int, [(TransactionId, TransactionData)])
 listTransactions userId filt page = do
   logDebug $ "Listing transactions for user " <> displayShow userId
-  accountRM <- view accountReadModelL
-  visible <- AccountRM.getAccessibleAccountIds accountRM userId
+  visible <- runDb (AccountRM.getAccessibleAccountIds userId)
   if Set.null visible
     then do
       logDebug "User has no accessible accounts; returning empty list"
@@ -242,11 +242,10 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
     ExceptT (validateLabels userId labels)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     externalAccId <- getUserExternalAccountId userId
-    accountRM <- lift (view accountReadModelL)
     targetData <-
       liftMaybeM
         (NotFound "Account" (tshow targetAccountId))
-        (AccountRM.getAccount accountRM targetAccountId)
+        (runDb (AccountRM.getAccount targetAccountId))
     guardE
       (targetData.accountType /= External)
       ( ValidationErr
@@ -255,7 +254,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
     sourceData <-
       liftMaybeM
         (NotFound "Account" (tshow externalAccId))
-        (AccountRM.getAccount accountRM externalAccId)
+        (runDb (AccountRM.getAccount externalAccId))
     let srcCurrency = moneyCurrency sourceData.balance
         tgtCurrency = moneyCurrency targetData.balance
     -- Validate each allocation references a known category in its bucket.
@@ -302,11 +301,10 @@ initiateExpense userId sourceAccountId amount allocations labels description may
     ExceptT (validateLabels userId labels)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     externalAccId <- getUserExternalAccountId userId
-    accountRM <- lift (view accountReadModelL)
     sourceData <-
       liftMaybeM
         (NotFound "Account" (tshow sourceAccountId))
-        (AccountRM.getAccount accountRM sourceAccountId)
+        (runDb (AccountRM.getAccount sourceAccountId))
     guardE
       (sourceData.accountType /= External)
       ( ValidationErr
@@ -315,7 +313,7 @@ initiateExpense userId sourceAccountId amount allocations labels description may
     targetData <-
       liftMaybeM
         (NotFound "Account" (tshow externalAccId))
-        (AccountRM.getAccount accountRM externalAccId)
+        (runDb (AccountRM.getAccount externalAccId))
     let srcCurrency = moneyCurrency sourceData.balance
         tgtCurrency = moneyCurrency targetData.balance
     -- Validate each allocation references a known category in its bucket.
@@ -361,11 +359,10 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
-    accountRM <- lift (view accountReadModelL)
     sourceData <-
       liftMaybeM
         (NotFound "Account" (tshow sourceAccountId))
-        (AccountRM.getAccount accountRM sourceAccountId)
+        (runDb (AccountRM.getAccount sourceAccountId))
     guardE
       (sourceData.accountType /= External)
       ( ValidationErr
@@ -374,7 +371,7 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
     targetData <-
       liftMaybeM
         (NotFound "Account" (tshow targetAccountId))
-        (AccountRM.getAccount accountRM targetAccountId)
+        (runDb (AccountRM.getAccount targetAccountId))
     guardE
       (targetData.accountType /= External)
       ( ValidationErr
@@ -728,9 +725,8 @@ ensureEditorAccess userId transactionId = runExceptT $ do
     liftMaybeM
       (NotFound "Transaction" (tshow transactionId))
       (liftIO (ReadModel.getTransaction txnRM transactionId))
-  accountRM <- lift (view accountReadModelL)
-  mSrc <- liftIO (AccountRM.getAccount accountRM transaction.sourceAccountId)
-  mTgt <- liftIO (AccountRM.getAccount accountRM transaction.targetAccountId)
+  mSrc <- lift (runDb (AccountRM.getAccount transaction.sourceAccountId))
+  mTgt <- lift (runDb (AccountRM.getAccount transaction.targetAccountId))
   let toAuthData acc =
         AccountAuthData
           { createdBy = acc.createdBy,
@@ -817,15 +813,14 @@ ensureEditorOnNewAccounts ::
   AccountId ->
   AppM (Either DomainError (AccountData, AccountData))
 ensureEditorOnNewAccounts userId newSrc newTgt = runExceptT $ do
-  accountRM <- lift (view accountReadModelL)
   src <-
     liftMaybeM
       (NotFound "Account" (tshow newSrc))
-      (liftIO (AccountRM.getAccount accountRM newSrc))
+      (runDb (AccountRM.getAccount newSrc))
   tgt <-
     liftMaybeM
       (NotFound "Account" (tshow newTgt))
-      (liftIO (AccountRM.getAccount accountRM newTgt))
+      (runDb (AccountRM.getAccount newTgt))
   let toAuthData acc =
         AccountAuthData
           { createdBy = acc.createdBy,

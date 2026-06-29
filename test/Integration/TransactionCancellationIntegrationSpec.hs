@@ -69,7 +69,7 @@ import Testkit.Fixtures
     createDefaultAccount,
     setupMetadataFixture,
   )
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Testkit.Time (utc)
 
 -- -----------------------------------------------------------------------------
@@ -79,7 +79,7 @@ import Testkit.Time (utc)
 -- | Convenience: read the USD balance of an account from the read model.
 balanceUsd :: AppEnv -> AccountId -> IO Rational
 balanceUsd env aid = do
-  m <- AccountRM.getAccount env.accountReadModel aid
+  m <- runDbIn env (AccountRM.getAccount aid)
   case m of
     Just acc -> pure (unMoney acc.balance)
     Nothing -> fail $ "balanceUsd: account not found: " <> show aid

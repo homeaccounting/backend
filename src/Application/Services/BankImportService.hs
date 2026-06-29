@@ -358,11 +358,10 @@ commitImport provider userId userData localAccId tx money = do
   -- different-currency local account is unsupported. Detect it up front and
   -- SKIP the transaction with a clear reason, rather than initiating it and
   -- letting the posting saga fail with a cryptic 'CurrencyMismatch'.
-  accountRM <- lift (view accountReadModelL)
   localData <-
     ExceptT
       $ maybe (Left (NotFound "Account" (tshow localAccId))) Right
-      <$> AccountRM.getAccount accountRM localAccId
+      <$> runDb (AccountRM.getAccount localAccId)
   let localCurrency = moneyCurrency localData.balance
   if localCurrency /= txCurrency
     then do
@@ -428,15 +427,14 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
   -- with 'CurrencyMismatch'. See 'resolveAmounts' for same-currency handling
   -- (returns the amount unchanged with a 'Nothing' rate) and nearest-date
   -- fallback semantics.
-  accountRM <- lift (view accountReadModelL)
   srcData <-
     ExceptT
       $ maybe (Left (NotFound "Account" (tshow sourceAccId))) Right
-      <$> AccountRM.getAccount accountRM sourceAccId
+      <$> runDb (AccountRM.getAccount sourceAccId)
   tgtData <-
     ExceptT
       $ maybe (Left (NotFound "Account" (tshow targetAccId))) Right
-      <$> AccountRM.getAccount accountRM targetAccId
+      <$> runDb (AccountRM.getAccount targetAccId)
   let srcCurrency = moneyCurrency srcData.balance
       tgtCurrency = moneyCurrency tgtData.balance
       -- The known bank amount 'money' is in the LOCAL account's currency. For

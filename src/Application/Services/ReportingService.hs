@@ -43,7 +43,7 @@ module Application.Services.ReportingService
   )
 where
 
-import Application.ReadModels.Account (AccountData (..), getAccessibleAccountIds, getAllAccounts)
+import Application.ReadModels.Account (AccountData (..), getAccessibleAccountIds, getMyAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..))
 import Application.ReadModels.ExchangeRate (ExchangeRateReadModel, lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), getAllTransactions, touchesVisible)
@@ -55,7 +55,7 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
 import Domain.ExchangeRate.Events (Provider)
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Infrastructure.App (AppM, accountReadModelL, appConfigL, exchangeRateReadModelL, transactionReadModelL)
+import Infrastructure.App (AppM, appConfigL, exchangeRateReadModelL, runDb, transactionReadModelL)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
 import RIO.Time (UTCTime)
@@ -178,9 +178,7 @@ resolveBaseCurrency userId = do
 
 -- | The set of accounts the user can see (any role grants visibility).
 visibleAccounts :: UserId -> AppM (Set AccountId)
-visibleAccounts userId = do
-  accountRM <- view accountReadModelL
-  getAccessibleAccountIds accountRM userId
+visibleAccounts userId = runDb (getAccessibleAccountIds userId)
 
 -- | Spending grouped by category for the user's visible accounts within the
 -- optional inclusive date window. Returns the base-currency grand total plus
@@ -232,9 +230,8 @@ ownedRegularOpened userId =
 netWorth :: UserId -> AppM (Either DomainError (Money, [(AccountId, Money, Money)]))
 netWorth userId = do
   base <- resolveBaseCurrency userId
-  accountRM <- view accountReadModelL
-  allAccts <- getAllAccounts accountRM
-  let owned = ownedRegularOpened userId (Map.toList allAccts)
+  myAccts <- runDb (getMyAccounts userId)
+  let owned = ownedRegularOpened userId (Map.toList myAccts)
   rm <- view exchangeRateReadModelL
   cfg <- view appConfigL
   now <- liftIO getCurrentTime

@@ -90,6 +90,7 @@ import Infrastructure.App
   ( AppM,
     HasEventStore (..),
     HasReadModel (..),
+    runDb,
   )
 import RIO
 import qualified RIO.Text as T
@@ -121,11 +122,10 @@ createAccount createCmd = runExceptT $ do
       (mkAccountId accountUuid)
   lift $ logInfo $ "Generated account ID: " <> displayShow accountUuid
   runAccountCmd id accountUuid (CreateAccountAccountCommand createCmd)
-  readModel <- lift (view accountReadModelL)
   account <-
     liftMaybeM
       (AccountError "Account created but not found in read model")
-      (liftIO $ ReadModel.getAccount readModel accountId)
+      (runDb (ReadModel.getAccount accountId))
   lift $ logInfo "Account successfully created"
   pure (accountId, account)
 
@@ -143,11 +143,10 @@ getAccount accountUuid = runExceptT $ do
   lift $ logInfo $ "Getting account: " <> displayShow accountUuid
   accountId <-
     liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
-  readModel <- lift (view accountReadModelL)
   account <-
     liftMaybeM
       (NotFound "Account" (tshow accountUuid))
-      (liftIO $ ReadModel.getAccount readModel accountId)
+      (runDb (ReadModel.getAccount accountId))
   lift $ logInfo "Account found"
   pure (accountId, account)
 
@@ -161,8 +160,7 @@ listAccountsForUser :: UserId -> AppM [(AccountId, AccountData)]
 listAccountsForUser userId = do
   logInfo $ "Listing accounts for user " <> displayShow userId
 
-  readModel <- view accountReadModelL
-  accountsList <- liftIO $ ReadModel.getAccessibleAccounts readModel userId
+  accountsList <- runDb (ReadModel.getAccessibleAccounts userId)
 
   let result =
         [ (aid, account)
@@ -190,11 +188,10 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = runExceptT $
   lift $ logInfo $ "Sharing account: " <> displayShow accountUuid
   accountId <-
     liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
-  readModel <- lift (view accountReadModelL)
   account <-
     liftMaybeM
       (NotFound "Account" (tshow accountUuid))
-      (liftIO $ ReadModel.getAccount readModel accountId)
+      (runDb (ReadModel.getAccount accountId))
   guardE
     (account.createdBy == requestingUserId)
     (AccountError "Only account owner can share access")
@@ -237,11 +234,10 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = runExceptT $ d
   lift $ logInfo $ "Revoking account access: " <> displayShow accountUuid
   accountId <-
     liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
-  readModel <- lift (view accountReadModelL)
   account <-
     liftMaybeM
       (NotFound "Account" (tshow accountUuid))
-      (liftIO $ ReadModel.getAccount readModel accountId)
+      (runDb (ReadModel.getAccount accountId))
   guardE
     (account.createdBy == requestingUserId)
     (AccountError "Only account owner can revoke access")
@@ -398,11 +394,10 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
     )
 
   -- 1. Load account; reject if missing or External.
-  accountRM <- lift (view accountReadModelL)
   account <-
     liftMaybeM
       (NotFound "Account" (tshow accountId))
-      (ReadModel.getAccount accountRM accountId)
+      (runDb (ReadModel.getAccount accountId))
   guardE
     (account.accountType /= External)
     ( ValidationErr
@@ -437,7 +432,7 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
   externalAccount <-
     liftMaybeM
       (NotFound "Account" (tshow externalAccId))
-      (ReadModel.getAccount accountRM externalAccId)
+      (runDb (ReadModel.getAccount externalAccId))
 
   -- 5. Compute delta against the historical balance at D.
   --

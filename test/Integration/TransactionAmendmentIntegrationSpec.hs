@@ -36,7 +36,7 @@ import RIO
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, userExternalAccountId)
 import Testkit.Helpers (singletonAllocation)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Testkit.TransactionEditFixture
   ( Seed (..),
     authHeaders,
@@ -140,7 +140,7 @@ incomeAllocsJson categoryUuid amt =
 
 balanceOf :: AppEnv -> AccountId -> IO Rational
 balanceOf env aid = do
-  m <- AccountRM.getAccount env.accountReadModel aid
+  m <- runDbIn env (AccountRM.getAccount aid)
   case m of
     Just acc -> pure (unMoney acc.balance)
     Nothing -> fail "balanceOf: account not found"

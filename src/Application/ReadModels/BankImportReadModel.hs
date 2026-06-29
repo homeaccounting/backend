@@ -19,15 +19,14 @@
 -- Key components:
 --   - 'ImportedTransactionEntity': @imported_transactions@ row (external id -> internal tx id)
 --   - 'isImported': SQL membership check used during bank statement import
---   - 'handleBankImportEvents': idempotent projection apply, run in the
---     event-append transaction (strong consistency)
+--   - 'bankImportReadModel': the eventium 'ReadModel' (apply, checkpoint,
+--     migrate, reset), driven synchronously in the event-append transaction
 --   - 'migrateBankImport' / 'resetBankImport': schema + rebuild support
 --
 -- Design rationale:
 --   - A unique constraint on the external transaction id lets the database
 --     enforce dedup uniqueness, and the apply is naturally idempotent
---     ('insertUnique' re-inserting the same id is a no-op). This is what makes
---     boot catch-up (which re-applies events past the checkpoint) safe here.
+--     ('insertUnique' re-inserting the same id is a no-op).
 --   - Deduplication is /permanent/: a mapping recorded on
 --     'TransactionPostingInitiated' is never removed, even if the posting later
 --     fails. A re-sync therefore never re-imports a transaction it has already
@@ -39,7 +38,7 @@ module Application.ReadModels.BankImportReadModel
     bankImportProjectionName,
     migrateBankImport,
     resetBankImport,
-    handleBankImportEvents,
+    bankImportReadModel,
     isImported,
   )
 where
@@ -48,7 +47,7 @@ import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Maybe (isJust)
 import Database.Persist (Filter, deleteWhere, getBy, insertUnique)
-import Database.Persist.Sql (SqlPersistT)
+import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.TH
   ( mkMigrate,
     mkPersist,
@@ -59,10 +58,9 @@ import Database.Persist.TH
 import Domain.Core.Types (ExternalTransactionId, TransactionId, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransactionPostingInitiated (..))
-import Eventium (EventHandler (..), GlobalStreamEvent)
-import Eventium.ProjectionCache.Postgresql (CheckpointName (..))
+import Eventium (EventHandler (..), GlobalStreamEvent, ReadModel (..))
+import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
 import Infrastructure.Database.Orphans ()
-import Infrastructure.Eventium (AccountingReadModelHandler)
 import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 
 -- -----------------------------------------------------------------------------
@@ -107,27 +105,34 @@ isImported :: (MonadIO m) => ExternalTransactionId -> SqlPersistT m Bool
 isImported extId = isJust <$> getBy (UniqueExternalTransactionId extId)
 
 -- -----------------------------------------------------------------------------
--- Event Handler
+-- Read model
 -- -----------------------------------------------------------------------------
 
--- | Idempotent projection apply: records the external-id -> internal-tx-id
--- mapping for every 'TransactionPostingInitiated' carrying an external id.
---
--- Runs in 'SqlPersistT' so it commits in the same transaction as the event
--- append. 'insertUnique' (keyed by the external id) makes re-application a no-op,
--- which is required for safe boot catch-up.
-handleBankImportEvents :: (MonadIO m) => AccountingReadModelHandler (SqlPersistT m)
-handleBankImportEvents = EventHandler $ \events -> mapM_ applyOne events
-  where
-    applyOne :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
-    applyOne globalEvent =
-      let (streamUuid, payload) = unpackGlobalEvent globalEvent
-       in case payload of
-            TransactionPostingInitiatedEvent evt ->
-              case (evt.externalTransactionId, mkTransactionIdSafe streamUuid) of
-                (Just extId, Just txId) ->
-                  -- insertUnique is a no-op (returns Nothing) when the external
-                  -- id already exists, so re-applying an event is idempotent.
-                  void $ insertUnique (ImportedTransactionEntity extId txId)
-                _ -> pure ()
+-- | Idempotent projection apply for a single global event: records the
+-- external-id -> internal-tx-id mapping for every 'TransactionPostingInitiated'
+-- carrying an external id. 'insertUnique' (keyed by the external id) makes
+-- re-application a no-op.
+applyBankImportEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
+applyBankImportEvent globalEvent =
+  let (streamUuid, payload) = unpackGlobalEvent globalEvent
+   in case payload of
+        TransactionPostingInitiatedEvent evt ->
+          case (evt.externalTransactionId, mkTransactionIdSafe streamUuid) of
+            (Just extId, Just txId) ->
+              void $ insertUnique (ImportedTransactionEntity extId txId)
             _ -> pure ()
+        _ -> pure ()
+
+-- | The bank-import dedup as an eventium 'ReadModel'. Driven synchronously in the
+-- event-append transaction via 'readModelPublisher' (real global positions,
+-- checkpoint advanced in-line), and brought up to date / rebuilt at startup via
+-- 'catchUpReadModel' / 'rebuildReadModel'.
+bankImportReadModel :: ReadModel (SqlPersistT IO) AccountingEvent
+bankImportReadModel =
+  ReadModel
+    { initialize = void (runMigrationSilent migrateBankImport),
+      eventHandler = EventHandler applyBankImportEvent,
+      checkpointStore = postgresqlCheckpointStore bankImportProjectionName,
+      -- Only drop view data; rebuildReadModel resets the checkpoint itself.
+      reset = resetBankImport
+    }

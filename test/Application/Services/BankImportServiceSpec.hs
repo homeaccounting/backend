@@ -17,10 +17,8 @@
 module Application.Services.BankImportServiceSpec (spec) where
 
 import Application.ReadModels.BankImportReadModel
-  ( bankImportProjectionName,
-    handleBankImportEvents,
+  ( bankImportReadModel,
     isImported,
-    resetBankImport,
   )
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
@@ -61,8 +59,7 @@ import Domain.Transaction.Events
   ( TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
   )
-import Eventium (Codec (..), EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
-import Eventium.ProjectionCache.Postgresql (postgresqlCheckpointStore)
+import Eventium (Codec (..), EventHandler (..), GlobalStreamEvent, ReadModel (..), SequenceNumber, StreamEvent (..), catchUpReadModel, emptyMetadata, rebuildReadModel)
 import Eventium.Store.Postgresql (jsonStringCodec)
 import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)
 import Infrastructure.App (AppEnv (..), HasReadModel (..), runAppM, runDb)
@@ -72,8 +69,8 @@ import Infrastructure.Banking.Provider
     BankTransaction (..),
     TransactionClassification (..),
   )
+import Infrastructure.Database (runDbDirect)
 import Infrastructure.Eventium (accountingGlobalEventStoreReader)
-import Infrastructure.Eventium.Backfill (backfillReadModel, rebuildReadModelTables)
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
@@ -575,39 +572,34 @@ spec = describe "BankImportService" $ do
   -- the persistent table. We insert events straight into the store (bypassing
   -- the live in-transaction handler), simulating pre-existing history before the
   -- projection existed, then drive the foundation functions.
-  describe "bank-import backfill + rebuild" $ do
-    it "backfills the dedup table from the event log; re-running is idempotent" $ do
+  describe "bank-import catch-up + rebuild (eventium ReadModel)" $ do
+    it "catches up the dedup table from the event log; re-running is idempotent" $ do
       env <- createTestAppEnvWithProcessManager
       let tx1 = mockTransactionId (UUID.fromWords 11 0 0 0)
           tx2 = mockTransactionId (UUID.fromWords 12 0 0 0)
           ext1 = unsafeExternalTransactionId "bf-1"
           ext2 = unsafeExternalTransactionId "bf-2"
-          cp = postgresqlCheckpointStore bankImportProjectionName
           gr = accountingGlobalEventStoreReader defaultSqlEventStoreConfig
       storeInitiatedEvent env tx1 ext1
       storeInitiatedEvent env tx2 ext2
-      -- Not yet projected (direct insert bypassed the live handler).
-      notYet <- runDbIn env $ isImported ext1
-      notYet `shouldBe` False
-      applied <- backfillReadModel env.dbPool gr cp handleBankImportEvents 100
-      applied `shouldBe` 2
+      -- Not yet projected (direct insert bypassed the live publisher).
+      runDbIn env (isImported ext1) `shouldReturn` False
+      runDbDirect env.dbPool (catchUpReadModel gr bankImportReadModel)
       runDbIn env (isImported ext1) `shouldReturn` True
       runDbIn env (isImported ext2) `shouldReturn` True
-      -- Idempotent: nothing past the checkpoint on a second pass.
-      applied2 <- backfillReadModel env.dbPool gr cp handleBankImportEvents 100
-      applied2 `shouldBe` 0
+      -- Idempotent: a second catch-up changes nothing.
+      runDbDirect env.dbPool (catchUpReadModel gr bankImportReadModel)
+      runDbIn env (isImported ext1) `shouldReturn` True
 
     it "rebuild truncates and replays to identical state" $ do
       env <- createTestAppEnvWithProcessManager
       let tx1 = mockTransactionId (UUID.fromWords 13 0 0 0)
           ext1 = unsafeExternalTransactionId "rb-1"
-          cp = postgresqlCheckpointStore bankImportProjectionName
           gr = accountingGlobalEventStoreReader defaultSqlEventStoreConfig
       storeInitiatedEvent env tx1 ext1
-      _ <- backfillReadModel env.dbPool gr cp handleBankImportEvents 100
+      runDbDirect env.dbPool (catchUpReadModel gr bankImportReadModel)
       runDbIn env (isImported ext1) `shouldReturn` True
-      total <- rebuildReadModelTables env.dbPool resetBankImport gr cp handleBankImportEvents 100
-      total `shouldBe` 1
+      runDbDirect env.dbPool (rebuildReadModel gr bankImportReadModel)
       runDbIn env (isImported ext1) `shouldReturn` True
 
 -- -----------------------------------------------------------------------------
@@ -626,8 +618,8 @@ feedBankImportEvents ::
   [GlobalStreamEvent AccountingEvent] ->
   IO ()
 feedBankImportEvents env events =
-  let EventHandler runHandler = handleBankImportEvents
-   in runDbIn env $ runHandler events
+  let ReadModel {eventHandler = EventHandler apply} = bankImportReadModel
+   in runDbDirect env.dbPool (mapM_ apply events)
 
 mkInitiatedEvent ::
   TransactionId ->

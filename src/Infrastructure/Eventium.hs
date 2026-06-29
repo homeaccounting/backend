@@ -104,6 +104,7 @@ import Eventium
     MetadataEnricher,
     ProcessManager,
     QueryRange,
+    ReadModel,
     RejectionReason (..),
     StreamEvent (..),
     TaggedEvent,
@@ -118,15 +119,17 @@ import Eventium
     codecVersionedEventStoreReader,
     commandHandlerDispatcher,
     emptyMetadata,
+    globalToVersionedHandler,
     latestProjection,
     metadataEnrichingEventStoreWriterWithEnricher,
     mkAggregateHandler,
     mkAggregateHandlerWith,
     processManagerEventHandler,
-    publishingTaggedCodecEventStoreWriter,
+    publishingGlobalTaggedCodecEventStoreWriter,
+    readModelPublisher,
     runEventStoreReaderUsing,
     runEventStoreWriterUsing,
-    synchronousPublisher,
+    synchronousGlobalPublisher,
   )
 import Eventium.Store.Postgresql
   ( JSONString,
@@ -241,6 +244,7 @@ accountingEventStoreWriter ::
   SqlEventStoreConfig entity JSONString ->
   AccountingProcessManagerFactory (SqlPersistT m) ->
   [AccountingEventHandler (SqlPersistT m)] ->
+  [ReadModel (SqlPersistT m) AccountingEvent] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
 accountingEventStoreWriter config =
   accountingEventStoreWriterWithRaw (postgresqlTaggedEventStoreWriter config) config
@@ -248,8 +252,16 @@ accountingEventStoreWriter config =
 -- | Like 'accountingEventStoreWriter' but with the raw (pre-publishing) tagged
 -- writer supplied explicitly, decoupling the wiring from the SQL backend.
 -- Production passes @postgresqlTaggedEventStoreWriter config@; tests pass the
--- SQLite raw writer, so both exercise the identical synchronous-publisher /
--- in-transaction-projection wiring.
+-- SQLite raw writer, so both exercise the identical wiring.
+--
+-- Two classes of consumer run synchronously in the write transaction:
+--
+--   * @persistentReadModels@ — eventium 'ReadModel's, each driven by
+--     'readModelPublisher' so it applies and advances its own 'CheckpointStore'
+--     using the real global 'SequenceNumber' the write assigns.
+--   * @extraHandlers@ — the still-in-memory (versioned) read-model handlers, plus
+--     the logger and process managers, lifted onto the global stream via
+--     'globalToVersionedHandler'.
 accountingEventStoreWriterWithRaw ::
   forall m entity.
   (MonadIO m, PersistEntity entity, PersistEntityBackend entity ~ SqlBackend) =>
@@ -257,22 +269,25 @@ accountingEventStoreWriterWithRaw ::
   SqlEventStoreConfig entity JSONString ->
   AccountingProcessManagerFactory (SqlPersistT m) ->
   [AccountingEventHandler (SqlPersistT m)] ->
+  [ReadModel (SqlPersistT m) AccountingEvent] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
-accountingEventStoreWriterWithRaw rawWriter config pmFactory extraHandlers =
+accountingEventStoreWriterWithRaw rawWriter config pmFactory extraHandlers persistentReadModels =
   let globalReader = accountingGlobalEventStoreReader config
       versionedReader = accountingVersionedEventStoreReader config
-      combinedHandler =
+      -- Versioned consumers: logger, in-memory read models, and process managers.
+      -- The process manager receives publishingWriter so events produced by
+      -- dispatched commands re-enter the bus (lazy binding resolves the cycle).
+      versionedHandler =
         eventLoggerHandler
           <> mconcat extraHandlers
-          -- Process manager receives publishingWriter so that events produced by
-          -- dispatched commands (e.g. AccountDebited from DebitAccount) re-enter
-          -- the event bus and trigger the next saga step. The circular reference
-          -- is resolved by Haskell's laziness.
           <> pmFactory publishingWriter globalReader versionedReader
-      -- Wrap the raw tagged writer with event bus publishing.
-      -- Writes TaggedEvent JSONString to DB, decodes via jsonStringCodec for handlers.
+      -- Publish GlobalStreamEvents (real positions): persistent read models via
+      -- their own checkpoint-advancing publisher; versioned consumers lifted in.
+      globalPublisher =
+        mconcat (map readModelPublisher persistentReadModels)
+          <> synchronousGlobalPublisher (globalToVersionedHandler versionedHandler)
       publishingWriter =
-        publishingTaggedCodecEventStoreWriter jsonStringCodec rawWriter (synchronousPublisher combinedHandler)
+        publishingGlobalTaggedCodecEventStoreWriter jsonStringCodec rawWriter globalPublisher
    in publishingWriter
 
 -- -----------------------------------------------------------------------------

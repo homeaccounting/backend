@@ -11,14 +11,15 @@ module Application.ReadModels.AmendmentBalanceSpec (spec) where
 
 import Application.ReadModels.Account
   ( AccountData (..),
-    accountToMap,
+    accountReadModel,
     balanceAsOf,
-    createAccountReadModel,
-    handleAccountEvents,
+    getAccount,
   )
+import Control.Monad.Logger (runNoLoggingT)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
+import Database.Persist.Sqlite (createSqlitePool)
 import Domain.Account.Events
   ( AccountCreated (..),
     AccountCreditReversed (..),
@@ -38,8 +39,9 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import Domain.Models (AccountingEvent (..))
-import Eventium (EventHandler (..), EventStoreReader (..), EventStoreWriter (..), ExpectedPosition (..), StreamEvent (..), emptyMetadata)
+import Eventium (EventHandler (..), EventStoreReader (..), EventStoreWriter (..), ExpectedPosition (..), ReadModel (..), StreamEvent (..), emptyMetadata)
 import qualified Eventium
+import Infrastructure.Database (runDbDirect)
 import RIO
 import Test.Hspec
 import Testkit.Helpers (mockAccountId, mockTransactionId, mockUserId)
@@ -114,11 +116,12 @@ creditReversedEvent w amt at_ =
 -- the target account's stream.
 runLiveBalance :: AccountId -> [AccountingEvent] -> IO (Maybe Money)
 runLiveBalance accountId events = do
-  rm <- createAccountReadModel
-  let EventHandler h = handleAccountEvents rm
-  h (zipWith mkGlobal [0 ..] events)
-  m <- accountToMap rm
-  pure ((.balance) <$> Map.lookup accountId m)
+  pool <- runNoLoggingT (createSqlitePool ":memory:" 1)
+  let ReadModel {initialize = initRM, eventHandler = EventHandler h} = accountReadModel
+  runDbDirect pool initRM
+  runDbDirect pool (mapM_ h (zipWith mkGlobal [0 ..] events))
+  mAcc <- runDbDirect pool (getAccount accountId)
+  pure ((.balance) <$> mAcc)
   where
     mkGlobal :: Eventium.SequenceNumber -> AccountingEvent -> Eventium.GlobalStreamEvent AccountingEvent
     mkGlobal seqNo payload =

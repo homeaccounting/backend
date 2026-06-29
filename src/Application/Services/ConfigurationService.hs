@@ -146,6 +146,7 @@ import Infrastructure.App
     HasBankingKeyRing (..),
     HasEventStore (..),
     HasReadModel (..),
+    runDb,
   )
 import Infrastructure.Banking.Provider (BankProvider)
 import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
@@ -431,8 +432,7 @@ setBankConnectionAccountMap userId connId accountMap = runExceptT $ do
   lift $ logInfo $ "Setting bank connection account map for user " <> displayShow userId
   -- Cross-aggregate validation against the account read model BEFORE issuing the
   -- command. The user must own/edit every target account.
-  accountRM <- lift (view accountReadModelL)
-  accessible <- lift (getAccessibleAccounts accountRM userId)
+  accessible <- lift (runDb (getAccessibleAccounts userId))
   let writable =
         [ accId
         | (accId, _accData, role) <- accessible,

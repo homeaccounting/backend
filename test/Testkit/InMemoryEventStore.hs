@@ -40,14 +40,14 @@ where
 import Application.EventDispatch (ReadModels (..), createReadModels, fromReadModels)
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
-import Application.ReadModels.BankImportReadModel (handleBankImportEvents, migrateBankImport)
+import Application.ReadModels.Persist (persistentReadModels)
 import Application.ReadModels.User ()
 import Control.Monad.Logger (LoggingT, runNoLoggingT)
 import qualified Data.Set as Set
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.Sqlite (createSqlitePool)
 import Domain.Models (AccountingEvent)
-import Eventium (EventStoreReader (..))
+import Eventium (EventStoreReader (..), ReadModel (..))
 import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Memory
   ( EventMap,
@@ -206,8 +206,8 @@ mkAppEnv withProcessManager = do
   runDbDirect pool $ do
     _ <- runMigrationSilent migrateSqlEvent
     _ <- runMigrationSilent migrateProjectionSnapshot
-    _ <- runMigrationSilent migrateBankImport
-    pure ()
+    -- Migrate every persistent read model's tables (each model's 'initialize').
+    mapM_ (\(_, ReadModel {initialize = initRM}) -> initRM) persistentReadModels
 
   readModels <- createReadModels
   let handlers = fromReadModels readModels
@@ -232,9 +232,8 @@ mkAppEnv withProcessManager = do
           (sqliteTaggedEventStoreWriter eventStoreConfig)
           eventStoreConfig
           pmFactory
-          ( createReadModelHandlersFrom handleBankImportEvents
-              ++ map liftIOEventHandler readModelHandlers
-          )
+          (map liftIOEventHandler readModelHandlers)
+          (map snd persistentReadModels)
       writer = liftTaggedWriter pool sqlWriter
       reader = liftVersionedReader pool (accountingVersionedEventStoreReader eventStoreConfig)
       globalReader = liftGlobalReader pool (accountingGlobalEventStoreReader eventStoreConfig)
@@ -259,7 +258,6 @@ mkAppEnv withProcessManager = do
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
-        accountReadModel = readModels.account,
         transactionReadModel = readModels.transaction,
         userReadModel = readModels.user,
         configurationReadModel = readModels.configuration,

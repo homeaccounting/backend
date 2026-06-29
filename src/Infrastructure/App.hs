@@ -119,13 +119,13 @@ where
 
 -- Local imports
 import Application.LinkCodeStore (LinkCodeStore)
-import Application.ReadModels.Account (AccountReadModel)
 import Application.ReadModels.Configuration (ConfigurationReadModel)
 import Application.ReadModels.ExchangeRate (ExchangeRateReadModel)
 import Application.ReadModels.Transaction (TransactionReadModel)
 import Application.ReadModels.User (UserReadModel)
 import Control.Concurrent.STM (retry)
-import Control.Monad.Logger (LoggingT, runStdoutLoggingT)
+import Control.Monad.Logger (LoggingT, filterLogger, runStdoutLoggingT)
+import qualified Control.Monad.Logger as ML
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
 import qualified Data.Set as Set
@@ -140,11 +140,13 @@ import Infrastructure.Auth.OAuth (OAuthConfig)
 import Infrastructure.Auth.Telegram (TelegramConfig)
 import Infrastructure.Banking.Provider (BankProvider)
 import Infrastructure.Config
-  ( AppConfig,
+  ( AppConfig (..),
     BankingConfig (..),
     DatabaseConfig,
     Environment (..),
+    LoggingConfig (..),
   )
+import qualified Infrastructure.Config as Config
 import Infrastructure.Crypto.SecretBox (KeyRing, mkKeyRing)
 import Infrastructure.Eventium
   ( AccountingGlobalEventStoreReader,
@@ -201,8 +203,6 @@ data AppEnv = AppEnv
     eventStoreReader :: !(AccountingVersionedEventStoreReader IO),
     -- | Global event store reader for read models
     globalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
-    -- | In-memory account read model (STM)
-    accountReadModel :: !(TVar AccountReadModel),
     -- | In-memory transaction read model (STM)
     transactionReadModel :: !(TVar TransactionReadModel),
     -- | In-memory user read model (STM)
@@ -298,7 +298,6 @@ initializeAppEnv ::
   AccountingTaggedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
   AccountingGlobalEventStoreReader IO ->
-  TVar AccountReadModel ->
   TVar TransactionReadModel ->
   TVar UserReadModel ->
   TVar ConfigurationReadModel ->
@@ -312,7 +311,7 @@ initializeAppEnv ::
   BankingEnv ->
   LinkCodeStore ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader accountReadModel transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv linkCodeStore' =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv linkCodeStore' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -321,7 +320,6 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader account
       eventStoreWriter = writer,
       eventStoreReader = reader,
       globalEventStoreReader = globalReader,
-      accountReadModel = accountReadModel,
       transactionReadModel = transactionReadModel,
       userReadModel = userReadModel,
       configurationReadModel = configurationReadModel,
@@ -475,13 +473,11 @@ instance HasEventStore AppEnv where
 -- >>>   readModel <- view accountReadModelL
 -- >>>   liftIO $ getAccount readModel accountId
 class HasReadModel env where
-  accountReadModelL :: Lens' env (TVar AccountReadModel)
   transactionReadModelL :: Lens' env (TVar TransactionReadModel)
   userReadModelL :: Lens' env (TVar UserReadModel)
   configurationReadModelL :: Lens' env (TVar ConfigurationReadModel)
 
 instance HasReadModel AppEnv where
-  accountReadModelL = lens (.accountReadModel) (\x y -> x {accountReadModel = y})
   transactionReadModelL = lens (.transactionReadModel) (\x y -> x {transactionReadModel = y})
   userReadModelL = lens (.userReadModel) (\x y -> x {userReadModel = y})
   configurationReadModelL = lens (.configurationReadModel) (\x y -> x {configurationReadModel = y})
@@ -688,14 +684,27 @@ runAppM = runRIO
 -- >>>   insert $ DbAccount "Savings" 1000.0
 -- >>>   insert $ DbAccount "Checking" 500.0
 --
--- Note: Database operations run with runStdoutLoggingT for persistent's logging.
+-- Note: persistent emits each SQL statement at 'ML.LevelDebug'. We gate that on
+-- the configured log level via 'filterLogger', so @[Debug#SQL]@ lines appear
+-- only under @logging.level: debug@ and are silent otherwise.
 runDb ::
-  (MonadReader env m, HasDbPool env, MonadUnliftIO m) =>
+  (MonadReader env m, HasDbPool env, HasAppConfig env, MonadUnliftIO m) =>
   ReaderT SqlBackend (LoggingT IO) a ->
   m a
 runDb action = do
   pool <- view dbPoolL
-  liftIO $ runStdoutLoggingT $ runSqlPool action pool
+  cfg <- view appConfigL
+  let minLevel = sqlLogMinLevel cfg.logging.level
+  liftIO $ runStdoutLoggingT $ filterLogger (\_ lvl -> lvl >= minLevel) $ runSqlPool action pool
+
+-- | Map the application's configured log level onto monad-logger's, so SQL
+-- logging (emitted at 'ML.LevelDebug') honours the same threshold as the rest
+-- of the app.
+sqlLogMinLevel :: Config.LogLevel -> ML.LogLevel
+sqlLogMinLevel Config.LogDebug = ML.LevelDebug
+sqlLogMinLevel Config.LogInfo = ML.LevelInfo
+sqlLogMinLevel Config.LogWarn = ML.LevelWarn
+sqlLogMinLevel Config.LogError = ML.LevelError
 
 -- -----------------------------------------------------------------------------
 -- Concurrency Helpers

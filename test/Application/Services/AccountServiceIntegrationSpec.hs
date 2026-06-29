@@ -59,7 +59,7 @@ import qualified RIO.Map as Map
 import qualified RIO.Text as T
 import Test.Hspec
 import Testkit.Helpers (fromRight', mockExchangeRate)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Spec
@@ -215,7 +215,7 @@ positiveDeltaSpec = do
       txData.sourceAmount `shouldBe` unsafeMoney USD 50
       txData.targetAmount `shouldBe` unsafeMoney USD 50
       -- Balance is now 150 USD.
-      maybeAcct <- getAccount env.accountReadModel accountId
+      maybeAcct <- runDbIn env (getAccount accountId)
       case maybeAcct of
         Just acct -> acct.balance `shouldBe` unsafeMoney USD 150
         Nothing -> expectationFailure "Account vanished from read model"
@@ -236,7 +236,7 @@ negativeDeltaSpec = do
       txData.sourceAccountId `shouldBe` accountId
       txData.sourceAmount `shouldBe` unsafeMoney USD 80
       txData.targetAmount `shouldBe` unsafeMoney USD 80
-      maybeAcct <- getAccount env.accountReadModel accountId
+      maybeAcct <- runDbIn env (getAccount accountId)
       case maybeAcct of
         Just acct -> acct.balance `shouldBe` unsafeMoney USD 120
         Nothing -> expectationFailure "Account vanished from read model"
@@ -271,7 +271,7 @@ backdateSpec = do
       txData.sourceAccountId `shouldBe` externalAccId
       txData.targetAccountId `shouldBe` accountId
       txData.sourceAmount `shouldBe` unsafeMoney USD 100
-      maybeAcct <- getAccount env.accountReadModel accountId
+      maybeAcct <- runDbIn env (getAccount accountId)
       case maybeAcct of
         Just acct ->
           acct.balance `shouldBe` unsafeMoney USD 260
@@ -353,7 +353,7 @@ rejectOverdraftSpec = do
         other ->
           expectationFailure $ "Expected Failed status, got: " <> show other
       -- Balance must remain unchanged.
-      maybeAcct <- getAccount env.accountReadModel accountId
+      maybeAcct <- runDbIn env (getAccount accountId)
       case maybeAcct of
         Just acct -> acct.balance `shouldBe` unsafeMoney USD 100
         Nothing -> expectationFailure "Account vanished from read model"
@@ -471,17 +471,17 @@ closeReopenStatusSpec = do
       apply = applyAccountCommand env.eventStoreWriter env.eventStoreReader id uuid
 
   -- Newly created accounts are Opened.
-  m0 <- getAccount env.accountReadModel accountId
+  m0 <- runDbIn env (getAccount accountId)
   fmap (.status) m0 `shouldBe` Just Opened
 
   -- Close, then confirm the read model reports Closed.
   _ <- apply (CloseAccountAccountCommand (CloseAccount {by = userId}))
-  m1 <- getAccount env.accountReadModel accountId
+  m1 <- runDbIn env (getAccount accountId)
   fmap (.status) m1 `shouldBe` Just Closed
 
   -- Reopen, then confirm it flips back to Opened.
   _ <- apply (ReopenAccountAccountCommand (ReopenAccount {by = userId}))
-  m2 <- getAccount env.accountReadModel accountId
+  m2 <- runDbIn env (getAccount accountId)
   fmap (.status) m2 `shouldBe` Just Opened
 
 serviceCloseReopenSpec :: Expectation
@@ -491,7 +491,7 @@ serviceCloseReopenSpec = do
 
   closed <- runAppM env $ closeAccount userId uuid
   closed `shouldBe` Right ()
-  m1 <- getAccount env.accountReadModel accountId
+  m1 <- runDbIn env (getAccount accountId)
   fmap (.status) m1 `shouldBe` Just Closed
 
   -- Closing again is rejected by the domain (collapses to a generic AccountError).
@@ -500,5 +500,5 @@ serviceCloseReopenSpec = do
 
   reopened <- runAppM env $ reopenAccount userId uuid
   reopened `shouldBe` Right ()
-  m2 <- getAccount env.accountReadModel accountId
+  m2 <- runDbIn env (getAccount accountId)
   fmap (.status) m2 `shouldBe` Just Opened

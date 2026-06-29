@@ -3,78 +3,67 @@
 
 -- |
 -- Module      : Application.ReadModels.Persist
--- Description : Startup migration + catch-up/rebuild for persistent read models
+-- Description : Registry + startup catch-up/rebuild for persistent read models
 --
--- Single place that brings every persistent (SQL) read model up to date at
--- startup. Called from the composition root (@app/Main.hs@) so that
--- Infrastructure need not depend on Application.
+-- The single registry of persistent (SQL) read models, expressed as eventium
+-- 'ReadModel's. Two consumers use it:
 --
--- For each persistent read model it:
---   1. migrates the model's table(s), then
---   2. catches it up from its checkpoint — or fully rebuilds it when requested
---      via the 'rebuildEnvVar' environment variable.
+--   * the event-store writer wiring (@app/Main.hs@) drives each model
+--     synchronously in the event-append transaction via @readModelPublisher@
+--     (real global positions; checkpoint advanced in-line), and
+--   * 'initializePersistentReadModels' brings each model up to date at startup
+--     with 'catchUpReadModel' (initialize + replay from its checkpoint, no
+--     reset) — or 'rebuildReadModel' (reset + replay) when named in
+--     'rebuildEnvVar'.
 --
--- Their live updates already commit in the event-append transaction; this is the
--- one-time backfill (newly-added tables) / bounded boot catch-up / on-demand
--- rebuild path. Idempotent applies make re-application safe.
+-- Lives in Application (it references concrete read models) and is called from
+-- the composition root, so Infrastructure need not depend on Application.
 module Application.ReadModels.Persist
-  ( initializePersistentReadModels,
+  ( persistentReadModels,
+    initializePersistentReadModels,
     rebuildEnvVar,
   )
 where
 
-import Application.ReadModels.BankImportReadModel
-  ( bankImportProjectionName,
-    handleBankImportEvents,
-    migrateBankImport,
-    resetBankImport,
-  )
-import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
-import Infrastructure.Database (ConnectionPool, SqlIO, runDbDirect, runMigration)
+import Application.ReadModels.Account (accountProjectionName, accountReadModel)
+import Application.ReadModels.BankImportReadModel (bankImportProjectionName, bankImportReadModel)
+import Domain.Models (AccountingEvent)
+import Eventium (ReadModel, catchUpReadModel, rebuildReadModel)
+import Eventium.ProjectionCache.Postgresql (CheckpointName (..))
+import Infrastructure.Database (ConnectionPool, SqlIO, runDbDirect)
 import Infrastructure.Eventium (AccountingGlobalEventStoreReader)
-import Infrastructure.Eventium.Backfill (backfillReadModel, rebuildReadModelTables)
 import RIO
 import qualified RIO.Text as T
 import System.Environment (lookupEnv)
 
 -- | Environment variable naming which read models to fully rebuild at startup
--- (comma-separated projection names, or @all@). Centralized here rather than
--- read inline in the composition root.
+-- (comma-separated projection names, or @all@).
 rebuildEnvVar :: String
 rebuildEnvVar = "REBUILD_READ_MODELS"
 
--- | Events replayed per backfill batch / DB transaction.
-defaultBatchSize :: Int
-defaultBatchSize = 1000
+-- | Every persistent read model, keyed by its projection name (used both to
+-- drive it in the writer and to match 'rebuildEnvVar' targets).
+persistentReadModels :: [(Text, ReadModel SqlIO AccountingEvent)]
+persistentReadModels =
+  [ (unCheckpointName bankImportProjectionName, bankImportReadModel),
+    (unCheckpointName accountProjectionName, accountReadModel)
+  ]
+  where
+    unCheckpointName (CheckpointName t) = t
 
--- | Migrate and bring every persistent read model up to date. Returns
--- @(projectionName, eventsApplied)@ pairs for the caller to log.
+-- | Bring every persistent read model up to date at startup: catch up from each
+-- model's checkpoint, or fully rebuild the ones named in 'rebuildEnvVar'.
 initializePersistentReadModels ::
   ConnectionPool ->
   AccountingGlobalEventStoreReader SqlIO ->
-  IO [(Text, Int)]
+  IO ()
 initializePersistentReadModels pool gr = do
   rebuildTargets <- readRebuildTargets
-  let bringUpToDate name reset checkpoint handler = do
-        let cp = postgresqlCheckpointStore checkpoint
-        applied <-
-          if shouldRebuild rebuildTargets name
-            then rebuildReadModelTables pool reset gr cp handler defaultBatchSize
-            else backfillReadModel pool gr cp handler defaultBatchSize
-        pure (name, applied)
-
-  -- BankImport
-  runDbDirect pool (runMigration migrateBankImport)
-  bankImport <-
-    bringUpToDate
-      (projectionText bankImportProjectionName)
-      resetBankImport
-      bankImportProjectionName
-      handleBankImportEvents
-
-  pure [bankImport]
-  where
-    projectionText (CheckpointName t) = t
+  forM_ persistentReadModels $ \(name, rm) ->
+    runDbDirect pool
+      $ if shouldRebuild rebuildTargets name
+        then rebuildReadModel gr rm
+        else catchUpReadModel gr rm
 
 -- | Parse 'rebuildEnvVar' into a list of requested targets (trimmed,
 -- comma-separated). Empty when unset.

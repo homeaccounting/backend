@@ -149,16 +149,34 @@ idempotent:
   idempotent — re-inserting the same key is a no-op (`repsert`/`INSERT … ON
   CONFLICT DO NOTHING`).
 - **Accumulating projections** (e.g. `accounts.balance`, which folds
-  `AccountDebited`/`AccountCredited` deltas) are NOT idempotent under naive
-  re-application. They must guard by **per-aggregate stream version**: store the
-  last-applied `EventVersion` per row and apply an event only when its version
-  exceeds the stored one.
+  `AccountDebited`/`AccountCredited` deltas — events carry the delta, not an
+  absolute) are NOT idempotent under naive re-application.
 
-The BankImport pilot needs only natural upsert idempotency. The exact mechanism
-for accumulating models — a per-aggregate version guard, vs. a future eventium
-change that threads the real global `SequenceNumber` to live handlers (which would
-let live writes advance the checkpoint and eliminate boot catch-up entirely) — is
-decided in the **Account** phase, not here.
+**Resolution (decided): synchronous, in-transaction projection (eventium 0.4.0).**
+Rather than a per-aggregate version guard, we adopt eventium's dual-mode
+`ReadModel` (PR `aleks-sidorenko/eventium#9`): `readModelPublisher` applies the
+handler and advances the model's `CheckpointStore` **in the event-append
+transaction**, using the real global `SequenceNumber` the write now returns
+(`WriteResult`). The PostgreSQL exclusive lock (held to commit) keeps the
+checkpoint monotonic, so it is always current and **boot catch-up re-applies
+nothing** — there is no re-application source in normal operation. Consequences:
+
+- The one accumulating field, `accounts.balance`, applies exactly once — **no
+  per-aggregate version guard needed**.
+- The per-row `version` is **recorded from the event's real per-stream version**
+  (`globalEvent.payload.position`), not derived as `version + 1`. This removes the
+  `version + 1` boilerplate across the read models (User/Account/Configuration),
+  is idempotent (setting to the event's version is a no-op on re-apply), and makes
+  the stored version match the event store's actual versions.
+- A newly-added table's one-time backfill and explicit rebuild still replay from
+  the log via `rebuildReadModel` (reset → replay), each event applied once.
+
+The BankImport pilot (already merged) relied on natural upsert idempotency; once
+on `readModelPublisher` it needs nothing more. Open sub-decision, settled at
+Account-migration time: how to surface `(streamKey, version, payload)` from a
+`GlobalStreamEvent` — extend the app's `unpackGlobalEvent`, or upstream
+`globalStreamKey`/`globalStreamVersion`/`globalStreamPayload` accessors to
+eventium.
 
 **On-demand rebuild** (also the schema-evolution path): reset one model's tables
 + checkpoint, replay from the log, via eventium's `reset` / `rebuildReadModel`.

@@ -92,7 +92,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
-import Infrastructure.App (AppM, HasReadModel (..), HasTelegramClient (..))
+import Infrastructure.App (AppM, HasReadModel (..), HasTelegramClient (..), runDb)
 import RIO
 import qualified RIO.Map as Map
 import qualified RIO.Text as T
@@ -524,8 +524,7 @@ handleIncomeAmount botState telegramId chatId cat text =
           clearConversation botState telegramId
           sendMsg chatId "No account selected. Use /accounts to select one first."
         Just (accountId, _name) -> do
-          accountReadModel <- view accountReadModelL
-          maybeAcc <- getAccount accountReadModel accountId
+          maybeAcc <- runDb (getAccount accountId)
           case maybeAcc of
             Nothing -> do
               clearConversation botState telegramId
@@ -597,8 +596,7 @@ handleExpenseAmount botState telegramId chatId cat text =
           clearConversation botState telegramId
           sendMsg chatId "No account selected. Use /accounts to select one first."
         Just (accountId, _name) -> do
-          accountReadModel <- view accountReadModelL
-          maybeAcc <- getAccount accountReadModel accountId
+          maybeAcc <- runDb (getAccount accountId)
           case maybeAcc of
             Nothing -> do
               clearConversation botState telegramId
@@ -683,8 +681,7 @@ handleTransferAmount botState telegramId chatId srcId tgtId text =
   case parseAmount text of
     Nothing -> sendMsg chatId "Invalid amount. Please enter a positive number:"
     Just amt -> do
-      accountReadModel <- view accountReadModelL
-      maybeAcc <- getAccount accountReadModel srcId
+      maybeAcc <- runDb (getAccount srcId)
       case maybeAcc of
         Nothing -> do
           clearConversation botState telegramId
@@ -811,8 +808,7 @@ getUserRegularAccounts telegramId = do
   case maybeUserId of
     Nothing -> return Nothing
     Just userId -> do
-      accountReadModel <- view accountReadModelL
-      accounts <- AccountRM.getUserRegularAccounts accountReadModel userId
+      accounts <- runDb (AccountRM.getUserRegularAccounts userId)
       return $ Just accounts
 
 -- | Find an account by short ID prefix (first 8 chars of UUID).

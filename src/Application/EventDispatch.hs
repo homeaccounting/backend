@@ -15,11 +15,6 @@ module Application.EventDispatch
   )
 where
 
-import Application.ReadModels.Account
-  ( AccountReadModel,
-    createAccountReadModel,
-    handleAccountEvents,
-  )
 import Application.ReadModels.Configuration
   ( ConfigurationReadModel,
     createConfigurationReadModel,
@@ -48,8 +43,7 @@ import RIO
 -- model and is wired separately (see 'Application.ReadModels.BankImportReadModel'
 -- and the event-store writer in @app/Main.hs@).
 data ReadModels = ReadModels
-  { account :: TVar AccountReadModel,
-    transaction :: TVar TransactionReadModel,
+  { transaction :: TVar TransactionReadModel,
     user :: TVar UserReadModel,
     configuration :: TVar ConfigurationReadModel,
     exchangeRate :: TVar ExchangeRateReadModel
@@ -58,15 +52,13 @@ data ReadModels = ReadModels
 -- | Allocate fresh TVars for every read model.
 createReadModels :: (MonadIO m) => m ReadModels
 createReadModels = do
-  accountRM <- createAccountReadModel
   transactionRM <- createTransactionReadModel
   userRM <- createUserReadModel
   configRM <- createConfigurationReadModel
   exchangeRateRM <- createExchangeRateReadModel
   pure
     ReadModels
-      { account = accountRM,
-        transaction = transactionRM,
+      { transaction = transactionRM,
         user = userRM,
         configuration = configRM,
         exchangeRate = exchangeRateRM
@@ -79,8 +71,7 @@ createReadModels = do
 fromReadModels :: (MonadIO m) => ReadModels -> AccountingReadModelHandler m
 fromReadModels rms =
   mconcat
-    [ handleAccountEvents rms.account,
-      handleTransactionEvents rms.transaction,
+    [ handleTransactionEvents rms.transaction,
       handleUserEvents rms.user,
       handleConfigurationEvents rms.configuration,
       handleExchangeRateEvents rms.exchangeRate

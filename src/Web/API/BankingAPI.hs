@@ -69,7 +69,7 @@ import Domain.Core.Types
 import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
-    HasReadModel (..),
+    runDb,
   )
 import Infrastructure.Banking.Provider (BankProvider (..))
 import qualified Infrastructure.Banking.Provider as Banking
@@ -307,8 +307,7 @@ resyncHandler user connUuid request = do
   -- share. accountMap :: Map ExternalAccountId AccountId, and
   -- BankAccountId = ExternalAccountId = Text, so each entry is already a
   -- (BankAccountId, AccountId) pair.
-  accountRM <- view accountReadModelL
-  localAccounts <- getAccessibleAccounts accountRM userId
+  localAccounts <- runDb (getAccessibleAccounts userId)
   let writable =
         Set.fromList
           [ accId

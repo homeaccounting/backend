@@ -58,7 +58,7 @@ import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, registerUser)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Harness
@@ -116,7 +116,7 @@ money = unsafeMoney ccy
 -- | Read the balance of an account; fails the test if the account is absent.
 balanceOf :: AppEnv -> AccountId -> IO Rational
 balanceOf env aid = do
-  m <- AccountRM.getAccount env.accountReadModel aid
+  m <- runDbIn env (AccountRM.getAccount aid)
   case m of
     Just acc -> pure (unMoney acc.balance)
     Nothing -> fail "balanceOf: account not found"

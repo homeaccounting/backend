@@ -172,6 +172,23 @@ Config path set via `CONFIG_PATH` env var. Environment variables loaded via dire
 - Process managers (sagas) handle cross-aggregate workflows (e.g., `TransferManager` for two-phase account transfers)
 - Eventium packages: `eventium-core`, `eventium-postgresql`, `eventium-memory`, `eventium-testkit`
 
+### Eventium as a first-class goal
+
+A core goal of this project is to grow **eventium** into the best event-sourcing
+library for Haskell. Eventium is developed in tandem with this backend (it is a
+local, owned dependency), so:
+
+- **Push generic event-sourcing machinery down into eventium.** If a piece of
+  boilerplate or infrastructure is generic enough to apply beyond this app
+  (replay/backfill, checkpointed projections, read-model lifecycle, subscription
+  drivers, etc.), it belongs in the library, not in `Infrastructure.*`. The app
+  should keep only domain-specific wiring.
+- When adding to eventium, design for **genericity** — it must serve all event
+  types and backends, and both **synchronous (in-transaction)** and
+  **asynchronous (polling)** read-model consumers, not a single call site.
+- Prefer evolving eventium's abstractions cleanly (we own it; there is no
+  external-compat constraint) over working around them in the app.
+
 ## Monad Usage Guidelines
 
 - **`IO`**: Only for resource acquisition, config loading, wiring in `Main.hs`

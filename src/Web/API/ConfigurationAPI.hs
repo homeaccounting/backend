@@ -85,7 +85,7 @@ import Domain.Core.Types
     unDictionaryId,
     unEntryName,
   )
-import Infrastructure.App (AppM, HasAppConfig (..), accountReadModelL)
+import Infrastructure.App (AppM, HasAppConfig (..), runDb)
 import Infrastructure.Config
   ( AppConfig (..),
     bankingFeatureAvailable,
@@ -819,8 +819,7 @@ computeBaseCurrencyEditable uid = do
   case extResult of
     Left _ -> pure True
     Right extAccId -> do
-      readModel <- view accountReadModelL
-      mAccount <- getAccount readModel extAccId
+      mAccount <- runDb (getAccount extAccId)
       pure $ maybe True (not . (.hasTransactions)) mAccount
 
 -- | Convert domain DictionaryData to API response DTO.

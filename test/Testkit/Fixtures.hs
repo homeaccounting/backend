@@ -18,6 +18,8 @@ module Testkit.Fixtures
   ( registerUser,
     createAccount,
     createDefaultAccount,
+    registerWithAccount,
+    creditAccount,
     firstDictionaryEntry,
     seedDefaultAndRegister,
     seedExchangeRates,
@@ -42,7 +44,8 @@ import Application.Services.ConfigurationService
 import qualified Data.Map.Strict as Map
 import Data.Time (getCurrentTime, utctDay)
 import qualified Data.UUID as UUID
-import Domain.Account.Commands (CreateAccount (..))
+import Domain.Account.CommandHandler (AccountCommand (..))
+import Domain.Account.Commands (CreateAccount (..), CreditAccount (..))
 import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
@@ -53,10 +56,13 @@ import Domain.Core.Types
     DictionaryId,
     Money,
     UserId,
+    defaultBankAccount,
     defaultCash,
     mkExpenseAllocations,
     mkIncomeAllocations,
+    unAccountId,
     unsafeMoney,
+    unsafeTransactionId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
@@ -64,6 +70,7 @@ import Domain.Models (AccountingEvent (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
+import Infrastructure.Eventium (applyAccountCommand)
 import RIO
 import Testkit.Helpers (mockExchangeRate)
 
@@ -103,6 +110,32 @@ createAccount env uid accName subtype currency balance = do
 -- "an account to attach a transaction to" case.
 createDefaultAccount :: AppEnv -> UserId -> Text -> IO AccountId
 createDefaultAccount env uid accName = createAccount env uid accName defaultCash Core.USD 5000
+
+-- | Register a user and create a USD 'Regular' bank account they own, returning
+-- both ids — the common "a user with one account" starting point.
+registerWithAccount :: AppEnv -> Text -> Text -> IO (UserId, AccountId)
+registerWithAccount env email accName = do
+  uid <- registerUser env email
+  acct <- createAccount env uid accName defaultBankAccount Core.USD 100
+  pure (uid, acct)
+
+-- | Append a single 'AccountCredited' event directly (bypassing the saga) so the
+-- stream grows by exactly one event. @seed@ yields a distinct synthetic
+-- transaction id, letting callers append several independent credits.
+creditAccount :: AppEnv -> AccountId -> Word32 -> Money -> IO ()
+creditAccount env accountId seed amount =
+  void
+    $ applyAccountCommand
+      env.eventStoreWriter
+      env.eventStoreReader
+      id
+      (unAccountId accountId)
+      ( CreditAccountAccountCommand
+          CreditAccount
+            { amount = amount,
+              transactionId = unsafeTransactionId (UUID.fromWords seed 0 0 7)
+            }
+      )
 
 -- | Publish a set of @(source, target, rate)@ exchange rates into the env's
 -- exchange-rate read model, dated today, exactly as the provider feed would.

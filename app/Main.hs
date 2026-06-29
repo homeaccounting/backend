@@ -85,8 +85,7 @@ import Application.EventDispatch
   )
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
-import Application.ReadModels.BankImportReadModel (handleBankImportEvents)
-import Application.ReadModels.Persist (initializePersistentReadModels)
+import Application.ReadModels.Persist (initializePersistentReadModels, persistentReadModels)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
@@ -296,12 +295,12 @@ initializeEnvironment logFunc config versionInfo = do
                 wireProcessManager transactionCancellationProcessManager
               ]
           )
-          -- Persistent (SQL) read models run their apply directly in the
-          -- writer's SqlPersistT transaction; in-memory (TVar) models are
-          -- IO handlers lifted into it.
-          ( createReadModelHandlersFrom handleBankImportEvents
-              ++ map liftIOEventHandler readModelHandlers
-          )
+          -- In-memory (TVar) read models + logger + process managers, lifted onto
+          -- the global stream inside the writer.
+          (map liftIOEventHandler readModelHandlers)
+          -- Persistent (SQL) read models: applied + checkpointed in the write
+          -- transaction via readModelPublisher (real global positions).
+          (map snd persistentReadModels)
       sqlReader = accountingVersionedEventStoreReader eventStoreConfig
       sqlGlobalReader = accountingGlobalEventStoreReader eventStoreConfig
       -- Lift to IO by running through the connection pool
@@ -321,9 +320,8 @@ initializeEnvironment logFunc config versionInfo = do
   -- the event-append transaction; this is the one-time backfill / bounded boot
   -- catch-up / on-demand rebuild path.
   logInfo "Migrating + catching up persistent read models..."
-  appliedCounts <- liftIO $ initializePersistentReadModels pool sqlGlobalReader
-  forM_ appliedCounts $ \(name, applied) ->
-    logInfo $ "Persistent read model '" <> display name <> "' up to date (" <> displayShow applied <> " events applied)"
+  liftIO $ initializePersistentReadModels pool sqlGlobalReader
+  logInfo "Persistent read models up to date"
 
   -- 5. Auth configurations (loaded from YAML config)
   logInfo "Auth configurations loaded from config file"
@@ -407,7 +405,6 @@ initializeEnvironment logFunc config versionInfo = do
           writer
           reader
           globalReader
-          readModels.account
           readModels.transaction
           readModels.user
           readModels.configuration

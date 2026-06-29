@@ -75,7 +75,7 @@ import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
 import RIO
 import Test.Hspec
 import Testkit.Helpers (singletonExpense, singletonIncome)
-import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager, runDbIn)
 
 -- | Test DictionaryEntryId for "Salary" income category.
 -- | Fixed business time used for transfer fixtures.
@@ -523,16 +523,15 @@ processManagerDrivenSpec =
       -- Source: 1000, Target: 500. Transfer 200.
       _ <- initiateTransferOnly env acct1Uuid acct2Uuid _userUuid 200 "Balance test"
 
-      let acctReadModel = env.accountReadModel
       -- Source should be 1000 - 200 = 800
-      maybeSrc <- getAccount acctReadModel (unsafeAccountId acct1Uuid)
+      maybeSrc <- runDbIn env (getAccount (unsafeAccountId acct1Uuid))
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found in read model"
         Just srcData ->
           srcData.balance `shouldBe` unsafeMoney USD 800
 
       -- Target should be 500 + 200 = 700
-      maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
+      maybeTgt <- runDbIn env (getAccount (unsafeAccountId acct2Uuid))
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found in read model"
         Just tgtData ->
@@ -575,14 +574,13 @@ processManagerDrivenSpec =
       -- External should go to -500
       _ <- initiateTransferOnly env extUuid regUuid userUuid 500 "Salary"
 
-      let acctReadModel = env.accountReadModel
-      maybeExt <- getAccount acctReadModel (unsafeAccountId extUuid)
+      maybeExt <- runDbIn env (getAccount (unsafeAccountId extUuid))
       case maybeExt of
         Nothing -> expectationFailure "External account not found in read model"
         Just extData ->
           extData.balance `shouldBe` unsafeMoney USD (-500)
 
-      maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
+      maybeReg <- runDbIn env (getAccount (unsafeAccountId regUuid))
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found in read model"
         Just regData ->
@@ -603,14 +601,13 @@ processManagerDrivenSpec =
           txData.status `shouldBe` Failed "Insufficient funds"
 
       -- Balances should remain unchanged
-      let acctReadModel = env.accountReadModel
-      maybeSrc <- getAccount acctReadModel (unsafeAccountId acct1Uuid)
+      maybeSrc <- runDbIn env (getAccount (unsafeAccountId acct1Uuid))
       case maybeSrc of
         Nothing -> expectationFailure "Source account not found"
         Just srcData ->
           srcData.balance `shouldBe` unsafeMoney USD 1000
 
-      maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
+      maybeTgt <- runDbIn env (getAccount (unsafeAccountId acct2Uuid))
       case maybeTgt of
         Nothing -> expectationFailure "Target account not found"
         Just tgtData ->
@@ -626,14 +623,13 @@ processManagerDrivenSpec =
 
       -- Source: 1000 - 100 - 200 + 50 = 750
       -- Target: 500 + 100 + 200 - 50 = 750
-      let acctReadModel = env.accountReadModel
-      maybeSrc <- getAccount acctReadModel (unsafeAccountId acct1Uuid)
+      maybeSrc <- runDbIn env (getAccount (unsafeAccountId acct1Uuid))
       case maybeSrc of
         Nothing -> expectationFailure "Source not found"
         Just srcData ->
           srcData.balance `shouldBe` unsafeMoney USD 750
 
-      maybeTgt <- getAccount acctReadModel (unsafeAccountId acct2Uuid)
+      maybeTgt <- runDbIn env (getAccount (unsafeAccountId acct2Uuid))
       case maybeTgt of
         Nothing -> expectationFailure "Target not found"
         Just tgtData ->
@@ -708,14 +704,13 @@ categorizedTransferSpec =
           txData.status `shouldBe` Completed
 
       -- Verify account balances
-      let acctReadModel = env.accountReadModel
-      maybeExt <- getAccount acctReadModel (unsafeAccountId extUuid)
+      maybeExt <- runDbIn env (getAccount (unsafeAccountId extUuid))
       case maybeExt of
         Nothing -> expectationFailure "External account not found"
         Just extData ->
           extData.balance `shouldBe` unsafeMoney USD (-3000)
 
-      maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
+      maybeReg <- runDbIn env (getAccount (unsafeAccountId regUuid))
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found"
         Just regData ->
@@ -783,14 +778,13 @@ categorizedTransferSpec =
           txData.status `shouldBe` Completed
 
       -- Verify account balances
-      let acctReadModel = env.accountReadModel
-      maybeReg <- getAccount acctReadModel (unsafeAccountId regUuid)
+      maybeReg <- runDbIn env (getAccount (unsafeAccountId regUuid))
       case maybeReg of
         Nothing -> expectationFailure "Regular account not found"
         Just regData ->
           regData.balance `shouldBe` unsafeMoney USD 4850
 
-      maybeExt <- getAccount acctReadModel (unsafeAccountId extUuid)
+      maybeExt <- runDbIn env (getAccount (unsafeAccountId extUuid))
       case maybeExt of
         Nothing -> expectationFailure "External account not found"
         Just extData ->

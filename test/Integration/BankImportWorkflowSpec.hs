@@ -81,7 +81,7 @@ import Testkit.Helpers
     singletonExpense,
     singletonIncome,
   )
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import qualified UnliftIO.Async as Async
 
 -- -----------------------------------------------------------------------------
@@ -317,8 +317,7 @@ testDay = fromGregorian 2026 4 10
 -- | Look up an account's current balance from the read model.
 accountBalanceOf :: AppEnv -> AccountId -> IO Money
 accountBalanceOf env accId = do
-  accountRM <- runAppM env $ view accountReadModelL
-  mData <- AccountRM.getAccount accountRM accId
+  mData <- runDbIn env (AccountRM.getAccount accId)
   d <- fromJustIO "account" mData
   pure d.balance
 

@@ -110,6 +110,7 @@ import Application.ReadModels.Account (AccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
 import Data.Aeson (FromJSON (..), ToJSON (..), Value, object, withObject, (.:), (.:?), (.=))
 import Data.Bifunctor (first)
+import Data.Coerce (coerce)
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes, fromMaybe)
@@ -127,6 +128,7 @@ import Domain.Core.Types (AccountId, AccountStatus (..), AccountSubtype (..), Ac
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
+import Eventium (EventVersion (..))
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------
@@ -891,7 +893,7 @@ fromAccountData accountId AccountData {..} =
         Regular at -> Just (fromAccountSubtype at)
         External -> Nothing,
       status = fromAccountStatus status,
-      version = version
+      version = coerce version
     }
 
 -- | Converts AccountStatus to Text representation.

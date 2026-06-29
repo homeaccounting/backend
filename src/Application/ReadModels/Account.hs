@@ -1,80 +1,91 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- |
 -- Module      : Application.ReadModels.Account
--- Description : Read model for optimized account queries
+-- Description : Persistent, indexed read model for account queries
 --
--- This module implements a read model that provides efficient queries for account
--- information without requiring event replay. The read model listens to the event
--- stream and maintains a denormalized view optimized for common query patterns.
+-- Accounts are projected into two Postgres tables:
 --
--- Key Components:
---   - AccountData: Denormalized account information (with ownership and RBAC)
---   - AccountReadModel: Map of account IDs to account data
---   - Event handlers: Update the read model when events occur
---   - Query functions: Efficient lookups by account ID
+--   * @accounts@ — one row per account (name, balance, owner, type, overdraft,
+--     status, version), and
+--   * @account_access@ — the many-to-many access list (account, user, role),
+--     indexed by user so "accounts visible to user U" is an indexed lookup
+--     rather than a scan of every account.
 --
--- Design Rationale:
---   - Separates read and write models (CQRS pattern)
---   - Optimizes for query performance
---   - Maintains eventual consistency with event stream
---   - Tracks sequence numbers for reliable event processing
---   - Includes RBAC data for authorization checks
---
--- The read model can be:
---   - Rebuilt from the event stream if corrupted
---   - Extended with additional denormalized fields
---   - Backed by in-memory or persistent storage
+-- The projection is an eventium 'ReadModel' ('accountReadModel') driven
+-- synchronously in the event-append transaction. Per-row @version@ is recorded
+-- from the event's real per-stream 'EventVersion' (not derived by incrementing),
+-- which is idempotent; @balance@ folds debit/credit deltas (applied exactly once
+-- under the synchronous driver).
 module Application.ReadModels.Account
-  ( -- * Read Model Types
+  ( -- * Query result type
     AccountData (..),
-    AccountReadModel,
 
-    -- * Read Model Creation
-    createAccountReadModel,
+    -- * Read model
+    accountReadModel,
+    accountProjectionName,
+    migrateAccount,
+    resetAccount,
+    AccountEntity (..),
+    AccountAccessEntity (..),
 
-    -- * Event Handler
-    handleAccountEvents,
-
-    -- * Query Functions
+    -- * Queries (run via 'runDb')
     getAccount,
-    getAccountForUser,
-    getAllAccounts,
+    getMyAccounts,
     getAccessibleAccounts,
     getAccessibleAccountIds,
     getUserRegularAccounts,
     accountExists,
+
+    -- * Temporal balance (event-store fold)
     balanceAsOf,
     foldBalanceAsOf,
-
-    -- * Helper Functions
-    accountToMap,
   )
 where
 
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad (void)
+import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson (FromJSON, ToJSON)
+import Data.Either (fromRight)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
+import Database.Persist
+  ( Entity (..),
+    Filter,
+    deleteWhere,
+    getBy,
+    insertUnique,
+    replace,
+    selectList,
+    (<-.),
+    (==.),
+  )
+import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
+import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
-    AccountClosed (..),
     AccountCreated (..),
     AccountCreditReversed (..),
     AccountCredited (..),
     AccountDebitReversed (..),
     AccountDebited (..),
     AccountRenamed (..),
-    AccountReopened (..),
     AccountSubtypeSet (..),
     OverdraftLimitSet (..),
   )
@@ -93,50 +104,37 @@ import Domain.Core.Types
     subtractMoney,
     unAccountId,
   )
-import Domain.Models
-  ( AccountingEvent (..),
+import Domain.Models (AccountingEvent (..))
+import Eventium
+  ( EventHandler (..),
+    EventStoreReader (..),
+    EventVersion (..),
+    GlobalStreamEvent,
+    ReadModel (..),
+    StreamEvent (..),
+    VersionedStreamEvent,
+    allEvents,
   )
-import Eventium (EventHandler (..), EventStoreReader (..), EventVersion, GlobalStreamEvent, SequenceNumber, StreamEvent (..), VersionedStreamEvent, allEvents)
+import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
 import GHC.Generics (Generic)
-import Infrastructure.Eventium (AccountingReadModelHandler)
-import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
-import Safe (maximumDef)
+import Infrastructure.Database.Orphans ()
 
 -- -----------------------------------------------------------------------------
--- Read Model Data Types
+-- Query result type
 -- -----------------------------------------------------------------------------
 
--- | Denormalized account information for efficient querying.
---
--- This structure contains all the information needed for common account queries
--- without requiring event replay. It's optimized for read operations.
---
--- Now includes:
---   - Ownership (createdBy)
---   - Account type (Regular or External)
---   - Access list for RBAC
+-- | Denormalized account information returned by queries. @accessList@ is
+-- assembled from the @account_access@ rows.
 data AccountData = AccountData
-  { -- | Human-readable account name
-    name :: Text,
-    -- | Current account balance
+  { name :: Text,
     balance :: Money,
-    -- | User who created the account (Owner)
     createdBy :: UserId,
-    -- | Account category (Regular with type, or External)
     accountType :: AccountType,
-    -- | Access control list (users and their roles)
     accessList :: [AccountAccess],
-    -- | Overdraft limit (Nothing = unlimited)
     overdraftLimit :: Maybe Money,
-    -- | Whether the account has ever been touched by a posted transaction
-    -- (debited, credited, or had a debit/credit reversed). Mirrors the
-    -- domain aggregate's @hasTransactions@ in 'Domain.Account.Projection'
-    -- and is the precondition for 'ChangeAccountCurrency'.
     hasTransactions :: Bool,
-    -- | Lifecycle status. Opened on creation; flipped by Close/Reopen events.
     status :: AccountStatus,
-    -- | Version number from event stream for optimistic concurrency
-    version :: Int
+    version :: EventVersion
   }
   deriving (Show, Eq, Generic)
 
@@ -144,485 +142,233 @@ instance ToJSON AccountData
 
 instance FromJSON AccountData
 
--- | Account with the requesting user's role included.
---
--- This is returned when querying for a specific user, indicating
--- what role they have on the account.
-data AccountWithRole = AccountWithRole
-  { -- | The account data
-    account :: AccountData,
-    -- | The requesting user's role on this account
-    userRole :: AccountRole
-  }
-  deriving (Show, Eq, Generic)
-
-instance ToJSON AccountWithRole
-
-instance FromJSON AccountWithRole
-
--- | The read model state: a map from account IDs to their account data.
---
--- This is wrapped in a TVar for concurrent access and includes the latest
--- sequence number for reliable event processing.
-data AccountReadModel = AccountReadModel
-  { latestSequence :: SequenceNumber,
-    accounts :: Map AccountId AccountData
-  }
-  deriving (Show, Eq)
-
 -- -----------------------------------------------------------------------------
--- Read Model Creation
+-- Schema
 -- -----------------------------------------------------------------------------
 
--- | Creates a new empty account read model.
---
--- This initializes the read model with:
---   - Sequence number -1 (before any events)
---   - Empty map of accounts
---
--- Example:
--- >>> readModel <- createAccountReadModel
--- >>> account <- getAccount readModel someAccountId
-createAccountReadModel :: (MonadIO m) => m (TVar AccountReadModel)
-createAccountReadModel =
-  liftIO $
-    newTVarIO $
-      AccountReadModel
-        { latestSequence = -1,
-          accounts = Map.empty
-        }
+share
+  [mkPersist sqlSettings, mkMigrate "migrateAccount"]
+  [persistLowerCase|
+AccountEntity sql=accounts
+    accountId AccountId
+    name Text
+    balance Money
+    createdBy UserId
+    accountType AccountType
+    overdraftLimit Money Maybe
+    hasTransactions Bool
+    status AccountStatus
+    version EventVersion
+    UniqueAccountId accountId
+    deriving Show Eq
+AccountAccessEntity sql=account_access
+    accountId AccountId
+    userId UserId
+    role AccountRole
+    -- (userId, accountId): leads with userId so "accounts visible to a user" is
+    -- an indexed lookup; also uniquely identifies a user's role on an account.
+    UniqueAccountAccess userId accountId
+    deriving Show Eq
+|]
+
+-- | Projection/checkpoint name for this read model.
+accountProjectionName :: CheckpointName
+accountProjectionName = CheckpointName "account"
+
+-- | Clear both account tables. The checkpoint is reset by 'rebuildReadModel'.
+resetAccount :: (MonadIO m) => SqlPersistT m ()
+resetAccount = do
+  deleteWhere ([] :: [Filter AccountAccessEntity])
+  deleteWhere ([] :: [Filter AccountEntity])
 
 -- -----------------------------------------------------------------------------
--- Event Handler
+-- Read model
 -- -----------------------------------------------------------------------------
 
--- | Updates the read model with new events from the global event stream.
---
--- This function:
---   1. Processes each event and updates the account data accordingly
---   2. Tracks the highest sequence number seen
---   3. Updates the TVar atomically
---
--- Events handled:
---   - AccountCreated: Adds new account to the map (with owner and type)
---   - AccountAccessGranted: Updates access list
---   - AccountAccessRevoked: Updates access list
---   - AccountDebited: Decreases account balance (debit succeeded)
---   - AccountCredited: Increases account balance (credit succeeded)
---   - AccountDebitRejected: Ignored (no balance change)
---
--- The function is idempotent - replaying the same events produces the same result.
---
--- Example:
--- >>> handleAccountEvents readModelTVar events
--- >>> account <- getAccount readModelTVar accountId
-handleAccountEvents ::
+accountReadModel :: ReadModel (SqlPersistT IO) AccountingEvent
+accountReadModel =
+  ReadModel
+    { initialize = void (runMigrationSilent migrateAccount),
+      eventHandler = EventHandler applyAccountEvent,
+      checkpointStore = postgresqlCheckpointStore accountProjectionName,
+      reset = resetAccount
+    }
+
+-- | Apply a single global event to the account tables. The per-stream version
+-- (@globalEvent.payload.position@) is recorded as the row @version@.
+applyAccountEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
+applyAccountEvent globalEvent =
+  let inner = globalEvent.payload
+      ver = inner.position
+   in case mkAccountIdSafe inner.key of
+        Nothing -> pure ()
+        Just accId -> case inner.payload of
+          AccountCreatedEvent evt -> do
+            void $
+              insertUnique
+                AccountEntity
+                  { accountEntityAccountId = accId,
+                    accountEntityName = evt.name,
+                    accountEntityBalance = evt.initialBalance,
+                    accountEntityCreatedBy = evt.by,
+                    accountEntityAccountType = evt.accountType,
+                    accountEntityOverdraftLimit = evt.overdraftLimit,
+                    accountEntityHasTransactions = False,
+                    accountEntityStatus = Opened,
+                    accountEntityVersion = ver
+                  }
+            void $ insertUnique (AccountAccessEntity accId evt.by Owner)
+          AccountAccessGrantedEvent evt -> do
+            deleteWhere [AccountAccessEntityAccountId ==. accId, AccountAccessEntityUserId ==. evt.userId]
+            void $ insertUnique (AccountAccessEntity accId evt.userId evt.role)
+            bumpVersion accId ver
+          AccountAccessRevokedEvent evt -> do
+            deleteWhere [AccountAccessEntityAccountId ==. accId, AccountAccessEntityUserId ==. evt.userId]
+            bumpVersion accId ver
+          AccountDebitedEvent evt -> adjustBalance accId ver subtractMoney evt.amount
+          AccountCreditedEvent evt -> adjustBalance accId ver addMoney evt.amount
+          AccountDebitReversedEvent evt -> adjustBalance accId ver addMoney evt.amount
+          AccountCreditReversedEvent evt -> adjustBalance accId ver subtractMoney evt.amount
+          OverdraftLimitSetEvent evt ->
+            modifyAccount accId (\e -> e {accountEntityOverdraftLimit = evt.overdraftLimit, accountEntityVersion = ver})
+          AccountSubtypeSetEvent evt ->
+            modifyAccount accId (\e -> e {accountEntityAccountType = Regular evt.subtype, accountEntityVersion = ver})
+          AccountRenamedEvent evt ->
+            modifyAccount accId (\e -> e {accountEntityName = evt.newName, accountEntityVersion = ver})
+          AccountClosedEvent _ ->
+            modifyAccount accId (\e -> e {accountEntityStatus = Closed, accountEntityVersion = ver})
+          AccountReopenedEvent _ ->
+            modifyAccount accId (\e -> e {accountEntityStatus = Opened, accountEntityVersion = ver})
+          _ -> pure ()
+
+-- | Read-modify-write the account row (no-op if absent).
+modifyAccount :: (MonadIO m) => AccountId -> (AccountEntity -> AccountEntity) -> SqlPersistT m ()
+modifyAccount accId f = do
+  mEnt <- getBy (UniqueAccountId accId)
+  case mEnt of
+    Nothing -> pure ()
+    Just (Entity k e) -> replace k (f e)
+
+-- | Apply a balance delta (currency mismatch — impossible for valid streams — is
+-- a no-op), set @hasTransactions@, and record the version.
+adjustBalance ::
   (MonadIO m) =>
-  TVar AccountReadModel ->
-  AccountingReadModelHandler m
-handleAccountEvents readModelTVar = EventHandler $ \events -> do
-  currentModel <- liftIO $ readTVarIO readModelTVar
-
-  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
-      updatedData = foldl processEvent currentModel.accounts events
-
-  liftIO . atomically . writeTVar readModelTVar $
-    currentModel
-      { latestSequence = newSeq,
-        accounts = updatedData
-      }
-
--- | Processes a single event and updates the accounts map.
---
--- GlobalStreamEvent is nested: StreamEvent () SequenceNumber (VersionedStreamEvent event)
--- where VersionedStreamEvent event = StreamEvent UUID EventVersion event
--- So we need to unwrap twice to get the payload and stream key (UUID).
-processEvent ::
-  Map AccountId AccountData ->
-  GlobalStreamEvent AccountingEvent ->
-  Map AccountId AccountData
-processEvent accounts globalEvent =
-  let (streamUuid, payload) = unpackGlobalEvent globalEvent
-   in case payload of
-        AccountCreatedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              let initialAccess = AccountAccess evt.by Owner
-               in Map.insert
-                    accountId
-                    AccountData
-                      { name = evt.name,
-                        balance = evt.initialBalance,
-                        createdBy = evt.by,
-                        accountType = evt.accountType,
-                        accessList = [initialAccess],
-                        overdraftLimit = evt.overdraftLimit,
-                        hasTransactions = False,
-                        status = Opened,
-                        version = 1
-                      }
-                    accounts
-        AccountAccessGrantedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    let existingList = account.accessList
-                        withoutUser = filter (\a -> a.userId /= evt.userId) existingList
-                        newAccess = AccountAccess evt.userId evt.role
-                     in account
-                          { accessList = newAccess : withoutUser,
-                            version = account.version + 1
-                          }
-                )
-                accountId
-                accounts
-        AccountAccessRevokedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    let existingList = account.accessList
-                        withoutUser = filter (\a -> a.userId /= evt.userId) existingList
-                     in account
-                          { accessList = withoutUser,
-                            version = account.version + 1
-                          }
-                )
-                accountId
-                accounts
-        AccountDebitedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    case subtractMoney account.balance evt.amount of
-                      Right newBalance ->
-                        account
-                          { balance = newBalance,
-                            hasTransactions = True,
-                            version = account.version + 1
-                          }
-                      Left _ -> account -- Currency mismatch: should not happen for valid events
-                )
-                accountId
-                accounts
-        AccountCreditedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    case addMoney account.balance evt.amount of
-                      Right newBalance ->
-                        account
-                          { balance = newBalance,
-                            hasTransactions = True,
-                            version = account.version + 1
-                          }
-                      Left _ -> account -- Currency mismatch: should not happen for valid events
-                )
-                accountId
-                accounts
-        AccountDebitReversedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    case addMoney account.balance evt.amount of
-                      Right newBalance ->
-                        account
-                          { balance = newBalance,
-                            hasTransactions = True,
-                            version = account.version + 1
-                          }
-                      Left _ -> account
-                )
-                accountId
-                accounts
-        AccountCreditReversedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    case subtractMoney account.balance evt.amount of
-                      Right newBalance ->
-                        account
-                          { balance = newBalance,
-                            hasTransactions = True,
-                            version = account.version + 1
-                          }
-                      Left _ -> account
-                )
-                accountId
-                accounts
-        OverdraftLimitSetEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    account
-                      { overdraftLimit = evt.overdraftLimit,
-                        version = account.version + 1
-                      }
-                )
-                accountId
-                accounts
-        AccountSubtypeSetEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    account
-                      { accountType = Regular evt.subtype,
-                        version = account.version + 1
-                      }
-                )
-                accountId
-                accounts
-        AccountRenamedEvent evt ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                ( \account ->
-                    account
-                      { name = evt.newName,
-                        version = account.version + 1
-                      }
-                )
-                accountId
-                accounts
-        AccountClosedEvent _ ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                (\account -> account {status = Closed, version = account.version + 1})
-                accountId
-                accounts
-        AccountReopenedEvent _ ->
-          case mkAccountIdSafe streamUuid of
-            Nothing -> accounts
-            Just accountId ->
-              Map.adjust
-                (\account -> account {status = Opened, version = account.version + 1})
-                accountId
-                accounts
-        _ -> accounts -- Ignore other events (AccountDebitRejected, etc.)
-
--- -----------------------------------------------------------------------------
--- Query Functions
--- -----------------------------------------------------------------------------
-
--- | Retrieves the account data for a specific account ID.
---
--- Returns 'Nothing' if the account doesn't exist in the read model.
--- This is for internal/admin use - does not check access permissions.
---
--- Example:
--- >>> maybeAccount <- getAccount readModel accountId
--- >>> case maybeAccount of
--- >>>   Just account -> print (account.balance)
--- >>>   Nothing -> putStrLn "Account not found"
-getAccount ::
-  (MonadIO m) =>
-  TVar AccountReadModel ->
   AccountId ->
-  m (Maybe AccountData)
-getAccount readModelTVar accountId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup accountId model.accounts
+  EventVersion ->
+  (Money -> Money -> Either e Money) ->
+  Money ->
+  SqlPersistT m ()
+adjustBalance accId ver op amount =
+  modifyAccount accId $ \e ->
+    case op e.accountEntityBalance amount of
+      Right b -> e {accountEntityBalance = b, accountEntityHasTransactions = True, accountEntityVersion = ver}
+      Left _ -> e
 
--- | Retrieves the account data for a specific user.
---
--- Returns 'Nothing' if the account doesn't exist OR user doesn't have access.
--- This hides account existence from unauthorized users.
---
--- Example:
--- >>> maybeAccount <- getAccountForUser readModel accountId userId
--- >>> case maybeAccount of
--- >>>   Just (account, role) -> displayAccount account role
--- >>>   Nothing -> return404
-getAccountForUser ::
-  (MonadIO m) =>
-  TVar AccountReadModel ->
-  AccountId ->
-  UserId ->
-  m (Maybe AccountWithRole)
-getAccountForUser readModelTVar accountId userId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup accountId model.accounts of
-    Nothing -> return Nothing
-    Just account ->
-      case getUserRole userId account.accessList of
-        Nothing -> return Nothing -- User doesn't have access
-        Just role ->
-          return $
-            Just
-              AccountWithRole
-                { account = account,
-                  userRole = role
-                }
+bumpVersion :: (MonadIO m) => AccountId -> EventVersion -> SqlPersistT m ()
+bumpVersion accId ver = modifyAccount accId (\e -> e {accountEntityVersion = ver})
 
--- | Retrieves all accounts in the read model.
---
--- Returns a map from AccountId to AccountData for all known accounts.
--- This is for internal/admin use.
---
--- Example:
--- >>> accounts <- getAllAccounts readModel
--- >>> mapM_ print (Map.toList accounts)
-getAllAccounts ::
-  (MonadIO m) =>
-  TVar AccountReadModel ->
-  m (Map AccountId AccountData)
-getAllAccounts readModelTVar = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return model.accounts
+-- -----------------------------------------------------------------------------
+-- Queries
+-- -----------------------------------------------------------------------------
 
--- | Retrieves all accounts accessible to a specific user.
---
--- Returns a list of (AccountId, AccountData, AccountRole) tuples
--- for all accounts where the user has access.
---
--- Example:
--- >>> accounts <- getAccessibleAccounts readModel userId
--- >>> mapM_ (\(id, data, role) -> displayAccount id data role) accounts
+entToData :: AccountEntity -> [AccountAccess] -> AccountData
+entToData e acl =
+  AccountData
+    { name = e.accountEntityName,
+      balance = e.accountEntityBalance,
+      createdBy = e.accountEntityCreatedBy,
+      accountType = e.accountEntityAccountType,
+      accessList = acl,
+      overdraftLimit = e.accountEntityOverdraftLimit,
+      hasTransactions = e.accountEntityHasTransactions,
+      status = e.accountEntityStatus,
+      version = e.accountEntityVersion
+    }
+
+-- | The access list (users + roles) for an account.
+loadAccessList :: (MonadIO m) => AccountId -> SqlPersistT m [AccountAccess]
+loadAccessList accId = do
+  rows <- selectList [AccountAccessEntityAccountId ==. accId] []
+  pure [AccountAccess r.accountAccessEntityUserId r.accountAccessEntityRole | Entity _ r <- rows]
+
+-- | Access lists for many accounts in a single indexed query, grouped by
+-- account. Avoids the N+1 of calling 'loadAccessList' per account in the
+-- multi-account queries below.
+loadAccessLists :: (MonadIO m) => [AccountId] -> SqlPersistT m (Map AccountId [AccountAccess])
+loadAccessLists accIds = do
+  rows <- selectList [AccountAccessEntityAccountId <-. accIds] []
+  pure $
+    Map.fromListWith
+      (<>)
+      [ (r.accountAccessEntityAccountId, [AccountAccess r.accountAccessEntityUserId r.accountAccessEntityRole])
+      | Entity _ r <- rows
+      ]
+
+-- | Account by id, with its access list, or 'Nothing'.
+getAccount :: (MonadIO m) => AccountId -> SqlPersistT m (Maybe AccountData)
+getAccount accId = do
+  mEnt <- getBy (UniqueAccountId accId)
+  case mEnt of
+    Nothing -> pure Nothing
+    Just (Entity _ e) -> Just . entToData e <$> loadAccessList accId
+
+-- | The caller's own accounts (those they created), keyed by id, each with its
+-- access list. Scoped to the owner via an indexed @created_by@ lookup — never a
+-- full-table scan over every user's accounts.
+getMyAccounts :: (MonadIO m) => UserId -> SqlPersistT m (Map AccountId AccountData)
+getMyAccounts userId = do
+  rows <- selectList [AccountEntityCreatedBy ==. userId] []
+  aclByAcc <- loadAccessLists [e.accountEntityAccountId | Entity _ e <- rows]
+  pure $
+    Map.fromList
+      [ (e.accountEntityAccountId, entToData e (Map.findWithDefault [] e.accountEntityAccountId aclByAcc))
+      | Entity _ e <- rows
+      ]
+
+-- | Accounts the user can access (any role), with the user's role on each.
 getAccessibleAccounts ::
   (MonadIO m) =>
-  TVar AccountReadModel ->
   UserId ->
-  m [(AccountId, AccountData, AccountRole)]
-getAccessibleAccounts readModelTVar userId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  let allAccounts = Map.toList model.accounts
-      accessibleAccounts =
-        [ (accountId, account, role)
-        | (accountId, account) <- allAccounts,
-          Just role <- [getUserRole userId account.accessList]
-        ]
-  return accessibleAccounts
-
--- | The set of account ids a user can see (any role grants visibility).
---
--- A thin projection over 'getAccessibleAccounts' that discards the data and
--- role, keeping only the ids as a 'Set' for membership tests. Callers that
--- only need "is this account visible to the user?" should prefer this over
--- rebuilding the set from 'getAccessibleAccounts' at each site.
-getAccessibleAccountIds ::
-  (MonadIO m) =>
-  TVar AccountReadModel ->
-  UserId ->
-  m (Set AccountId)
-getAccessibleAccountIds readModelTVar userId = do
-  accessible <- getAccessibleAccounts readModelTVar userId
-  return $ Set.fromList [accountId | (accountId, _, _) <- accessible]
-
--- | Retrieves a user's regular (non-External) accounts as (AccountId, name, balance) triples.
---
--- Filters accounts where the user is the creator and the account type is RegularAccount.
---
--- Example:
--- >>> accounts <- getUserRegularAccounts readModel userId
--- >>> mapM_ (\(id, name, bal) -> displayAccount id name bal) accounts
-getUserRegularAccounts ::
-  (MonadIO m) =>
-  TVar AccountReadModel ->
-  UserId ->
-  m [(AccountId, Text, Money)]
-getUserRegularAccounts readModelTVar userId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  let allAccounts = Map.toList model.accounts
-  return
-    [ (accId, acc.name, acc.balance)
-    | (accId, acc) <- allAccounts,
-      acc.createdBy == userId,
-      isRegular acc.accountType
+  SqlPersistT m [(AccountId, AccountData, AccountRole)]
+getAccessibleAccounts userId = do
+  accessRows <- selectList [AccountAccessEntityUserId ==. userId] []
+  let roleByAcc = Map.fromList [(r.accountAccessEntityAccountId, r.accountAccessEntityRole) | Entity _ r <- accessRows]
+      accIds = Map.keys roleByAcc
+  accountRows <- selectList [AccountEntityAccountId <-. accIds] []
+  aclByAcc <- loadAccessLists accIds
+  pure
+    [ (e.accountEntityAccountId, entToData e (Map.findWithDefault [] e.accountEntityAccountId aclByAcc), role)
+    | Entity _ e <- accountRows,
+      Just role <- [Map.lookup e.accountEntityAccountId roleByAcc]
     ]
 
--- | Checks if an account exists in the read model.
---
--- This is more efficient than checking if 'getAccount' returns 'Just'.
---
--- Example:
--- >>> exists <- accountExists readModel accountId
--- >>> if exists then proceedWithTransfer else rejectTransfer
-accountExists ::
-  (MonadIO m) =>
-  TVar AccountReadModel ->
-  AccountId ->
-  m Bool
-accountExists readModelTVar accountId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member accountId model.accounts
+-- | The set of account ids a user can see.
+getAccessibleAccountIds :: (MonadIO m) => UserId -> SqlPersistT m (Set AccountId)
+getAccessibleAccountIds userId = do
+  accessRows <- selectList [AccountAccessEntityUserId ==. userId] []
+  pure $ Set.fromList [r.accountAccessEntityAccountId | Entity _ r <- accessRows]
+
+-- | A user's own regular (non-External) accounts as (id, name, balance).
+getUserRegularAccounts :: (MonadIO m) => UserId -> SqlPersistT m [(AccountId, Text, Money)]
+getUserRegularAccounts userId = do
+  rows <- selectList [AccountEntityCreatedBy ==. userId] []
+  pure
+    [ (e.accountEntityAccountId, e.accountEntityName, e.accountEntityBalance)
+    | Entity _ e <- rows,
+      isRegular e.accountEntityAccountType
+    ]
+
+-- | Whether an account exists.
+accountExists :: (MonadIO m) => AccountId -> SqlPersistT m Bool
+accountExists accId = isJust <$> getBy (UniqueAccountId accId)
 
 -- -----------------------------------------------------------------------------
--- Helper Functions
+-- Temporal balance query (event-store fold; unchanged)
 -- -----------------------------------------------------------------------------
 
--- | Extracts the map of accounts from the read model.
---
--- This is useful for testing and debugging.
---
--- Example:
--- >>> accountsMap <- accountToMap readModel
--- >>> print $ Map.size accountsMap
-accountToMap ::
-  (MonadIO m) =>
-  TVar AccountReadModel ->
-  m (Map AccountId AccountData)
-accountToMap = getAllAccounts
-
--- | Get a user's role from an access list.
-getUserRole :: UserId -> [AccountAccess] -> Maybe AccountRole
-getUserRole uid accessList =
-  (.role) <$> findAccess
-  where
-    findAccess = foldr matchUser Nothing accessList
-    matchUser acc result =
-      if acc.userId == uid
-        then Just acc
-        else result
-
--- -----------------------------------------------------------------------------
--- Temporal balance query
--- -----------------------------------------------------------------------------
-
--- | Compute the account's balance as of business date @D@ by re-folding the
--- aggregate's event stream.
---
--- This is an on-demand event-store fold, not a maintained projection. It is
--- exposed alongside the read model because callers usually reach for it in
--- the same place they reach for current balance, but the live read-model
--- 'AccountReadModel' is not an input — the reader is passed explicitly,
--- mirroring 'Infrastructure.Eventium.loadUserAggregate'.
---
--- Returns 'Nothing' when the account has no events at all (i.e. does not
--- exist). The genesis balance is the @initialBalance@ from 'AccountCreated';
--- any 'AccountDebited' / 'AccountCredited' events with @at <= D@ are folded
--- in. Other event payloads do not affect balance.
---
--- Callers (typically the service layer) are responsible for lifting
--- 'Nothing' to a domain error such as @NotFound \"Account\" ...@.
---
--- The @lookupAt@ parameter resolves a 'TransactionId' to the authoritative
--- business date currently recorded on the Transaction aggregate (typically
--- backed by 'Application.ReadModels.Transaction'). It exists so that user
--- edits to a transaction's date (see
--- @docs/specs/2026-05-20-editable-transaction-metadata-design.md@ §4)
--- propagate into historical balance queries: the authoritative @at@ lives
--- on the TX aggregate. When @lookupAt@ returns 'Nothing' the leg is
--- skipped entirely; this is purely defensive, as valid event streams
--- produced by the command handler always have a corresponding TX entry.
+-- | Balance as of business date @D@ by re-folding the aggregate's event stream
+-- (an on-demand event-store fold, not a maintained projection). See the prior
+-- documentation; behaviour is unchanged.
 balanceAsOf ::
   (Monad m) =>
   EventStoreReader UUID EventVersion m (VersionedStreamEvent AccountingEvent) ->
@@ -634,20 +380,8 @@ balanceAsOf (EventStoreReader readStream) lookupAt accountId asOf = do
   events <- readStream (allEvents (unAccountId accountId))
   pure (foldBalanceAsOf asOf lookupAt ((.payload) <$> events))
 
--- | Fold a list of 'AccountingEvent' payloads into a balance as of @D@.
---
--- Pure helper exposed for testability. Returns
--- 'Nothing' when no 'AccountCreated' event is present; otherwise folds
--- 'AccountCredited' / 'AccountDebited' events whose authoritative business
--- date (resolved via @lookupAt@ from the Transaction aggregate) is at or
--- before @asOf@. When @lookupAt@ returns 'Nothing' for a leg's
--- 'TransactionId', the leg is skipped entirely — this is purely defensive,
--- as valid event streams produced by the command handler always have a
--- corresponding TX entry in the lookup.
---
--- Currency-mismatch errors from 'addMoney' / 'subtractMoney' are silently
--- ignored, mirroring 'handleAccountEvents' — such mismatches cannot arise
--- from valid event streams produced by the command handler.
+-- | Pure fold of 'AccountingEvent' payloads into a balance as of @D@. Returns
+-- 'Nothing' when no 'AccountCreated' is present.
 foldBalanceAsOf ::
   UTCTime ->
   (TransactionId -> Maybe UTCTime) ->
@@ -667,25 +401,17 @@ foldBalanceAsOf asOf lookupAt events =
     applyAsOf cutoff lookup_ bal (AccountDebitedEvent e)
       | Just effectiveAt <- lookup_ e.transactionId,
         effectiveAt <= cutoff =
-          case subtractMoney bal e.amount of
-            Right newBal -> newBal
-            Left _ -> bal -- currency mismatch cannot occur in valid streams
+          fromRight bal (subtractMoney bal e.amount)
     applyAsOf cutoff lookup_ bal (AccountCreditedEvent e)
       | Just effectiveAt <- lookup_ e.transactionId,
         effectiveAt <= cutoff =
-          case addMoney bal e.amount of
-            Right newBal -> newBal
-            Left _ -> bal
+          fromRight bal (addMoney bal e.amount)
     applyAsOf cutoff lookup_ bal (AccountDebitReversedEvent e)
       | Just effectiveAt <- lookup_ e.transactionId,
         effectiveAt <= cutoff =
-          case addMoney bal e.amount of
-            Right newBal -> newBal
-            Left _ -> bal
+          fromRight bal (addMoney bal e.amount)
     applyAsOf cutoff lookup_ bal (AccountCreditReversedEvent e)
       | Just effectiveAt <- lookup_ e.transactionId,
         effectiveAt <= cutoff =
-          case subtractMoney bal e.amount of
-            Right newBal -> newBal
-            Left _ -> bal
+          fromRight bal (subtractMoney bal e.amount)
     applyAsOf _ _ bal _ = bal
