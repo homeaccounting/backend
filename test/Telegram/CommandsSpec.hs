@@ -11,7 +11,6 @@
 -- so tests assert only on read-model side-effects, not reply text.
 module Telegram.CommandsSpec (spec) where
 
-import Application.LinkCodeStore (mkLinkCodeToken)
 import Application.ReadModels.User (getUserByTelegramId)
 import Application.Services.AuthService
   ( TelegramLinkCodeResult (..),

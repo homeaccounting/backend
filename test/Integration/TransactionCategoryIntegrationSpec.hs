@@ -56,7 +56,7 @@ import qualified RIO.List as List
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, firstDictionaryEntry, registerUser)
 import Testkit.Helpers (singletonAllocation, singletonIncome)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Harness
@@ -123,7 +123,7 @@ seedTransfer h = do
 
 getTransactionType :: Harness -> TransactionId -> IO TransactionType
 getTransactionType h txId = do
-  mTd <- TxRM.getTransaction h.harnessEnv.transactionReadModel txId
+  mTd <- runDbIn h.harnessEnv (TxRM.getTransaction txId)
   case mTd of
     Nothing -> fail $ "transaction not found: " <> show txId
     Just td -> pure td.transactionType

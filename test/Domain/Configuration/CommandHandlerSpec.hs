@@ -17,7 +17,6 @@
 --   - RemoveDictionaryEntry: Removing entries, last entry rejection
 module Domain.Configuration.CommandHandlerSpec (spec) where
 
-import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import Domain.Banking.Types (BankConnectionId, BankProvider (..), unsafeBankConnectionId)
 import Domain.Configuration
@@ -33,7 +32,6 @@ import Domain.Configuration.Events
     ConfigurationCreated (..),
     DefaultExpenseCategorySet (..),
     DefaultIncomeCategorySet (..),
-    DictionaryEntryAdded (..),
   )
 import Domain.Core.Types
 import Eventium (latestProjection)

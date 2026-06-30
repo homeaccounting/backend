@@ -63,7 +63,7 @@ import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
 import Testkit.Helpers (mockExchangeRate, singletonExpense, singletonIncome)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Web.API.ReportingAPI (incomeVsExpenseHandler)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types (IncomeVsExpenseResponse (..))
@@ -248,7 +248,7 @@ publishFixedRate env src tgt rate = do
 -- | Assert a transaction reached 'Completed' in the read model.
 expectCompleted :: AppEnv -> UUID -> IO ()
 expectCompleted env txUuid = do
-  maybeTx <- getTransaction env.transactionReadModel (unsafeTransactionId txUuid)
+  maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
   case maybeTx of
     Nothing -> expectationFailure "Transaction not found in read model"
     Just txData -> txData.status `shouldBe` Completed

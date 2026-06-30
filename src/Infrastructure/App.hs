@@ -121,7 +121,6 @@ where
 import Application.LinkCodeStore (LinkCodeStore)
 import Application.ReadModels.Configuration (ConfigurationReadModel)
 import Application.ReadModels.ExchangeRate (ExchangeRateReadModel)
-import Application.ReadModels.Transaction (TransactionReadModel)
 import Application.ReadModels.User (UserReadModel)
 import Control.Concurrent.STM (retry)
 import Control.Monad.Logger (LoggingT, filterLogger, runStdoutLoggingT)
@@ -178,8 +177,8 @@ import Telegram.Types (BotState)
 --  - eventStoreWriter: Event store writer with event bus
 --  - eventStoreReader: Event store reader for loading aggregates
 --  - globalEventStoreReader: Global event reader for read models
---  - accountReadModel: In-memory account read model
---  - transactionReadModel: In-memory transaction read model
+--  - userReadModel / configurationReadModel / exchangeRateReadModel: in-memory
+--    read models (Account, Transaction, BankImport are persistent SQL models)
 --
 -- Design Notes:
 --  - All fields are strict (!) for performance
@@ -203,8 +202,6 @@ data AppEnv = AppEnv
     eventStoreReader :: !(AccountingVersionedEventStoreReader IO),
     -- | Global event store reader for read models
     globalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
-    -- | In-memory transaction read model (STM)
-    transactionReadModel :: !(TVar TransactionReadModel),
     -- | In-memory user read model (STM)
     userReadModel :: !(TVar UserReadModel),
     -- | In-memory configuration read model (STM)
@@ -298,7 +295,6 @@ initializeAppEnv ::
   AccountingTaggedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
   AccountingGlobalEventStoreReader IO ->
-  TVar TransactionReadModel ->
   TVar UserReadModel ->
   TVar ConfigurationReadModel ->
   JWTConfig ->
@@ -311,7 +307,7 @@ initializeAppEnv ::
   BankingEnv ->
   LinkCodeStore ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader transactionReadModel userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv linkCodeStore' =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv linkCodeStore' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -320,7 +316,6 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader transac
       eventStoreWriter = writer,
       eventStoreReader = reader,
       globalEventStoreReader = globalReader,
-      transactionReadModel = transactionReadModel,
       userReadModel = userReadModel,
       configurationReadModel = configurationReadModel,
       jwtConfig = jwtConfig,
@@ -463,22 +458,22 @@ instance HasEventStore AppEnv where
   eventStoreReaderL = lens (.eventStoreReader) (\x y -> x {eventStoreReader = y})
   globalEventStoreReaderL = lens (.globalEventStoreReader) (\x y -> x {globalEventStoreReader = y})
 
--- | Type class for environments that have read model access.
+-- | Type class for environments that have in-memory read model access.
 --
--- Provides lenses to access account, transaction, and user read models.
+-- Provides lenses to the user and configuration read models. (Account,
+-- Transaction, and BankImport are persistent SQL read models accessed via
+-- 'runDb', not through this class.)
 --
 -- Example:
--- >>> getAccount :: (MonadReader env m, HasReadModel env, MonadIO m) => AccountId -> m (Maybe AccountData)
--- >>> getAccount accountId = do
--- >>>   readModel <- view accountReadModelL
--- >>>   liftIO $ getAccount readModel accountId
+-- >>> getUser :: (MonadReader env m, HasReadModel env, MonadIO m) => UserId -> m (Maybe UserData)
+-- >>> getUser userId = do
+-- >>>   readModel <- view userReadModelL
+-- >>>   liftIO $ getUser readModel userId
 class HasReadModel env where
-  transactionReadModelL :: Lens' env (TVar TransactionReadModel)
   userReadModelL :: Lens' env (TVar UserReadModel)
   configurationReadModelL :: Lens' env (TVar ConfigurationReadModel)
 
 instance HasReadModel AppEnv where
-  transactionReadModelL = lens (.transactionReadModel) (\x y -> x {transactionReadModel = y})
   userReadModelL = lens (.userReadModel) (\x y -> x {userReadModel = y})
   configurationReadModelL = lens (.configurationReadModel) (\x y -> x {configurationReadModel = y})
 

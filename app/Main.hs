@@ -405,7 +405,6 @@ initializeEnvironment logFunc config versionInfo = do
           writer
           reader
           globalReader
-          readModels.transaction
           readModels.user
           readModels.configuration
           jwtConfig

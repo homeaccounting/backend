@@ -40,7 +40,6 @@ where
 
 import Application.ReadModels.Account (AccountData (..), balanceAsOf)
 import qualified Application.ReadModels.Account as ReadModel
-import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Application.Services.Internal
@@ -89,7 +88,6 @@ import Domain.Transaction.Commands (InitiateTransaction (..))
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),
-    HasReadModel (..),
     runDb,
   )
 import RIO
@@ -440,9 +438,8 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
   -- aggregate to honour user edits of the TX's business date. We snapshot
   -- the transaction read model once and feed a pure lookup into the fold.
   reader <- lift (view eventStoreReaderL)
-  txnRM <- lift (view transactionReadModelL)
-  txnMap <- liftIO (TransactionRM.getAllTransactions txnRM)
-  let lookupTxAt txId = (.date) <$> Map.lookup txId txnMap
+  txnDates <- lift (runDb (TransactionRM.transactionDatesForAccount accountId))
+  let lookupTxAt txId = Map.lookup txId txnDates
   currentAtD <-
     liftMaybeM
       (NotFound "Account" (tshow accountId))

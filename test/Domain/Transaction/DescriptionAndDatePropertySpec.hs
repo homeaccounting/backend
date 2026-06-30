@@ -15,7 +15,6 @@ import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( Currency (..),
     TransactionId,
-    TransactionType (..),
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,

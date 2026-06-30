@@ -17,15 +17,12 @@
 --   - Validation: Business rules enforcement
 module Domain.Transaction.CommandHandlerPropertySpec (spec) where
 
-import Data.Either (isLeft)
 import Data.List.NonEmpty (nonEmpty)
-import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian)
 import Domain.Core.Types
 import Domain.Transaction
-import Domain.Transaction.CommandHandler
 import Eventium (latestProjection)
 import Optics ((^.))
 import RIO hiding (fromMaybe, (^.))

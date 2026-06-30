@@ -364,11 +364,12 @@ runMigrations = do
   -- Projection checkpoints (eventium): per read-model catch-up watermark.
   void $ runMigration migrateProjectionSnapshot
 
--- NOTE: Persistent read-model table migrations (e.g. 'migrateBankImport') are
--- Application-layer artifacts and are run from the composition root
--- (@app/Main.hs@), since Infrastructure must not import Application. Remaining
--- read models (Account, Transaction, User, Configuration, ExchangeRate) are
--- still in-memory TVars rebuilt on restart.
+-- NOTE: Persistent read-model table migrations (e.g. 'migrateBankImport',
+-- 'migrateAccount', 'migrateTransaction') are Application-layer artifacts run
+-- from the composition root (@app/Main.hs@) via each read model's 'initialize',
+-- since Infrastructure must not import Application. The remaining read models
+-- (User, Configuration, ExchangeRate) are still in-memory TVars rebuilt on
+-- restart.
 
 -- | Get the default SQL event store configuration.
 --

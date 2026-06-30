@@ -19,14 +19,9 @@
 -- model. Balance changes are handled by the transfer process manager.
 module Domain.Account.CommandHandlerSpec (spec) where
 
-import Data.Either (isLeft)
 import Domain.Account
-import Domain.Account.CommandHandler
-import Domain.Account.Commands (CloseAccount (..), CreditAccount (..), DebitAccount (..), RenameAccount (..), ReopenAccount (..), SetOverdraftLimit (..))
 import Domain.Account.Events
-  ( AccountAccessGranted (..),
-    AccountAccessRevoked (..),
-    AccountClosed (..),
+  ( AccountClosed (..),
     AccountCreated (..),
     AccountRenamed (..),
     AccountReopened (..),

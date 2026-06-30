@@ -60,13 +60,12 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Ratio ((%))
 import qualified Data.Set as Set
 import qualified Data.Text as T
-import Data.Time (UTCTime (..))
 import Data.Time.Calendar (Day, addDays, fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
 import Domain.Transaction.Commands (AmendTransaction (..))
-import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
+import Domain.Transaction.Projection (StatusKind (..))
 import RIO
 import qualified RIO.NonEmpty as NE
 import Test.QuickCheck

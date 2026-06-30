@@ -8,74 +8,23 @@ module Application.ReadModels.TransactionListPropertySpec (spec) where
 
 import Application.ReadModels.Transaction
   ( TransactionData (..),
-    TransactionReadModel,
-    createTransactionReadModel,
-    handleTransactionEvents,
+    applyTransactionEvent,
     listTransactions,
     mkTransactionFilter,
+    resetTransaction,
   )
 import qualified Data.Set as Set
 import Data.Time (NominalDiffTime, UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Page (Page (..), defaultLimit)
 import Domain.Core.Range (Range (..))
-import Domain.Core.Types
-  ( AccountId,
-    Currency (..),
-    TransactionId,
-    TransactionType (..),
-    unTransactionId,
-  )
-import Domain.Models (AccountingEvent (..))
-import Domain.Transaction.Events (TransactionPostingInitiated (..))
-import Eventium (StreamEvent (..), emptyMetadata)
-import qualified Eventium
+import Domain.Core.Types (TransactionType (..))
 import RIO
 import Test.Hspec
 import Test.QuickCheck
-import Testkit.Helpers
-  ( mockAccountId,
-    mockMoneyWith,
-    mockTransactionId,
-    mockUserId,
-  )
-
--- | Duplicated locally from TransactionListSpec so each Spec stays
--- self-contained. If a third call site lands, promote to
--- Testkit/Generators.hs as a follow-up PR.
-mkInitiatedEvent ::
-  TransactionId ->
-  AccountId ->
-  AccountId ->
-  UTCTime ->
-  UTCTime ->
-  Eventium.SequenceNumber ->
-  Eventium.GlobalStreamEvent AccountingEvent
-mkInitiatedEvent txId src tgt businessAt persistedAt seqNo =
-  let inner =
-        StreamEvent
-          (unTransactionId txId)
-          0
-          ( (emptyMetadata "TransactionPostingInitiated")
-              { Eventium.createdAt = Just persistedAt
-              }
-          )
-          ( TransactionPostingInitiatedEvent
-              TransactionPostingInitiated
-                { sourceAccountId = src,
-                  targetAccountId = tgt,
-                  sourceAmount = mockMoneyWith USD 100,
-                  targetAmount = mockMoneyWith USD 100,
-                  exchangeRate = Nothing,
-                  description = "seed",
-                  by = mockUserId (UUID.fromWords 9 0 0 0),
-                  at = businessAt,
-                  transactionType = Transfer,
-                  externalTransactionId = Nothing,
-                  labels = Set.empty
-                }
-          )
-   in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
+import Testkit.Helpers (mockAccountId, mockTransactionId)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
+import Testkit.TransactionEvents (postingInitiatedGlobal)
 
 -- | A random UTC instant inside a fixed 366-day window starting 2026-01-01.
 -- Uses addUTCTime so the day counter is normalised correctly.
@@ -97,27 +46,33 @@ genBoundedRange = do
   pure (min a b, max a b)
 
 spec :: Spec
-spec = describe "listTransactions / date bounds (property)" $ do
-  it "every returned entry has from <= date <= to when both bounds are set"
-    $ property
-    $ forAll (resize 20 (listOf genBoundedDay))
-    $ \dates ->
-      forAll genBoundedRange $ \(fromD, toD) -> ioProperty $ do
-        let acctA = mockAccountId (UUID.fromWords 1 0 0 0)
-            acctB = mockAccountId (UUID.fromWords 2 0 0 0)
-            events =
-              [ mkInitiatedEvent
-                  (mockTransactionId (UUID.fromWords (fromIntegral i) 0 0 0))
-                  acctA
-                  acctB
-                  d
-                  d
-                  (fromIntegral i)
-              | (i, d) <- zip [(1 :: Word32) ..] dates
-              ]
-        tvar <- createTransactionReadModel :: IO (TVar TransactionReadModel)
-        let h = handleTransactionEvents tvar
-        h.handleEvent events
-        let filt = mkTransactionFilter Nothing (Just (Range (Just fromD) (Just toD))) Nothing Nothing
-        (_, results) <- listTransactions tvar (Set.singleton acctA) filt (Page defaultLimit 0)
-        pure $ all (\(_, td) -> td.date >= fromD && td.date <= toD) results
+spec = describe "listTransactions / date bounds (property)"
+  $
+  -- One environment shared across all QuickCheck iterations; the transaction
+  -- tables are reset between iterations so each draw starts from empty.
+  before createTestAppEnvWithProcessManager
+  $ it "every returned entry has from <= date <= to when both bounds are set"
+  $ \env ->
+    property
+      $ forAll (resize 20 (listOf genBoundedDay))
+      $ \dates ->
+        forAll genBoundedRange $ \(fromD, toD) -> ioProperty $ do
+          let acctA = mockAccountId (UUID.fromWords 1 0 0 0)
+              acctB = mockAccountId (UUID.fromWords 2 0 0 0)
+              events =
+                [ postingInitiatedGlobal
+                    (mockTransactionId (UUID.fromWords (fromIntegral i) 0 0 0))
+                    acctA
+                    acctB
+                    Transfer
+                    Set.empty
+                    d
+                    d
+                    (fromIntegral i)
+                | (i, d) <- zip [(1 :: Word32) ..] dates
+                ]
+          runDbIn env resetTransaction
+          runDbIn env (mapM_ applyTransactionEvent events)
+          let filt = mkTransactionFilter Nothing (Just (Range (Just fromD) (Just toD))) Nothing Nothing
+          (_, results) <- runDbIn env (listTransactions (Set.singleton acctA) filt (Page defaultLimit 0))
+          pure $ all (\(_, td) -> td.date >= fromD && td.date <= toD) results

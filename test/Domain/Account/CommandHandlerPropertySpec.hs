@@ -20,21 +20,17 @@
 -- the transfer process manager via AccountBalanceUpdated events.
 module Domain.Account.CommandHandlerPropertySpec (spec) where
 
-import Data.Either (fromRight, isLeft)
 import qualified Data.Text as T
 import Domain.Account
-import Domain.Account.CommandHandler
-import Domain.Account.Commands (CloseAccount (..), DebitAccount (..), ReopenAccount (..), SetOverdraftLimit (..))
-import Domain.Account.Events (AccountAccessGranted (..), AccountAccessRevoked (..), AccountClosed (..), AccountCreated (..), AccountRenamed (..), AccountReopened (..))
+import Domain.Account.Events (AccountClosed (..), AccountCreated (..), AccountRenamed (..))
 import Domain.Core.Types
 import Eventium (latestProjection)
-import Optics ((&), (.~), (^.))
+import Optics ((.~), (?~), (^.))
 import RIO hiding ((.~), (^.))
 import Test.Hspec
 import Test.QuickCheck
 import Testkit.Generators
 import Testkit.Helpers
-import Prelude (read)
 
 spec :: Spec
 spec = do
@@ -306,7 +302,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account =
                 createAccountWithOwner "Test" (mockMoney 0) ownerId (Regular defaultCash)
                   & #overdraftLimit
-                  .~ Just debitAmt
+                  ?~ debitAmt
               command =
                 DebitAccountAccountCommand
                   $ DebitAccount debitAmt txId

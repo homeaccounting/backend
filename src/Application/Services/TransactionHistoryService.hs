@@ -70,7 +70,6 @@ import Domain.Transaction.Events
 import Eventium (EventStoreReader (..), StreamEvent (..), VersionedStreamEvent, allEvents)
 import Infrastructure.App
   ( AppM,
-    HasReadModel (..),
     eventStoreReaderL,
     runDb,
   )
@@ -132,11 +131,10 @@ getTransactionHistory ::
   TransactionId ->
   AppM (Either DomainError (Maybe TransactionHistory))
 getTransactionHistory userId transactionId = runExceptT $ do
-  txnRM <- lift (view transactionReadModelL)
   transaction <-
     liftMaybeM
       (NotFound "Transaction" (tshow transactionId))
-      (liftIO (ReadModel.getTransaction txnRM transactionId))
+      (runDb (ReadModel.getTransaction transactionId))
   -- Access: caller has any role on either the current source or target.
   mSrc <- lift (runDb (AccountRM.getAccount transaction.sourceAccountId))
   mTgt <- lift (runDb (AccountRM.getAccount transaction.targetAccountId))

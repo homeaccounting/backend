@@ -19,13 +19,22 @@ import Domain.Core.Types
     defaultBankAccount,
     unsafeExternalTransactionId,
   )
+import Domain.Transaction.Projection (StatusKind (..))
 import Infrastructure.Database.Orphans ()
 import RIO
 import qualified RIO.Text as T
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Gen, arbitrary, forAll, listOf1, suchThat)
-import Testkit.Generators (genAccountId, genMoney, genTransactionId, genUserId)
+import Testkit.Generators
+  ( genAccountId,
+    genDictionaryEntryId,
+    genExchangeRate,
+    genMoney,
+    genTransactionId,
+    genTransactionType,
+    genUserId,
+  )
 
 -- | Generate a non-empty 'ExternalTransactionId' (the smart constructor rejects
 -- empty text).
@@ -68,3 +77,22 @@ spec = describe "Infrastructure.Database.Orphans" $ do
     mapM_ roundTrips [Opened, Closed]
     roundTrips External
     roundTrips (Regular defaultBankAccount)
+
+  prop "DictionaryEntryId round-trips through PersistValue"
+    $ forAll genDictionaryEntryId
+    $ \deId ->
+      fromPersistValue (toPersistValue deId) `shouldBe` Right deId
+
+  prop "ExchangeRate round-trips through PersistValue (JSON column)"
+    $ forAll genExchangeRate
+    $ \er ->
+      fromPersistValue (toPersistValue er) `shouldBe` Right er
+
+  prop "TransactionType round-trips through PersistValue (JSON column)"
+    $ forAll genTransactionType
+    $ \tt ->
+      fromPersistValue (toPersistValue tt) `shouldBe` Right tt
+
+  it "StatusKind round-trips through PersistValue (text token)" $ do
+    let roundTrips x = fromPersistValue (toPersistValue x) `shouldBe` Right x
+    mapM_ roundTrips [PendingKind, CompletedKind, FailedKind, CancelledKind]

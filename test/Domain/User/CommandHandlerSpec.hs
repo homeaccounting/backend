@@ -20,8 +20,6 @@
 --   - State transitions and invariants
 module Domain.User.CommandHandlerSpec (spec) where
 
-import Data.Either (isLeft)
-import Data.Text.Encoding (encodeUtf8)
 import Domain.Core.Types
 import Domain.User
 import Eventium (latestProjection)

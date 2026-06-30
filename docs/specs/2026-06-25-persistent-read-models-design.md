@@ -282,10 +282,12 @@ authoritative owner field.
 
 1. **Foundation + pilot** — migration plumbing, checkpoint-in-transaction
    pattern, startup catch-up, rebuild op; proven on **BankImport** (tiny, no
-   read-after-write criticality).
+   read-after-write criticality). ✅ done.
 2. **Account** — the headline #110 win (`account_access` join table; removes the
-   `getAccessibleAccounts` scan).
-3. **Transaction** — removes the `listTransactions` scan.
+   `getAccessibleAccounts` scan). ✅ done (#112).
+3. **Transaction** — `transactions` + `transaction_labels`; removes the
+   `listTransactions` and reporting scans (and a per-account
+   `transactionDatesForAccount` for the balance-as-of fold). ✅ done.
 4. **User**, **Configuration**, **ExchangeRate** — fast-follow.
 
 The spec describes the full target architecture; the implementation plan executes

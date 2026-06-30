@@ -47,7 +47,7 @@ import qualified Data.Set as Set
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.Sqlite (createSqlitePool)
 import Domain.Models (AccountingEvent)
-import Eventium (EventStoreReader (..), ReadModel (..))
+import Eventium (ReadModel (..))
 import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Memory
   ( EventMap,
@@ -258,7 +258,6 @@ mkAppEnv withProcessManager = do
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
-        transactionReadModel = readModels.transaction,
         userReadModel = readModels.user,
         configurationReadModel = readModels.configuration,
         jwtConfig = config.auth,

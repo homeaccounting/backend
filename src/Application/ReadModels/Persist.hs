@@ -27,6 +27,7 @@ where
 
 import Application.ReadModels.Account (accountProjectionName, accountReadModel)
 import Application.ReadModels.BankImportReadModel (bankImportProjectionName, bankImportReadModel)
+import Application.ReadModels.Transaction (transactionProjectionName, transactionReadModel)
 import Domain.Models (AccountingEvent)
 import Eventium (ReadModel, catchUpReadModel, rebuildReadModel)
 import Eventium.ProjectionCache.Postgresql (CheckpointName (..))
@@ -46,7 +47,8 @@ rebuildEnvVar = "REBUILD_READ_MODELS"
 persistentReadModels :: [(Text, ReadModel SqlIO AccountingEvent)]
 persistentReadModels =
   [ (unCheckpointName bankImportProjectionName, bankImportReadModel),
-    (unCheckpointName accountProjectionName, accountReadModel)
+    (unCheckpointName accountProjectionName, accountReadModel),
+    (unCheckpointName transactionProjectionName, transactionReadModel)
   ]
   where
     unCheckpointName (CheckpointName t) = t

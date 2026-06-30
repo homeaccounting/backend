@@ -274,8 +274,7 @@ successfulTransferSpec =
       txUuid <- initiateAndCompleteTransfer env acct1Uuid acct2Uuid userUuid 200 "Test transfer"
 
       -- Verify transaction in read model
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model"
         Just txData -> do
@@ -328,8 +327,7 @@ incomeFlowSpec =
       txUuid <- initiateAndCompleteTransfer env extUuid regUuid userUuid 500 "Salary"
 
       -- Verify transaction completed with correct data
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
@@ -383,8 +381,7 @@ expenseFlowSpec =
       txUuid <- initiateAndCompleteTransfer env regUuid extUuid userUuid 300 "Groceries"
 
       -- Verify transaction completed with correct data
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
@@ -509,8 +506,7 @@ processManagerDrivenSpec =
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 200 "PM test transfer"
 
       -- Verify transaction reached Completed status
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model after PM processing"
         Just txData -> do
@@ -593,8 +589,7 @@ processManagerDrivenSpec =
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 5000 "Overdraft"
 
       -- Transaction should be Failed (insufficient funds)
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Transaction not found in read model"
         Just txData ->
@@ -695,8 +690,7 @@ categorizedTransferSpec =
               }
 
       -- Verify transaction read model has correct type
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Income transaction not found in read model"
         Just txData -> do
@@ -769,8 +763,7 @@ categorizedTransferSpec =
               }
 
       -- Verify transaction read model has correct type
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Expense transaction not found in read model"
         Just txData -> do
@@ -815,8 +808,7 @@ categorizedTransferSpec =
               }
 
       -- Verify transaction read model has correct type
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Internal transfer not found in read model"
         Just txData -> do
@@ -850,8 +842,7 @@ categorizedTransferSpec =
                 labels = expectedLabels
               }
 
-      let txReadModel = env.transactionReadModel
-      maybeTx <- getTransaction txReadModel (unsafeTransactionId txUuid)
+      maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))
       case maybeTx of
         Nothing -> expectationFailure "Transfer not found in read model"
         Just txData -> do

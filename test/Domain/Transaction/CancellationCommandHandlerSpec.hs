@@ -28,6 +28,7 @@ import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
     TransactionId,
+    TransactionType (..),
     UserId,
     unsafeTransactionId,
     unsafeUserId,
@@ -159,6 +160,8 @@ validAmendCmd =
         newSourceAmount = mockMoney 200,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
+        newAllocations = Nothing,
+        newTransactionType = Transfer,
         by = amendedBy
       }
 
@@ -173,6 +176,8 @@ sameAccountAmendCmd =
         newSourceAmount = mockMoney 200,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
+        newAllocations = Nothing,
+        newTransactionType = Transfer,
         by = amendedBy
       }
 
@@ -187,6 +192,8 @@ zeroSourceAmendCmd =
         newSourceAmount = mockMoney 0,
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
+        newAllocations = Nothing,
+        newTransactionType = Transfer,
         by = amendedBy
       }
 

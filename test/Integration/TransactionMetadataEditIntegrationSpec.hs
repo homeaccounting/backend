@@ -22,7 +22,6 @@
 module Integration.TransactionMetadataEditIntegrationSpec (spec) where
 
 import Application.ReadModels.Account (balanceAsOf)
-import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TxRM
 import Application.ReadModels.User (UserData (..), getUser)
 import Data.Aeson (Value, eitherDecode, encode, object, (.=))
@@ -42,7 +41,7 @@ import Network.Wai.Test (SResponse (..))
 import RIO
 import qualified RIO.Text as T
 import Test.Hspec
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Testkit.Time (utc)
 import Testkit.TransactionEditFixture
   ( Seed (..),
@@ -93,8 +92,8 @@ externalAccountIdFor seed = do
 -- balance fold consults.
 balanceAt :: AppEnv -> AccountId -> UTCTime -> IO (Maybe Money)
 balanceAt env accountId asOf = do
-  txnMap <- TxRM.getAllTransactions env.transactionReadModel
-  let lookupTxAt txId = (.date) <$> Map.lookup txId txnMap
+  txnDates <- runDbIn env (TxRM.transactionDatesForAccount accountId)
+  let lookupTxAt txId = Map.lookup txId txnDates
   balanceAsOf env.eventStoreReader lookupTxAt accountId asOf
 
 -- | Create an Income for the seed at the given date with the given

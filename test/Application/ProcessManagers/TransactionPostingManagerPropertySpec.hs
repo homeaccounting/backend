@@ -35,6 +35,7 @@ import Domain.Transaction.Events (TransactionPostingInitiated (..))
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
 import RIO hiding (view, (^.))
+import RIO.Time (UTCTime (..), fromGregorian)
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
@@ -83,7 +84,8 @@ genTransactionPostingInitiatedEvent = do
                 by = unsafeUserId userId,
                 transactionType = Transfer,
                 externalTransactionId = Nothing,
-                labels = Set.empty
+                labels = Set.empty,
+                at = UTCTime (fromGregorian 2026 1 1) 0
               }
         )
     )

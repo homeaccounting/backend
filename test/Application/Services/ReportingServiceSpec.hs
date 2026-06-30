@@ -45,7 +45,7 @@ spec = describe "ReportingService pure aggregation" $ do
     R.allocationBase (expenseTo (mockCategoryIdN 1) 100) m `shouldBe` m
 
   it "allocationBase scales a cross-currency expense allocation by external/regular" $ do
-    let Right er = mkExchangeRate USD UAH 40
+    let er = unsafeExchangeRate USD UAH 40
         td =
           mockTransactionData
             (mockAccountIdN 1)

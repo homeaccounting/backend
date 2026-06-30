@@ -254,8 +254,7 @@ renameDictionaryEntry userId dictId entryId newName = runExceptT $ do
 removeDictionaryEntry :: UserId -> DictionaryId -> DictionaryEntryId -> AppM (Either DomainError ())
 removeDictionaryEntry userId dictId entryId = runExceptT $ do
   lift $ logInfo $ "Removing dictionary entry from " <> displayShow dictId <> " for user " <> displayShow userId
-  txnRM <- lift (view transactionReadModelL)
-  usageCount <- lift (findReferencingTransactions txnRM entryId)
+  usageCount <- lift (runDb (findReferencingTransactions entryId))
   let inUse =
         if dictId == labelsDictId
           then LabelInUse {entryId = T.pack (show (unDictionaryEntryId entryId)), usageCount = usageCount}

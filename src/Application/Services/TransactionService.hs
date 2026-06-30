@@ -133,7 +133,6 @@ import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
     HasExchangeRateReadModel (..),
-    HasReadModel (..),
     eventStoreReaderL,
     runDb,
   )
@@ -217,9 +216,7 @@ listTransactions userId filt page = do
     then do
       logDebug "User has no accessible accounts; returning empty list"
       pure (0, [])
-    else do
-      readModel <- view transactionReadModelL
-      ReadModel.listTransactions readModel visible filt page
+    else runDb (ReadModel.listTransactions visible filt page)
 
 -- | Initiate an income transfer (External -> Regular account).
 --
@@ -720,11 +717,10 @@ ensureEditorAccess ::
   TransactionId ->
   AppM (Either DomainError TransactionData)
 ensureEditorAccess userId transactionId = runExceptT $ do
-  txnRM <- lift (view transactionReadModelL)
   transaction <-
     liftMaybeM
       (NotFound "Transaction" (tshow transactionId))
-      (liftIO (ReadModel.getTransaction txnRM transactionId))
+      (runDb (ReadModel.getTransaction transactionId))
   mSrc <- lift (runDb (AccountRM.getAccount transaction.sourceAccountId))
   mTgt <- lift (runDb (AccountRM.getAccount transaction.targetAccountId))
   let toAuthData acc =
@@ -1041,11 +1037,10 @@ queryTransactionResult ::
   TransactionId ->
   AppM (Either DomainError (TransactionId, TransactionData))
 queryTransactionResult transactionId = runExceptT $ do
-  readModel <- lift (view transactionReadModelL)
   transaction <-
     liftMaybeM
       (NotFound "Transaction" (tshow transactionId))
-      (liftIO (ReadModel.getTransaction readModel transactionId))
+      (runDb (ReadModel.getTransaction transactionId))
   pure (transactionId, transaction)
 
 -- | Resolve amounts for a cross-currency transfer.

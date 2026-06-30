@@ -1,108 +1,139 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- |
 -- Module      : Application.ReadModels.Transaction
--- Description : Read model for optimized transaction queries
+-- Description : Persistent, indexed read model for transaction queries
 --
--- This module implements a read model that provides efficient queries for transaction
--- information without requiring event replay. The read model listens to the event
--- stream and maintains a denormalized view optimized for common query patterns.
+-- Transactions are projected into two Postgres tables:
 --
--- Key Components:
---   - TransactionData: Denormalized transaction information
---   - TransactionReadModel: Map of transaction IDs to transaction data
---   - Event handlers: Update the read model when events occur
---   - Query functions: Efficient lookups by transaction ID
+--   * @transactions@ — one row per transaction (legs, amounts, exchange rate,
+--     description, status, type, business date, amendment count, version), and
+--   * @transaction_labels@ — the many-to-many label set, indexed by label so the
+--     in-use deletion guard and label filters are indexed lookups.
 --
--- Design Rationale:
---   - Separates read and write models (CQRS pattern)
---   - Optimizes for query performance
---   - Maintains eventual consistency with event stream
---   - Tracks sequence numbers for reliable event processing
---
--- The read model can be:
---   - Rebuilt from the event stream if corrupted
---   - Extended with additional denormalized fields
---   - Backed by in-memory or persistent storage
+-- The projection is an eventium 'ReadModel' ('transactionReadModel') driven
+-- synchronously in the event-append transaction. Per-row @version@ is recorded
+-- from the event's real per-stream 'EventVersion' (not derived by incrementing).
+-- Queries are scoped to the caller's visible accounts via indexed SQL, replacing
+-- the former full-map scans (@listTransactions@, reporting).
 module Application.ReadModels.Transaction
-  ( -- * Read Model Types
+  ( -- * Query result type
     TransactionData (..),
-    TransactionReadModel,
 
-    -- * Query Types
+    -- * Query filter
     TransactionFilter (..),
     mkTransactionFilter,
     emptyTransactionFilter,
 
-    -- * Read Model Creation
-    createTransactionReadModel,
+    -- * Read model
+    transactionReadModel,
+    transactionProjectionName,
+    migrateTransaction,
+    resetTransaction,
+    applyTransactionEvent,
+    TransactionEntity (..),
+    TransactionLabelEntity (..),
 
-    -- * Event Handler
-    handleTransactionEvents,
-
-    -- * Query Functions
+    -- * Queries (run via 'runDb')
     getTransaction,
-    getAllTransactions,
-    transactionExists,
     listTransactions,
+    transactionDatesForAccount,
     findReferencingTransactions,
+    reportableTransactions,
+    countTransactions,
 
-    -- * Helper Functions
-    transactionToMap,
+    -- * Helpers
     touchesVisible,
   )
 where
 
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad (forM_, void)
+import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.List (sortBy)
-import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
-import Data.Time (UTCTime (..))
-import Domain.Core.Page (Page (..))
-import Domain.Core.Range (Range, within)
-import Domain.Core.Types (AccountId, Allocation (..), DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, TransactionType (..), allAllocations, allocationsOf, mkTransactionIdSafe, replaceAllocations)
-import Domain.Models
-  ( AccountingEvent
-      ( TransactionAllocationsChangedEvent,
-        TransactionAmendmentCompletedEvent,
-        TransactionAmendmentFailedEvent,
-        TransactionAmendmentInitiatedEvent,
-        TransactionCancellationCompletedEvent,
-        TransactionCancellationInitiatedEvent,
-        TransactionDateChangedEvent,
-        TransactionDescriptionChangedEvent,
-        TransactionLabelsSetEvent,
-        TransactionPostingCompletedEvent,
-        TransactionPostingFailedEvent,
-        TransactionPostingInitiatedEvent
-      ),
+import Data.Time (UTCTime)
+import Database.Persist
+  ( Entity (..),
+    Filter (..),
+    SelectOpt (Asc, Desc, LimitTo, OffsetBy),
+    count,
+    deleteWhere,
+    getBy,
+    insertUnique,
+    replace,
+    selectList,
+    (!=.),
+    (<-.),
+    (<=.),
+    (==.),
+    (>=.),
   )
-import qualified Domain.Transaction.Events
-import Domain.Transaction.Projection (StatusKind, TransactionStatus (Cancelled, Completed, Failed, Pending), statusKind)
-import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationSilent)
+import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
+import Domain.Core.Page (Page (..))
+import Domain.Core.Range (Range (..))
+import Domain.Core.Types
+  ( AccountId,
+    Allocation (..),
+    DictionaryEntryId,
+    ExchangeRate,
+    LabelId,
+    Money,
+    TransactionId,
+    TransactionType,
+    allAllocations,
+    allocationsOf,
+    mkTransactionIdSafe,
+    replaceAllocations,
+  )
+-- Event record types imported with @(..)@ so their field labels are in scope —
+-- 'OverloadedRecordDot' (@evt.sourceAccountId@ etc.) needs the label visible
+-- under @DuplicateRecordFields@, since 'TransactionData' shares some names.
+import Domain.Models
+  ( AccountingEvent (..),
+    TransactionAllocationsChanged (..),
+    TransactionAmendmentCompleted (..),
+    TransactionDateChanged (..),
+    TransactionDescriptionChanged (..),
+    TransactionLabelsSet (..),
+    TransactionPostingFailed (..),
+    TransactionPostingInitiated (..),
+  )
+import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..), statusFromKind)
+import Eventium
+  ( EventHandler (..),
+    EventVersion (..),
+    GlobalStreamEvent,
+    ReadModel (..),
+    StreamEvent (..),
+  )
+import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
 import GHC.Generics (Generic)
-import Infrastructure.Eventium (AccountingReadModelHandler)
-import Safe (maximumDef)
+import Infrastructure.Database.Orphans ()
 
 -- -----------------------------------------------------------------------------
--- Read Model Data Types
+-- Query result type
 -- -----------------------------------------------------------------------------
 
--- | Denormalized transaction information for efficient querying.
---
--- This structure contains all the information needed for common transaction queries
--- without requiring event replay. It's optimized for read operations.
-data TransactionData
-  = TransactionData
+-- | Denormalized transaction information returned by queries. @labels@ is
+-- assembled from the @transaction_labels@ rows; @status@ is reconstructed from
+-- the stored 'StatusKind' plus the optional failure reason.
+data TransactionData = TransactionData
   { sourceAccountId :: AccountId,
     targetAccountId :: AccountId,
     sourceAmount :: Money,
@@ -123,19 +154,8 @@ instance ToJSON TransactionData
 
 instance FromJSON TransactionData
 
--- | The read model state: a map from transaction IDs to their transaction data.
---
--- This is wrapped in a TVar for concurrent access and includes the latest
--- sequence number for reliable event processing.
-data TransactionReadModel
-  = TransactionReadModel
-  { latestSequence :: SequenceNumber,
-    transactions :: Map TransactionId TransactionData
-  }
-  deriving (Show, Eq)
-
 -- -----------------------------------------------------------------------------
--- Query Types
+-- Query filter
 -- -----------------------------------------------------------------------------
 
 -- | Standardized transaction query filter. Each field is an optional
@@ -148,8 +168,8 @@ data TransactionFilter = TransactionFilter
     dateRange :: Maybe (Range UTCTime),
     -- | Status set (IN). Named 'statuses' (not 'status') to avoid a collision
     -- with 'TransactionData.status'.
-    statuses :: Maybe (NonEmpty StatusKind),
-    label :: Maybe (NonEmpty LabelId)
+    statuses :: Maybe (NE.NonEmpty StatusKind),
+    label :: Maybe (NE.NonEmpty LabelId)
   }
   deriving (Show, Eq)
 
@@ -158,8 +178,8 @@ data TransactionFilter = TransactionFilter
 mkTransactionFilter ::
   Maybe AccountId ->
   Maybe (Range UTCTime) ->
-  Maybe (NonEmpty StatusKind) ->
-  Maybe (NonEmpty LabelId) ->
+  Maybe (NE.NonEmpty StatusKind) ->
+  Maybe (NE.NonEmpty LabelId) ->
   TransactionFilter
 mkTransactionFilter a d s l =
   TransactionFilter {accountId = a, dateRange = d, statuses = s, label = l}
@@ -169,345 +189,354 @@ emptyTransactionFilter :: TransactionFilter
 emptyTransactionFilter = TransactionFilter Nothing Nothing Nothing Nothing
 
 -- -----------------------------------------------------------------------------
--- Read Model Creation
+-- Schema
 -- -----------------------------------------------------------------------------
 
--- | Creates a new empty transaction read model.
---
--- This initializes the read model with:
---  - Sequence number -1 (before any events)
---  - Empty map of transactions
---
--- Example:
--- >>> readModel <- createTransactionReadModel
--- >>> transaction <- getTransaction readModel someTransactionId
-createTransactionReadModel :: (MonadIO m) => m (TVar TransactionReadModel)
-createTransactionReadModel =
-  liftIO $
-    newTVarIO $
-      TransactionReadModel
-        { latestSequence = -1,
-          transactions = Map.empty
-        }
+share
+  [mkPersist sqlSettings, mkMigrate "migrateTransaction"]
+  [persistLowerCase|
+TransactionEntity sql=transactions
+    transactionId TransactionId
+    sourceAccountId AccountId
+    targetAccountId AccountId
+    sourceAmount Money
+    targetAmount Money
+    exchangeRate ExchangeRate Maybe
+    description Text
+    statusKind StatusKind
+    failureReason Text Maybe
+    transactionType TransactionType
+    date UTCTime
+    amendmentCount Int
+    version EventVersion
+    UniqueTransactionId transactionId
+    deriving Show Eq
+TransactionLabelEntity sql=transaction_labels
+    transactionId TransactionId
+    labelId LabelId
+    UniqueTransactionLabel transactionId labelId
+    deriving Show Eq
+|]
+
+-- | Projection/checkpoint name for this read model.
+transactionProjectionName :: CheckpointName
+transactionProjectionName = CheckpointName "transaction"
+
+-- | Clear both transaction tables. The checkpoint is reset by 'rebuildReadModel'.
+resetTransaction :: (MonadIO m) => SqlPersistT m ()
+resetTransaction = do
+  deleteWhere ([] :: [Filter TransactionLabelEntity])
+  deleteWhere ([] :: [Filter TransactionEntity])
+
+-- | Secondary indexes the query layer relies on. Persistent's quasi-quoter only
+-- emits the unique constraints, so the lookup/filter columns get explicit
+-- @CREATE INDEX IF NOT EXISTS@ (valid on both PostgreSQL and SQLite) at startup.
+createTransactionIndexes :: (MonadIO m) => SqlPersistT m ()
+createTransactionIndexes =
+  forM_ stmts $ \s -> rawExecute s []
+  where
+    stmts =
+      [ "CREATE INDEX IF NOT EXISTS idx_transactions_source ON transactions (source_account_id)",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_target ON transactions (target_account_id)",
+        "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date)",
+        "CREATE INDEX IF NOT EXISTS idx_transaction_labels_label ON transaction_labels (label_id)"
+      ]
 
 -- -----------------------------------------------------------------------------
--- Event Handler
+-- Read model
 -- -----------------------------------------------------------------------------
 
--- | Updates the read model with new events from the global event stream.
---
--- This function:
---  1. Processes each event and updates the transaction data accordingly
---  2. Tracks the highest sequence number seen
---  3. Updates the TVar atomically
---
--- Events handled:
---  - TransactionPostingInitiated: Adds new transaction with Pending status
---  - TransactionPostingCompleted: Updates status to Completed
---  - TransactionPostingFailed: Updates status to Failed with reason
---  - TransactionLabelsSet: Replaces the labels set
---  - TransactionAllocationsChanged: Replaces the categorised TransactionType payload
---  - TransactionDescriptionChanged: Replaces the description
---  - TransactionDateChanged: Replaces the business date
---
--- The function is idempotent - replaying the same events produces the same result.
---
--- Example:
--- >>> handleTransactionEvents readModelTVar events
--- >>> transaction <- getTransaction readModelTVar transactionId
-handleTransactionEvents ::
-  (MonadIO m) =>
-  TVar TransactionReadModel ->
-  AccountingReadModelHandler m
-handleTransactionEvents readModelTVar = EventHandler $ \events -> do
-  currentModel <- liftIO $ readTVarIO readModelTVar
+transactionReadModel :: ReadModel (SqlPersistT IO) AccountingEvent
+transactionReadModel =
+  ReadModel
+    { initialize = do
+        void (runMigrationSilent migrateTransaction)
+        createTransactionIndexes,
+      eventHandler = EventHandler applyTransactionEvent,
+      checkpointStore = postgresqlCheckpointStore transactionProjectionName,
+      reset = resetTransaction
+    }
 
-  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
-      updatedData = foldl processEvent currentModel.transactions events
+-- | Apply a single global event to the transaction tables. The per-stream
+-- version (@globalEvent.payload.position@) is recorded as the row @version@.
+-- Total and idempotent: row inserts are keyed by 'UniqueTransactionId', the
+-- label set is fully replaced, and amendment count is the only accumulator
+-- (incremented once per completed amendment under the synchronous driver).
+applyTransactionEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
+applyTransactionEvent globalEvent =
+  let inner = globalEvent.payload
+      ver = inner.position
+   in case mkTransactionIdSafe inner.key of
+        Nothing -> pure ()
+        Just txId -> case inner.payload of
+          TransactionPostingInitiatedEvent evt -> do
+            -- insertUnique (not repsert) so a terminal event already applied
+            -- out of order is never clobbered back to Pending.
+            inserted <-
+              insertUnique
+                TransactionEntity
+                  { transactionEntityTransactionId = txId,
+                    transactionEntitySourceAccountId = evt.sourceAccountId,
+                    transactionEntityTargetAccountId = evt.targetAccountId,
+                    transactionEntitySourceAmount = evt.sourceAmount,
+                    transactionEntityTargetAmount = evt.targetAmount,
+                    transactionEntityExchangeRate = evt.exchangeRate,
+                    transactionEntityDescription = evt.description,
+                    transactionEntityStatusKind = PendingKind,
+                    transactionEntityFailureReason = Nothing,
+                    transactionEntityTransactionType = evt.transactionType,
+                    transactionEntityDate = evt.at,
+                    transactionEntityAmendmentCount = 0,
+                    transactionEntityVersion = ver
+                  }
+            case inserted of
+              Nothing -> pure ()
+              Just _ -> setLabels txId (Set.toList evt.labels)
+          TransactionPostingCompletedEvent _ ->
+            modifyTx txId (\e -> e {transactionEntityStatusKind = CompletedKind, transactionEntityVersion = ver})
+          TransactionPostingFailedEvent evt ->
+            modifyTx txId (\e -> e {transactionEntityStatusKind = FailedKind, transactionEntityFailureReason = Just evt.reason, transactionEntityVersion = ver})
+          TransactionLabelsSetEvent evt -> do
+            setLabels txId (Set.toList evt.labels)
+            modifyTx txId (\e -> e {transactionEntityVersion = ver})
+          TransactionAllocationsChangedEvent evt ->
+            modifyTx txId (\e -> e {transactionEntityTransactionType = replaceAllocations evt.newAllocations e.transactionEntityTransactionType, transactionEntityVersion = ver})
+          TransactionDescriptionChangedEvent evt ->
+            modifyTx txId (\e -> e {transactionEntityDescription = evt.newDescription, transactionEntityVersion = ver})
+          TransactionDateChangedEvent evt ->
+            modifyTx txId (\e -> e {transactionEntityDate = evt.newAt, transactionEntityVersion = ver})
+          TransactionAmendmentCompletedEvent evt ->
+            modifyTx
+              txId
+              ( \e ->
+                  e
+                    { transactionEntitySourceAccountId = evt.newSourceAccountId,
+                      transactionEntityTargetAccountId = evt.newTargetAccountId,
+                      transactionEntitySourceAmount = evt.newSourceAmount,
+                      transactionEntityTargetAmount = evt.newTargetAmount,
+                      transactionEntityExchangeRate = evt.newExchangeRate,
+                      transactionEntityTransactionType = evt.newTransactionType,
+                      transactionEntityAmendmentCount = e.transactionEntityAmendmentCount + 1,
+                      transactionEntityVersion = ver
+                    }
+              )
+          TransactionCancellationCompletedEvent _ ->
+            modifyTx txId (\e -> e {transactionEntityStatusKind = CancelledKind, transactionEntityVersion = ver})
+          -- saga-internal markers / informational: no canonical change
+          TransactionAmendmentInitiatedEvent _ -> pure ()
+          TransactionAmendmentFailedEvent _ -> pure ()
+          TransactionCancellationInitiatedEvent _ -> pure ()
+          _ -> pure ()
 
-  liftIO . atomically . writeTVar readModelTVar $
-    currentModel
-      { latestSequence = newSeq,
-        transactions = updatedData
-      }
+-- | Read-modify-write a transaction row (no-op if absent).
+modifyTx :: (MonadIO m) => TransactionId -> (TransactionEntity -> TransactionEntity) -> SqlPersistT m ()
+modifyTx txId f = do
+  mEnt <- getBy (UniqueTransactionId txId)
+  case mEnt of
+    Nothing -> pure ()
+    Just (Entity k e) -> replace k (f e)
 
--- | Processes a single event and updates the transactions map.
---
--- GlobalStreamEvent is nested: StreamEvent () SequenceNumber (VersionedStreamEvent event)
--- where VersionedStreamEvent event = StreamEvent UUID EventVersion event
--- So we need to unwrap twice to get the payload and stream key (UUID).
-processEvent ::
-  Map TransactionId TransactionData ->
-  GlobalStreamEvent AccountingEvent ->
-  Map TransactionId TransactionData
-processEvent transactions globalEvent =
-  let versionedEvent = globalEvent.payload
-      streamUuid = versionedEvent.key
-      payload = versionedEvent.payload
-   in case payload of
-        TransactionPostingInitiatedEvent evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              -- Use insertWith to avoid overwriting terminal states (Completed/Failed).
-              -- In depth-first event bus dispatch, TransactionPostingCompleted/TransactionPostingFailed
-              -- may be processed before TransactionPostingInitiated for the same transaction.
-              -- The merge function keeps the existing entry if one already exists.
-              let newEntry =
-                    TransactionData
-                      { sourceAccountId = evt.sourceAccountId,
-                        targetAccountId = evt.targetAccountId,
-                        sourceAmount = evt.sourceAmount,
-                        targetAmount = evt.targetAmount,
-                        exchangeRate = evt.exchangeRate,
-                        description = evt.description,
-                        status = Pending,
-                        transactionType = evt.transactionType,
-                        date = evt.at,
-                        labels = evt.labels,
-                        amendmentCount = 0
-                      }
-               in Map.insertWith (\_ existing -> existing) transactionId newEntry transactions
-        TransactionPostingCompletedEvent _evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                (\transaction -> transaction {status = Completed})
-                transactionId
-                transactions
-        TransactionPostingFailedEvent evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                ( \transaction ->
-                    transaction {status = Failed evt.reason}
-                )
-                transactionId
-                transactions
-        TransactionLabelsSetEvent evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                (\transaction -> (transaction :: TransactionData) {labels = evt.labels})
-                transactionId
-                transactions
-        TransactionAllocationsChangedEvent evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                ( \transaction ->
-                    (transaction :: TransactionData)
-                      { transactionType =
-                          replaceAllocations evt.newAllocations transaction.transactionType
-                      }
-                )
-                transactionId
-                transactions
-        TransactionDescriptionChangedEvent evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                (\transaction -> (transaction :: TransactionData) {description = evt.newDescription})
-                transactionId
-                transactions
-        TransactionDateChangedEvent evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                (\transaction -> (transaction :: TransactionData) {date = evt.newAt})
-                transactionId
-                transactions
-        TransactionAmendmentInitiatedEvent _evt -> transactions -- saga-internal marker
-        TransactionAmendmentCompletedEvent evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                ( \transaction ->
-                    (transaction :: TransactionData)
-                      { sourceAccountId = evt.newSourceAccountId,
-                        targetAccountId = evt.newTargetAccountId,
-                        sourceAmount = evt.newSourceAmount,
-                        targetAmount = evt.newTargetAmount,
-                        exchangeRate = evt.newExchangeRate,
-                        transactionType = evt.newTransactionType,
-                        amendmentCount = transaction.amendmentCount + 1
-                      }
-                )
-                transactionId
-                transactions
-        TransactionAmendmentFailedEvent _evt -> transactions -- informational; no canonical change
-        TransactionCancellationInitiatedEvent _evt -> transactions -- saga-internal marker; no canonical change
-        TransactionCancellationCompletedEvent _evt ->
-          case mkTransactionIdSafe streamUuid of
-            Nothing -> transactions
-            Just transactionId ->
-              Map.adjust
-                (\transaction -> (transaction :: TransactionData) {status = Cancelled})
-                transactionId
-                transactions
-        _ -> transactions -- Ignore account events
+-- | Replace the full label set for a transaction (delete then insert).
+setLabels :: (MonadIO m) => TransactionId -> [LabelId] -> SqlPersistT m ()
+setLabels txId ls = do
+  deleteWhere [TransactionLabelEntityTransactionId ==. txId]
+  forM_ ls $ \l -> void (insertUnique (TransactionLabelEntity txId l))
 
 -- -----------------------------------------------------------------------------
--- Query Functions
+-- Reconstruction
 -- -----------------------------------------------------------------------------
 
--- | Retrieves the transaction data for a specific transaction ID.
---
--- Returns 'Nothing' if the transaction doesn't exist in the read model.
---
--- Example:
--- >>> maybeTransaction <- getTransaction readModel transactionId
--- >>> case maybeTransaction of
--- >>>   Just transaction -> print (transaction.status)
--- >>>   Nothing -> putStrLn "Transaction not found"
-getTransaction ::
-  (MonadIO m) =>
-  TVar TransactionReadModel ->
-  TransactionId ->
-  m (Maybe TransactionData)
-getTransaction readModelTVar transactionId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup transactionId model.transactions
+entToData :: TransactionEntity -> [LabelId] -> TransactionData
+entToData e ls =
+  TransactionData
+    { sourceAccountId = e.transactionEntitySourceAccountId,
+      targetAccountId = e.transactionEntityTargetAccountId,
+      sourceAmount = e.transactionEntitySourceAmount,
+      targetAmount = e.transactionEntityTargetAmount,
+      exchangeRate = e.transactionEntityExchangeRate,
+      description = e.transactionEntityDescription,
+      status = statusFromKind e.transactionEntityStatusKind e.transactionEntityFailureReason,
+      transactionType = e.transactionEntityTransactionType,
+      date = e.transactionEntityDate,
+      labels = Set.fromList ls,
+      amendmentCount = fromIntegral (max 0 e.transactionEntityAmendmentCount)
+    }
 
--- | Retrieves all transactions in the read model.
---
--- Returns a map from TransactionId to TransactionData for all known transactions.
---
--- Example:
--- >>> allTransactions <- getAllTransactions readModel
--- >>> mapM_ print (Map.toList allTransactions)
-getAllTransactions ::
-  (MonadIO m) =>
-  TVar TransactionReadModel ->
-  m (Map TransactionId TransactionData)
-getAllTransactions readModelTVar = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return model.transactions
+-- | Labels for one transaction.
+loadLabels :: (MonadIO m) => TransactionId -> SqlPersistT m [LabelId]
+loadLabels txId = do
+  rows <- selectList [TransactionLabelEntityTransactionId ==. txId] []
+  pure [r.transactionLabelEntityLabelId | Entity _ r <- rows]
 
--- | Checks if a transaction exists in the read model.
---
--- This is more efficient than checking if 'getTransaction' returns 'Just'.
---
--- Example:
--- >>> exists <- transactionExists readModel transactionId
--- >>> if exists then returnStatus else return404
-transactionExists ::
-  (MonadIO m) =>
-  TVar TransactionReadModel ->
-  TransactionId ->
-  m Bool
-transactionExists readModelTVar transactionId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member transactionId model.transactions
+-- | Labels for many transactions in a single indexed query, grouped by
+-- transaction (avoids the N+1 of 'loadLabels' per row).
+loadLabelsMany :: (MonadIO m) => [TransactionId] -> SqlPersistT m (Map TransactionId [LabelId])
+loadLabelsMany [] = pure Map.empty
+loadLabelsMany txIds = do
+  rows <- selectList [TransactionLabelEntityTransactionId <-. txIds] []
+  pure $
+    Map.fromListWith
+      (<>)
+      [(r.transactionLabelEntityTransactionId, [r.transactionLabelEntityLabelId]) | Entity _ r <- rows]
 
--- | List transactions visible to the caller, filtered by 'TransactionFilter'
--- and paginated by 'Page'. Returns @(totalMatches, pageSlice)@ where
--- @totalMatches@ counts all matches before slicing.
---
--- Semantics (see docs/specs/2026-06-09-transaction-query-language-design.md):
---
---  1. Keep entries where at least one of sourceAccountId/targetAccountId is
---     in the visible set (access-control precondition supplied by the
---     service).
---  2. Apply each present filter field; absent fields impose no constraint.
---     Date bounds apply (inclusive) to 'TransactionData.date', the business
---     timestamp; @status@ matches by 'StatusKind'; @label@ matches by set
---     overlap.
---  3. Sort by date descending (ties broken by TransactionId), count, then
---     slice by @offset@/@limit@. This maps directly onto a future
---     @COUNT(*)@ + @ORDER BY .. OFFSET .. LIMIT@ DB query.
+-- | Materialize a page of entity rows into '(id, TransactionData)' pairs,
+-- batch-loading their labels.
+withLabels :: (MonadIO m) => [Entity TransactionEntity] -> SqlPersistT m [(TransactionId, TransactionData)]
+withLabels rows = do
+  labelMap <- loadLabelsMany [e.transactionEntityTransactionId | Entity _ e <- rows]
+  pure
+    [ (e.transactionEntityTransactionId, entToData e (Map.findWithDefault [] e.transactionEntityTransactionId labelMap))
+    | Entity _ e <- rows
+    ]
+
+-- -----------------------------------------------------------------------------
+-- Queries
+-- -----------------------------------------------------------------------------
+
+-- | Total number of transactions in the read model (an unfiltered @COUNT(*)@).
+-- Not a per-tenant data scan; useful for ops/health checks and tests.
+countTransactions :: (MonadIO m) => SqlPersistT m Int
+countTransactions = count ([] :: [Filter TransactionEntity])
+
+-- | Transaction by id, with its labels, or 'Nothing'.
+getTransaction :: (MonadIO m) => TransactionId -> SqlPersistT m (Maybe TransactionData)
+getTransaction txId = do
+  mEnt <- getBy (UniqueTransactionId txId)
+  case mEnt of
+    Nothing -> pure Nothing
+    Just (Entity _ e) -> Just . entToData e <$> loadLabels txId
+
+-- | List transactions visible to the caller (touching at least one account in
+-- @visible@ on either leg), filtered by 'TransactionFilter' and paginated by
+-- 'Page'. Returns @(totalMatches, pageSlice)@; @totalMatches@ counts all matches
+-- before slicing. All predicates run as indexed SQL — never a full scan over
+-- other tenants' transactions. Ordered by date descending, ties by id.
 listTransactions ::
   (MonadIO m) =>
-  TVar TransactionReadModel ->
   Set AccountId ->
   TransactionFilter ->
   Page ->
-  m (Int, [(TransactionId, TransactionData)])
-listTransactions readModelTVar visible filt page = do
-  model <- liftIO $ readTVarIO readModelTVar
-  let matches =
-        [ (txId, td)
-        | (txId, td) <- Map.toList model.transactions,
-          touchesVisible visible td,
-          matchesAccount td,
-          matchesDate td,
-          matchesStatus td,
-          matchesLabel td
-        ]
-      sorted = sortBy descendingByDate matches
-      total = length sorted
-      slice = take page.limit (drop page.offset sorted)
-  pure (total, slice)
+  SqlPersistT m (Int, [(TransactionId, TransactionData)])
+listTransactions visible filt page
+  | Set.null visible = pure (0, [])
+  | otherwise = do
+      mLabelTxIds <- resolveLabelFilter filt.label
+      case mLabelTxIds of
+        Just [] -> pure (0, []) -- label filter present, nothing matches
+        _ -> do
+          let filters = baseVisible visible ++ accountFilter filt.accountId ++ dateFilters filt.dateRange ++ statusFilters filt.statuses ++ labelFilters mLabelTxIds
+          total <- count filters
+          rows <-
+            selectList
+              filters
+              [Desc TransactionEntityDate, Asc TransactionEntityTransactionId, OffsetBy page.offset, LimitTo page.limit]
+          slice <- withLabels rows
+          pure (total, slice)
+
+-- | The set of transaction ids carrying a given label, or 'Nothing' when no
+-- label filter is requested.
+resolveLabelFilter :: (MonadIO m) => Maybe (NE.NonEmpty LabelId) -> SqlPersistT m (Maybe [TransactionId])
+resolveLabelFilter Nothing = pure Nothing
+resolveLabelFilter (Just ls) = do
+  rows <- selectList [TransactionLabelEntityLabelId <-. NE.toList ls] []
+  pure (Just (Set.toList (Set.fromList [r.transactionLabelEntityTransactionId | Entity _ r <- rows])))
+
+-- | The visibility precondition as a single OR-group: source OR target leg in
+-- the visible set.
+baseVisible :: Set AccountId -> [Filter TransactionEntity]
+baseVisible visible =
+  let vis = Set.toList visible
+   in [FilterOr [TransactionEntitySourceAccountId <-. vis, TransactionEntityTargetAccountId <-. vis]]
+
+accountFilter :: Maybe AccountId -> [Filter TransactionEntity]
+accountFilter Nothing = []
+accountFilter (Just a) = [FilterOr [TransactionEntitySourceAccountId ==. a, TransactionEntityTargetAccountId ==. a]]
+
+dateFilters :: Maybe (Range UTCTime) -> [Filter TransactionEntity]
+dateFilters Nothing = []
+dateFilters (Just r) =
+  maybe [] (\f -> [TransactionEntityDate >=. f]) r.from
+    ++ maybe [] (\t -> [TransactionEntityDate <=. t]) r.to
+
+statusFilters :: Maybe (NE.NonEmpty StatusKind) -> [Filter TransactionEntity]
+statusFilters Nothing = []
+statusFilters (Just ks) = [TransactionEntityStatusKind <-. NE.toList ks]
+
+labelFilters :: Maybe [TransactionId] -> [Filter TransactionEntity]
+labelFilters (Just txIds) = [TransactionEntityTransactionId <-. txIds]
+labelFilters Nothing = []
+
+-- | Map of @transactionId -> business date@ for every transaction touching the
+-- given account on either leg, regardless of status. Powers the balance-as-of
+-- fold (which needs the effective date of each leg's transaction) without
+-- scanning every tenant's transactions.
+transactionDatesForAccount :: (MonadIO m) => AccountId -> SqlPersistT m (Map TransactionId UTCTime)
+transactionDatesForAccount accId = do
+  rows <- selectList [FilterOr [TransactionEntitySourceAccountId ==. accId, TransactionEntityTargetAccountId ==. accId]] []
+  pure $ Map.fromList [(e.transactionEntityTransactionId, e.transactionEntityDate) | Entity _ e <- rows]
+
+-- | Count transactions that reference the given dictionary entry id — as a label
+-- (indexed @transaction_labels@ lookup) or as an allocation category — and are
+-- not 'Cancelled'. Powers the in-use check that blocks deleting a dictionary
+-- entry.
+--
+-- This is intentionally account-agnostic: the guard must catch a reference from
+-- /any/ transaction, and a transaction's accounts are unrelated to which
+-- configuration owns the entry (the entry id is a globally-unique UUID, so only
+-- the genuinely-referencing transactions match). The label path is the indexed
+-- @transaction_labels.label_id@ lookup; the allocation path deserializes the
+-- non-cancelled rows' @transactionType@ — a bounded scan acceptable for this
+-- rare deletion-time guard. A fully-indexed allocation path would require a
+-- normalized @transaction_categories@ table (spec out-of-scope follow-up).
+findReferencingTransactions :: (MonadIO m) => DictionaryEntryId -> SqlPersistT m Int
+findReferencingTransactions entryId = do
+  nonCancelled <- selectList [TransactionEntityStatusKind !=. CancelledKind] []
+  let nonCancelledIds = Set.fromList [e.transactionEntityTransactionId | Entity _ e <- nonCancelled]
+      allocRefs =
+        Set.fromList
+          [ e.transactionEntityTransactionId
+          | Entity _ e <- nonCancelled,
+            referencesEntry entryId e.transactionEntityTransactionType
+          ]
+  labelRows <- selectList [TransactionLabelEntityLabelId ==. entryId] []
+  let labelRefs =
+        Set.intersection nonCancelledIds $
+          Set.fromList [r.transactionLabelEntityTransactionId | Entity _ r <- labelRows]
+  pure (Set.size (Set.union allocRefs labelRefs))
   where
-    matchesAccount td = case filt.accountId of
-      Nothing -> True
-      Just a -> td.sourceAccountId == a || td.targetAccountId == a
-    matchesDate td = maybe True (\r -> within r td.date) filt.dateRange
-    matchesStatus td =
-      maybe True (\ks -> statusKind td.status `elem` ks) filt.statuses
-    matchesLabel td =
-      maybe
-        True
-        (not . Set.disjoint td.labels . Set.fromList . NE.toList)
-        filt.label
-    descendingByDate (idA, a) (idB, b) =
-      compare b.date a.date <> compare idA idB
+    referencesEntry eid tt = case allocationsOf tt of
+      Nothing -> False
+      Just allocs -> any (\(Allocation cid _) -> cid == eid) (allAllocations allocs)
 
--- -----------------------------------------------------------------------------
--- Helper Functions
--- -----------------------------------------------------------------------------
-
--- | Extracts the map of transactions from the read model.
---
--- This is useful for testing and debugging.
---
--- Example:
--- >>> transactionsMap <- transactionToMap readModel
--- >>> print $ Map.size transactionsMap
-transactionToMap ::
+-- | Transactions eligible for reporting: 'Completed', touching a visible
+-- account, within the optional inclusive business-date window. Returned as
+-- 'TransactionData' (with labels) for the pure base-currency aggregations in
+-- 'Application.Services.ReportingService'. Replaces the former full-map scan.
+reportableTransactions ::
   (MonadIO m) =>
-  TVar TransactionReadModel ->
-  m (Map TransactionId TransactionData)
-transactionToMap = getAllTransactions
+  Set AccountId ->
+  Maybe UTCTime ->
+  Maybe UTCTime ->
+  SqlPersistT m [TransactionData]
+reportableTransactions visible mFrom mTo
+  | Set.null visible = pure []
+  | otherwise = do
+      let filters =
+            baseVisible visible
+              ++ [TransactionEntityStatusKind ==. CompletedKind]
+              ++ maybe [] (\f -> [TransactionEntityDate >=. f]) mFrom
+              ++ maybe [] (\t -> [TransactionEntityDate <=. t]) mTo
+      rows <- selectList filters []
+      map snd <$> withLabels rows
 
--- | Whether a transaction touches at least one account in the visible set,
--- on either its source or target leg. This is the access-control visibility
--- predicate shared by 'listTransactions' and the reporting aggregations.
+-- -----------------------------------------------------------------------------
+-- Pure helpers
+-- -----------------------------------------------------------------------------
+
+-- | Whether a transaction touches at least one account in the visible set, on
+-- either its source or target leg. Retained for the pure reporting filter
+-- ('Application.Services.ReportingService.reportableTxns') and its unit tests.
 touchesVisible :: Set AccountId -> TransactionData -> Bool
 touchesVisible visible td =
   Set.member td.sourceAccountId visible
     || Set.member td.targetAccountId visible
-
--- | Count transactions that reference the given dictionary entry id, either
--- as a label (via 'TransactionData.labels') or as the categorised
--- 'TransactionType' (Income / Expense).
---
--- Powers the service-layer in-use check that blocks deletion of a
--- dictionary entry while any transaction still references it. Performs a
--- linear scan of the read model — acceptable at current personal-accounting
--- volumes; a reverse index is a localised follow-up if measurements warrant it.
-findReferencingTransactions ::
-  (MonadIO m) =>
-  TVar TransactionReadModel ->
-  DictionaryEntryId ->
-  m Int
-findReferencingTransactions readModelTVar entryId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  pure . length $ filter referencesEntry (Map.elems model.transactions)
-  where
-    referencesEntry td =
-      td.status /= Cancelled
-        && ( Set.member entryId td.labels
-               || referencesInAllocations td.transactionType
-           )
-    referencesInAllocations :: TransactionType -> Bool
-    referencesInAllocations tt = case allocationsOf tt of
-      Nothing -> False
-      Just allocs -> any (\(Allocation cid _) -> cid == entryId) (allAllocations allocs)

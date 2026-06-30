@@ -27,7 +27,6 @@
 --   * (3) Every allocation shares the relevant leg's currency.
 module Domain.Transaction.AmendmentPropertySpec (spec) where
 
-import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
 import qualified Data.UUID as UUID
 import Domain.Core.Types
@@ -55,7 +54,6 @@ import Domain.Core.Types
   )
 import Domain.Transaction.CommandHandler
   ( TransactionCommand (..),
-    TransactionError,
     handleTransactionCommand,
   )
 import Domain.Transaction.Commands (AmendTransaction (..))

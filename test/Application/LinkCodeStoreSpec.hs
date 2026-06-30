@@ -4,13 +4,11 @@
 module Application.LinkCodeStoreSpec (spec) where
 
 import Application.LinkCodeStore
-  ( LinkCodeStore,
-    LinkCodeToken,
-    issueAt,
+  ( issueAt,
     newLinkCodeStore,
     redeemAt,
   )
-import Data.Time (UTCTime, addUTCTime)
+import Data.Time (addUTCTime)
 import qualified Data.Time as Time
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types (UserId, mkUserId)

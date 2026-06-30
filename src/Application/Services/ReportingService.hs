@@ -46,7 +46,7 @@ where
 import Application.ReadModels.Account (AccountData (..), getAccessibleAccountIds, getMyAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..))
 import Application.ReadModels.ExchangeRate (ExchangeRateReadModel, lookupHistoricalRate)
-import Application.ReadModels.Transaction (TransactionData (..), getAllTransactions, touchesVisible)
+import Application.ReadModels.Transaction (TransactionData (..), reportableTransactions, touchesVisible)
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
 import qualified Data.Map.Strict as Map
@@ -55,7 +55,7 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
 import Domain.ExchangeRate.Events (Provider)
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Infrastructure.App (AppM, appConfigL, exchangeRateReadModelL, runDb, transactionReadModelL)
+import Infrastructure.App (AppM, appConfigL, exchangeRateReadModelL, runDb)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
 import RIO.Time (UTCTime)
@@ -187,9 +187,8 @@ spendingByCategory :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Money, [
 spendingByCategory userId mFrom mTo = do
   base <- resolveBaseCurrency userId
   visible <- visibleAccounts userId
-  txRM <- view transactionReadModelL
-  txs <- getAllTransactions txRM
-  let perCat = aggregateSpending base (reportableTxns visible mFrom mTo txs)
+  txs <- runDb (reportableTransactions visible mFrom mTo)
+  let perCat = aggregateSpending base txs
       totalR = sum [unMoney m | m <- Map.elems perCat]
   pure (unsafeMoney base totalR, Map.toList perCat)
 
@@ -199,9 +198,8 @@ incomeVsExpense :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Money, Mone
 incomeVsExpense userId mFrom mTo = do
   base <- resolveBaseCurrency userId
   visible <- visibleAccounts userId
-  txRM <- view transactionReadModelL
-  txs <- getAllTransactions txRM
-  pure $ aggregateIncomeExpense base (reportableTxns visible mFrom mTo txs)
+  txs <- runDb (reportableTransactions visible mFrom mTo)
+  pure $ aggregateIncomeExpense base txs
 
 -- | Restrict an @(AccountId, AccountData)@ list to the accounts that count
 -- towards a user's net worth: 'Regular' (not 'External'), 'Opened' (not

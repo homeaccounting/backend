@@ -58,7 +58,7 @@ import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, registerUser)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Harness
@@ -109,7 +109,7 @@ unwrap ctx = either (\err -> fail $ ctx <> " failed: " <> show err) pure
 -- | Convenience: pull the current 'TransactionType' off the read model.
 getTransactionType :: Harness -> TransactionId -> IO TransactionType
 getTransactionType h txId = do
-  mTd <- TxRM.getTransaction h.harnessEnv.transactionReadModel txId
+  mTd <- runDbIn h.harnessEnv (TxRM.getTransaction txId)
   case mTd of
     Nothing -> fail $ "transaction not found: " <> show txId
     Just td -> pure td.transactionType
@@ -117,7 +117,7 @@ getTransactionType h txId = do
 -- | Convenience: pull the 'TransactionData' off the read model.
 getTransaction :: Harness -> TransactionId -> IO TransactionData
 getTransaction h txId = do
-  mTd <- TxRM.getTransaction h.harnessEnv.transactionReadModel txId
+  mTd <- runDbIn h.harnessEnv (TxRM.getTransaction txId)
   case mTd of
     Nothing -> fail $ "transaction not found: " <> show txId
     Just td -> pure td

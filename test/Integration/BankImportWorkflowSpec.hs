@@ -58,7 +58,7 @@ import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Projection (TransactionStatus (Completed))
 import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
-import Infrastructure.App (AppEnv (..), HasReadModel (..), runAppM)
+import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Banking.Provider
   ( BankAccountId,
     BankProvider (..),
@@ -347,8 +347,7 @@ spec = describe "Bank Import Workflow" $ do
     case importedIds of
       [expenseId, incomeId, holdId] -> do
         -- Verify expense transfer: source = bank account, target = external
-        txRM <- runAppM env $ view transactionReadModelL
-        expenseData <- fromJustIO "expense transaction" =<< TransactionRM.getTransaction txRM expenseId
+        expenseData <- fromJustIO "expense transaction" =<< runDbIn env (TransactionRM.getTransaction expenseId)
         expenseData.sourceAccountId `shouldBe` bankAccId
         expenseData.targetAccountId `shouldBe` externalAccId
         expenseData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 50)
@@ -358,7 +357,7 @@ spec = describe "Bank Import Workflow" $ do
         expenseData.date `shouldBe` testTime
 
         -- Verify income transfer: source = external, target = bank account
-        incomeData <- fromJustIO "income transaction" =<< TransactionRM.getTransaction txRM incomeId
+        incomeData <- fromJustIO "income transaction" =<< runDbIn env (TransactionRM.getTransaction incomeId)
         incomeData.sourceAccountId `shouldBe` externalAccId
         incomeData.targetAccountId `shouldBe` bankAccId
         incomeData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 100)
@@ -368,7 +367,7 @@ spec = describe "Bank Import Workflow" $ do
         incomeData.date `shouldBe` testTime
 
         -- Verify the hold was imported as a normal expense (negative amount)
-        holdData <- fromJustIO "hold transaction" =<< TransactionRM.getTransaction txRM holdId
+        holdData <- fromJustIO "hold transaction" =<< runDbIn env (TransactionRM.getTransaction holdId)
         holdData.sourceAccountId `shouldBe` bankAccId
         holdData.targetAccountId `shouldBe` externalAccId
         holdData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 30)
@@ -423,9 +422,9 @@ spec = describe "Bank Import Workflow" $ do
       -- the same external id, producing a total greater than `expected`.
       let importedIn r = length (concatMap (.imported) r.accounts)
           totalImported = importedIn r1 + importedIn r2
-      allTxs <- TransactionRM.getAllTransactions env.transactionReadModel
+      allTxCount <- runDbIn env TransactionRM.countTransactions
       pure
-        $ (totalImported, Map.size allTxs)
+        $ (totalImported, allTxCount)
         === (expected, expected)
 
   describe "cross-currency import (External account currency != bank tx currency)" $ do
@@ -442,8 +441,7 @@ spec = describe "Bank Import Workflow" $ do
         [i] -> pure i
         other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      txData <- fromJustIO "income tx" =<< TransactionRM.getTransaction txRM txId
+      txData <- fromJustIO "income tx" =<< runDbIn env (TransactionRM.getTransaction txId)
       -- Income: source = USD External, target = UAH bank account.
       txData.sourceAccountId `shouldBe` externalAccId
       txData.targetAccountId `shouldBe` bankAccId
@@ -473,8 +471,7 @@ spec = describe "Bank Import Workflow" $ do
         [_fundId, eId] -> pure eId
         other -> expectationFailure ("expected two imported ids, got " <> show (length other)) >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      txData <- fromJustIO "expense tx" =<< TransactionRM.getTransaction txRM expenseId
+      txData <- fromJustIO "expense tx" =<< runDbIn env (TransactionRM.getTransaction expenseId)
       -- Expense: source = UAH bank account, target = USD External.
       txData.sourceAccountId `shouldBe` bankAccId
       txData.targetAccountId `shouldBe` externalAccId
@@ -502,8 +499,7 @@ spec = describe "Bank Import Workflow" $ do
         [i] -> pure i
         other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      txData <- fromJustIO "income tx" =<< TransactionRM.getTransaction txRM txId
+      txData <- fromJustIO "income tx" =<< runDbIn env (TransactionRM.getTransaction txId)
       txData.exchangeRate `shouldNotBe` Nothing
       txData.status `shouldBe` Completed
       bankBalance <- accountBalanceOf env bankAccId
@@ -580,8 +576,8 @@ spec = describe "Bank Import Workflow" $ do
       concatMap (.failures) result.accounts `shouldBe` []
       sum (map (.skipped) result.accounts) `shouldBe` 1
       -- No transaction was ever initiated.
-      allTxs <- TransactionRM.getAllTransactions env.transactionReadModel
-      Map.size allTxs `shouldBe` 0
+      allTxCount <- runDbIn env TransactionRM.countTransactions
+      allTxCount `shouldBe` 0
       -- The account balance is unchanged.
       bankBalance <- accountBalanceOf env bankAccId
       bankBalance `shouldBe` fromRight' (mkMoney USD 0)
@@ -596,8 +592,7 @@ spec = describe "Bank Import Workflow" $ do
       txId <- case concatMap (.imported) result.accounts of
         [i] -> pure i
         other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
-      txRM <- runAppM env $ view transactionReadModelL
-      txData <- fromJustIO "income tx" =<< TransactionRM.getTransaction txRM txId
+      txData <- fromJustIO "income tx" =<< runDbIn env (TransactionRM.getTransaction txId)
       txData.exchangeRate `shouldBe` Nothing
       txData.sourceAmount `shouldBe` txData.targetAmount
       txData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 100)

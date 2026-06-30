@@ -36,7 +36,6 @@ import Domain.Models (AccountingEvent (..))
 import Eventium
   ( Codec (..),
     EventHandler (..),
-    EventMetadata (..),
     EventStoreReader (..),
     EventStoreWriter (..),
     EventVersion,

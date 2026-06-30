@@ -20,7 +20,6 @@ import qualified Application.ReadModels.User as UserRM
 import Application.Services.AccountService (adjustAccountBalance, closeAccount, createAccount, reopenAccount, shareAccount)
 import Application.Services.AuthService (AuthResult (..), register)
 import qualified Application.Services.ConfigurationService as ConfigurationService
-import Data.Either (isLeft)
 import Data.Ratio ((%))
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian, getCurrentTime, utctDay)
 import qualified Data.UUID as UUID

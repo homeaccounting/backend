@@ -34,7 +34,6 @@ import Application.Services.ConfigurationService
     seedDefaultConfiguration,
   )
 import qualified Application.Services.TransactionService as TransactionService
-import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
@@ -124,7 +123,7 @@ balanceOf env aid = do
 -- | Retrieve a transaction from the read model; fails the test if absent.
 getTx :: AppEnv -> TransactionId -> IO TransactionData
 getTx env txId = do
-  mTd <- TxRM.getTransaction env.transactionReadModel txId
+  mTd <- runDbIn env (TxRM.getTransaction txId)
   case mTd of
     Nothing -> fail $ "getTx: transaction not found: " <> show txId
     Just td -> pure td
@@ -179,11 +178,11 @@ postExpense h amt allocs = do
 --
 -- This is intentionally NOT production code — it exists only to prove that
 -- the stored 'TransactionData' supports the contract.
-expenseNet :: AppEnv -> DictionaryEntryId -> IO Rational
-expenseNet env catId = do
-  allTxns <- TxRM.getAllTransactions env.transactionReadModel
-  let txList = Map.elems allTxns
-      -- Sum the expense-bucket slices for 'catId' on one transaction.
+expenseNet :: AppEnv -> AccountId -> DictionaryEntryId -> IO Rational
+expenseNet env acct catId = do
+  -- All reporting-eligible (Completed) transactions touching the account.
+  txList <- runDbIn env (TxRM.reportableTransactions (Set.singleton acct) Nothing Nothing)
+  let -- Sum the expense-bucket slices for 'catId' on one transaction.
       expenseSlices td = case allocationsOf td.transactionType of
         Nothing -> 0
         Just allocs -> sum [a.amount.amount | a <- allocs.expenses, a.categoryId == catId]
@@ -252,7 +251,7 @@ spec = describe "Application.Services / ContraExpense end-to-end" $ do
     _ <- postExpense h expenseTotal expenseAllocs
 
     -- expenseNet(Rent) = 500 (expense txn) − 500 (income txn contra slice) = 0
-    net <- expenseNet h.harnessEnv h.harnessRent
+    net <- expenseNet h.harnessEnv h.harnessAccount h.harnessRent
     net `shouldBe` 0
 
   it "3. Standalone refund (pure-expense-bucket Income) credits account and yields negative expenseNet" $ do
@@ -284,5 +283,5 @@ spec = describe "Application.Services / ContraExpense end-to-end" $ do
           <> show other
 
     -- (b) expenseNet(RefundCat) = −$40 (contra-only, no prior expense).
-    net <- expenseNet h.harnessEnv h.harnessRefundCat
+    net <- expenseNet h.harnessEnv h.harnessAccount h.harnessRefundCat
     net `shouldBe` (-40)

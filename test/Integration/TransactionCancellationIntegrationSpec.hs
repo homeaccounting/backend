@@ -120,8 +120,8 @@ listExcludingCancelled env uid =
 
 -- | Directly look up a transaction from the read model.
 getTransactionFromRM :: AppEnv -> TransactionId -> IO (Maybe TransactionData)
-getTransactionFromRM env =
-  ReadModel.getTransaction env.transactionReadModel
+getTransactionFromRM env txId =
+  runDbIn env (ReadModel.getTransaction txId)
 
 -- | Common fixture: a fresh env, a user, a source and target account.
 data CancelFixture = CancelFixture

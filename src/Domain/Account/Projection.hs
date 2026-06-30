@@ -52,7 +52,6 @@ import qualified Data.UUID as UUID
 import Domain.Account.Events
   ( AccountAccessGranted (..),
     AccountAccessRevoked (..),
-    AccountClosed (..),
     AccountCreated (..),
     AccountCreditReversed (..),
     AccountCredited (..),
@@ -60,7 +59,6 @@ import Domain.Account.Events
     AccountDebitReversed (..),
     AccountDebited (..),
     AccountRenamed (..),
-    AccountReopened (..),
     AccountSubtypeSet (..),
     OverdraftLimitSet (..),
     accountEvents,

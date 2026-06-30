@@ -21,10 +21,9 @@ import Application.Services.AuthService
     linkOrSignInWithOAuth,
     redeemTelegramLinkCode,
   )
-import Data.Either (isLeft)
 import Data.Time (addUTCTime, getCurrentTime)
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (OAuthProvider (..), TelegramId (..), TelegramIdentity (..))
+import Domain.Core.Types (OAuthProvider (..), TelegramIdentity (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.Telegram (TelegramConfig (..))

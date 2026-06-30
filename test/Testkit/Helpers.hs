@@ -59,7 +59,6 @@ where
 import Application.ReadModels.Account (AccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Data.ByteString as BS
-import Data.List.NonEmpty (NonEmpty (..))
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types

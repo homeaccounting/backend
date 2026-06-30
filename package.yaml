@@ -145,6 +145,14 @@ tests:
       - test
     ghc-options:
       - -Wall
+      # Test-only relaxations (lib/exe stay fully strict): test fixtures
+      # intentionally use partial head/tail on statically-known-non-empty data,
+      # define orphan generator/Arbitrary instances, shadow hspec hooks
+      # (before/after), and rely on DuplicateRecordFields type-directed updates.
+      - -Wno-x-partial
+      - -Wno-orphans
+      - -Wno-name-shadowing
+      - -Wno-ambiguous-fields
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N

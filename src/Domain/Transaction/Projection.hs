@@ -32,6 +32,7 @@ module Domain.Transaction.Projection
     TransactionStatus (..),
     StatusKind (..),
     statusKind,
+    statusFromKind,
     parseStatusKind,
     renderStatusKind,
 
@@ -51,6 +52,7 @@ where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -109,6 +111,15 @@ statusKind Pending = PendingKind
 statusKind Completed = CompletedKind
 statusKind (Failed _) = FailedKind
 statusKind Cancelled = CancelledKind
+
+-- | Reconstruct a 'TransactionStatus' from its 'StatusKind' and an optional
+-- failure reason — the inverse of 'statusKind', used by the persistent read
+-- model where the kind and reason are stored in separate columns.
+statusFromKind :: StatusKind -> Maybe Text -> TransactionStatus
+statusFromKind PendingKind _ = Pending
+statusFromKind CompletedKind _ = Completed
+statusFromKind CancelledKind _ = Cancelled
+statusFromKind FailedKind mReason = Failed (fromMaybe "" mReason)
 
 -- | Render a 'StatusKind' to its lowercase wire token.
 renderStatusKind :: StatusKind -> Text

@@ -62,7 +62,7 @@ import Domain.Transaction.Events
 import Eventium (Codec (..), EventHandler (..), GlobalStreamEvent, ReadModel (..), SequenceNumber, StreamEvent (..), catchUpReadModel, emptyMetadata, rebuildReadModel)
 import Eventium.Store.Postgresql (jsonStringCodec)
 import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)
-import Infrastructure.App (AppEnv (..), HasReadModel (..), runAppM, runDb)
+import Infrastructure.App (AppEnv (..), runAppM, runDb)
 import Infrastructure.Banking.Provider
   ( BankAccountId,
     BankProvider (..),
@@ -288,8 +288,7 @@ spec = describe "BankImportService" $ do
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
       -- Verify the transaction was created with correct fields
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       maybeTxData `shouldSatisfy` isJust
       txData <- case maybeTxData of
         Just d -> pure d
@@ -315,8 +314,7 @@ spec = describe "BankImportService" $ do
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
       -- Verify the transaction was created with correct fields
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       maybeTxData `shouldSatisfy` isJust
       txData <- case maybeTxData of
         Just d -> pure d
@@ -345,8 +343,7 @@ spec = describe "BankImportService" $ do
         Right (Just i) -> pure i
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
@@ -369,8 +366,7 @@ spec = describe "BankImportService" $ do
         Right (Just i) -> pure i
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
@@ -391,8 +387,7 @@ spec = describe "BankImportService" $ do
         Right (Just i) -> pure i
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
@@ -410,8 +405,7 @@ spec = describe "BankImportService" $ do
         Right (Just i) -> pure i
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
@@ -429,8 +423,7 @@ spec = describe "BankImportService" $ do
         Right (Just i) -> pure i
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
@@ -535,8 +528,7 @@ spec = describe "BankImportService" $ do
         Right (Just i) -> pure i
         _ -> expectationFailure "expected successful import" >> error "unreachable"
 
-      txRM <- runAppM env $ view transactionReadModelL
-      maybeTxData <- TransactionRM.getTransaction txRM txId
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"

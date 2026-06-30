@@ -16,8 +16,8 @@
 -- depend on them without redefining — and risking conflicting — instances.
 module Infrastructure.Database.Orphans () where
 
-import Data.Aeson (FromJSON, ToJSON, eitherDecodeStrict', encode)
-import Data.Bifunctor (first)
+import Data.Aeson (FromJSON, ToJSON, Value, eitherDecodeStrict', encode, object, parseJSON, toJSON, withObject, (.:), (.=))
+import Data.Aeson.Types (Parser, parseEither)
 import Data.UUID (UUID)
 import Database.Persist (PersistField (..), PersistValue (..))
 import Database.Persist.Sql (PersistFieldSql (..), SqlType (SqlString))
@@ -26,23 +26,35 @@ import Domain.Core.Types
     AccountRole,
     AccountStatus,
     AccountType,
+    Allocation (..),
+    Allocations (..),
     Currency,
+    DictionaryEntryId,
+    ExchangeRate,
     ExternalTransactionId,
     Money,
     TransactionId,
+    TransactionType (..),
     UserId,
+    exchangeRateSource,
+    exchangeRateTarget,
+    exchangeRateValue,
     mkAccountIdSafe,
+    mkDictionaryEntryId,
+    mkExchangeRate,
     mkExternalTransactionId,
     mkMoney,
     mkTransactionIdSafe,
     mkUserIdSafe,
     moneyCurrency,
     unAccountId,
+    unDictionaryEntryId,
     unExternalTransactionId,
     unMoney,
     unTransactionId,
     unUserId,
   )
+import Domain.Transaction.Projection (StatusKind, parseStatusKind, renderStatusKind)
 import Eventium.Store.Sql.Orphans ()
 import RIO
 import qualified RIO.ByteString.Lazy as BL
@@ -131,4 +143,99 @@ instance PersistField AccountStatus where
   fromPersistValue = jsonFromPersist
 
 instance PersistFieldSql AccountStatus where
+  sqlType _ = SqlString
+
+-- | 'DictionaryEntryId' (also 'LabelId'/'CategoryId') wraps a 'UUID'.
+instance PersistField DictionaryEntryId where
+  toPersistValue = toPersistValue . unDictionaryEntryId
+  fromPersistValue v = do
+    uuid <- fromPersistValue v
+    mkDictionaryEntryId uuid
+
+instance PersistFieldSql DictionaryEntryId where
+  sqlType _ = sqlType (Proxy :: Proxy UUID)
+
+-- | Exact JSON for a 'Money' amount: the 'Rational' is serialized via
+-- 'show'/'readMaybe' (not the domain's lossy 'Double' JSON), so amounts stored
+-- inside 'ExchangeRate'/'TransactionType' columns round-trip exactly — matching
+-- the standalone 'Money' column encoding above.
+moneyToValue :: Money -> Value
+moneyToValue m = toJSON (show (unMoney m), moneyCurrency m)
+
+moneyParser :: Value -> Parser Money
+moneyParser v = do
+  (s, cur) <- parseJSON v :: Parser (String, Currency)
+  r <- maybe (fail "Invalid Money amount") pure (readMaybe s)
+  either (fail . T.unpack) pure (mkMoney cur r)
+
+allocToValue :: Allocation -> Value
+allocToValue (Allocation cid amt) = object ["categoryId" .= cid, "amount" .= moneyToValue amt]
+
+allocParser :: Value -> Parser Allocation
+allocParser = withObject "Allocation" $ \o -> do
+  cid <- o .: "categoryId"
+  amt <- (o .: "amount") >>= moneyParser
+  pure (Allocation cid amt)
+
+allocsToValue :: Allocations -> Value
+allocsToValue (Allocations incs exps) =
+  object ["incomes" .= map allocToValue incs, "expenses" .= map allocToValue exps]
+
+allocsParser :: Value -> Parser Allocations
+allocsParser = withObject "Allocations" $ \o -> do
+  incs <- (o .: "incomes") >>= traverse allocParser
+  exps <- (o .: "expenses") >>= traverse allocParser
+  pure (Allocations incs exps)
+
+transactionTypeToValue :: TransactionType -> Value
+transactionTypeToValue Transfer = object ["kind" .= ("transfer" :: Text)]
+transactionTypeToValue Adjustment = object ["kind" .= ("adjustment" :: Text)]
+transactionTypeToValue (Income a) = object ["kind" .= ("income" :: Text), "allocations" .= allocsToValue a]
+transactionTypeToValue (Expense a) = object ["kind" .= ("expense" :: Text), "allocations" .= allocsToValue a]
+
+transactionTypeParser :: Value -> Parser TransactionType
+transactionTypeParser = withObject "TransactionType" $ \o -> do
+  kind <- o .: "kind" :: Parser Text
+  case kind of
+    "transfer" -> pure Transfer
+    "adjustment" -> pure Adjustment
+    "income" -> Income <$> ((o .: "allocations") >>= allocsParser)
+    "expense" -> Expense <$> ((o .: "allocations") >>= allocsParser)
+    other -> fail ("Unknown TransactionType kind: " <> T.unpack other)
+
+-- | 'ExchangeRate' stored as JSON @[source, target, rateString]@ with the
+-- 'Rational' rate shown exactly (the domain JSON renders it as a lossy
+-- 'Double').
+instance PersistField ExchangeRate where
+  toPersistValue er = jsonToPersist (exchangeRateSource er, exchangeRateTarget er, show (exchangeRateValue er))
+  fromPersistValue v = do
+    (s, t, rs) <- jsonFromPersist v :: Either Text (Currency, Currency, String)
+    r <- maybe (Left "Invalid ExchangeRate rate") Right (readMaybe rs)
+    mkExchangeRate s t r
+
+instance PersistFieldSql ExchangeRate where
+  sqlType _ = SqlString
+
+-- | 'TransactionType' stored as JSON — it carries the nested two-bucket
+-- allocations, reconstructed for reporting and the in-use deletion guard.
+-- Allocation amounts use the exact 'Money' encoding above.
+instance PersistField TransactionType where
+  toPersistValue = jsonToPersist . transactionTypeToValue
+  fromPersistValue v = do
+    val <- jsonFromPersist v :: Either Text Value
+    first T.pack (parseEither transactionTypeParser val)
+
+instance PersistFieldSql TransactionType where
+  sqlType _ = SqlString
+
+-- | 'StatusKind' stored as its lowercase wire token (a queryable enum column for
+-- the 'listTransactions' status filter). The 'Failed' reason is stored
+-- separately, so only the payload-free 'StatusKind' lands in the column.
+instance PersistField StatusKind where
+  toPersistValue = PersistText . renderStatusKind
+  fromPersistValue v = do
+    t <- fromPersistValue v
+    maybe (Left ("Invalid StatusKind token: " <> t)) Right (parseStatusKind t)
+
+instance PersistFieldSql StatusKind where
   sqlType _ = SqlString

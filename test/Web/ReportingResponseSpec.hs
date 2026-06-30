@@ -6,7 +6,7 @@ module Web.ReportingResponseSpec (spec) where
 import qualified Data.Aeson as Aeson
 import Data.ByteString (isInfixOf)
 import Domain.Core.Types (Currency (UAH), unsafeMoney)
-import RIO hiding (isInfixOf)
+import RIO
 import Test.Hspec
 import Web.Types
   ( CategorySpend (..),

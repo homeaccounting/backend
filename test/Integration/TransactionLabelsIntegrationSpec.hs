@@ -61,7 +61,7 @@ import qualified RIO.List as List
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, firstDictionaryEntry, registerUser)
 import Testkit.Helpers (expenseSingletonAllocation)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Harness
@@ -126,7 +126,7 @@ seedExpense h labels = do
 
 getTransactionLabels :: Harness -> TransactionId -> IO (Set DictionaryEntryId)
 getTransactionLabels h txId = do
-  mTd <- TxRM.getTransaction h.harnessEnv.transactionReadModel txId
+  mTd <- runDbIn h.harnessEnv (TxRM.getTransaction txId)
   case mTd of
     Nothing -> fail $ "transaction not found: " <> show txId
     Just td -> pure td.labels
