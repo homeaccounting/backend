@@ -43,7 +43,7 @@ import Network.Wai.Test (SResponse (..))
 import RIO
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, registerUser)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Testkit.TransactionEditFixture (authHeaders, httpRequest)
 import Web.Server (buildApplication)
 import Web.Types
@@ -242,7 +242,7 @@ externalAccountSpec :: IO ()
 externalAccountSpec = do
   f <- mkFixture "adjust-external@test.com"
   -- Retrieve the user's external account UUID from the read model.
-  mUser <- getUser f.fEnv.userReadModel f.fUserId
+  mUser <- runDbIn f.fEnv (getUser f.fUserId)
   externalUuid <- case mUser of
     Nothing -> fail "externalAccountSpec: user not found in read model"
     Just ud -> pure $ unAccountId ud.externalAccountId

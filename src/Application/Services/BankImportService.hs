@@ -68,7 +68,6 @@ import Domain.Core.Types
 import Domain.Transaction.Commands (InitiateTransaction (..))
 import Infrastructure.App
   ( AppM,
-    HasReadModel (..),
     runDb,
     withUserLock,
   )
@@ -285,7 +284,7 @@ logCategoryResolution tx direction cfg categoryId resolution =
 -- Flow:
 --   1. Check deduplication via BankImportReadModel
 --   2. Match external account to local account via the supplied mappings
---   3. Look up user's External account from UserReadModel
+--   3. Look up user's External account from the User read model
 --   4. Convert currency from numeric code
 --   5. Take absolute value of major-unit amount
 --   6. Classify transaction (income/expense)
@@ -320,8 +319,7 @@ importMatchedTransaction ::
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
 importMatchedTransaction provider userId localAccId tx = do
-  userRM <- view userReadModelL
-  maybeUser <- UserRM.getUser userRM userId
+  maybeUser <- runDb (UserRM.getUser userId)
   case maybeUser of
     Nothing -> do
       logWarn $ "User not found: " <> displayShow userId

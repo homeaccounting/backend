@@ -23,6 +23,7 @@ module Testkit.Fixtures
     firstDictionaryEntry,
     seedDefaultAndRegister,
     seedExchangeRates,
+    seedRegisteredUser,
     userExternalAccountId,
     MetadataFixture (..),
     setupMetadataFixture,
@@ -33,7 +34,7 @@ where
 
 import qualified Application.ReadModels.Configuration as ConfigRM
 import Application.ReadModels.ExchangeRate (handleExchangeRateEvents)
-import Application.ReadModels.User (UserData (..), getUser)
+import Application.ReadModels.User (UserData (..), applyUserEvent, getUser)
 import qualified Application.Services.AccountService as AccountService
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
@@ -61,18 +62,41 @@ import Domain.Core.Types
     mkExpenseAllocations,
     mkIncomeAllocations,
     unAccountId,
+    unUserId,
     unsafeMoney,
     unsafeTransactionId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
+import Domain.User.Events (UserRegistered (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import Infrastructure.Eventium (applyAccountCommand)
 import RIO
-import Testkit.Helpers (mockExchangeRate)
+import Testkit.Helpers (globalEvent, mockExchangeRate, mockPasswordHash)
+import Testkit.InMemoryEventStore (runDbIn)
+
+-- | Seed a registered user directly into the persistent User read model at a
+-- fixed 'UserId' and external-account id, by applying a synthesized
+-- 'UserRegistered' through the read model's own apply. For tests that need a
+-- specific id (so they bypass 'AuthService.register', which mints random ids).
+seedRegisteredUser :: AppEnv -> UserId -> AccountId -> Text -> IO ()
+seedRegisteredUser env uid extAcc email =
+  runDbIn env
+    $ applyUserEvent
+    $ globalEvent
+      (unUserId uid)
+      0
+      ( UserRegisteredEvent
+          UserRegistered
+            { email = email,
+              passwordHash = mockPasswordHash "seed",
+              externalAccountId = extAcc
+            }
+      )
+      0
 
 -- | Register a user via 'AuthService.register' and return the resulting 'UserId'.
 --
@@ -160,7 +184,7 @@ seedExchangeRates env rates = do
 -- if the user is missing from the read model.
 userExternalAccountId :: AppEnv -> UserId -> IO AccountId
 userExternalAccountId env uid = do
-  mUser <- getUser env.userReadModel uid
+  mUser <- runDbIn env (getUser uid)
   case mUser of
     Nothing -> fail $ "userExternalAccountId: user not found: " <> show uid
     Just ud -> pure ud.externalAccountId
@@ -173,7 +197,7 @@ userExternalAccountId env uid = do
 -- specific ordering across runs.
 firstDictionaryEntry :: AppEnv -> UserId -> DictionaryId -> IO DictionaryEntryId
 firstDictionaryEntry env uid dictId = do
-  mUser <- getUser env.userReadModel uid
+  mUser <- runDbIn env (getUser uid)
   case mUser of
     Nothing -> fail $ "firstDictionaryEntry: user not found: " <> show uid
     Just ud -> do

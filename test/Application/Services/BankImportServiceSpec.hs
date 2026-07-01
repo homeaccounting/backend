@@ -22,11 +22,9 @@ import Application.ReadModels.BankImportReadModel
   )
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
-import Application.ReadModels.User (UserData (..), UserReadModel (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.BankImportService (importTransaction)
 import qualified Application.Services.ConfigurationService as ConfigurationService
-import qualified Control.Concurrent.STM as STM
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
@@ -49,7 +47,6 @@ import Domain.Core.Types
     TransactionType (..),
     UserId,
     defaultBankAccount,
-    defaultConfigurationId,
     mkMoney,
     unTransactionId,
     unsafeExternalTransactionId,
@@ -72,8 +69,8 @@ import Infrastructure.Banking.Provider
 import Infrastructure.Database (runDbDirect)
 import Infrastructure.Eventium (accountingGlobalEventStoreReader)
 import RIO
-import qualified RIO.Map as Map
 import Test.Hspec
+import qualified Testkit.Fixtures as Fixtures
 import Testkit.Helpers
   ( fromRight',
     mockAccountId,
@@ -164,7 +161,7 @@ mkHoldTransaction amount extId =
 -- -----------------------------------------------------------------------------
 
 -- | Set up a test environment with:
---   - A user in the UserReadModel
+--   - A registered user (persistent User read model)
 --   - A bank account
 --   - An External account
 --   - Seeded default configuration (with MCC map and banking defaults)
@@ -208,26 +205,8 @@ setupTestEnv = do
     let (bankId, _) = fromRight' bankResult
     return (extId, bankId)
 
-  -- Populate UserReadModel with test user data
-  let userData =
-        UserData
-          { email = Just "test@example.com",
-            hasPassword = True,
-            oauthIdentities = [],
-            telegramIdentity = Nothing,
-            externalAccountId = externalAccId,
-            configurationId = defaultConfigurationId,
-            version = 1
-          }
-  STM.atomically
-    $ STM.writeTVar env.userReadModel
-    $ UserReadModel
-      { latestSequence = 0,
-        users = Map.singleton testUserId userData,
-        emailIndex = Map.singleton "test@example.com" testUserId,
-        telegramIndex = Map.empty,
-        oauthIndex = Map.empty
-      }
+  -- Seed the persistent User read model with the test user.
+  Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
 
   return (env, bankAccId)
 
@@ -487,25 +466,7 @@ spec = describe "BankImportService" $ do
         let (bankId, _) = fromRight' bankResult
         return (extId, bankId)
 
-      let userData =
-            UserData
-              { email = Just "test@example.com",
-                hasPassword = True,
-                oauthIdentities = [],
-                telegramIdentity = Nothing,
-                externalAccountId = externalAccId,
-                configurationId = defaultConfigurationId,
-                version = 1
-              }
-      STM.atomically
-        $ STM.writeTVar env.userReadModel
-        $ UserReadModel
-          { latestSequence = 0,
-            users = Map.singleton testUserId userData,
-            emailIndex = Map.singleton "test@example.com" testUserId,
-            telegramIndex = Map.empty,
-            oauthIndex = Map.empty
-          }
+      Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
 
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]

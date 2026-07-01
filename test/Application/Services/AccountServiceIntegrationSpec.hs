@@ -245,7 +245,7 @@ backdateSpec = do
   (env, userId, accountId) <- setupUserWithAccount USD 100
   let t1 = UTCTime (fromGregorian 2026 4 1) 0
       t2 = UTCTime (fromGregorian 2026 4 15) 0
-  maybeUser <- UserRM.getUser env.userReadModel userId
+  maybeUser <- runDbIn env (UserRM.getUser userId)
   let externalAccId = case maybeUser of
         Just u -> u.externalAccountId
         Nothing -> error "User vanished from read model"
@@ -279,7 +279,7 @@ backdateSpec = do
 rejectExternalSpec :: Expectation
 rejectExternalSpec = do
   (env, userId, _) <- setupUserWithAccount USD 100
-  maybeUser <- UserRM.getUser env.userReadModel userId
+  maybeUser <- runDbIn env (UserRM.getUser userId)
   let externalAccId = case maybeUser of
         Just u -> u.externalAccountId
         Nothing -> error "User vanished from read model"

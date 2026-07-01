@@ -59,6 +59,7 @@ import Testkit.Helpers (singletonAllocation, singletonIncome)
 import Testkit.InMemoryEventStore
   ( createTestAppEnv,
     createTestAppEnvWithProcessManager,
+    runDbIn,
   )
 
 -- -----------------------------------------------------------------------------
@@ -114,7 +115,7 @@ registerUser env email = do
 -- The seeded default populates income-category with at least one entry.
 firstIncomeCategory :: AppEnv -> UserId -> IO DictionaryEntryId
 firstIncomeCategory env uid = do
-  mUser <- getUser env.userReadModel uid
+  mUser <- runDbIn env (getUser uid)
   case mUser of
     Nothing -> fail "user not found"
     Just ud -> do

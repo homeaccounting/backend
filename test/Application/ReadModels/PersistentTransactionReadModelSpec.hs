@@ -60,7 +60,7 @@ import Testkit.Helpers
     mockTransactionId,
     mockUserId,
   )
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn, seedGlobals)
 import Testkit.TransactionEvents (postingInitiatedGlobal, transactionEditGlobal)
 
 acctA, acctB :: AccountId
@@ -108,10 +108,7 @@ expenseOn :: CategoryId -> TransactionType
 expenseOn c = Expense (mkExpenseAllocations (Allocation c (unsafeMoney USD 100) NE.:| []))
 
 seedEnv :: [Eventium.GlobalStreamEvent AccountingEvent] -> IO AppEnv
-seedEnv events = do
-  env <- createTestAppEnvWithProcessManager
-  runDbIn env (mapM_ applyTransactionEvent events)
-  pure env
+seedEnv = seedGlobals applyTransactionEvent
 
 spec :: Spec
 spec = describe "Persistent Transaction read model" $ do
@@ -120,10 +117,12 @@ spec = describe "Persistent Transaction read model" $ do
       env <- createTestAppEnvWithProcessManager
       -- The read model's 'initialize' runs migrate + createTransactionIndexes;
       -- introspect SQLite's catalogue to prove every hot-path index is present.
+      -- Scoped to @idx_transaction%@ so other read models' indexes (e.g. the
+      -- User model's @idx_user_oauth_user@) don't leak into the assertion.
       idxRows <-
         runDbIn env
           $ rawSql
-            "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'"
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_transaction%'"
             []
       let names = Set.fromList [n | Single n <- idxRows] :: Set Text
       names

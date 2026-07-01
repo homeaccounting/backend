@@ -20,7 +20,6 @@ import qualified Application.ReadModels.Account as AccountRM
 import qualified Application.ReadModels.ExchangeRate as ExchangeRateRM
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
-import Application.ReadModels.User (UserData (..), UserReadModel (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.BankImportService
   ( AccountResyncResult (..),
@@ -28,7 +27,6 @@ import Application.Services.BankImportService
     resync,
   )
 import qualified Application.Services.ConfigurationService as ConfigurationService
-import qualified Control.Concurrent.STM as STM
 import Data.List (nubBy)
 import Data.Time (Day, UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
@@ -49,7 +47,6 @@ import Domain.Core.Types
     Money,
     UserId,
     defaultBankAccount,
-    defaultConfigurationId,
     mkMoney,
     moneyCurrency,
     unsafeExternalTransactionId,
@@ -73,6 +70,7 @@ import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (NonEmptyList (..), Positive (..), ioProperty, (===))
 import Testkit.BankingHelpers (mkSameCurrencyBankTx)
+import qualified Testkit.Fixtures as Fixtures
 import Testkit.Helpers
   ( fromRight',
     mockExchangeRate,
@@ -208,26 +206,8 @@ setupTestEnv = do
     let (bankId, _) = fromRight' bankResult
     return (extId, bankId)
 
-  -- Populate UserReadModel
-  let userData =
-        UserData
-          { email = Just "test@example.com",
-            hasPassword = True,
-            oauthIdentities = [],
-            telegramIdentity = Nothing,
-            externalAccountId = externalAccId,
-            configurationId = defaultConfigurationId,
-            version = 1
-          }
-  STM.atomically
-    $ STM.writeTVar env.userReadModel
-    $ UserReadModel
-      { latestSequence = 0,
-        users = Map.singleton testUserId userData,
-        emailIndex = Map.singleton "test@example.com" testUserId,
-        telegramIndex = Map.empty,
-        oauthIndex = Map.empty
-      }
+  -- Seed the persistent User read model with the test user.
+  Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
 
   let accountLink :: [(BankAccountId, AccountId)]
       accountLink = [("mono-acc-1", bankAccId)]
@@ -268,25 +248,7 @@ setupCrossCurrencyEnv = do
           }
     let (bankId, _) = fromRight' bankResult
     return (extId, bankId)
-  let userData =
-        UserData
-          { email = Just "test@example.com",
-            hasPassword = True,
-            oauthIdentities = [],
-            telegramIdentity = Nothing,
-            externalAccountId = externalAccId,
-            configurationId = defaultConfigurationId,
-            version = 1
-          }
-  STM.atomically
-    $ STM.writeTVar env.userReadModel
-    $ UserReadModel
-      { latestSequence = 0,
-        users = Map.singleton testUserId userData,
-        emailIndex = Map.singleton "test@example.com" testUserId,
-        telegramIndex = Map.empty,
-        oauthIndex = Map.empty
-      }
+  Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
   let accountLink :: [(BankAccountId, AccountId)]
       accountLink = [("mono-acc-1", bankAccId)]
   return (env, externalAccId, bankAccId, accountLink)
@@ -545,25 +507,7 @@ spec = describe "Bank Import Workflow" $ do
               }
         let (bankId, _) = fromRight' bankResult
         return (extId, bankId)
-      let userData =
-            UserData
-              { email = Just "test@example.com",
-                hasPassword = True,
-                oauthIdentities = [],
-                telegramIdentity = Nothing,
-                externalAccountId = externalAccId,
-                configurationId = defaultConfigurationId,
-                version = 1
-              }
-      STM.atomically
-        $ STM.writeTVar env.userReadModel
-        $ UserReadModel
-          { latestSequence = 0,
-            users = Map.singleton testUserId userData,
-            emailIndex = Map.singleton "test@example.com" testUserId,
-            telegramIndex = Map.empty,
-            oauthIndex = Map.empty
-          }
+      Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
 

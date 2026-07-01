@@ -130,7 +130,7 @@ getTransactionType h txId = do
 
 incomeCategoryNames :: Harness -> IO [Text]
 incomeCategoryNames h = do
-  mUser <- getUser h.harnessEnv.userReadModel h.harnessUser
+  mUser <- runDbIn h.harnessEnv (getUser h.harnessUser)
   case mUser of
     Nothing -> fail "user not found"
     Just ud -> do

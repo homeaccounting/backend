@@ -31,6 +31,7 @@ module Testkit.InMemoryEventStore
 
     -- * Database helpers
     runDbIn,
+    seedGlobals,
 
     -- * Event Store Components
     InMemoryEventStores (..),
@@ -47,7 +48,7 @@ import qualified Data.Set as Set
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.Sqlite (createSqlitePool)
 import Domain.Models (AccountingEvent)
-import Eventium (ReadModel (..))
+import Eventium (GlobalStreamEvent, ReadModel (..))
 import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Memory
   ( EventMap,
@@ -157,6 +158,19 @@ createInMemoryEventStores = do
 runDbIn :: AppEnv -> SqlPersistT (LoggingT IO) a -> IO a
 runDbIn env = runAppM env . runDb
 
+-- | Create a process-manager-wired test 'AppEnv' and seed it by feeding the
+-- given global events through a read model's own apply. The single seeding
+-- primitive for the persistent read-model specs (each supplies its
+-- @applyXEvent@).
+seedGlobals ::
+  (GlobalStreamEvent AccountingEvent -> SqlPersistT (LoggingT IO) ()) ->
+  [GlobalStreamEvent AccountingEvent] ->
+  IO AppEnv
+seedGlobals apply events = do
+  env <- createTestAppEnvWithProcessManager
+  runDbIn env (mapM_ apply events)
+  pure env
+
 -- -----------------------------------------------------------------------------
 -- Test Environment Creation
 -- -----------------------------------------------------------------------------
@@ -258,7 +272,6 @@ mkAppEnv withProcessManager = do
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
-        userReadModel = readModels.user,
         configurationReadModel = readModels.configuration,
         jwtConfig = config.auth,
         oauthConfig = config.oauth,

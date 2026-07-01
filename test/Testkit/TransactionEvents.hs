@@ -31,7 +31,7 @@ import Domain.Models (AccountingEvent (..), TransactionPostingInitiated (..))
 import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
 import qualified Eventium
 import RIO
-import Testkit.Helpers (mockUserId)
+import Testkit.Helpers (globalEvent, mockUserId)
 
 -- | A 'TransactionPostingInitiated' wrapped as a 'GlobalStreamEvent', with the
 -- given type and labels. @businessAt@ is the payload's @at@; @persistedAt@ is
@@ -76,5 +76,4 @@ transactionEditGlobal ::
   AccountingEvent ->
   SequenceNumber ->
   GlobalStreamEvent AccountingEvent
-transactionEditGlobal txId payload seqNo =
-  StreamEvent () seqNo (emptyMetadata "edit") (StreamEvent (unTransactionId txId) 1 (emptyMetadata "edit") payload)
+transactionEditGlobal txId = globalEvent (unTransactionId txId) 1

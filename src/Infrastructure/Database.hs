@@ -365,11 +365,11 @@ runMigrations = do
   void $ runMigration migrateProjectionSnapshot
 
 -- NOTE: Persistent read-model table migrations (e.g. 'migrateBankImport',
--- 'migrateAccount', 'migrateTransaction') are Application-layer artifacts run
--- from the composition root (@app/Main.hs@) via each read model's 'initialize',
--- since Infrastructure must not import Application. The remaining read models
--- (User, Configuration, ExchangeRate) are still in-memory TVars rebuilt on
--- restart.
+-- 'migrateAccount', 'migrateTransaction', 'migrateUser') are Application-layer
+-- artifacts run from the composition root (@app/Main.hs@) via each read model's
+-- 'initialize', since Infrastructure must not import Application. The remaining
+-- read models (Configuration, ExchangeRate) are still in-memory TVars rebuilt
+-- on restart.
 
 -- | Get the default SQL event store configuration.
 --

@@ -288,6 +288,7 @@ test-suite backend-test
       Application.ReadModels.ExchangeRateSpec
       Application.ReadModels.PersistentAccountReadModelSpec
       Application.ReadModels.PersistentTransactionReadModelSpec
+      Application.ReadModels.PersistentUserReadModelSpec
       Application.ReadModels.TransactionFilterSpec
       Application.ReadModels.TransactionListPropertySpec
       Application.ReadModels.TransactionListSpec

@@ -257,8 +257,7 @@ handleStart _botState tgIdentity chatId args =
 -- No user is created in this branch.
 handleStartNoPayload :: TelegramIdentity -> Int64 -> AppM ()
 handleStartNoPayload tgIdentity chatId = do
-  rm <- view userReadModelL
-  existing <- liftIO (getUserByTelegramId rm ((.id) tgIdentity))
+  existing <- runDb (getUserByTelegramId ((.id) tgIdentity))
   case existing of
     Just _ -> sendWelcome False chatId
     Nothing ->
@@ -750,8 +749,7 @@ clearConversation botState telegramId =
 -- specified dictionary ID as a list of (DictionaryEntryId, EntryName) pairs.
 getCategoryEntries :: TelegramId -> DictionaryId -> AppM (Maybe [(DictionaryEntryId, EntryName)])
 getCategoryEntries telegramId dictId = do
-  userRM <- view userReadModelL
-  maybeUser <- getUserByTelegramId userRM telegramId
+  maybeUser <- runDb (getUserByTelegramId telegramId)
   case maybeUser of
     Nothing -> return Nothing
     Just (_, userData) -> do
@@ -772,8 +770,7 @@ getCategoryEntries telegramId dictId = do
 --   resolved so callers can proceed with the plain type label.
 getDictionaryEntryNames :: TelegramId -> AppM (Map DictionaryEntryId Text)
 getDictionaryEntryNames telegramId = do
-  userRM <- view userReadModelL
-  maybeUser <- getUserByTelegramId userRM telegramId
+  maybeUser <- runDb (getUserByTelegramId telegramId)
   case maybeUser of
     Nothing -> return Map.empty
     Just (_, userData) -> do
@@ -796,8 +793,7 @@ getDictionaryEntryNames telegramId = do
 -- | Look up the UserId for a Telegram user.
 getUserIdForTelegram :: TelegramId -> AppM (Maybe UserId)
 getUserIdForTelegram telegramId = do
-  userReadModel <- view userReadModelL
-  maybeUser <- getUserByTelegramId userReadModel telegramId
+  maybeUser <- runDb (getUserByTelegramId telegramId)
   return $ fmap fst maybeUser
 
 -- | Get a user's regular (non-External) accounts as (AccountId, name, balance) triples.

@@ -28,11 +28,14 @@ import Domain.Core.Types
     AccountType,
     Allocation (..),
     Allocations (..),
+    ConfigurationId,
     Currency,
     DictionaryEntryId,
     ExchangeRate,
     ExternalTransactionId,
     Money,
+    OAuthProvider,
+    TelegramId (..),
     TransactionId,
     TransactionType (..),
     UserId,
@@ -40,6 +43,7 @@ import Domain.Core.Types
     exchangeRateTarget,
     exchangeRateValue,
     mkAccountIdSafe,
+    mkConfigurationIdSafe,
     mkDictionaryEntryId,
     mkExchangeRate,
     mkExternalTransactionId,
@@ -48,6 +52,7 @@ import Domain.Core.Types
     mkUserIdSafe,
     moneyCurrency,
     unAccountId,
+    unConfigurationId,
     unDictionaryEntryId,
     unExternalTransactionId,
     unMoney,
@@ -110,6 +115,33 @@ instance PersistField UserId where
 
 instance PersistFieldSql UserId where
   sqlType _ = sqlType (Proxy :: Proxy UUID)
+
+-- | 'ConfigurationId' wraps a 'UUID'.
+instance PersistField ConfigurationId where
+  toPersistValue = toPersistValue . unConfigurationId
+  fromPersistValue v = do
+    uuid <- fromPersistValue v
+    maybe (Left "Invalid ConfigurationId UUID") Right (mkConfigurationIdSafe uuid)
+
+instance PersistFieldSql ConfigurationId where
+  sqlType _ = sqlType (Proxy :: Proxy UUID)
+
+-- | 'TelegramId' wraps an 'Int64'; stored as an integer column.
+instance PersistField TelegramId where
+  toPersistValue (TelegramId i) = toPersistValue i
+  fromPersistValue v = TelegramId <$> fromPersistValue v
+
+instance PersistFieldSql TelegramId where
+  sqlType _ = sqlType (Proxy :: Proxy Int64)
+
+-- | 'OAuthProvider' is a small closed enum; stored as its JSON token (a valid
+-- equality filter for the @getUserByOAuthIdentity@ lookup and the unique key).
+instance PersistField OAuthProvider where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql OAuthProvider where
+  sqlType _ = SqlString
 
 -- | 'Money' stored exactly as JSON @[amountString, currency]@. The domain's own
 -- JSON encodes the amount as a lossy 'Double'; a balance column must round-trip

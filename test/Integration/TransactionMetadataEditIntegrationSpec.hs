@@ -80,7 +80,7 @@ decodeList resp = case eitherDecode (simpleBody resp) :: Either String Transacti
 -- queried for the leg that an Income transaction debits.
 externalAccountIdFor :: Seed -> IO AccountId
 externalAccountIdFor seed = do
-  mUser <- getUser seed.seedEnv.userReadModel seed.seedUserId
+  mUser <- runDbIn seed.seedEnv (getUser seed.seedUserId)
   case mUser of
     Nothing -> fail "externalAccountIdFor: user not found"
     Just ud -> pure ud.externalAccountId

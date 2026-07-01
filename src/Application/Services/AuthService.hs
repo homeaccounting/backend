@@ -97,6 +97,7 @@ import Infrastructure.App
     HasEventStore (..),
     HasLinkCodeStore (..),
     HasReadModel (..),
+    runDb,
   )
 import Infrastructure.Auth.JWT (JWTClaims (..), JWTConfig (..))
 import qualified Infrastructure.Auth.JWT as JWT
@@ -153,8 +154,7 @@ register ::
   AppM (Either DomainError AuthResult)
 register email password = runExceptT $ do
   lift $ logInfo "Processing registration request"
-  userReadModel <- lift (view userReadModelL)
-  exists <- lift (emailExists userReadModel email)
+  exists <- lift (runDb (emailExists email))
   guardE (not exists) (AccountError "Email already registered")
   passwordHash <- lift (hashPassword password)
   userUuid <- liftIO UUID.nextRandom
@@ -207,9 +207,8 @@ login ::
   AppM (Either DomainError AuthResult)
 login email password = runExceptT $ do
   lift $ logInfo "Processing login request"
-  userReadModel <- lift (view userReadModelL)
   (userId, user) <-
-    liftMaybeM (NotFound "User" email) (getUserByEmail userReadModel email)
+    liftMaybeM (NotFound "User" email) (runDb (getUserByEmail email))
   guardE user.hasPassword (AccountError "Invalid email or password")
   reader <- lift (view eventStoreReaderL)
   userAggregate <- liftIO (loadUserAggregate reader (unUserId userId))
@@ -282,8 +281,7 @@ linkOrSignInWithOAuth provider userInfo = runExceptT $ do
           { provider = provider,
             subject = userInfo.subject
           }
-  userReadModel <- lift (view userReadModelL)
-  maybeUser <- lift (getUserByOAuthIdentity userReadModel provider userInfo.subject)
+  maybeUser <- lift (runDb (getUserByOAuthIdentity provider userInfo.subject))
   case maybeUser of
     Just (uid, user) -> do
       lift $ logInfo "Existing user found via OAuth"
@@ -299,7 +297,7 @@ linkOrSignInWithOAuth provider userInfo = runExceptT $ do
         lift $ logInfo "OAuth email not verified — creating new user without auto-link"
         ExceptT (createUserViaOAuth email oauthIdentity)
       (Just email, True) -> do
-        maybeByEmail <- lift (getUserByEmail userReadModel email)
+        maybeByEmail <- lift (runDb (getUserByEmail email))
         case maybeByEmail of
           Just (uid, user) -> do
             lift $ logInfo "Auto-linking verified OAuth email to existing user"
@@ -351,8 +349,7 @@ linkOAuthIdentityToUser ::
   AppM (Either DomainError ())
 linkOAuthIdentityToUser userId provider userInfo = runExceptT $ do
   let oauthIdentity = OAuthIdentity {provider = provider, subject = userInfo.subject}
-  userReadModel <- lift (view userReadModelL)
-  maybeExisting <- lift (getUserByOAuthIdentity userReadModel provider userInfo.subject)
+  maybeExisting <- lift (runDb (getUserByOAuthIdentity provider userInfo.subject))
   guardE (isNothing maybeExisting) (AccountError "OAuth account already linked to another user")
   let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
   runUserCmd id (unUserId userId) linkCmd
@@ -400,8 +397,7 @@ redeemTelegramLinkCode tok tgIdent = runExceptT $ do
       lift $ logInfo "Telegram link code not found / expired / consumed"
       throwE (NotFound "telegram-link-code" "")
     Just u -> pure u
-  userReadModel <- lift (view userReadModelL)
-  maybeExisting <- lift (getUserByTelegramId userReadModel tgIdent.id)
+  maybeExisting <- lift (runDb (getUserByTelegramId tgIdent.id))
   guardE
     (isNothing maybeExisting)
     (AccountError "Telegram account already linked to another user")
@@ -451,8 +447,7 @@ findOrCreateTelegramBotUser ::
   TelegramIdentity ->
   AppM (Either DomainError (UserId, Bool))
 findOrCreateTelegramBotUser tgIdent = runExceptT $ do
-  userReadModel <- lift (view userReadModelL)
-  maybeUser <- lift (getUserByTelegramId userReadModel tgIdent.id)
+  maybeUser <- lift (runDb (getUserByTelegramId tgIdent.id))
   case maybeUser of
     Just (uid, _) -> pure (uid, False)
     Nothing -> do

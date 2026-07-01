@@ -56,7 +56,7 @@ import RIO
 import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount)
 import Testkit.Helpers (singletonExpense, singletonIncome)
-import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager)
+import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Harness helpers
@@ -73,7 +73,7 @@ registerUser env email = do
 -- | Look up one category id belonging to the given dictionary for the user.
 firstEntryId :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
 firstEntryId env userId dictName = do
-  mUser <- getUser env.userReadModel userId
+  mUser <- runDbIn env (getUser userId)
   case mUser of
     Nothing -> fail "user not found"
     Just ud -> do

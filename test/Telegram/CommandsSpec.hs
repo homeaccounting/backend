@@ -29,7 +29,7 @@ import Telegram.Commands (handleSignup, handleStart)
 import Telegram.Types (emptyBotState)
 import Test.Hspec
 import Testkit.Fixtures (registerUser)
-import Testkit.InMemoryEventStore (createTestAppEnv)
+import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Helpers
@@ -77,7 +77,7 @@ spec = do
       runAppM env $ handleStart botState freshTgIdent testChatId (Just ("LINK_" <> tokText))
 
       -- The Telegram identity must now be linked to the issuing user.
-      linked <- getUserByTelegramId env.userReadModel freshTgIdent.id
+      linked <- runDbIn env (getUserByTelegramId freshTgIdent.id)
       case linked of
         Nothing -> expectationFailure "expected Telegram identity to be linked after handleStart LINK_"
         Just (linkedUid, _) -> linkedUid `shouldBe` uid
@@ -90,7 +90,7 @@ spec = do
       runAppM env $ handleStart botState freshTgIdent testChatId (Just "LINK_not-a-real-token")
 
       -- The fresh Telegram identity must not be linked to anyone.
-      linked <- getUserByTelegramId env.userReadModel freshTgIdent.id
+      linked <- runDbIn env (getUserByTelegramId freshTgIdent.id)
       linked `shouldBe` Nothing
 
     it "/start (no payload) from an unknown Telegram ID does NOT create a user" $ do
@@ -100,7 +100,7 @@ spec = do
       runAppM env $ handleStart botState freshTgIdent testChatId Nothing
 
       -- The fresh Telegram identity must remain absent from the read model.
-      result <- getUserByTelegramId env.userReadModel freshTgIdent.id
+      result <- runDbIn env (getUserByTelegramId freshTgIdent.id)
       result `shouldBe` Nothing
 
     it "/start (no payload) from an already-linked Telegram ID is idempotent" $ do
@@ -116,7 +116,7 @@ spec = do
       runAppM env $ handleStart botState freshTgIdent testChatId Nothing
 
       -- The user must still be present and unchanged.
-      result <- getUserByTelegramId env.userReadModel freshTgIdent.id
+      result <- runDbIn env (getUserByTelegramId freshTgIdent.id)
       case result of
         Nothing -> expectationFailure "expected Telegram identity to still be linked after /start"
         Just (linkedUid, _) -> linkedUid `shouldBe` uid
@@ -129,7 +129,7 @@ spec = do
       runAppM env $ handleSignup botState freshTgIdent testChatId Nothing
 
       -- The Telegram identity must now be present in the read model.
-      result <- getUserByTelegramId env.userReadModel freshTgIdent.id
+      result <- runDbIn env (getUserByTelegramId freshTgIdent.id)
       result `shouldSatisfy` (/= Nothing)
 
     it "/signup from an already-linked Telegram ID is idempotent" $ do
@@ -146,7 +146,7 @@ spec = do
       runAppM env $ handleSignup botState freshTgIdent testChatId Nothing
 
       -- Must still map to the same user ID — no duplicate creation.
-      result <- getUserByTelegramId env.userReadModel freshTgIdent.id
+      result <- runDbIn env (getUserByTelegramId freshTgIdent.id)
       case result of
         Nothing -> expectationFailure "expected Telegram identity to still be linked after /signup"
         Just (linkedUid, _) -> linkedUid `shouldBe` uid

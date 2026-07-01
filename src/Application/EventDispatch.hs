@@ -25,11 +25,6 @@ import Application.ReadModels.ExchangeRate
     createExchangeRateReadModel,
     handleExchangeRateEvents,
   )
-import Application.ReadModels.User
-  ( UserReadModel,
-    createUserReadModel,
-    handleUserEvents,
-  )
 import Infrastructure.Eventium (AccountingReadModelHandler)
 import RIO
 
@@ -38,21 +33,18 @@ import RIO
 -- persistent (SQL) read models and are wired separately (see
 -- 'Application.ReadModels.Persist' and the event-store writer in @app/Main.hs@).
 data ReadModels = ReadModels
-  { user :: TVar UserReadModel,
-    configuration :: TVar ConfigurationReadModel,
+  { configuration :: TVar ConfigurationReadModel,
     exchangeRate :: TVar ExchangeRateReadModel
   }
 
 -- | Allocate fresh TVars for every read model.
 createReadModels :: (MonadIO m) => m ReadModels
 createReadModels = do
-  userRM <- createUserReadModel
   configRM <- createConfigurationReadModel
   exchangeRateRM <- createExchangeRateReadModel
   pure
     ReadModels
-      { user = userRM,
-        configuration = configRM,
+      { configuration = configRM,
         exchangeRate = exchangeRateRM
       }
 
@@ -63,7 +55,6 @@ createReadModels = do
 fromReadModels :: (MonadIO m) => ReadModels -> AccountingReadModelHandler m
 fromReadModels rms =
   mconcat
-    [ handleUserEvents rms.user,
-      handleConfigurationEvents rms.configuration,
+    [ handleConfigurationEvents rms.configuration,
       handleExchangeRateEvents rms.exchangeRate
     ]

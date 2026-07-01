@@ -28,9 +28,12 @@ import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Gen, arbitrary, forAll, listOf1, suchThat)
 import Testkit.Generators
   ( genAccountId,
+    genConfigurationId,
     genDictionaryEntryId,
     genExchangeRate,
     genMoney,
+    genOAuthProvider,
+    genTelegramId,
     genTransactionId,
     genTransactionType,
     genUserId,
@@ -96,3 +99,18 @@ spec = describe "Infrastructure.Database.Orphans" $ do
   it "StatusKind round-trips through PersistValue (text token)" $ do
     let roundTrips x = fromPersistValue (toPersistValue x) `shouldBe` Right x
     mapM_ roundTrips [PendingKind, CompletedKind, FailedKind, CancelledKind]
+
+  prop "ConfigurationId round-trips through PersistValue"
+    $ forAll genConfigurationId
+    $ \cid ->
+      fromPersistValue (toPersistValue cid) `shouldBe` Right cid
+
+  prop "TelegramId round-trips through PersistValue (integer column)"
+    $ forAll genTelegramId
+    $ \tid ->
+      fromPersistValue (toPersistValue tid) `shouldBe` Right tid
+
+  prop "OAuthProvider round-trips through PersistValue (JSON token)"
+    $ forAll genOAuthProvider
+    $ \p ->
+      fromPersistValue (toPersistValue p) `shouldBe` Right p

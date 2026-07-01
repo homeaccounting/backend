@@ -46,7 +46,7 @@ import Domain.Core.Types (AccountId, UserId)
 import Domain.Transaction.CommandHandler (TransactionCommand, TransactionError)
 import Domain.User.CommandHandler (UserCommand)
 import Eventium (CommandHandlerError, MetadataEnricher)
-import Infrastructure.App (AppM, HasEventStore (..), HasReadModel (..))
+import Infrastructure.App (AppM, HasEventStore (..), runDb)
 import Infrastructure.Eventium
   ( applyAccountCommand,
     applyConfigurationCommand,
@@ -61,9 +61,8 @@ import RIO
 
 -- | Look up a 'UserData' record by 'UserId', throwing 'NotFound' if missing.
 getUserData :: UserId -> ExceptT DomainError AppM UserData
-getUserData userId = do
-  userRM <- lift (view userReadModelL)
-  liftMaybeM (NotFound "User" (tshow userId)) (getUser userRM userId)
+getUserData userId =
+  liftMaybeM (NotFound "User" (tshow userId)) (runDb (getUser userId))
 
 -- | Resolve the user's auto-created External account id. Throws 'NotFound'
 -- if the user is missing from the read model.

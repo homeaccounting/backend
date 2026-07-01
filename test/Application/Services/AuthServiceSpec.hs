@@ -32,7 +32,7 @@ import qualified RIO.Text as T
 import Test.Hspec
 import Testkit.Fixtures (registerUser)
 import Testkit.Helpers (mockTelegramId)
-import Testkit.InMemoryEventStore (createTestAppEnv)
+import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Test data
@@ -68,7 +68,7 @@ spec = do
         Left err -> expectationFailure $ "expected Right, got Left: " <> show err
 
       -- The OAuth identity is now attached to the existing user.
-      linked <- getUserByOAuthIdentity env.userReadModel Google "google-subject-1"
+      linked <- runDbIn env (getUserByOAuthIdentity Google "google-subject-1")
       case linked of
         Just (uid, _) -> uid `shouldBe` existingUid
         Nothing -> expectationFailure "expected the OAuth identity to be linked to the existing user"
@@ -93,7 +93,7 @@ spec = do
         Left err -> expectationFailure $ "expected Right, got Left: " <> show err
 
       -- The new user is now reachable via the OAuth identity.
-      linked <- getUserByOAuthIdentity env.userReadModel Google "google-subject-3"
+      linked <- runDbIn env (getUserByOAuthIdentity Google "google-subject-3")
       case linked of
         Just _ -> pure ()
         Nothing -> expectationFailure "expected the new user to be reachable via OAuth identity"
@@ -131,7 +131,7 @@ spec = do
         Left err -> expectationFailure $ "expected Right, got Left: " <> show err
 
       -- The identity is keyed on userinfo.subject (not on any auth code).
-      linked <- getUserByOAuthIdentity env.userReadModel Google "google-stable-sub-1"
+      linked <- runDbIn env (getUserByOAuthIdentity Google "google-stable-sub-1")
       case linked of
         Just (linkedUid, _) -> linkedUid `shouldBe` uid
         Nothing -> expectationFailure "expected the OAuth identity to be linked to the user"
@@ -227,7 +227,7 @@ spec = do
         Left err -> expectationFailure $ "expected Right, got Left: " <> show err
         Right returnedUid -> do
           returnedUid `shouldBe` uid
-          linked <- getUserByTelegramId env.userReadModel tgIdentX.id
+          linked <- runDbIn env (getUserByTelegramId tgIdentX.id)
           case linked of
             Nothing -> expectationFailure "expected Telegram identity to be linked after redemption"
             Just (linkedUid, _) -> linkedUid `shouldBe` uid

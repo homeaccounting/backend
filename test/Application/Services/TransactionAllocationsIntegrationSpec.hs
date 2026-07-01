@@ -144,7 +144,7 @@ categorisedTotal tt = case allocationsOf tt of
 -- configuration instead of cloning.
 sanityCheckCloned :: Harness -> IO ()
 sanityCheckCloned h = do
-  mUser <- getUser h.harnessEnv.userReadModel h.harnessUser
+  mUser <- runDbIn h.harnessEnv (getUser h.harnessUser)
   case mUser of
     Nothing -> fail "sanityCheckCloned: user not found"
     Just ud -> do

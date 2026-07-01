@@ -37,6 +37,7 @@ module Testkit.Helpers
     fixtureTime,
     mockAccountData,
     mockTransactionData,
+    globalEvent,
 
     -- * Test Assertions
     shouldBeRight,
@@ -62,7 +63,9 @@ import qualified Data.ByteString as BS
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
+import Domain.Models (AccountingEvent)
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Eventium (EventVersion, GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
 import RIO
 import RIO.Time (UTCTime (..), fromGregorian)
 import Test.Hspec
@@ -240,6 +243,15 @@ mockTransactionData src tgt srcAmt tgtAmt rate tt =
       labels = mempty,
       amendmentCount = 0
     }
+
+-- | Wrap an 'AccountingEvent' as a 'GlobalStreamEvent' on the given stream
+-- @UUID@ at a per-stream 'EventVersion' and global 'SequenceNumber' — the
+-- two-layer 'StreamEvent' nesting the read-model specs otherwise repeat by
+-- hand. Read-model applies ignore the wrapper metadata, so a fixed label is
+-- used (specs needing a bespoke @createdAt@ build the event directly).
+globalEvent :: UUID -> EventVersion -> AccountingEvent -> SequenceNumber -> GlobalStreamEvent AccountingEvent
+globalEvent streamId ver payload seqNo =
+  StreamEvent () seqNo (emptyMetadata "test") (StreamEvent streamId ver (emptyMetadata "test") payload)
 
 -- -----------------------------------------------------------------------------
 -- Test Assertions

@@ -57,7 +57,7 @@ import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
 import Infrastructure.Eventium (applyConfigurationCommand)
 import RIO
 import Test.Hspec
-import Testkit.InMemoryEventStore (createTestAppEnv)
+import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 spec :: Spec
 spec = describe "ConfigurationService banking" $ do
@@ -111,7 +111,7 @@ cloneBankingDefaultsSpec =
           result `shouldSatisfy` isRight
 
           -- The user now has a cloned configuration
-          maybeUser <- getUser env.userReadModel userId
+          maybeUser <- runDbIn env (getUser userId)
           case maybeUser of
             Nothing -> expectationFailure "User not found after clone"
             Just userData -> do
@@ -170,7 +170,7 @@ cloneBankingDefaultsSpec =
           changeRes <- runRIO env $ changeDefaultCurrency userId GBP
           changeRes `shouldSatisfy` isRight
 
-          maybeUser <- getUser env.userReadModel userId
+          maybeUser <- runDbIn env (getUser userId)
           case maybeUser of
             Nothing -> expectationFailure "User not found after clone"
             Just userData -> do
@@ -211,7 +211,7 @@ addBankConnectionSpec =
               error "unreachable"
             Right cid -> pure cid
 
-          maybeUser <- getUser env.userReadModel userId
+          maybeUser <- runDbIn env (getUser userId)
           case maybeUser of
             Nothing -> expectationFailure "User not found"
             Just userData -> do
@@ -284,7 +284,7 @@ setBankConnectionAccountMapSpec =
           case addResult of
             Left err -> expectationFailure $ "addBankConnection failed: " <> show err
             Right connId -> do
-              maybeUser <- getUser env.userReadModel userId
+              maybeUser <- runDbIn env (getUser userId)
               ownedAcc <- case maybeUser of
                 Nothing -> do
                   expectationFailure "User not found"
@@ -295,7 +295,7 @@ setBankConnectionAccountMapSpec =
                   $ setBankConnectionAccountMap userId connId (Map.singleton "ext-1" ownedAcc)
               result `shouldSatisfy` isRight
 
-              maybeUser2 <- getUser env.userReadModel userId
+              maybeUser2 <- runDbIn env (getUser userId)
               case maybeUser2 of
                 Nothing -> expectationFailure "User not found after map"
                 Just ud -> do

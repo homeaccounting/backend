@@ -1,44 +1,46 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- |
 -- Module      : Application.ReadModels.User
--- Description : Read model for optimized user queries
+-- Description : Persistent, indexed read model for user queries
 --
--- This module implements a read model that provides efficient queries for user
--- information without requiring event replay. The read model listens to the event
--- stream and maintains a denormalized view optimized for common query patterns.
+-- Users are projected into three Postgres tables:
 --
--- Key Components:
---   - UserData: Denormalized user information
---   - UserReadModel: Map of user IDs to user data, plus lookup indices
---   - Event handlers: Update the read model when events occur
---   - Query functions: Efficient lookups by user ID, email, or Telegram ID
+--   * @users@ — one row per user (email, password flag, external account,
+--     configuration, version),
+--   * @user_oauth@ — the linked OAuth identities (provider, subject), and
+--   * @user_telegram@ — the optional linked Telegram identity.
 --
--- Design Rationale:
---   - Separates read and write models (CQRS pattern)
---   - Maintains multiple indices for efficient lookups
---   - Tracks sequence numbers for reliable event processing
---   - Supports authentication workflows (login by email or Telegram)
---
--- The read model can be:
---   - Rebuilt from the event stream if corrupted
---   - Extended with additional denormalized fields
---   - Backed by in-memory or persistent storage
+-- The email, Telegram-id, and (provider, subject) lookups are backed by unique
+-- indexes, replacing the in-memory index maps. The projection is an eventium
+-- 'ReadModel' ('userReadModel') driven synchronously in the event-append
+-- transaction; per-row @version@ is recorded from the event's real per-stream
+-- 'EventVersion' (not derived by incrementing).
 module Application.ReadModels.User
-  ( -- * Read Model Types
+  ( -- * Query result type
     UserData (..),
-    UserReadModel (..),
 
-    -- * Read Model Creation
-    createUserReadModel,
-    emptyUserReadModel,
+    -- * Read model
+    userReadModel,
+    userProjectionName,
+    migrateUser,
+    resetUser,
+    applyUserEvent,
+    UserEntity (..),
+    UserOAuthEntity (..),
+    UserTelegramEntity (..),
 
-    -- * Event Handler
-    handleUserEvents,
-
-    -- * Query Functions
+    -- * Queries (run via 'runDb')
     getUser,
     getUserByEmail,
     getUserByTelegramId,
@@ -46,24 +48,33 @@ module Application.ReadModels.User
     userExists,
     emailExists,
     telegramIdLinked,
-
-    -- * Helper Functions
-    userToMap,
   )
 where
 
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad (forM_, void)
+import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson (FromJSON, ToJSON)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Data.Text (Text)
+import Database.Persist
+  ( Entity (..),
+    Filter,
+    deleteWhere,
+    getBy,
+    insertUnique,
+    replace,
+    selectFirst,
+    selectList,
+    (==.),
+  )
+import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationSilent)
+import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
 import Domain.Core.Types
   ( AccountId,
     ConfigurationId,
     OAuthIdentity (..),
     OAuthProvider,
-    TelegramId (..),
+    TelegramId,
     TelegramIdentity (..),
     UserId,
     defaultConfigurationId,
@@ -78,35 +89,31 @@ import Domain.User.Events
     UserRegistered (..),
     UserRegisteredViaTelegram (..),
   )
-import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium
+  ( EventHandler (..),
+    EventVersion (..),
+    GlobalStreamEvent,
+    ReadModel (..),
+    StreamEvent (..),
+  )
+import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
 import GHC.Generics (Generic)
-import Infrastructure.Eventium (AccountingReadModelHandler)
-import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
-import Safe (maximumDef)
+import Infrastructure.Database.Orphans ()
 
 -- -----------------------------------------------------------------------------
--- Read Model Data Types
+-- Query result type
 -- -----------------------------------------------------------------------------
 
--- | Denormalized user information for efficient querying.
---
--- This structure contains all the information needed for common user queries
--- without requiring event replay. It's optimized for read operations.
+-- | Denormalized user information returned by queries. @oauthIdentities@ and
+-- @telegramIdentity@ are assembled from the @user_oauth@ / @user_telegram@ rows.
 data UserData = UserData
-  { -- | User's email address (primary identifier for web login)
-    email :: Maybe Text,
-    -- | Whether user has a password set
+  { email :: Maybe Text,
     hasPassword :: Bool,
-    -- | List of linked OAuth identities
     oauthIdentities :: [OAuthIdentity],
-    -- | Linked Telegram identity (if any)
     telegramIdentity :: Maybe TelegramIdentity,
-    -- | Reference to auto-created External account
     externalAccountId :: AccountId,
-    -- | User's assigned configuration (defaults to defaultConfigurationId)
     configurationId :: ConfigurationId,
-    -- | Version number from event stream for optimistic concurrency
-    version :: Int
+    version :: EventVersion
   }
   deriving (Show, Eq, Generic)
 
@@ -114,385 +121,231 @@ instance ToJSON UserData
 
 instance FromJSON UserData
 
--- | The read model state with multiple indices for efficient lookups.
---
--- Maintains:
---   - Primary index: User ID -> UserData
---   - Email index: Email -> User ID
---   - Telegram index: Telegram ID -> User ID
---   - OAuth index: (Provider, Subject) -> User ID
-data UserReadModel = UserReadModel
-  { -- | Latest processed sequence number
-    latestSequence :: SequenceNumber,
-    -- | Primary data map: User ID -> UserData
-    users :: Map UserId UserData,
-    -- | Email index: Email -> User ID
-    emailIndex :: Map Text UserId, -- TODO: type Email = Text
-
-    -- | Telegram index: Telegram ID -> User ID
-    telegramIndex :: Map TelegramId UserId,
-    -- | OAuth index: (Provider, Subject) -> User ID
-    oauthIndex :: Map (OAuthProvider, Text) UserId -- TODO: type OAuthSubject = Text
-  }
-  deriving (Show, Eq)
-
 -- -----------------------------------------------------------------------------
--- Read Model Creation
+-- Schema
 -- -----------------------------------------------------------------------------
 
--- | Creates a new empty user read model.
---
--- This initializes the read model with:
---   - Sequence number -1 (before any events)
---   - Empty maps for all indices
---
--- Example:
--- >>> readModel <- createUserReadModel
--- >>> user <- getUser readModel someUserId
-createUserReadModel :: (MonadIO m) => m (TVar UserReadModel)
-createUserReadModel =
-  liftIO $ newTVarIO emptyUserReadModel
+share
+  [mkPersist sqlSettings, mkMigrate "migrateUser"]
+  [persistLowerCase|
+UserEntity sql=users
+    userId UserId
+    email Text Maybe
+    hasPassword Bool
+    externalAccountId AccountId
+    configurationId ConfigurationId
+    version EventVersion
+    UniqueUserId userId
+    UniqueUserEmail email !force
+    deriving Show Eq
+UserOAuthEntity sql=user_oauth
+    userId UserId
+    provider OAuthProvider
+    subject Text
+    -- (provider, subject): the global OAuth-identity key and the
+    -- 'getUserByOAuthIdentity' lookup.
+    UniqueUserOAuth provider subject
+    deriving Show Eq
+UserTelegramEntity sql=user_telegram
+    userId UserId
+    telegramId TelegramId
+    username Text Maybe
+    firstName Text
+    -- At most one Telegram identity per user; telegram id is globally unique.
+    UniqueUserTelegramUser userId
+    UniqueUserTelegramId telegramId
+    deriving Show Eq
+|]
 
--- | Empty user read model for initialization.
-emptyUserReadModel :: UserReadModel
-emptyUserReadModel =
-  UserReadModel
-    { latestSequence = -1,
-      users = Map.empty,
-      emailIndex = Map.empty,
-      telegramIndex = Map.empty,
-      oauthIndex = Map.empty
+-- | Projection/checkpoint name for this read model.
+userProjectionName :: CheckpointName
+userProjectionName = CheckpointName "user"
+
+-- | Secondary index backing the "a user's OAuth identities" load in 'getUser'.
+-- The unique constraints already index @users.email@, @user_oauth(provider,
+-- subject)@, and @user_telegram.user_id@ / @.telegram_id@. Idempotent
+-- @CREATE INDEX IF NOT EXISTS@ (valid on both PostgreSQL and SQLite).
+createUserIndexes :: (MonadIO m) => SqlPersistT m ()
+createUserIndexes =
+  forM_ stmts $ \s -> rawExecute s []
+  where
+    stmts =
+      ["CREATE INDEX IF NOT EXISTS idx_user_oauth_user ON user_oauth (user_id)"]
+
+-- | Clear all three user tables. The checkpoint is reset by 'rebuildReadModel'.
+resetUser :: (MonadIO m) => SqlPersistT m ()
+resetUser = do
+  deleteWhere ([] :: [Filter UserOAuthEntity])
+  deleteWhere ([] :: [Filter UserTelegramEntity])
+  deleteWhere ([] :: [Filter UserEntity])
+
+-- -----------------------------------------------------------------------------
+-- Read model
+-- -----------------------------------------------------------------------------
+
+userReadModel :: ReadModel (SqlPersistT IO) AccountingEvent
+userReadModel =
+  ReadModel
+    { initialize = do
+        void (runMigrationSilent migrateUser)
+        createUserIndexes,
+      eventHandler = EventHandler applyUserEvent,
+      checkpointStore = postgresqlCheckpointStore userProjectionName,
+      reset = resetUser
     }
 
--- -----------------------------------------------------------------------------
--- Event Handler
--- -----------------------------------------------------------------------------
+-- | Apply a single global event to the user tables. The per-stream version
+-- (@globalEvent.payload.position@) is recorded as the row @version@.
+applyUserEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
+applyUserEvent globalEvent =
+  let inner = globalEvent.payload
+      ver = inner.position
+   in case mkUserIdSafe inner.key of
+        Nothing -> pure ()
+        Just uid -> case inner.payload of
+          UserRegisteredEvent evt ->
+            void $
+              insertUnique
+                UserEntity
+                  { userEntityUserId = uid,
+                    userEntityEmail = Just evt.email,
+                    userEntityHasPassword = True,
+                    userEntityExternalAccountId = evt.externalAccountId,
+                    userEntityConfigurationId = defaultConfigurationId,
+                    userEntityVersion = ver
+                  }
+          UserRegisteredViaTelegramEvent evt -> do
+            void $
+              insertUnique
+                UserEntity
+                  { userEntityUserId = uid,
+                    userEntityEmail = Nothing,
+                    userEntityHasPassword = False,
+                    userEntityExternalAccountId = evt.externalAccountId,
+                    userEntityConfigurationId = defaultConfigurationId,
+                    userEntityVersion = ver
+                  }
+            insertTelegram uid evt.identity
+          OAuthAccountLinkedEvent evt -> do
+            void $ insertUnique (UserOAuthEntity uid evt.identity.provider evt.identity.subject)
+            bumpVersion uid ver
+          TelegramAccountLinkedEvent evt -> do
+            deleteWhere [UserTelegramEntityUserId ==. uid]
+            insertTelegram uid evt.identity
+            bumpVersion uid ver
+          OAuthAccountUnlinkedEvent evt -> do
+            deleteWhere
+              [ UserOAuthEntityProvider ==. evt.identity.provider,
+                UserOAuthEntitySubject ==. evt.identity.subject
+              ]
+            bumpVersion uid ver
+          TelegramAccountUnlinkedEvent _ -> do
+            deleteWhere [UserTelegramEntityUserId ==. uid]
+            bumpVersion uid ver
+          PasswordChangedEvent _ ->
+            modifyUser uid (\e -> e {userEntityHasPassword = True, userEntityVersion = ver})
+          UserConfigurationAssignedEvent evt ->
+            modifyUser uid (\e -> e {userEntityConfigurationId = evt.configurationId, userEntityVersion = ver})
+          _ -> pure ()
 
--- | Updates the read model with new events from the global event stream.
---
--- This function:
---   1. Processes each event and updates user data accordingly
---   2. Maintains all lookup indices
---   3. Tracks the highest sequence number seen
---   4. Updates the TVar atomically
---
--- Events handled:
---   - UserRegistered: Adds new user with email/password
---   - UserRegisteredViaTelegram: Adds new user with Telegram identity
---   - OAuthAccountLinked: Adds OAuth identity to user
---   - TelegramAccountLinked: Adds Telegram identity to user
---   - OAuthAccountUnlinked: Removes OAuth identity from user
---   - TelegramAccountUnlinked: Removes Telegram identity from user
---   - PasswordChanged: Updates password flag
---
--- The function is idempotent - replaying the same events produces the same result.
-handleUserEvents ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  AccountingReadModelHandler m
-handleUserEvents readModelTVar = EventHandler $ \events -> do
-  currentModel <- liftIO $ readTVarIO readModelTVar
+-- | Insert (idempotently) the user's Telegram row from a 'TelegramIdentity'.
+insertTelegram :: (MonadIO m) => UserId -> TelegramIdentity -> SqlPersistT m ()
+insertTelegram uid ident =
+  void $
+    insertUnique
+      UserTelegramEntity
+        { userTelegramEntityUserId = uid,
+          userTelegramEntityTelegramId = ident.id,
+          userTelegramEntityUsername = ident.username,
+          userTelegramEntityFirstName = ident.firstName
+        }
 
-  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
-      updatedModel = foldl processUserEvent currentModel events
+-- | Read-modify-write the user row (no-op if absent).
+modifyUser :: (MonadIO m) => UserId -> (UserEntity -> UserEntity) -> SqlPersistT m ()
+modifyUser uid f = do
+  mEnt <- getBy (UniqueUserId uid)
+  case mEnt of
+    Nothing -> pure ()
+    Just (Entity k e) -> replace k (f e)
 
-  liftIO . atomically . writeTVar readModelTVar $
-    updatedModel {latestSequence = newSeq}
-
--- | Processes a single event and updates the user read model.
-processUserEvent ::
-  UserReadModel ->
-  GlobalStreamEvent AccountingEvent ->
-  UserReadModel
-processUserEvent model globalEvent =
-  let (streamUuid, payload) = unpackGlobalEvent globalEvent
-   in case payload of
-        UserRegisteredEvent evt ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              let user =
-                    UserData
-                      { email = Just evt.email,
-                        hasPassword = True,
-                        oauthIdentities = [],
-                        telegramIdentity = Nothing,
-                        externalAccountId = evt.externalAccountId,
-                        configurationId = defaultConfigurationId,
-                        version = 1
-                      }
-               in model
-                    { users = Map.insert userId user model.users,
-                      emailIndex = Map.insert evt.email userId model.emailIndex
-                    }
-        UserRegisteredViaTelegramEvent evt ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              let ident = evt.identity
-                  user =
-                    UserData
-                      { email = Nothing,
-                        hasPassword = False,
-                        oauthIdentities = [],
-                        telegramIdentity = Just ident,
-                        externalAccountId = evt.externalAccountId,
-                        configurationId = defaultConfigurationId,
-                        version = 1
-                      }
-               in model
-                    { users = Map.insert userId user model.users,
-                      telegramIndex = Map.insert ident.id userId model.telegramIndex
-                    }
-        OAuthAccountLinkedEvent evt ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              let ident = evt.identity
-                  oauthKey = (ident.provider, ident.subject)
-               in model
-                    { users =
-                        Map.adjust
-                          ( \s ->
-                              s
-                                { oauthIdentities = ident : s.oauthIdentities,
-                                  version = s.version + 1
-                                }
-                          )
-                          userId
-                          model.users,
-                      oauthIndex = Map.insert oauthKey userId model.oauthIndex
-                    }
-        TelegramAccountLinkedEvent evt ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              let ident = evt.identity
-               in model
-                    { users =
-                        Map.adjust
-                          ( \s ->
-                              s
-                                { telegramIdentity = Just ident,
-                                  version = s.version + 1
-                                }
-                          )
-                          userId
-                          model.users,
-                      telegramIndex = Map.insert ident.id userId model.telegramIndex
-                    }
-        OAuthAccountUnlinkedEvent evt ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              let ident = evt.identity
-                  oauthKey = (ident.provider, ident.subject)
-               in model
-                    { users =
-                        Map.adjust
-                          ( \s ->
-                              s
-                                { oauthIdentities =
-                                    filter
-                                      ( \i ->
-                                          i.provider /= ident.provider
-                                            || i.subject /= ident.subject
-                                      )
-                                      s.oauthIdentities,
-                                  version = s.version + 1
-                                }
-                          )
-                          userId
-                          model.users,
-                      oauthIndex = Map.delete oauthKey model.oauthIndex
-                    }
-        TelegramAccountUnlinkedEvent _ ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              case Map.lookup userId model.users of
-                Nothing -> model
-                Just existing ->
-                  case existing.telegramIdentity of
-                    Nothing -> model
-                    Just ident ->
-                      model
-                        { users =
-                            Map.adjust
-                              ( \s ->
-                                  s
-                                    { telegramIdentity = Nothing,
-                                      version = s.version + 1
-                                    }
-                              )
-                              userId
-                              model.users,
-                          telegramIndex = Map.delete ident.id model.telegramIndex
-                        }
-        PasswordChangedEvent _ ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              model
-                { users =
-                    Map.adjust
-                      ( \s ->
-                          s
-                            { hasPassword = True,
-                              version = s.version + 1
-                            }
-                      )
-                      userId
-                      model.users
-                }
-        UserConfigurationAssignedEvent evt ->
-          case mkUserIdSafe streamUuid of
-            Nothing -> model
-            Just userId ->
-              model
-                { users =
-                    Map.adjust
-                      ( \s ->
-                          s
-                            { configurationId = evt.configurationId,
-                              version = s.version + 1
-                            }
-                      )
-                      userId
-                      model.users
-                }
-        _ -> model -- Ignore non-user events
+bumpVersion :: (MonadIO m) => UserId -> EventVersion -> SqlPersistT m ()
+bumpVersion uid ver = modifyUser uid (\e -> e {userEntityVersion = ver})
 
 -- -----------------------------------------------------------------------------
--- Query Functions
+-- Queries
 -- -----------------------------------------------------------------------------
 
--- | Retrieves the user data for a specific user ID.
---
--- Returns 'Nothing' if the user doesn't exist in the read model.
---
--- Example:
--- >>> maybeUser <- getUser readModel userId
--- >>> case maybeUser of
--- >>>   Just user -> print (user.email)
--- >>>   Nothing -> putStrLn "User not found"
-getUser ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  UserId ->
-  m (Maybe UserData)
-getUser readModelTVar userId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup userId model.users
+entToData :: UserEntity -> [OAuthIdentity] -> Maybe TelegramIdentity -> UserData
+entToData e oauths mTg =
+  UserData
+    { email = e.userEntityEmail,
+      hasPassword = e.userEntityHasPassword,
+      oauthIdentities = oauths,
+      telegramIdentity = mTg,
+      externalAccountId = e.userEntityExternalAccountId,
+      configurationId = e.userEntityConfigurationId,
+      version = e.userEntityVersion
+    }
 
--- | Retrieves a user by email address.
---
--- Returns 'Nothing' if no user is registered with this email.
---
--- Example:
--- >>> maybeUser <- getUserByEmail readModel "user@example.com"
--- >>> case maybeUser of
--- >>>   Just (userId, user) -> authenticateUser userId user
--- >>>   Nothing -> rejectLogin
-getUserByEmail ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  Text ->
-  m (Maybe (UserId, UserData))
-getUserByEmail readModelTVar emailAddr = do
-  model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup emailAddr model.emailIndex of
-    Nothing -> return Nothing
-    Just userId -> case Map.lookup userId model.users of
-      Nothing -> return Nothing
-      Just user -> return $ Just (userId, user)
+tgFromEntity :: UserTelegramEntity -> TelegramIdentity
+tgFromEntity t =
+  TelegramIdentity t.userTelegramEntityTelegramId t.userTelegramEntityUsername t.userTelegramEntityFirstName
 
--- | Retrieves a user by Telegram ID.
---
--- Returns 'Nothing' if no user is linked to this Telegram account.
---
--- Example:
--- >>> maybeUser <- getUserByTelegramId readModel telegramId
--- >>> case maybeUser of
--- >>>   Just (userId, user) -> loginUser userId
--- >>>   Nothing -> createNewUser
-getUserByTelegramId ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  TelegramId ->
-  m (Maybe (UserId, UserData))
-getUserByTelegramId readModelTVar tgId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup tgId model.telegramIndex of
-    Nothing -> return Nothing
-    Just userId -> case Map.lookup userId model.users of
-      Nothing -> return Nothing
-      Just user -> return $ Just (userId, user)
+-- | Load a user's full 'UserData' (its OAuth identities + Telegram identity).
+loadUserData :: (MonadIO m) => UserId -> UserEntity -> SqlPersistT m UserData
+loadUserData uid e = do
+  oauthRows <- selectList [UserOAuthEntityUserId ==. uid] []
+  mTg <- getBy (UniqueUserTelegramUser uid)
+  let oauths = [OAuthIdentity r.userOAuthEntityProvider r.userOAuthEntitySubject | Entity _ r <- oauthRows]
+  pure $ entToData e oauths (tgFromEntity . entityVal <$> mTg)
 
--- | Retrieves a user by OAuth identity.
---
--- Returns 'Nothing' if no user is linked to this OAuth account.
---
--- Example:
--- >>> maybeUser <- getUserByOAuthIdentity readModel Google "123456789"
--- >>> case maybeUser of
--- >>>   Just (userId, user) -> loginUser userId
--- >>>   Nothing -> promptToLinkOrCreate
-getUserByOAuthIdentity ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  OAuthProvider ->
-  Text ->
-  m (Maybe (UserId, UserData))
-getUserByOAuthIdentity readModelTVar provider subjectVal = do
-  model <- liftIO $ readTVarIO readModelTVar
-  case Map.lookup (provider, subjectVal) model.oauthIndex of
-    Nothing -> return Nothing
-    Just userId -> case Map.lookup userId model.users of
-      Nothing -> return Nothing
-      Just user -> return $ Just (userId, user)
+-- | Resolve a user id to @(id, data)@, or 'Nothing' if the row is absent.
+resolveUser :: (MonadIO m) => UserId -> SqlPersistT m (Maybe (UserId, UserData))
+resolveUser uid = do
+  mEnt <- getBy (UniqueUserId uid)
+  case mEnt of
+    Nothing -> pure Nothing
+    Just (Entity _ e) -> Just . (,) uid <$> loadUserData uid e
 
--- | Checks if a user exists in the read model.
-userExists ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  UserId ->
-  m Bool
-userExists readModelTVar userId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member userId model.users
+-- | User by id, with identities, or 'Nothing'.
+getUser :: (MonadIO m) => UserId -> SqlPersistT m (Maybe UserData)
+getUser uid = do
+  mEnt <- getBy (UniqueUserId uid)
+  traverse (loadUserData uid . entityVal) mEnt
 
--- | Checks if an email is already registered.
-emailExists ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  Text ->
-  m Bool
-emailExists readModelTVar emailAddr = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member emailAddr model.emailIndex
+-- | User by email (unique indexed lookup). Callers pass a concrete email; the
+-- @NULL@ emails of Telegram-only users never match.
+getUserByEmail :: (MonadIO m) => Text -> SqlPersistT m (Maybe (UserId, UserData))
+getUserByEmail emailAddr = do
+  mEnt <- selectFirst [UserEntityEmail ==. Just emailAddr] []
+  case mEnt of
+    Nothing -> pure Nothing
+    Just (Entity _ e) -> Just . (,) e.userEntityUserId <$> loadUserData e.userEntityUserId e
 
--- | Checks if a Telegram ID is already linked to a user.
-telegramIdLinked ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  TelegramId ->
-  m Bool
-telegramIdLinked readModelTVar tgId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.member tgId model.telegramIndex
+-- | User by Telegram id (unique indexed lookup).
+getUserByTelegramId :: (MonadIO m) => TelegramId -> SqlPersistT m (Maybe (UserId, UserData))
+getUserByTelegramId tgId = do
+  mTg <- getBy (UniqueUserTelegramId tgId)
+  case mTg of
+    Nothing -> pure Nothing
+    Just (Entity _ t) -> resolveUser t.userTelegramEntityUserId
 
--- -----------------------------------------------------------------------------
--- Helper Functions
--- -----------------------------------------------------------------------------
+-- | User by OAuth identity (unique @(provider, subject)@ indexed lookup).
+getUserByOAuthIdentity :: (MonadIO m) => OAuthProvider -> Text -> SqlPersistT m (Maybe (UserId, UserData))
+getUserByOAuthIdentity provider subjectVal = do
+  mO <- getBy (UniqueUserOAuth provider subjectVal)
+  case mO of
+    Nothing -> pure Nothing
+    Just (Entity _ o) -> resolveUser o.userOAuthEntityUserId
 
--- | Extracts the map of users from the read model.
---
--- This is useful for testing and debugging.
-userToMap ::
-  (MonadIO m) =>
-  TVar UserReadModel ->
-  m (Map UserId UserData)
-userToMap readModelTVar = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return model.users
+-- | Whether a user exists.
+userExists :: (MonadIO m) => UserId -> SqlPersistT m Bool
+userExists uid = isJust <$> getBy (UniqueUserId uid)
+
+-- | Whether an email is already registered.
+emailExists :: (MonadIO m) => Text -> SqlPersistT m Bool
+emailExists emailAddr = isJust <$> selectFirst [UserEntityEmail ==. Just emailAddr] []
+
+-- | Whether a Telegram id is already linked to a user.
+telegramIdLinked :: (MonadIO m) => TelegramId -> SqlPersistT m Bool
+telegramIdLinked tgId = isJust <$> getBy (UniqueUserTelegramId tgId)

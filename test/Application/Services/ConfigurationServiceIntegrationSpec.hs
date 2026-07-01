@@ -45,7 +45,7 @@ import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand)
 import RIO
 import Test.Hspec
-import Testkit.InMemoryEventStore (createTestAppEnv)
+import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 spec :: Spec
 spec = describe "ConfigurationService" $ do
@@ -105,7 +105,7 @@ cloneOnWriteSpec =
           let userId = authResult.userId
 
           -- Verify user initially has default config
-          maybeUser1 <- getUser env.userReadModel userId
+          maybeUser1 <- runDbIn env (getUser userId)
           case maybeUser1 of
             Nothing -> expectationFailure "User not found"
             Just userData1 ->
@@ -116,7 +116,7 @@ cloneOnWriteSpec =
           result `shouldSatisfy` isRight
 
           -- User should now have a different (cloned) config
-          maybeUser2 <- getUser env.userReadModel userId
+          maybeUser2 <- runDbIn env (getUser userId)
           case maybeUser2 of
             Nothing -> expectationFailure "User not found after clone"
             Just userData2 -> do
@@ -148,7 +148,7 @@ cloneOnWriteSpec =
           _ <- runRIO env $ changeDefaultCurrency userId EUR
 
           -- Get the cloned config ID
-          maybeUser1 <- getUser env.userReadModel userId
+          maybeUser1 <- runDbIn env (getUser userId)
           case maybeUser1 of
             Nothing -> expectationFailure "User not found"
             Just userData1 -> do
@@ -159,7 +159,7 @@ cloneOnWriteSpec =
               result `shouldSatisfy` isRight
 
               -- Config ID should still be the same
-              maybeUser2 <- getUser env.userReadModel userId
+              maybeUser2 <- runDbIn env (getUser userId)
               case maybeUser2 of
                 Nothing -> expectationFailure "User not found after second change"
                 Just userData2 ->
@@ -205,7 +205,7 @@ changeBaseCurrencySpec =
           result1 `shouldSatisfy` isRight
 
           -- Now issue a credit on the external account to mark it as having transactions
-          maybeUser <- getUser env.userReadModel userId
+          maybeUser <- runDbIn env (getUser userId)
           case maybeUser of
             Nothing -> expectationFailure "User not found"
             Just userData -> do
@@ -243,7 +243,7 @@ dictionaryCRUDSpec =
           result `shouldSatisfy` isRight
 
           -- Verify the entry exists in the cloned config
-          maybeUser <- getUser env.userReadModel userId
+          maybeUser <- runDbIn env (getUser userId)
           case maybeUser of
             Nothing -> expectationFailure "User not found"
             Just userData -> do
@@ -277,7 +277,7 @@ dictionaryCRUDSpec =
               renameResult `shouldSatisfy` isRight
 
               -- Verify the rename
-              maybeUser <- getUser env.userReadModel userId
+              maybeUser <- runDbIn env (getUser userId)
               case maybeUser of
                 Nothing -> expectationFailure "User not found"
                 Just userData -> do
@@ -314,7 +314,7 @@ dictionaryCRUDSpec =
               removeResult `shouldSatisfy` isRight
 
               -- Verify it's gone
-              maybeUser <- getUser env.userReadModel userId
+              maybeUser <- runDbIn env (getUser userId)
               case maybeUser of
                 Nothing -> expectationFailure "User not found"
                 Just userData -> do
@@ -342,7 +342,7 @@ dictionaryCRUDSpec =
           _ <- runRIO env $ changeDefaultCurrency userId USD
 
           -- Now get the cloned config and find its income entries
-          maybeUser <- getUser env.userReadModel userId
+          maybeUser <- runDbIn env (getUser userId)
           case maybeUser of
             Nothing -> expectationFailure "User not found"
             Just userData -> do
@@ -392,7 +392,7 @@ registrationAssignsDefaultConfigSpec =
       case regResult of
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
-          maybeUser <- getUser env.userReadModel authResult.userId
+          maybeUser <- runDbIn env (getUser authResult.userId)
           case maybeUser of
             Nothing -> expectationFailure "User not found in read model"
             Just userData ->

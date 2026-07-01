@@ -288,7 +288,10 @@ authoritative owner field.
 3. **Transaction** — `transactions` + `transaction_labels`; removes the
    `listTransactions` and reporting scans (and a per-account
    `transactionDatesForAccount` for the balance-as-of fold). ✅ done.
-4. **User**, **Configuration**, **ExchangeRate** — fast-follow.
+4. **User** — `users` + `user_oauth` + `user_telegram`; email / Telegram /
+   OAuth lookups become indexed unique queries (removes the in-memory index
+   maps). ✅ done.
+5. **Configuration**, **ExchangeRate** — fast-follow.
 
 The spec describes the full target architecture; the implementation plan executes
 it phase by phase. Phases 1–3 are the committed scope of this effort; 4 is

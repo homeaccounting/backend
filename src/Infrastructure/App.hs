@@ -121,7 +121,6 @@ where
 import Application.LinkCodeStore (LinkCodeStore)
 import Application.ReadModels.Configuration (ConfigurationReadModel)
 import Application.ReadModels.ExchangeRate (ExchangeRateReadModel)
-import Application.ReadModels.User (UserReadModel)
 import Control.Concurrent.STM (retry)
 import Control.Monad.Logger (LoggingT, filterLogger, runStdoutLoggingT)
 import qualified Control.Monad.Logger as ML
@@ -177,8 +176,8 @@ import Telegram.Types (BotState)
 --  - eventStoreWriter: Event store writer with event bus
 --  - eventStoreReader: Event store reader for loading aggregates
 --  - globalEventStoreReader: Global event reader for read models
---  - userReadModel / configurationReadModel / exchangeRateReadModel: in-memory
---    read models (Account, Transaction, BankImport are persistent SQL models)
+--  - configurationReadModel / exchangeRateReadModel: in-memory read models
+--    (User, Account, Transaction, BankImport are persistent SQL models)
 --
 -- Design Notes:
 --  - All fields are strict (!) for performance
@@ -202,8 +201,6 @@ data AppEnv = AppEnv
     eventStoreReader :: !(AccountingVersionedEventStoreReader IO),
     -- | Global event store reader for read models
     globalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
-    -- | In-memory user read model (STM)
-    userReadModel :: !(TVar UserReadModel),
     -- | In-memory configuration read model (STM)
     configurationReadModel :: !(TVar ConfigurationReadModel),
     -- | JWT authentication configuration
@@ -295,7 +292,6 @@ initializeAppEnv ::
   AccountingTaggedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
   AccountingGlobalEventStoreReader IO ->
-  TVar UserReadModel ->
   TVar ConfigurationReadModel ->
   JWTConfig ->
   OAuthConfig ->
@@ -307,7 +303,7 @@ initializeAppEnv ::
   BankingEnv ->
   LinkCodeStore ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader userReadModel configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv linkCodeStore' =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv exchangeRateReadModel versionInfo bankingEnv linkCodeStore' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -316,7 +312,6 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader userRea
       eventStoreWriter = writer,
       eventStoreReader = reader,
       globalEventStoreReader = globalReader,
-      userReadModel = userReadModel,
       configurationReadModel = configurationReadModel,
       jwtConfig = jwtConfig,
       oauthConfig = oauthConfig,
@@ -465,16 +460,14 @@ instance HasEventStore AppEnv where
 -- 'runDb', not through this class.)
 --
 -- Example:
--- >>> getUser :: (MonadReader env m, HasReadModel env, MonadIO m) => UserId -> m (Maybe UserData)
--- >>> getUser userId = do
--- >>>   readModel <- view userReadModelL
--- >>>   liftIO $ getUser readModel userId
+-- >>> getConfig :: (MonadReader env m, HasReadModel env, MonadIO m) => m ConfigurationData
+-- >>> getConfig = do
+-- >>>   readModel <- view configurationReadModelL
+-- >>>   ...
 class HasReadModel env where
-  userReadModelL :: Lens' env (TVar UserReadModel)
   configurationReadModelL :: Lens' env (TVar ConfigurationReadModel)
 
 instance HasReadModel AppEnv where
-  userReadModelL = lens (.userReadModel) (\x y -> x {userReadModel = y})
   configurationReadModelL = lens (.configurationReadModel) (\x y -> x {configurationReadModel = y})
 
 -- | Type class for environments that have auth configuration access.
