@@ -1,4 +1,3 @@
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -10,130 +9,37 @@
 -- Closes the loop that motivates the feature: "rates published in an old
 -- process must be available in a new one". The test:
 --
---   1. Runs 'publishRates' once against an in-memory tagged store.
---   2. Discards the read model that observed the live publish.
---   3. Builds a fresh 'ExchangeRateReadModel' and replays every
---      persisted event through 'handleExchangeRateEvents'.
---   4. Asserts 'lookupHistoricalRate' on the fresh read model returns
---      the originally published rate.
---
--- The harness mirrors the production wiring used in
--- 'Testkit.InMemoryEventStore.createTestAppEnv' (tagged writer +
--- synchronous publisher), but keeps the writer/reader pieces local so
--- the test can construct a second read model against the same backing
--- store without touching 'AppEnv'.
+--   1. Runs 'publishRates' once against the SQLite-backed test env, whose
+--      writer projects the persistent @exchange_rates@ read model in the
+--      append transaction.
+--   2. Wipes the read-model table ('resetExchangeRate') — simulating a fresh
+--      process whose read model starts empty — and confirms the lookup misses.
+--   3. Replays every persisted event through 'applyExchangeRateEvent' (the
+--      mechanism @Main.hs@ uses at startup via 'catchUpReadModel').
+--   4. Asserts 'lookupHistoricalRate' again returns the originally published
+--      rate: the event store is the source of truth.
 module Integration.ExchangeRatePersistenceSpec (spec) where
 
 import Application.ReadModels.ExchangeRate
-  ( createExchangeRateReadModel,
-    handleExchangeRateEvents,
+  ( applyExchangeRateEvent,
     lookupHistoricalRate,
+    resetExchangeRate,
   )
 import Application.Services.ExchangeRatePublisher
   ( providerStreamId,
     publishRates,
   )
 import Data.Time (getCurrentTime, utctDay)
-import qualified Data.UUID as UUID
 import Domain.Core.Types (Currency (..), exchangeRateValue)
 import Domain.ExchangeRate.Events (ExchangeRateMap, Provider)
-import Domain.Models (AccountingEvent)
-import Eventium
-  ( Codec (..),
-    EventHandler (..),
-    EventStoreReader (..),
-    EventStoreWriter (..),
-    EventVersion,
-    TaggedEvent (..),
-    allEvents,
-    publishingTaggedCodecEventStoreWriter,
-    synchronousPublisher,
-  )
-import Eventium.Store.Memory (tvarTaggedEventStoreWriter)
-import Eventium.Store.Postgresql (JSONString, jsonStringCodec)
-import Infrastructure.Eventium
-  ( AccountingGlobalEventStoreReader,
-    AccountingTaggedEventStoreWriter,
-    AccountingVersionedEventStoreReader,
-  )
+import Eventium (EventStoreReader (..), allEvents)
+import Infrastructure.App (AppEnv (..))
 import Infrastructure.ExchangeRate.Provider (RateProvider (..))
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
 import Testkit.Helpers (mockExchangeRate)
-import Testkit.InMemoryEventStore
-  ( InMemoryEventStores (..),
-    createInMemoryEventStores,
-  )
-
--- -----------------------------------------------------------------------------
--- Harness
--- -----------------------------------------------------------------------------
-
--- | Everything a publish-then-replay test needs from the in-memory
--- store. The tagged writer is backed by 'tvarTaggedEventStoreWriter';
--- the replayed read model reads the business date from the payload
--- field 'ExchangeRatesPublished.at'.
-data PersistenceHarness = PersistenceHarness
-  { persistWriter :: !(AccountingTaggedEventStoreWriter IO),
-    persistReader :: !(AccountingVersionedEventStoreReader IO),
-    persistGlobalReader :: !(AccountingGlobalEventStoreReader IO)
-  }
-
-mkHarness :: IO PersistenceHarness
-mkHarness = do
-  stores <- createInMemoryEventStores
-  let taggedBaseWriter =
-        liftSTMTaggedEventWriter (tvarTaggedEventStoreWriter stores.inMemoryEventMap)
-      -- No subscribers: the live read model is intentionally absent so
-      -- the test cannot accidentally pass by reading from a model
-      -- populated during publish.
-      writer =
-        publishingTaggedCodecEventStoreWriter
-          (jsonStringCodec :: Codec AccountingEvent JSONString)
-          (decodingTaggedWriter taggedBaseWriter)
-          (synchronousPublisher (EventHandler $ \_ -> pure ()))
-  pure
-    PersistenceHarness
-      { persistWriter = writer,
-        persistReader = liftSTMVersionedReader stores.inMemoryReader,
-        persistGlobalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
-      }
-
-liftSTMTaggedEventWriter ::
-  EventStoreWriter UUID.UUID EventVersion STM (TaggedEvent AccountingEvent) ->
-  EventStoreWriter UUID.UUID EventVersion IO (TaggedEvent AccountingEvent)
-liftSTMTaggedEventWriter (EventStoreWriter stmWrite) =
-  EventStoreWriter $ \uuid expectedVersion events ->
-    atomically $ stmWrite uuid expectedVersion events
-
-liftSTMVersionedReader ::
-  AccountingVersionedEventStoreReader STM ->
-  AccountingVersionedEventStoreReader IO
-liftSTMVersionedReader (EventStoreReader stmRead) =
-  EventStoreReader $ \range -> atomically $ stmRead range
-
-liftSTMGlobalReader ::
-  AccountingGlobalEventStoreReader STM ->
-  AccountingGlobalEventStoreReader IO
-liftSTMGlobalReader (EventStoreReader stmRead) =
-  EventStoreReader $ \range -> atomically $ stmRead range
-
--- | Preserve metadata when routing serialized tagged events back down
--- to the tagged domain-event writer. Matches the pattern in
--- 'Application.Services.ExchangeRatePublisherSpec'.
-decodingTaggedWriter ::
-  (Monad m) =>
-  EventStoreWriter UUID.UUID EventVersion m (TaggedEvent AccountingEvent) ->
-  AccountingTaggedEventStoreWriter m
-decodingTaggedWriter (EventStoreWriter write) =
-  EventStoreWriter $ \uuid expectedVersion taggedEvents ->
-    case traverse decodeTagged taggedEvents of
-      Nothing -> error "decodingTaggedWriter: codec decode failure"
-      Just events -> write uuid expectedVersion events
-  where
-    decodeTagged (TaggedEvent meta encoded) =
-      TaggedEvent meta <$> (jsonStringCodec :: Codec AccountingEvent JSONString).decode encoded
+import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Provider stub
@@ -146,55 +52,49 @@ fixedRateProvider name rates =
       fetchRates = pure (Right rates)
     }
 
+-- | Publish @prov@'s rates through the env's writer/reader/pool.
+publish :: AppEnv -> RateProvider -> IO (Either Text ())
+publish env prov = publishRates prov env.eventStoreWriter env.eventStoreReader env.dbPool
+
 -- -----------------------------------------------------------------------------
 -- Spec
 -- -----------------------------------------------------------------------------
 
 spec :: Spec
 spec = describe "Integration.ExchangeRatePersistence" $ do
-  it "replays a persisted ExchangeRatesPublishedEvent into a fresh read model" $ do
-    PersistenceHarness writer reader globalReader <- mkHarness
+  it "restores a wiped read model by replaying persisted events" $ do
+    env <- createTestAppEnv
     today <- utctDay <$> getCurrentTime
 
-    -- 1. First "process": publish rates through the event store. The
-    -- live read model is intentionally absent from the synchronous bus
-    -- (see 'mkHarness'); the event must therefore be observable only
-    -- via replay.
+    -- 1. Publish rates. The writer projects the @exchange_rates@ table
+    -- synchronously in the append transaction.
     let published = mockExchangeRate USD UAH 41
         rates = Map.singleton (USD, UAH) published
         prov = fixedRateProvider "ecb" rates
-    liveRM <- createExchangeRateReadModel
-    result <- publishRates prov writer reader liveRM
+    result <- publish env prov
     result `shouldBe` Right ()
 
-    -- Sanity: liveRM never saw the event, because the publishing
-    -- writer was wired with a no-op subscriber.
-    preReplay <- lookupHistoricalRate liveRM "ecb" today USD UAH
-    preReplay `shouldBe` Nothing
+    live <- runDbIn env (lookupHistoricalRate "ecb" today USD UAH)
+    (exchangeRateValue <$> live) `shouldBe` Just (exchangeRateValue published)
 
-    -- 2. Second "process": fresh read model, replay from the global
-    -- stream (the same mechanism Main.hs uses at startup via
-    -- 'replayReadModels').
-    freshRM <- createExchangeRateReadModel
-    let EventStoreReader readGlobal = globalReader
+    -- 2. Simulate a fresh process whose read model is empty.
+    runDbIn env resetExchangeRate
+    wiped <- runDbIn env (lookupHistoricalRate "ecb" today USD UAH)
+    wiped `shouldBe` Nothing
+
+    -- 3. Replay from the global stream (as Main.hs does at startup).
+    let EventStoreReader readGlobal = env.globalEventStoreReader
     globalEvents <- readGlobal (allEvents ())
-    (handleExchangeRateEvents freshRM).handleEvent globalEvents
+    runDbIn env (mapM_ applyExchangeRateEvent globalEvents)
 
-    -- 3. The fresh model must now resolve the rate that was fetched
-    -- by the provider stub in the first process.
-    postReplay <- lookupHistoricalRate freshRM "ecb" today USD UAH
-    case postReplay of
-      Nothing ->
-        expectationFailure
-          "Expected freshly replayed read model to know today's USD→UAH rate"
-      Just er ->
-        exchangeRateValue er `shouldBe` exchangeRateValue published
+    -- 4. The rebuilt read model resolves the originally published rate.
+    restored <- runDbIn env (lookupHistoricalRate "ecb" today USD UAH)
+    (exchangeRateValue <$> restored) `shouldBe` Just (exchangeRateValue published)
 
   it "persists exactly one event on the provider's stream" $ do
-    PersistenceHarness writer reader _globalReader <- mkHarness
-    liveRM <- createExchangeRateReadModel
+    env <- createTestAppEnv
     let prov = fixedRateProvider "ecb" (Map.singleton (USD, UAH) (mockExchangeRate USD UAH 41))
-    _ <- publishRates prov writer reader liveRM
-    let EventStoreReader readStream = reader
+    _ <- publish env prov
+    let EventStoreReader readStream = env.eventStoreReader
     persisted <- readStream (allEvents (providerStreamId "ecb"))
     length persisted `shouldBe` 1

@@ -15,10 +15,12 @@ import Domain.Core.Types
   ( AccountRole (..),
     AccountStatus (..),
     AccountType (..),
+    Currency (..),
     ExternalTransactionId,
     defaultBankAccount,
     unsafeExternalTransactionId,
   )
+import Domain.ExchangeRate.Events (Provider (..))
 import Domain.Transaction.Projection (StatusKind (..))
 import Infrastructure.Database.Orphans ()
 import RIO
@@ -46,6 +48,10 @@ genExternalTransactionId =
   unsafeExternalTransactionId
     . T.pack
     <$> listOf1 (suchThat arbitrary (/= '\NUL'))
+
+-- | Generate a non-empty 'Provider' name.
+genProvider :: Gen Provider
+genProvider = Provider . T.pack <$> listOf1 (suchThat arbitrary (/= '\NUL'))
 
 spec :: Spec
 spec = describe "Infrastructure.Database.Orphans" $ do
@@ -112,5 +118,14 @@ spec = describe "Infrastructure.Database.Orphans" $ do
 
   prop "OAuthProvider round-trips through PersistValue (JSON token)"
     $ forAll genOAuthProvider
+    $ \p ->
+      fromPersistValue (toPersistValue p) `shouldBe` Right p
+
+  it "Currency round-trips through PersistValue (JSON token)" $ do
+    let roundTrips x = fromPersistValue (toPersistValue x) `shouldBe` Right x
+    mapM_ roundTrips [UAH, USD, EUR, GBP]
+
+  prop "Provider round-trips through PersistValue (text column)"
+    $ forAll genProvider
     $ \p ->
       fromPersistValue (toPersistValue p) `shouldBe` Right p

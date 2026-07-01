@@ -278,7 +278,6 @@ mkAppEnv withProcessManager = do
         telegramConfig = config.telegram,
         botState = botState,
         telegramClientEnv = Nothing,
-        exchangeRateReadModel = readModels.exchangeRate,
         versionInfo = testVersionInfo,
         bankingEnv =
           BankingEnv

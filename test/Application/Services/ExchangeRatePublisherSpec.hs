@@ -1,29 +1,19 @@
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
 -- Module      : Application.Services.ExchangeRatePublisherSpec
--- Description : Failing (red) unit tests for the exchange-rate publisher service.
+-- Description : Unit tests for the exchange-rate publisher service.
 --
--- These tests describe the behaviour of
--- @Application.Services.ExchangeRatePublisher@ before it is implemented.
--- The module does not yet exist, so this spec intentionally fails at
--- the import / compile step — that is the success condition for Task 6
--- of the persistable-exchange-rates plan.
---
--- Wiring mirrors production: the in-memory tagged writer is composed
--- with 'synchronousPublisher' so that 'ExchangeRatesPublishedEvent's
--- written by 'publishRates' are delivered to the read-model TVar
--- automatically, enabling the idempotence assertion on a second call.
+-- Wiring mirrors production: 'createTestAppEnv' builds a SQLite-backed env
+-- whose event-store writer synchronously projects the persistent
+-- @exchange_rates@ read model in the append transaction. So an
+-- 'ExchangeRatesPublishedEvent' written by 'publishRates' immediately lands
+-- in the table the publisher's idempotency guard ('ratesPublishedOn')
+-- queries — enabling the second-call idempotence assertion.
 module Application.Services.ExchangeRatePublisherSpec (spec) where
 
-import Application.ReadModels.ExchangeRate
-  ( ExchangeRateReadModel,
-    createExchangeRateReadModel,
-    handleExchangeRateEvents,
-  )
 import Application.Services.ExchangeRatePublisher
   ( providerStreamId,
     publishRates,
@@ -34,115 +24,19 @@ import Domain.Core.Types (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRateMap, ExchangeRatesPublished (..), Provider)
 import Domain.Models (AccountingEvent (..))
 import Eventium
-  ( Codec (..),
-    EventHandler (..),
-    EventStoreReader (..),
-    EventStoreWriter (..),
+  ( EventStoreReader (..),
     EventVersion,
     StreamEvent (..),
-    TaggedEvent (..),
     allEvents,
-    emptyMetadata,
-    publishingTaggedCodecEventStoreWriter,
-    synchronousPublisher,
   )
-import Eventium.Store.Memory (tvarTaggedEventStoreWriter)
-import Eventium.Store.Postgresql (JSONString, jsonStringCodec)
-import Infrastructure.Eventium
-  ( AccountingGlobalEventStoreReader,
-    AccountingTaggedEventStoreWriter,
-    AccountingVersionedEventStoreReader,
-  )
+import Infrastructure.App (AppEnv (..))
+import Infrastructure.Eventium (AccountingVersionedEventStoreReader)
 import Infrastructure.ExchangeRate.Provider (RateProvider (..))
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
 import Testkit.Helpers (mockExchangeRate)
-import Testkit.InMemoryEventStore
-  ( InMemoryEventStores (..),
-    createInMemoryEventStores,
-  )
-
--- -----------------------------------------------------------------------------
--- Spec harness — inline to avoid modifying Testkit modules.
--- -----------------------------------------------------------------------------
-
--- | Bundle the IO-lifted event-store pieces the publisher needs plus
--- the read-model TVar that the tagged writer feeds synchronously.
-data PublisherHarness = PublisherHarness
-  { harnessWriter :: !(AccountingTaggedEventStoreWriter IO),
-    harnessReader :: !(AccountingVersionedEventStoreReader IO),
-    harnessGlobalReader :: !(AccountingGlobalEventStoreReader IO),
-    harnessReadModel :: !(TVar ExchangeRateReadModel)
-  }
-
--- | Build a self-contained in-memory harness. The tagged writer is
--- wired through 'synchronousPublisher' so that every successfully
--- persisted 'ExchangeRatesPublishedEvent' also updates the read model
--- TVar — matching the production wiring in
--- 'Testkit.InMemoryEventStore.createTestAppEnv'.
-mkHarness :: IO PublisherHarness
-mkHarness = do
-  stores <- createInMemoryEventStores
-  rm <- createExchangeRateReadModel
-  let reader = liftSTMVersionedReader stores.inMemoryReader
-      globalReader = liftSTMGlobalReader stores.inMemoryGlobalReader
-      taggedBaseWriter =
-        liftSTMTaggedEventWriter (tvarTaggedEventStoreWriter stores.inMemoryEventMap)
-      rmHandler = EventHandler $ \versionedEvent ->
-        let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-         in (handleExchangeRateEvents rm).handleEvent [globalEvent]
-      writer =
-        publishingTaggedCodecEventStoreWriter
-          (jsonStringCodec :: Codec AccountingEvent JSONString)
-          (decodingTaggedWriter taggedBaseWriter)
-          (synchronousPublisher rmHandler)
-  pure
-    PublisherHarness
-      { harnessWriter = writer,
-        harnessReader = reader,
-        harnessGlobalReader = globalReader,
-        harnessReadModel = rm
-      }
-
--- | Lift an STM tagged (AccountingEvent) writer to IO. The tagged
--- variant preserves 'EventMetadata' through to the in-memory store —
--- unlike the versioned writer used in the broader testkit which
--- synthesises empty metadata.
-liftSTMTaggedEventWriter ::
-  EventStoreWriter UUID.UUID EventVersion STM (TaggedEvent AccountingEvent) ->
-  EventStoreWriter UUID.UUID EventVersion IO (TaggedEvent AccountingEvent)
-liftSTMTaggedEventWriter (EventStoreWriter stmWrite) =
-  EventStoreWriter $ \uuid expectedVersion events ->
-    atomically $ stmWrite uuid expectedVersion events
-
-liftSTMVersionedReader ::
-  AccountingVersionedEventStoreReader STM ->
-  AccountingVersionedEventStoreReader IO
-liftSTMVersionedReader (EventStoreReader stmRead) =
-  EventStoreReader $ \range -> atomically $ stmRead range
-
-liftSTMGlobalReader ::
-  AccountingGlobalEventStoreReader STM ->
-  AccountingGlobalEventStoreReader IO
-liftSTMGlobalReader (EventStoreReader stmRead) =
-  EventStoreReader $ \range -> atomically $ stmRead range
-
--- | Adapt a tagged-domain-event writer to accept serialized
--- 'TaggedEvent' payloads by decoding each payload through the JSON
--- codec while preserving the associated 'EventMetadata'.
-decodingTaggedWriter ::
-  (Monad m) =>
-  EventStoreWriter UUID.UUID EventVersion m (TaggedEvent AccountingEvent) ->
-  AccountingTaggedEventStoreWriter m
-decodingTaggedWriter (EventStoreWriter write) =
-  EventStoreWriter $ \uuid expectedVersion taggedEvents ->
-    case traverse decodeTagged taggedEvents of
-      Nothing -> error "decodingTaggedWriter: codec decode failure"
-      Just events -> write uuid expectedVersion events
-  where
-    decodeTagged (TaggedEvent meta encoded) =
-      TaggedEvent meta <$> (jsonStringCodec :: Codec AccountingEvent JSONString).decode encoded
+import Testkit.InMemoryEventStore (createTestAppEnv)
 
 -- -----------------------------------------------------------------------------
 -- Provider stubs
@@ -165,6 +59,11 @@ failingRateProvider name err =
 -- | One-pair rate map used across tests.
 sampleRates :: ExchangeRateMap
 sampleRates = Map.singleton (USD, UAH) (mockExchangeRate USD UAH 41)
+
+-- | Publish @prov@'s rates against the env's writer/reader/pool — the same
+-- three arguments 'publishRates' takes in production.
+publish :: AppEnv -> RateProvider -> IO (Either Text ())
+publish env prov = publishRates prov env.eventStoreWriter env.eventStoreReader env.dbPool
 
 -- | Count the events currently persisted on a given stream.
 streamEventCount ::
@@ -193,14 +92,14 @@ spec :: Spec
 spec = describe "Application.Services.ExchangeRatePublisher" $ do
   describe "publishRates" $ do
     it "appends exactly one ExchangeRatesPublishedEvent to the provider's stream on first publish" $ do
-      h <- mkHarness
+      env <- createTestAppEnv
       let prov = fixedRateProvider "ecb" sampleRates
-      result <- publishRates prov h.harnessWriter h.harnessReader h.harnessReadModel
+      result <- publish env prov
       result `shouldBe` Right ()
       let streamId = providerStreamId "ecb"
-      count <- streamEventCount h.harnessReader streamId
+      count <- streamEventCount env.eventStoreReader streamId
       count `shouldBe` 1
-      persisted <- singleStreamEvent h.harnessReader streamId
+      persisted <- singleStreamEvent env.eventStoreReader streamId
       case persisted.payload of
         ExchangeRatesPublishedEvent published -> do
           published.provider `shouldBe` "ecb"
@@ -211,11 +110,11 @@ spec = describe "Application.Services.ExchangeRatePublisher" $ do
             <> show other
 
     it "stamps the persisted event's at field to today (UTC)" $ do
-      h <- mkHarness
+      env <- createTestAppEnv
       today <- utctDay <$> getCurrentTime
       let prov = fixedRateProvider "ecb" sampleRates
-      _ <- publishRates prov h.harnessWriter h.harnessReader h.harnessReadModel
-      persisted <- singleStreamEvent h.harnessReader (providerStreamId "ecb")
+      _ <- publish env prov
+      persisted <- singleStreamEvent env.eventStoreReader (providerStreamId "ecb")
       case persisted.payload of
         ExchangeRatesPublishedEvent published -> published.at `shouldBe` today
         other ->
@@ -224,23 +123,23 @@ spec = describe "Application.Services.ExchangeRatePublisher" $ do
             <> show other
 
     it "is idempotent for the same day — second call returns Left and does not re-append" $ do
-      h <- mkHarness
+      env <- createTestAppEnv
       let prov = fixedRateProvider "ecb" sampleRates
-      firstResult <- publishRates prov h.harnessWriter h.harnessReader h.harnessReadModel
+      firstResult <- publish env prov
       firstResult `shouldBe` Right ()
-      -- The read model was updated synchronously by the event bus when
-      -- the first publish succeeded (see 'mkHarness'); no manual prime.
-      secondResult <- publishRates prov h.harnessWriter h.harnessReader h.harnessReadModel
+      -- The @exchange_rates@ table was updated synchronously in the append
+      -- transaction when the first publish succeeded; no manual prime.
+      secondResult <- publish env prov
       secondResult `shouldSatisfy` isLeft
-      count <- streamEventCount h.harnessReader (providerStreamId "ecb")
+      count <- streamEventCount env.eventStoreReader (providerStreamId "ecb")
       count `shouldBe` 1
 
     it "propagates provider failures and writes nothing" $ do
-      h <- mkHarness
+      env <- createTestAppEnv
       let prov = failingRateProvider "ecb" "boom"
-      result <- publishRates prov h.harnessWriter h.harnessReader h.harnessReadModel
+      result <- publish env prov
       result `shouldBe` Left "boom"
-      count <- streamEventCount h.harnessReader (providerStreamId "ecb")
+      count <- streamEventCount env.eventStoreReader (providerStreamId "ecb")
       count `shouldBe` 0
 
   describe "providerStreamId" $ do

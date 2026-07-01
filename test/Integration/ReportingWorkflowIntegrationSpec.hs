@@ -226,8 +226,8 @@ createRegularAccount env ownerUuid cur initial = do
 
 -- | Publish a single fixed rate for the test provider ("ecb", per
 -- 'Testkit.InMemoryEventStore.testAppConfig') through the event store. The
--- synchronous bus routes the resulting 'ExchangeRatesPublishedEvent' into the
--- env's exchange-rate read model, which is what 'netWorth' consults.
+-- synchronous writer projects the resulting 'ExchangeRatesPublishedEvent' into
+-- the persistent @exchange_rates@ read model, which is what 'netWorth' consults.
 publishFixedRate :: AppEnv -> Currency -> Currency -> Rational -> IO ()
 publishFixedRate env src tgt rate = do
   let rates :: ExchangeRateMap
@@ -242,7 +242,7 @@ publishFixedRate env src tgt rate = do
       prov
       env.eventStoreWriter
       env.eventStoreReader
-      env.exchangeRateReadModel
+      env.dbPool
   result `shouldBe` Right ()
 
 -- | Assert a transaction reached 'Completed' in the read model.

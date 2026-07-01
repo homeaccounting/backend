@@ -49,7 +49,7 @@ import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
 import Domain.Transaction.Commands (InitiateTransaction (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
+import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
@@ -186,7 +186,7 @@ seedExchangeRate env rates = do
       versionedEvent = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
       globalEvent :: GlobalStreamEvent AccountingEvent
       globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-  (ExchangeRateRM.handleExchangeRateEvents env.exchangeRateReadModel).handleEvent [globalEvent]
+  runDbIn env (ExchangeRateRM.applyExchangeRateEvent globalEvent)
 
 -- | Construct a 'Money' value via the smart constructor.
 money :: Currency -> Rational -> Money

@@ -33,7 +33,7 @@ module Testkit.Fixtures
 where
 
 import qualified Application.ReadModels.Configuration as ConfigRM
-import Application.ReadModels.ExchangeRate (handleExchangeRateEvents)
+import Application.ReadModels.ExchangeRate (applyExchangeRateEvent)
 import Application.ReadModels.User (UserData (..), applyUserEvent, getUser)
 import qualified Application.Services.AccountService as AccountService
 import Application.Services.AuthService (AuthResult (..), register)
@@ -70,7 +70,7 @@ import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.User.Events (UserRegistered (..))
-import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
+import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import Infrastructure.Eventium (applyAccountCommand)
@@ -178,7 +178,7 @@ seedExchangeRates env rates = do
       versioned = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
       global :: GlobalStreamEvent AccountingEvent
       global = StreamEvent () 0 (emptyMetadata mempty) versioned
-  (handleExchangeRateEvents env.exchangeRateReadModel).handleEvent [global]
+  runDbIn env (applyExchangeRateEvent global)
 
 -- | Resolve the user's auto-created External account id. Fails the test
 -- if the user is missing from the read model.

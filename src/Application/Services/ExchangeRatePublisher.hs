@@ -10,8 +10,8 @@
 -- Writes 'ExchangeRatesPublishedEvent' to the event store so that
 -- historical rates survive restarts. Idempotent within a single UTC day
 -- per provider: the second call on the same day is a no-op, detected by
--- the read-model TVar which is updated synchronously by the event bus
--- after the first successful write.
+-- the @exchange_rates@ read-model table which is updated synchronously in
+-- the event-append transaction after the first successful write.
 --
 -- The business date is carried in the payload as 'ExchangeRatesPublished.at',
 -- set to today's UTC day at publish time.
@@ -22,14 +22,10 @@ module Application.Services.ExchangeRatePublisher
   )
 where
 
-import Application.ReadModels.ExchangeRate
-  ( ExchangeRateReadModel (..),
-  )
+import Application.ReadModels.ExchangeRate (ratesPublishedOn)
 import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
 import Data.Time
-  ( Day,
-    UTCTime (..),
+  ( UTCTime (..),
     addDays,
     diffUTCTime,
     getCurrentTime,
@@ -42,6 +38,7 @@ import Domain.ExchangeRate.Events (ExchangeRatesPublished (..), Provider, unProv
 import Domain.Models (AccountingEvent (..))
 import Eventium (EventStoreWriter (..), ExpectedPosition (..), metadataEnrichingEventStoreWriter)
 import Eventium.Store.Postgresql (jsonStringCodec)
+import Infrastructure.Database (ConnectionPool, runDbDirect)
 import Infrastructure.Eventium
   ( AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
@@ -86,21 +83,21 @@ providerStreamId prov =
 --     per-provider stream ('providerStreamId') with @at = today@ in the
 --     payload.
 --
--- Idempotence relies on the tagged writer being composed with a
--- synchronous publisher that updates the read-model TVar before this
--- function returns — the same wiring used in production
--- ('Infrastructure.Eventium.createReadModelHandlers' via
--- 'publishingTaggedCodecEventStoreWriter').
+-- Idempotence relies on the tagged writer being composed with the
+-- synchronous read-model publisher that projects the @exchange_rates@ table
+-- in the event-append transaction before this function returns — the same
+-- wiring used in production ('Application.ReadModels.Persist' driven by the
+-- event-store writer in @app/Main.hs@).
 publishRates ::
   (MonadIO m) =>
   RateProvider ->
   AccountingTaggedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
-  TVar ExchangeRateReadModel ->
+  ConnectionPool ->
   m (Either Text ())
-publishRates prov writer _reader rm = liftIO $ do
+publishRates prov writer _reader pool = liftIO $ do
   today <- utctDay <$> getCurrentTime
-  alreadyPublished <- isPublishedForToday rm prov.providerName today
+  alreadyPublished <- runDbDirect pool (ratesPublishedOn prov.providerName today)
   if alreadyPublished
     then pure (Left "Rates already published for today")
     else do
@@ -124,15 +121,6 @@ publishRates prov writer _reader rm = liftIO $ do
             Right _ -> pure (Right ())
             Left e -> pure (Left (tshow e))
 
--- | True if the read model has already recorded rates for
--- @prov@ on @day@.
-isPublishedForToday :: TVar ExchangeRateReadModel -> Provider -> Day -> IO Bool
-isPublishedForToday rm prov day = do
-  model <- readTVarIO rm
-  pure $ case Map.lookup prov model.historyByProvider of
-    Nothing -> False
-    Just byDay -> Map.member day byDay
-
 -- -----------------------------------------------------------------------------
 -- Background Scheduler
 -- -----------------------------------------------------------------------------
@@ -152,15 +140,15 @@ spawnRatePublisher ::
   RateProvider ->
   AccountingTaggedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
-  TVar ExchangeRateReadModel ->
+  ConnectionPool ->
   LogFunc ->
   IO (Async ())
-spawnRatePublisher prov writer reader rm logFunc =
+spawnRatePublisher prov writer reader pool logFunc =
   async
     $ runRIO logFunc
     $ forever
     $ do
-      outcome <- liftIO $ tryAny (publishRates prov writer reader rm)
+      outcome <- liftIO $ tryAny (publishRates prov writer reader pool)
       case outcome of
         Left e ->
           logError $ "rate publish failed: " <> displayShow e

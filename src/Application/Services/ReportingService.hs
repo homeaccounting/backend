@@ -45,7 +45,7 @@ where
 
 import Application.ReadModels.Account (AccountData (..), getAccessibleAccountIds, getMyAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..))
-import Application.ReadModels.ExchangeRate (ExchangeRateReadModel, lookupHistoricalRate)
+import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), reportableTransactions, touchesVisible)
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
@@ -55,7 +55,7 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
 import Domain.ExchangeRate.Events (Provider)
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Infrastructure.App (AppM, appConfigL, exchangeRateReadModelL, runDb)
+import Infrastructure.App (AppM, appConfigL, runDb)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
 import RIO.Time (UTCTime)
@@ -230,28 +230,26 @@ netWorth userId = do
   base <- resolveBaseCurrency userId
   myAccts <- runDb (getMyAccounts userId)
   let owned = ownedRegularOpened userId (Map.toList myAccts)
-  rm <- view exchangeRateReadModelL
   cfg <- view appConfigL
   now <- liftIO getCurrentTime
   let provider = cfg.exchangeRate.provider
       day = utctDay now
   runExceptT $ do
     rows <- forM owned $ \(aid, ad) -> do
-      baseBal <- toBase rm provider day base ad.balance
+      baseBal <- toBase provider day base ad.balance
       pure (aid, ad.balance, baseBal)
     pure (unsafeMoney base (sum [unMoney bb | (_, _, bb) <- rows]), rows)
   where
     toBase ::
-      TVar ExchangeRateReadModel ->
       Provider ->
       Day ->
       Currency ->
       Money ->
       ExceptT DomainError AppM Money
-    toBase rm provider day base bal
+    toBase provider day base bal
       | bal.currency == base = pure bal
       | otherwise = do
-          mer <- lookupHistoricalRate rm provider day bal.currency base
+          mer <- lift (runDb (lookupHistoricalRate provider day bal.currency base))
           case mer of
             Just er -> pure (convert er bal)
             Nothing ->

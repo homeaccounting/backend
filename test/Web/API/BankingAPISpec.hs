@@ -20,7 +20,7 @@
 --     import summary — i.e. it produces no per-account row at all).
 module Web.API.BankingAPISpec (spec) where
 
-import Application.ReadModels.ExchangeRate (handleExchangeRateEvents)
+import Application.ReadModels.ExchangeRate (applyExchangeRateEvent)
 import Data.Aeson
   ( Value (..),
     eitherDecode,
@@ -37,7 +37,7 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Core.Types (Currency (..), unsafeExternalTransactionId)
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
-import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
+import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.Banking.Provider (BankTransaction)
 import Network.HTTP.Types (status200, status204, status404, status422)
 import Network.Wai.Test (SResponse (..))
@@ -54,6 +54,7 @@ import Testkit.AppEnv
 import Testkit.BankingHelpers (mkSameCurrencyBankTx)
 import Testkit.Helpers (mockExchangeRate)
 import Testkit.HspecWai (IdResponse (..), createAccountWith, jsonAuthHeaders, registerAndGetToken)
+import Testkit.InMemoryEventStore (runDbIn)
 import Web.Types (ErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
@@ -125,7 +126,7 @@ sampleTxn extAccId =
 -- (via the stub controls) under the env's configured provider ("ecb"), so
 -- the cross-currency import (UAH statement, USD base External account) can
 -- resolve. Feeds a synthetic 'ExchangeRatesPublishedEvent' through
--- 'handleExchangeRateEvents' exactly as production does.
+-- 'applyExchangeRateEvent' into the persistent read model, as production does.
 seedRate :: StubControls -> IO ()
 seedRate controls = do
   today <- utctDay <$> getCurrentTime
@@ -144,7 +145,7 @@ seedRate controls = do
       versionedEvent = StreamEvent UUID0.nil 0 (emptyMetadata mempty) payload
       globalEvent :: GlobalStreamEvent AccountingEvent
       globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-  (handleExchangeRateEvents controls.stubExchangeRateRM).handleEvent [globalEvent]
+  runDbIn controls.stubEnv (applyExchangeRateEvent globalEvent)
 
 -- -----------------------------------------------------------------------------
 -- Spec

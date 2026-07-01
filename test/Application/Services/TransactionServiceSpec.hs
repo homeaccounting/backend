@@ -12,7 +12,7 @@
 --   - Returns appropriate DomainErrors for invalid operations
 module Application.Services.TransactionServiceSpec (spec) where
 
-import Application.ReadModels.ExchangeRate (handleExchangeRateEvents)
+import Application.ReadModels.ExchangeRate (applyExchangeRateEvent)
 import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.AccountService (createAccount)
 import Application.Services.TransactionService
@@ -27,14 +27,14 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Commands (InitiateTransaction (..))
-import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
+import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
 import Testkit.Helpers (fromRight', mockExchangeRate, mockMoney, mockMoneyWith, mockUserId, shouldBeLeft, shouldBeRight)
-import Testkit.InMemoryEventStore (createTestAppEnv)
+import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Test Data
@@ -73,7 +73,7 @@ mkCreateAccountWith currency balance acctName userId accountType =
 -- | Create a test env whose exchange-rate read model is pre-populated
 -- with the supplied rates for today under the default ECB provider
 -- name used by 'createTestAppEnv'. Feeds a synthetic
--- 'ExchangeRatesPublishedEvent' through 'handleExchangeRateEvents' so
+-- 'ExchangeRatesPublishedEvent' through 'applyExchangeRateEvent' so
 -- the projection sees the rates exactly as it would in production.
 createTestAppEnvWithRates :: [(Currency, Currency, Rational)] -> IO AppEnv
 createTestAppEnvWithRates rates = do
@@ -91,7 +91,7 @@ createTestAppEnvWithRates rates = do
       versionedEvent = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
       globalEvent :: GlobalStreamEvent AccountingEvent
       globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-  (handleExchangeRateEvents env.exchangeRateReadModel).handleEvent [globalEvent]
+  runDbIn env (applyExchangeRateEvent globalEvent)
   pure env
 
 -- | Helper to create two accounts in different currencies.

@@ -132,7 +132,7 @@ import Eventium (CommandHandlerError (..), EventStoreReader (..), StreamEvent (.
 import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
-    HasExchangeRateReadModel (..),
+    HasDbPool (..),
     eventStoreReaderL,
     runDb,
   )
@@ -1055,7 +1055,7 @@ queryTransactionResult transactionId = runExceptT $ do
 --   maybeUserRate: optional user-provided exchange rate override (src -> tgt)
 --   rateDate: the date to look up exchange rates for
 resolveAmounts ::
-  (MonadReader env m, HasExchangeRateReadModel env, HasAppConfig env, MonadIO m) =>
+  (MonadReader env m, HasDbPool env, HasAppConfig env, MonadUnliftIO m) =>
   Money ->
   Currency ->
   Currency ->
@@ -1072,7 +1072,6 @@ resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRa
         Just r ->
           liftEitherWith ExchangeRateUnavailable (mkExchangeRate srcCurrency tgtCurrency r)
         Nothing -> do
-          rm <- lift (view exchangeRateReadModelL)
           cfg <- lift (view appConfigL)
           let providerName = cfg.exchangeRate.provider
           liftMaybeM
@@ -1082,7 +1081,7 @@ resolveAmounts userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRa
                 <> " -> "
                 <> tshow tgtCurrency
             )
-            (lookupHistoricalRate rm providerName rateDate srcCurrency tgtCurrency)
+            (runDb (lookupHistoricalRate providerName rateDate srcCurrency tgtCurrency))
       if userAmountIsSource
         then -- User gave source amount, compute target
           let tgtAmount = convert er userAmount

@@ -54,7 +54,7 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Projection (TransactionStatus (Completed))
-import Eventium (EventHandler (..), GlobalStreamEvent, StreamEvent (..), emptyMetadata)
+import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Banking.Provider
   ( BankAccountId,
@@ -270,7 +270,7 @@ seedExchangeRateAt env day rates = do
       versionedEvent = StreamEvent UUID.nil 0 (emptyMetadata mempty) payload
       globalEvent :: GlobalStreamEvent AccountingEvent
       globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-  (ExchangeRateRM.handleExchangeRateEvents env.exchangeRateReadModel).handleEvent [globalEvent]
+  runDbIn env (ExchangeRateRM.applyExchangeRateEvent globalEvent)
 
 -- | The business day of 'testTime', used as the default rate date.
 testDay :: Day

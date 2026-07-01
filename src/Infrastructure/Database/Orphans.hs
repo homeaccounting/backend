@@ -59,6 +59,7 @@ import Domain.Core.Types
     unTransactionId,
     unUserId,
   )
+import Domain.ExchangeRate.Events (Provider (..), unProvider)
 import Domain.Transaction.Projection (StatusKind, parseStatusKind, renderStatusKind)
 import Eventium.Store.Sql.Orphans ()
 import RIO
@@ -270,4 +271,22 @@ instance PersistField StatusKind where
     maybe (Left ("Invalid StatusKind token: " <> t)) Right (parseStatusKind t)
 
 instance PersistFieldSql StatusKind where
+  sqlType _ = SqlString
+
+-- | 'Currency' is a small closed enum; stored as its JSON token so the
+-- @exchange_rates@ read model can filter on the @source@ / @target@ columns.
+instance PersistField Currency where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql Currency where
+  sqlType _ = SqlString
+
+-- | 'Provider' wraps 'Text' (an exchange-rate provider name); stored as a text
+-- column, the @exchange_rates@ read model's per-provider partition key.
+instance PersistField Provider where
+  toPersistValue = toPersistValue . unProvider
+  fromPersistValue v = Provider <$> fromPersistValue v
+
+instance PersistFieldSql Provider where
   sqlType _ = SqlString

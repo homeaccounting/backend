@@ -1,149 +1,188 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- |
 -- Module      : Application.ReadModels.ExchangeRate
--- Description : In-memory projection of persisted exchange-rate events.
+-- Description : Persistent, indexed projection of published exchange rates.
 --
--- Consumes 'ExchangeRatesPublishedEvent' payloads delivered on the
--- global event stream and builds a per-provider, per-day history of
--- published rates. Lookups fall back to the nearest available date
--- (see 'lookupNearestDate' below).
+-- Published rates are projected into a single Postgres table, one row per
+-- @(provider, day, source, target)@ currency pair:
+--
+--   * @exchange_rates@ — the exact rate for a pair on a given business day,
+--     partitioned by provider.
+--
+-- The @(provider, day, source, target)@ unique index backs both the
+-- historical lookup and the publisher's per-day idempotency check, replacing
+-- the in-memory @Map Provider (Map Day ExchangeRateMap)@. The projection is an
+-- eventium 'ReadModel' ('exchangeRateReadModel') driven synchronously in the
+-- event-append transaction.
 --
 -- The business date for a published rate set is the payload field
--- 'ExchangeRatesPublished.at'.
+-- 'ExchangeRatesPublished.at'. Lookups fall back to the nearest available date
+-- (see 'lookupNearestDate').
 module Application.ReadModels.ExchangeRate
-  ( -- * Read Model Types
-    ExchangeRateReadModel (..),
+  ( -- * Read model
+    exchangeRateReadModel,
+    exchangeRateProjectionName,
+    migrateExchangeRate,
+    resetExchangeRate,
+    applyExchangeRateEvent,
+    ExchangeRateEntity (..),
 
-    -- * Read Model Creation
-    createExchangeRateReadModel,
-
-    -- * Event Handler
-    handleExchangeRateEvents,
-
-    -- * Query Functions
+    -- * Query Functions (run via 'runDb')
     lookupHistoricalRate,
+    ratesPublishedOn,
 
     -- * Internal Helpers (re-exported for property tests)
     lookupNearestDate,
   )
 where
 
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad (forM_, void)
+import Control.Monad.IO.Class (MonadIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (isJust)
 import Data.Time (Day, diffDays)
+import Database.Persist
+  ( Entity (..),
+    Filter,
+    deleteWhere,
+    insert_,
+    selectFirst,
+    selectList,
+    (==.),
+  )
+import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
+import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
 import Domain.Core.Types (Currency, ExchangeRate)
-import Domain.ExchangeRate.Events (ExchangeRateMap, ExchangeRatesPublished (..), Provider)
+import Domain.ExchangeRate.Events (ExchangeRatesPublished (..), Provider)
 import Domain.Models (AccountingEvent (..))
-import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
-import Infrastructure.Eventium (AccountingReadModelHandler)
-import Infrastructure.ExchangeRate.Provider (getRate)
-import Safe (maximumDef)
+import Eventium
+  ( EventHandler (..),
+    GlobalStreamEvent,
+    ReadModel (..),
+    StreamEvent (..),
+  )
+import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
+import Infrastructure.Database.Orphans ()
 
 -- -----------------------------------------------------------------------------
--- Read Model Data Types
+-- Schema
 -- -----------------------------------------------------------------------------
 
--- | Per-provider, day-indexed history of published exchange rates.
+share
+  [mkPersist sqlSettings, mkMigrate "migrateExchangeRate"]
+  [persistLowerCase|
+ExchangeRateEntity sql=exchange_rates
+    provider Provider
+    day Day
+    source Currency
+    target Currency
+    rate ExchangeRate
+    -- One row per currency pair published by a provider on a business day.
+    -- The unique key backs the historical lookup and per-day idempotency.
+    UniqueExchangeRatePair provider day source target
+    deriving Show Eq
+|]
+
+-- | Projection/checkpoint name for this read model.
+exchangeRateProjectionName :: CheckpointName
+exchangeRateProjectionName = CheckpointName "exchange_rate"
+
+-- | Clear the exchange-rate table. The checkpoint is reset by 'rebuildReadModel'.
+resetExchangeRate :: (MonadIO m) => SqlPersistT m ()
+resetExchangeRate = deleteWhere ([] :: [Filter ExchangeRateEntity])
+
+-- -----------------------------------------------------------------------------
+-- Read model
+-- -----------------------------------------------------------------------------
+
+exchangeRateReadModel :: ReadModel (SqlPersistT IO) AccountingEvent
+exchangeRateReadModel =
+  ReadModel
+    { initialize = void (runMigrationSilent migrateExchangeRate),
+      eventHandler = EventHandler applyExchangeRateEvent,
+      checkpointStore = postgresqlCheckpointStore exchangeRateProjectionName,
+      reset = resetExchangeRate
+    }
+
+-- | Apply a single global event to the @exchange_rates@ table.
 --
--- Outer key is the provider name (matches
--- 'Infrastructure.ExchangeRate.Provider.RateProvider.providerName').
--- Inner key is the business date (from 'ExchangeRatesPublished.at').
--- The value is the full 'ExchangeRateMap' published for that day so
--- subsequent lookups can resolve any currency pair without replaying
--- events.
-data ExchangeRateReadModel = ExchangeRateReadModel
-  { latestSequence :: SequenceNumber,
-    historyByProvider :: !(Map Provider (Map Day ExchangeRateMap))
-  }
-  deriving (Show, Eq)
-
--- -----------------------------------------------------------------------------
--- Read Model Creation
--- -----------------------------------------------------------------------------
-
--- | Creates a new empty exchange-rate read model.
---
--- Initializes the read model with:
---   - Sequence number -1 (before any events)
---   - Empty per-provider history
-createExchangeRateReadModel :: (MonadIO m) => m (TVar ExchangeRateReadModel)
-createExchangeRateReadModel =
-  liftIO $
-    newTVarIO $
-      ExchangeRateReadModel
-        { latestSequence = -1,
-          historyByProvider = Map.empty
-        }
-
--- -----------------------------------------------------------------------------
--- Event Handler
--- -----------------------------------------------------------------------------
-
--- | Fold 'ExchangeRatesPublishedEvent' events into the read model.
---
--- Behaviour:
---   * Non-matching 'AccountingEvent' variants are silently skipped.
---   * The highest 'SequenceNumber' seen is tracked.
---   * Update is atomic via the TVar.
-handleExchangeRateEvents ::
-  (MonadIO m) =>
-  TVar ExchangeRateReadModel ->
-  AccountingReadModelHandler m
-handleExchangeRateEvents rmTVar = EventHandler $ \events -> do
-  currentModel <- liftIO $ readTVarIO rmTVar
-  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
-      updated = foldl processEvent currentModel.historyByProvider events
-  liftIO . atomically . writeTVar rmTVar $
-    currentModel
-      { latestSequence = newSeq,
-        historyByProvider = updated
-      }
-
--- | Project a single global event into the per-provider history.
---
--- The business date lives on the payload field 'ExchangeRatesPublished.at'.
-processEvent ::
-  Map Provider (Map Day ExchangeRateMap) ->
-  GlobalStreamEvent AccountingEvent ->
-  Map Provider (Map Day ExchangeRateMap)
-processEvent acc globalEvent =
+-- On 'ExchangeRatesPublishedEvent', the day's rows for that provider are
+-- replaced by the freshly published pairs — mirroring the in-memory
+-- @Map.insert published.at published.rates@ (full-day replace) and making
+-- replay idempotent.
+applyExchangeRateEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
+applyExchangeRateEvent globalEvent =
   case globalEvent.payload.payload of
-    ExchangeRatesPublishedEvent published ->
-      let providerKey = published.provider
-          providerHistory =
-            fromMaybe Map.empty (Map.lookup providerKey acc)
-          providerHistory' = Map.insert published.at published.rates providerHistory
-       in Map.insert providerKey providerHistory' acc
-    _ -> acc
+    ExchangeRatesPublishedEvent published -> do
+      deleteWhere
+        [ ExchangeRateEntityProvider ==. published.provider,
+          ExchangeRateEntityDay ==. published.at
+        ]
+      forM_ (Map.toList published.rates) $ \((src, tgt), er) ->
+        insert_ (ExchangeRateEntity published.provider published.at src tgt er)
+    _ -> pure ()
 
 -- -----------------------------------------------------------------------------
 -- Query Functions
 -- -----------------------------------------------------------------------------
 
--- | Look up a historical rate for a @(source, target)@ currency pair
--- published by @providerName@ on or near @day@.
+-- | Look up a historical rate for a @(source, target)@ currency pair published
+-- by @provider@ on or near @day@.
 --
--- When @day@ has no exact match in the provider's history, the query
--- falls back to the nearest known date per 'lookupNearestDate'.
+-- When @day@ has no exact match in the provider's history, the query falls back
+-- to the nearest known business day per 'lookupNearestDate' — the same day the
+-- provider published /any/ rates, then the pair is resolved on that day.
+-- Returns 'Nothing' when @source == target@ (matching the pure @getRate@).
 lookupHistoricalRate ::
   (MonadIO m) =>
-  TVar ExchangeRateReadModel ->
   Provider ->
   Day ->
   Currency ->
   Currency ->
-  m (Maybe ExchangeRate)
-lookupHistoricalRate rmTVar providerName day src tgt = do
-  model <- liftIO $ readTVarIO rmTVar
-  return $ do
-    providerHistory <- Map.lookup providerName model.historyByProvider
-    (_, rateMap) <- lookupNearestDate providerHistory day
-    getRate rateMap src tgt
+  SqlPersistT m (Maybe ExchangeRate)
+lookupHistoricalRate provider day src tgt
+  | src == tgt = pure Nothing
+  | otherwise = do
+      daysMap <- providerDays provider
+      case lookupNearestDate daysMap day of
+        Nothing -> pure Nothing
+        Just (nearest, ()) -> do
+          mRow <-
+            selectFirst
+              [ ExchangeRateEntityProvider ==. provider,
+                ExchangeRateEntityDay ==. nearest,
+                ExchangeRateEntitySource ==. src,
+                ExchangeRateEntityTarget ==. tgt
+              ]
+              []
+          pure ((.exchangeRateEntityRate) . entityVal <$> mRow)
+
+-- | Whether @provider@ has published any rates on the exact business day
+-- @day@. Backs the daily-publish idempotency guard.
+ratesPublishedOn :: (MonadIO m) => Provider -> Day -> SqlPersistT m Bool
+ratesPublishedOn provider day =
+  isJust
+    <$> selectFirst
+      [ExchangeRateEntityProvider ==. provider, ExchangeRateEntityDay ==. day]
+      []
+
+-- | The set of business days on which @provider@ has published rates, as a map
+-- suitable for 'lookupNearestDate'.
+providerDays :: (MonadIO m) => Provider -> SqlPersistT m (Map Day ())
+providerDays provider = do
+  rows <- selectList [ExchangeRateEntityProvider ==. provider] []
+  pure $ Map.fromList [(e.exchangeRateEntityDay, ()) | Entity _ e <- rows]
 
 -- | Find the nearest date in a map. Prefers earlier dates when the two
 -- candidates are equidistant.

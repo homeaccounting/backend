@@ -26,7 +26,6 @@ module Testkit.AppEnv
   )
 where
 
-import Application.ReadModels.ExchangeRate (ExchangeRateReadModel)
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Infrastructure.App (AppEnv (..), BankingEnv (..), runAppM)
 import Infrastructure.Banking.Provider
@@ -121,22 +120,22 @@ data StubControls = StubControls
     -- | Per-external-account-id statements 'fetchStatements' returns. A
     -- missing key yields @Right []@ (no statements for that account).
     stubStatements :: !(IORef (Map.Map Text [BankTransaction])),
-    -- | The env's exchange-rate read model, exposed so a test can seed
-    -- historical rates. The user's auto-created External account is
-    -- denominated in the configuration base currency (USD), so importing a
-    -- foreign-currency (e.g. UAH) bank transaction now requires a published
-    -- rate for the pair — see 'Application.Services.BankImportService'.
-    stubExchangeRateRM :: !(TVar ExchangeRateReadModel)
+    -- | The env, exposed so a test can seed historical rates into the
+    -- persistent @exchange_rates@ read model. The user's auto-created External
+    -- account is denominated in the configuration base currency (USD), so
+    -- importing a foreign-currency (e.g. UAH) bank transaction now requires a
+    -- published rate for the pair — see 'Application.Services.BankImportService'.
+    stubEnv :: !AppEnv
   }
 
 -- | Allocate fresh, empty stub controls (no accounts, no statements) bound to
--- the supplied exchange-rate read model.
-newStubControls :: TVar ExchangeRateReadModel -> IO StubControls
-newStubControls erRM =
+-- the supplied env (used to seed the persistent exchange-rate read model).
+newStubControls :: AppEnv -> IO StubControls
+newStubControls env =
   StubControls
     <$> newIORef (Right [])
     <*> newIORef Map.empty
-    <*> pure erRM
+    <*> pure env
 
 -- | An in-memory 'BankProvider' that serves whatever fixtures the given
 -- 'StubControls' currently hold. The @provider@ enum and @token@ passed by the
@@ -183,7 +182,7 @@ mkAppBankingEnabledSeeded = snd <$> mkAppBankingEnabledSeededWith
 mkAppBankingEnabledSeededWith :: IO (StubControls, Application)
 mkAppBankingEnabledSeededWith = do
   env <- createTestAppEnv
-  controls <- newStubControls env.exchangeRateReadModel
+  controls <- newStubControls env
   let cfg = env.config
       bankingCfg =
         BankingConfig

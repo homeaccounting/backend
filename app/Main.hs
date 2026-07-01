@@ -355,8 +355,9 @@ initializeEnvironment logFunc config versionInfo = do
   logInfo "Process managers registered via event bus"
 
   -- 6b. Spawn background rate publisher (best-effort, app starts even if provider is unreachable).
-  -- Historical rates survive restarts via the ExchangeRateReadModel replayed
-  -- from persisted 'ExchangeRatesPublishedEvent's in 'replayReadModels' above.
+  -- Historical rates survive restarts via the persistent @exchange_rates@ read
+  -- model, caught up from persisted 'ExchangeRatesPublishedEvent's by
+  -- 'initializePersistentReadModels' above.
   logInfo "Spawning exchange rate publisher..."
   rateProvider <- case unProvider config.exchangeRate.provider of
     "nbu" -> pure nbuProvider
@@ -366,7 +367,7 @@ initializeEnvironment logFunc config versionInfo = do
   -- runs for the lifetime of the process, so we do not retain the Async handle.
   void
     $ liftIO
-    $ spawnRatePublisher rateProvider writer reader readModels.exchangeRate logFunc
+    $ spawnRatePublisher rateProvider writer reader pool logFunc
   logInfo $ "Exchange rate publisher running (" <> display config.exchangeRate.provider <> ")"
 
   -- 6c. Create HTTP manager for bank API calls
@@ -411,7 +412,6 @@ initializeEnvironment logFunc config versionInfo = do
           telegramConfig
           botState
           telegramClientEnv
-          readModels.exchangeRate
           versionInfo
           bankingEnv'
           linkCodeStore

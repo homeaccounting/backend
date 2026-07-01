@@ -285,8 +285,8 @@ test-suite backend-test
       Application.ReadModels.AmendmentBalanceSpec
       Application.ReadModels.BalanceAsOfJoinSpec
       Application.ReadModels.ExchangeRatePropertySpec
-      Application.ReadModels.ExchangeRateSpec
       Application.ReadModels.PersistentAccountReadModelSpec
+      Application.ReadModels.PersistentExchangeRateReadModelSpec
       Application.ReadModels.PersistentTransactionReadModelSpec
       Application.ReadModels.PersistentUserReadModelSpec
       Application.ReadModels.TransactionFilterSpec

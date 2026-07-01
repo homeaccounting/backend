@@ -27,6 +27,7 @@ where
 
 import Application.ReadModels.Account (accountProjectionName, accountReadModel)
 import Application.ReadModels.BankImportReadModel (bankImportProjectionName, bankImportReadModel)
+import Application.ReadModels.ExchangeRate (exchangeRateProjectionName, exchangeRateReadModel)
 import Application.ReadModels.Transaction (transactionProjectionName, transactionReadModel)
 import Application.ReadModels.User (userProjectionName, userReadModel)
 import Domain.Models (AccountingEvent)
@@ -50,7 +51,8 @@ persistentReadModels =
   [ (unCheckpointName bankImportProjectionName, bankImportReadModel),
     (unCheckpointName accountProjectionName, accountReadModel),
     (unCheckpointName transactionProjectionName, transactionReadModel),
-    (unCheckpointName userProjectionName, userReadModel)
+    (unCheckpointName userProjectionName, userReadModel),
+    (unCheckpointName exchangeRateProjectionName, exchangeRateReadModel)
   ]
   where
     unCheckpointName (CheckpointName t) = t
