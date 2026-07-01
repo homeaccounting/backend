@@ -77,7 +77,7 @@ firstEntryId env userId dictName = do
   case mUser of
     Nothing -> fail "user not found"
     Just ud -> do
-      mCfg <- getConfiguration env.configurationReadModel ud.configurationId
+      mCfg <- runDbIn env (getConfiguration ud.configurationId)
       case mCfg of
         Nothing -> fail "configuration not found"
         Just cfg ->

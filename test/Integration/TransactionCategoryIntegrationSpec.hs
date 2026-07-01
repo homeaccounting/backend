@@ -134,7 +134,7 @@ incomeCategoryNames h = do
   case mUser of
     Nothing -> fail "user not found"
     Just ud -> do
-      mCfg <- ConfigRM.getConfiguration h.harnessEnv.configurationReadModel ud.configurationId
+      mCfg <- runDbIn h.harnessEnv (ConfigRM.getConfiguration ud.configurationId)
       case mCfg of
         Nothing -> fail "configuration not found"
         Just cfg ->

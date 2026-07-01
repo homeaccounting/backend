@@ -48,7 +48,6 @@ module Infrastructure.Eventium
     liftTaggedWriter,
     liftVersionedReader,
     liftGlobalReader,
-    liftIOEventHandler,
 
     -- * Command Handler Registry
     applyAccountCommand,
@@ -66,11 +65,6 @@ module Infrastructure.Eventium
     AccountingProcessManagerFactory,
     wireProcessManager,
     wireProcessManagers,
-
-    -- * Event Handler Bundle
-    AccountingReadModelHandler,
-    createReadModelHandlersFrom,
-    replayWith,
 
     -- * Utilities
     embedWith,
@@ -100,7 +94,6 @@ import Eventium
     EventStoreWriter,
     EventVersion,
     GlobalEventStoreReader,
-    GlobalStreamEvent,
     MetadataEnricher,
     ProcessManager,
     QueryRange,
@@ -118,7 +111,6 @@ import Eventium
     codecGlobalEventStoreReader,
     codecVersionedEventStoreReader,
     commandHandlerDispatcher,
-    emptyMetadata,
     globalToVersionedHandler,
     latestProjection,
     metadataEnrichingEventStoreWriterWithEnricher,
@@ -186,13 +178,6 @@ type AccountingProcessManagerFactory m =
   AccountingVersionedEventStoreReader m ->
   AccountingEventHandler m
 
--- | Batch event handler for one accounting read-model context.
---
--- Wraps a function @[GlobalStreamEvent AccountingEvent] -> m ()@: the list
--- allows read models to do a single STM write covering all events in a replay
--- pass, rather than N individual writes.
-type AccountingReadModelHandler m = EventHandler m [GlobalStreamEvent AccountingEvent]
-
 -- -----------------------------------------------------------------------------
 -- Event Store Creation
 -- -----------------------------------------------------------------------------
@@ -243,7 +228,6 @@ accountingEventStoreWriter ::
   (MonadIO m, PersistEntity entity, PersistEntityBackend entity ~ SqlBackend, SafeToInsert entity) =>
   SqlEventStoreConfig entity JSONString ->
   AccountingProcessManagerFactory (SqlPersistT m) ->
-  [AccountingEventHandler (SqlPersistT m)] ->
   [ReadModel (SqlPersistT m) AccountingEvent] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
 accountingEventStoreWriter config =
@@ -259,8 +243,7 @@ accountingEventStoreWriter config =
 --   * @persistentReadModels@ — eventium 'ReadModel's, each driven by
 --     'readModelPublisher' so it applies and advances its own 'CheckpointStore'
 --     using the real global 'SequenceNumber' the write assigns.
---   * @extraHandlers@ — the still-in-memory (versioned) read-model handlers, plus
---     the logger and process managers, lifted onto the global stream via
+--   * the logger and process managers, lifted onto the global stream via
 --     'globalToVersionedHandler'.
 accountingEventStoreWriterWithRaw ::
   forall m entity.
@@ -268,18 +251,16 @@ accountingEventStoreWriterWithRaw ::
   AccountingTaggedEventStoreWriter (SqlPersistT m) ->
   SqlEventStoreConfig entity JSONString ->
   AccountingProcessManagerFactory (SqlPersistT m) ->
-  [AccountingEventHandler (SqlPersistT m)] ->
   [ReadModel (SqlPersistT m) AccountingEvent] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
-accountingEventStoreWriterWithRaw rawWriter config pmFactory extraHandlers persistentReadModels =
+accountingEventStoreWriterWithRaw rawWriter config pmFactory persistentReadModels =
   let globalReader = accountingGlobalEventStoreReader config
       versionedReader = accountingVersionedEventStoreReader config
-      -- Versioned consumers: logger, in-memory read models, and process managers.
+      -- Versioned consumers: logger and process managers.
       -- The process manager receives publishingWriter so events produced by
       -- dispatched commands re-enter the bus (lazy binding resolves the cycle).
       versionedHandler =
         eventLoggerHandler
-          <> mconcat extraHandlers
           <> pmFactory publishingWriter globalReader versionedReader
       -- Publish GlobalStreamEvents (real positions): persistent read models via
       -- their own checkpoint-advancing publisher; versioned consumers lifted in.
@@ -367,41 +348,6 @@ formatAccountError InsufficientFunds = RejectionReason (T.pack "Insufficient fun
 formatAccountError AccountDoesNotExist = RejectionReason (T.pack "Account does not exist")
 formatAccountError AccountCurrencyLocked = RejectionReason (T.pack "Account currency is locked")
 formatAccountError err = RejectionReason (T.pack (show err))
-
--- | Lift an IO event handler to any MonadIO monad.
-
--- TODO: - move to eventium-core
-liftIOEventHandler :: (MonadIO m) => EventHandler IO event -> EventHandler m event
-liftIOEventHandler (EventHandler h) = EventHandler $ \e -> liftIO (h e)
-
--- -----------------------------------------------------------------------------
--- Read Models
--- -----------------------------------------------------------------------------
-
--- | Adapt a composite read-model handler for the real-time event bus.
---
--- Wraps each incoming 'VersionedStreamEvent' in a singleton
--- @[GlobalStreamEvent]@ batch and forwards it to the handler.
-createReadModelHandlersFrom ::
-  AccountingReadModelHandler m ->
-  [AccountingEventHandler m]
-createReadModelHandlersFrom (EventHandler h) =
-  [ EventHandler $ \versionedEvent -> do
-      let globalEvent = StreamEvent () 0 (emptyMetadata mempty) versionedEvent
-      h [globalEvent]
-  ]
-
--- | Replay all historical global events through a read-model handler and
--- return the event count.
-replayWith ::
-  (Monad m) =>
-  AccountingGlobalEventStoreReader m ->
-  AccountingReadModelHandler m ->
-  m Int
-replayWith globalReader (EventHandler h) = do
-  events <- readEvents globalReader (allEvents ())
-  h events
-  pure (length events)
 
 -- -----------------------------------------------------------------------------
 -- Command Handler Registry

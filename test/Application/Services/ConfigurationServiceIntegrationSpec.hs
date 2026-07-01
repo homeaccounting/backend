@@ -67,7 +67,7 @@ seedDefaultConfigurationSpec =
       runRIO env $ do
         seedDefaultConfiguration
 
-      maybeConfig <- getConfiguration env.configurationReadModel defaultConfigurationId
+      maybeConfig <- runDbIn env (getConfiguration defaultConfigurationId)
       case maybeConfig of
         Nothing -> expectationFailure "Default configuration not found in read model"
         Just config -> do
@@ -80,10 +80,10 @@ seedDefaultConfigurationSpec =
     it "is idempotent (second call is a no-op)" $ do
       env <- createTestAppEnv
       runRIO env seedDefaultConfiguration
-      config1 <- getConfiguration env.configurationReadModel defaultConfigurationId
+      config1 <- runDbIn env (getConfiguration defaultConfigurationId)
 
       runRIO env seedDefaultConfiguration
-      config2 <- getConfiguration env.configurationReadModel defaultConfigurationId
+      config2 <- runDbIn env (getConfiguration defaultConfigurationId)
 
       config1 `shouldBe` config2
 
@@ -123,7 +123,7 @@ cloneOnWriteSpec =
               userData2.configurationId `shouldNotBe` defaultConfigurationId
 
               -- The cloned config should have ClonedBy
-              maybeConfig <- getConfiguration env.configurationReadModel userData2.configurationId
+              maybeConfig <- runDbIn env (getConfiguration userData2.configurationId)
               case maybeConfig of
                 Nothing -> expectationFailure "Cloned configuration not found"
                 Just config -> do
@@ -166,7 +166,7 @@ cloneOnWriteSpec =
                   userData2.configurationId `shouldBe` clonedConfigId
 
               -- Currency should be updated
-              maybeConfig <- getConfiguration env.configurationReadModel clonedConfigId
+              maybeConfig <- runDbIn env (getConfiguration clonedConfigId)
               case maybeConfig of
                 Nothing -> expectationFailure "Cloned config not found"
                 Just config ->
@@ -247,7 +247,7 @@ dictionaryCRUDSpec =
           case maybeUser of
             Nothing -> expectationFailure "User not found"
             Just userData -> do
-              maybeConfig <- getConfiguration env.configurationReadModel userData.configurationId
+              maybeConfig <- runDbIn env (getConfiguration userData.configurationId)
               case maybeConfig of
                 Nothing -> expectationFailure "Config not found"
                 Just config -> do
@@ -281,7 +281,7 @@ dictionaryCRUDSpec =
               case maybeUser of
                 Nothing -> expectationFailure "User not found"
                 Just userData -> do
-                  maybeConfig <- getConfiguration env.configurationReadModel userData.configurationId
+                  maybeConfig <- runDbIn env (getConfiguration userData.configurationId)
                   case maybeConfig of
                     Nothing -> expectationFailure "Config not found"
                     Just config -> do
@@ -318,7 +318,7 @@ dictionaryCRUDSpec =
               case maybeUser of
                 Nothing -> expectationFailure "User not found"
                 Just userData -> do
-                  maybeConfig <- getConfiguration env.configurationReadModel userData.configurationId
+                  maybeConfig <- runDbIn env (getConfiguration userData.configurationId)
                   case maybeConfig of
                     Nothing -> expectationFailure "Config not found"
                     Just config -> do
@@ -346,7 +346,7 @@ dictionaryCRUDSpec =
           case maybeUser of
             Nothing -> expectationFailure "User not found"
             Just userData -> do
-              maybeConfig <- getConfiguration env.configurationReadModel userData.configurationId
+              maybeConfig <- runDbIn env (getConfiguration userData.configurationId)
               case maybeConfig of
                 Nothing -> expectationFailure "Config not found"
                 Just config -> do

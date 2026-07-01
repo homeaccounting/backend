@@ -145,7 +145,6 @@ import Infrastructure.App
     HasBankProviderFactory (..),
     HasBankingKeyRing (..),
     HasEventStore (..),
-    HasReadModel (..),
     runDb,
   )
 import Infrastructure.Banking.Provider (BankProvider)
@@ -560,8 +559,7 @@ defaultTranslateConfigurationError err = ConfigurationError (T.pack (show err))
 seedDefaultConfiguration :: AppM ()
 seedDefaultConfiguration = do
   logInfo "Checking if default configuration needs seeding..."
-  configRM <- view configurationReadModelL
-  maybeConfig <- liftIO $ getConfiguration configRM defaultConfigurationId
+  maybeConfig <- runDb (getConfiguration defaultConfigurationId)
   case maybeConfig of
     Just _ -> logInfo "Default configuration already exists, skipping seed"
     Nothing -> seedFresh
@@ -654,11 +652,10 @@ seedFresh = do
 lookupUserConfiguration :: UserId -> AppM (Either DomainError (ConfigurationId, ConfigurationData))
 lookupUserConfiguration userId = runExceptT $ do
   userData <- getUserData userId
-  configRM <- lift (view configurationReadModelL)
   configData <-
     liftMaybeM
       (NotFound "Configuration" (tshow userData.configurationId))
-      (liftIO $ getConfiguration configRM userData.configurationId)
+      (runDb (getConfiguration userData.configurationId))
   pure (userData.configurationId, configData)
 
 -- | Ensure the user has their own cloned configuration.

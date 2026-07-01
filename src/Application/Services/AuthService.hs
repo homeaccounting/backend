@@ -96,7 +96,6 @@ import Infrastructure.App
     HasAuthConfig (..),
     HasEventStore (..),
     HasLinkCodeStore (..),
-    HasReadModel (..),
     runDb,
   )
 import Infrastructure.Auth.JWT (JWTClaims (..), JWTConfig (..))
@@ -176,8 +175,7 @@ register email password = runExceptT $ do
     id
     userUuid
     (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
-  configRM <- lift (view configurationReadModelL)
-  maybeConfig <- lift (getConfiguration configRM defaultConfigurationId)
+  maybeConfig <- lift (runDb (getConfiguration defaultConfigurationId))
   let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
   runAccountCmd
     id
@@ -511,8 +509,7 @@ createUserViaOAuth email oauthIdentity = runExceptT $ do
     id
     userUuid
     (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
-  configRM <- lift (view configurationReadModelL)
-  maybeConfig <- lift (getConfiguration configRM defaultConfigurationId)
+  maybeConfig <- lift (runDb (getConfiguration defaultConfigurationId))
   let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
   runAccountCmd
     id
@@ -553,8 +550,7 @@ createUserViaTelegram telegramIdentity = runExceptT $ do
     id
     userUuid
     (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
-  configRM <- lift (view configurationReadModelL)
-  maybeConfig <- lift (getConfiguration configRM defaultConfigurationId)
+  maybeConfig <- lift (runDb (getConfiguration defaultConfigurationId))
   let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
   runAccountCmd
     id

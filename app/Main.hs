@@ -78,11 +78,6 @@ module Main (main) where
 
 -- Application
 
-import Application.EventDispatch
-  ( ReadModels (..),
-    createReadModels,
-    fromReadModels,
-  )
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
 import Application.ReadModels.Persist (initializePersistentReadModels, persistentReadModels)
@@ -120,12 +115,9 @@ import Infrastructure.Eventium
   ( accountingEventStoreWriter,
     accountingGlobalEventStoreReader,
     accountingVersionedEventStoreReader,
-    createReadModelHandlersFrom,
     liftGlobalReader,
-    liftIOEventHandler,
     liftTaggedWriter,
     liftVersionedReader,
-    replayWith,
     wireProcessManager,
     wireProcessManagers,
   )
@@ -275,17 +267,9 @@ initializeEnvironment logFunc config versionInfo = do
   liftIO $ initializeDatabase pool
   logInfo "Database initialized successfully"
 
-  -- 3. Initialize read models (must happen before creating the writer)
-  logInfo "Initializing read models..."
-  readModels <- liftIO createReadModels
-  let handlers = fromReadModels readModels
-      readModelHandlers = createReadModelHandlersFrom handlers
-  logInfo "Read models initialized"
-
-  -- 4. Create event store readers/writers with read model handlers on the event bus
+  -- 3. Create event store readers/writers with the read-model publishers on the bus
   logInfo "Creating event store readers and writers..."
   let eventStoreConfig = defaultSqlEventStoreConfig
-      -- Create SQL-based event stores with read model handlers on the event bus
       sqlWriter =
         accountingEventStoreWriter
           eventStoreConfig
@@ -295,9 +279,6 @@ initializeEnvironment logFunc config versionInfo = do
                 wireProcessManager transactionCancellationProcessManager
               ]
           )
-          -- In-memory (TVar) read models + logger + process managers, lifted onto
-          -- the global stream inside the writer.
-          (map liftIOEventHandler readModelHandlers)
           -- Persistent (SQL) read models: applied + checkpointed in the write
           -- transaction via readModelPublisher (real global positions).
           (map snd persistentReadModels)
@@ -307,15 +288,9 @@ initializeEnvironment logFunc config versionInfo = do
       writer = liftTaggedWriter pool sqlWriter
       reader = liftVersionedReader pool sqlReader
       globalReader = liftGlobalReader pool sqlGlobalReader
-  logInfo "Event store configured with read model handlers"
+  logInfo "Event store configured"
 
-  -- 4b. Replay historical events into the in-memory read models.
-  -- Must run before server/bot starts to avoid concurrent writes to TVars.
-  logInfo "Replaying historical events into read models..."
-  eventCount <- liftIO $ replayWith globalReader handlers
-  logInfo $ "Read models populated from event store (" <> displayShow eventCount <> " events)"
-
-  -- 4c. Persistent (SQL) read models: migrate tables, then bring them up to date
+  -- 4. Persistent (SQL) read models: migrate tables, then bring them up to date
   -- (or rebuild those named in REBUILD_READ_MODELS). Their live updates commit in
   -- the event-append transaction; this is the one-time backfill / bounded boot
   -- catch-up / on-demand rebuild path.
@@ -406,7 +381,6 @@ initializeEnvironment logFunc config versionInfo = do
           writer
           reader
           globalReader
-          readModels.configuration
           jwtConfig
           oauthConfig
           telegramConfig

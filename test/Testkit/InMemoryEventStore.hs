@@ -38,7 +38,6 @@ module Testkit.InMemoryEventStore
   )
 where
 
-import Application.EventDispatch (ReadModels (..), createReadModels, fromReadModels)
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
 import Application.ReadModels.Persist (persistentReadModels)
@@ -88,9 +87,7 @@ import Infrastructure.Eventium
     accountingEventStoreWriterWithRaw,
     accountingGlobalEventStoreReader,
     accountingVersionedEventStoreReader,
-    createReadModelHandlersFrom,
     liftGlobalReader,
-    liftIOEventHandler,
     liftTaggedWriter,
     liftVersionedReader,
     wireProcessManager,
@@ -223,10 +220,7 @@ mkAppEnv withProcessManager = do
     -- Migrate every persistent read model's tables (each model's 'initialize').
     mapM_ (\(_, ReadModel {initialize = initRM}) -> initRM) persistentReadModels
 
-  readModels <- createReadModels
-  let handlers = fromReadModels readModels
-      readModelHandlers = createReadModelHandlersFrom handlers
-      eventStoreConfig = defaultSqlEventStoreConfig
+  let eventStoreConfig = defaultSqlEventStoreConfig
 
       pmFactory =
         if withProcessManager
@@ -238,15 +232,13 @@ mkAppEnv withProcessManager = do
               ]
           else wireProcessManagers []
 
-      -- Same wiring as production (synchronous publisher; SQL read models apply
-      -- in the writer transaction, in-memory ones via liftIOEventHandler), but
-      -- with the SQLite raw writer.
+      -- Same wiring as production (synchronous publisher; persistent SQL read
+      -- models apply in the writer transaction), but with the SQLite raw writer.
       sqlWriter =
         accountingEventStoreWriterWithRaw
           (sqliteTaggedEventStoreWriter eventStoreConfig)
           eventStoreConfig
           pmFactory
-          (map liftIOEventHandler readModelHandlers)
           (map snd persistentReadModels)
       writer = liftTaggedWriter pool sqlWriter
       reader = liftVersionedReader pool (accountingVersionedEventStoreReader eventStoreConfig)
@@ -272,7 +264,6 @@ mkAppEnv withProcessManager = do
         eventStoreWriter = writer,
         eventStoreReader = reader,
         globalEventStoreReader = globalReader,
-        configurationReadModel = readModels.configuration,
         jwtConfig = config.auth,
         oauthConfig = config.oauth,
         telegramConfig = config.telegram,

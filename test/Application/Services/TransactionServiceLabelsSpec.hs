@@ -125,9 +125,7 @@ firstIncomeCategory env uid = do
         [] -> fail "income-category dictionary is empty"
   where
     fetchCfg e ud =
-      ConfigRM.getConfiguration
-        e.configurationReadModel
-        ud.configurationId
+      runDbIn e (ConfigRM.getConfiguration ud.configurationId)
         >>= maybe (fail "config not found") pure
     dictEntries cfg dictId =
       case Map.lookup dictId cfg.dictionaries of

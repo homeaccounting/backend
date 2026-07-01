@@ -49,8 +49,7 @@ import Domain.Core.Types
     unsafeAccountId,
   )
 import Infrastructure.App
-  ( AppEnv (..),
-    HasEventStore (..),
+  ( HasEventStore (..),
     bankingKeyRingL,
   )
 import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
@@ -77,7 +76,7 @@ seedBankingDefaultsSpec =
       env <- createTestAppEnv
       runRIO env seedDefaultConfiguration
 
-      maybeConfig <- getConfiguration env.configurationReadModel defaultConfigurationId
+      maybeConfig <- runDbIn env (getConfiguration defaultConfigurationId)
       case maybeConfig of
         Nothing -> expectationFailure "Default configuration not found in read model"
         Just cfg -> do
@@ -117,7 +116,7 @@ cloneBankingDefaultsSpec =
             Just userData -> do
               userData.configurationId `shouldNotBe` defaultConfigurationId
 
-              maybeClonedCfg <- getConfiguration env.configurationReadModel userData.configurationId
+              maybeClonedCfg <- runDbIn env (getConfiguration userData.configurationId)
               case maybeClonedCfg of
                 Nothing -> expectationFailure "Cloned configuration not found in read model"
                 Just clonedCfg -> do
@@ -175,7 +174,7 @@ cloneBankingDefaultsSpec =
             Nothing -> expectationFailure "User not found after clone"
             Just userData -> do
               userData.configurationId `shouldNotBe` defaultConfigurationId
-              maybeCfg <- getConfiguration env.configurationReadModel userData.configurationId
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
               case maybeCfg of
                 Nothing -> expectationFailure "Cloned configuration not found"
                 Just cfg ->
@@ -215,7 +214,7 @@ addBankConnectionSpec =
           case maybeUser of
             Nothing -> expectationFailure "User not found"
             Just userData -> do
-              maybeCfg <- getConfiguration env.configurationReadModel userData.configurationId
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
               case maybeCfg of
                 Nothing -> expectationFailure "Configuration not found"
                 Just cfg ->
@@ -299,7 +298,7 @@ setBankConnectionAccountMapSpec =
               case maybeUser2 of
                 Nothing -> expectationFailure "User not found after map"
                 Just ud -> do
-                  maybeCfg <- getConfiguration env.configurationReadModel ud.configurationId
+                  maybeCfg <- runDbIn env (getConfiguration ud.configurationId)
                   case maybeCfg of
                     Nothing -> expectationFailure "Configuration not found"
                     Just cfg ->

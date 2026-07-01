@@ -201,7 +201,7 @@ firstDictionaryEntry env uid dictId = do
   case mUser of
     Nothing -> fail $ "firstDictionaryEntry: user not found: " <> show uid
     Just ud -> do
-      mCfg <- ConfigRM.getConfiguration env.configurationReadModel ud.configurationId
+      mCfg <- runDbIn env (ConfigRM.getConfiguration ud.configurationId)
       case mCfg of
         Nothing -> fail $ "firstDictionaryEntry: configuration not found for user " <> show uid
         Just cfg ->

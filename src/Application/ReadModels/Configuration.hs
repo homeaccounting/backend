@@ -1,54 +1,81 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- |
 -- Module      : Application.ReadModels.Configuration
--- Description : Read model for optimized configuration queries
+-- Description : Persistent read model for configuration queries
 --
--- This module implements a read model that provides efficient queries for
--- configuration information without requiring event replay. The read model
--- listens to the event stream and maintains a denormalized view optimized
--- for common query patterns.
+-- A configuration is projected into five Postgres tables:
 --
--- Key Components:
---   - ConfigurationData: Denormalized configuration information
---   - DictionaryData: Denormalized dictionary with entries
---   - ConfigurationReadModel: Map of configuration IDs to configuration data
---   - Event handlers: Update the read model when events occur
---   - Query functions: Efficient lookups by configuration ID
+--   * @configurations@ — one row per configuration (currencies, default
+--     categories, books-closed cutoff, creator, version),
+--   * @configuration_dictionary_entries@ — one row per dictionary entry,
+--   * @configuration_mcc_categories@ — one row per MCC → expense-category map
+--     entry,
+--   * @configuration_bank_connections@ — one row per bank connection, and
+--   * @configuration_bank_account_map@ — one row per connection's
+--     external→local account mapping.
 --
--- Design Rationale:
---   - Separates read and write models (CQRS pattern)
---   - Optimizes for query performance
---   - Maintains eventual consistency with event stream
---   - Tracks sequence numbers for reliable event processing
---
--- Note: This module processes events from the unified AccountingEvent type.
--- Configuration events must be integrated into AccountingEvent (Task 6)
--- before this module will compile.
+-- The configuration projection is only ever fetched whole by id
+-- ('getConfiguration'), so the child tables carry no secondary indexes beyond
+-- their @configId@-leading unique keys. The projection is an eventium
+-- 'ReadModel' ('configurationReadModel') driven synchronously in the
+-- event-append transaction; the per-row @version@ is recorded from the event's
+-- real per-stream 'EventVersion'.
 module Application.ReadModels.Configuration
-  ( -- * Read Model Types
-    ConfigurationReadModel (..),
+  ( -- * Read Model Query Types
     ConfigurationData (..),
     DictionaryData (..),
 
-    -- * Read Model Creation
-    createConfigurationReadModel,
+    -- * Read model
+    configurationReadModel,
+    configurationProjectionName,
+    migrateConfiguration,
+    resetConfiguration,
+    applyConfigurationEvent,
+    ConfigurationEntity (..),
+    ConfigDictionaryEntryEntity (..),
+    ConfigMccCategoryEntity (..),
+    ConfigBankConnectionEntity (..),
+    ConfigBankAccountMapEntity (..),
 
-    -- * Event Handler
-    handleConfigurationEvents,
-
-    -- * Query Functions
+    -- * Query Functions (run via 'runDb')
     getConfiguration,
   )
 where
 
-import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad (forM, forM_, void)
+import Control.Monad.IO.Class (MonadIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Text (Text)
 import Data.Time (UTCTime)
+import Database.Persist
+  ( Entity (..),
+    Filter,
+    deleteWhere,
+    getBy,
+    insertUnique,
+    insert_,
+    replace,
+    selectList,
+    updateWhere,
+    upsertBy,
+    (=.),
+    (==.),
+  )
+import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
+import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
+import Domain.Banking.Types (BankConnectionId, BankProvider)
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
@@ -69,11 +96,12 @@ import Domain.Configuration.Events
   )
 import Domain.Configuration.Projection
   ( BankConnection (..),
-    BankingConfiguration (connections, mccExpenseCategoryMap),
+    BankingConfiguration (..),
     emptyBankingConfiguration,
   )
 import Domain.Core.Types
-  ( CategoryId,
+  ( AccountId,
+    CategoryId,
     ConfigurationId,
     CreatedBy,
     Currency,
@@ -83,20 +111,24 @@ import Domain.Core.Types
     mkConfigurationIdSafe,
   )
 import Domain.Models (AccountingEvent (..))
-import Eventium (EventHandler (..), GlobalStreamEvent, SequenceNumber, StreamEvent (..))
+import Eventium
+  ( EventHandler (..),
+    EventVersion (..),
+    GlobalStreamEvent,
+    ReadModel (..),
+    StreamEvent (..),
+  )
+import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
 import GHC.Generics (Generic)
-import Infrastructure.Eventium (AccountingReadModelHandler)
-import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
-import Safe (maximumDef)
+import Infrastructure.Crypto.SecretBox (EncryptedSecret)
+import Infrastructure.Database.Orphans ()
 
 -- -----------------------------------------------------------------------------
--- Read Model Data Types
+-- Query result types
 -- -----------------------------------------------------------------------------
 
--- | Denormalized configuration information for efficient querying.
---
--- This structure contains all the information needed for common configuration
--- queries without requiring event replay.
+-- | Denormalized configuration information returned by 'getConfiguration',
+-- assembled from the five backing tables.
 data ConfigurationData = ConfigurationData
   { -- | Base currency for reporting
     baseCurrency :: Currency,
@@ -110,441 +142,310 @@ data ConfigurationData = ConfigurationData
     defaultIncomeCategory :: Maybe CategoryId,
     -- | Default category for expense transactions when none is inferred from MCC
     defaultExpenseCategory :: Maybe CategoryId,
-    -- | Advance-only books-closed-through cutoff. 'Nothing' means no cutoff
-    -- has been set (the books are fully open). Folded from
-    -- 'BooksClosedThroughSet'.
+    -- | Advance-only books-closed-through cutoff. 'Nothing' means no cutoff.
     booksClosedThrough :: Maybe UTCTime,
     -- | Who created this configuration
     createdBy :: CreatedBy,
-    -- | Version number from event stream for optimistic concurrency
+    -- | Version number from the event stream for optimistic concurrency
     version :: Int
   }
   deriving (Show, Eq, Generic)
 
 -- | Denormalized dictionary data containing entries.
-data DictionaryData = DictionaryData
+newtype DictionaryData = DictionaryData
   { -- | Map of entry IDs to entry names
     entries :: Map DictionaryEntryId EntryName
   }
   deriving (Show, Eq, Generic)
 
--- | The read model state: a map from configuration IDs to their configuration data.
---
--- This is wrapped in a TVar for concurrent access and includes the latest
--- sequence number for reliable event processing.
-data ConfigurationReadModel = ConfigurationReadModel
-  { latestSequence :: SequenceNumber,
-    configurations :: Map ConfigurationId ConfigurationData
-  }
-  deriving (Show, Eq)
-
 -- -----------------------------------------------------------------------------
--- Read Model Creation
+-- Schema
 -- -----------------------------------------------------------------------------
 
--- | Creates a new empty configuration read model.
---
--- This initializes the read model with:
---   - Sequence number -1 (before any events)
---   - Empty map of configurations
---
--- Example:
--- >>> readModel <- createConfigurationReadModel
--- >>> config <- getConfiguration readModel someConfigId
-createConfigurationReadModel :: (MonadIO m) => m (TVar ConfigurationReadModel)
-createConfigurationReadModel =
-  liftIO $
-    newTVarIO $
-      ConfigurationReadModel
-        { latestSequence = -1,
-          configurations = Map.empty
-        }
+share
+  [mkPersist sqlSettings, mkMigrate "migrateConfiguration"]
+  [persistLowerCase|
+ConfigurationEntity sql=configurations
+    configId ConfigurationId
+    baseCurrency Currency
+    defaultCurrency Currency
+    defaultIncomeCategory DictionaryEntryId Maybe
+    defaultExpenseCategory DictionaryEntryId Maybe
+    booksClosedThrough UTCTime Maybe
+    createdBy CreatedBy
+    version Int
+    UniqueConfiguration configId
+    deriving Show Eq
+ConfigDictionaryEntryEntity sql=configuration_dictionary_entries
+    configId ConfigurationId
+    dictionaryId DictionaryId
+    entryId DictionaryEntryId
+    name EntryName
+    UniqueConfigDictEntry configId dictionaryId entryId
+    deriving Show Eq
+ConfigMccCategoryEntity sql=configuration_mcc_categories
+    configId ConfigurationId
+    mcc Text
+    categoryId DictionaryEntryId
+    UniqueConfigMcc configId mcc
+    deriving Show Eq
+ConfigBankConnectionEntity sql=configuration_bank_connections
+    configId ConfigurationId
+    connectionId BankConnectionId
+    provider BankProvider
+    name Text
+    encryptedToken EncryptedSecret
+    tokenHint Text
+    enabled Bool
+    UniqueConfigConn configId connectionId
+    deriving Show Eq
+ConfigBankAccountMapEntity sql=configuration_bank_account_map
+    configId ConfigurationId
+    connectionId BankConnectionId
+    externalAccountId Text
+    accountId AccountId
+    UniqueConfigConnAcct configId connectionId externalAccountId
+    deriving Show Eq
+|]
+
+-- | Projection/checkpoint name for this read model.
+configurationProjectionName :: CheckpointName
+configurationProjectionName = CheckpointName "configuration"
+
+-- | Clear all five configuration tables. The checkpoint is reset by
+-- 'rebuildReadModel'.
+resetConfiguration :: (MonadIO m) => SqlPersistT m ()
+resetConfiguration = do
+  deleteWhere ([] :: [Filter ConfigBankAccountMapEntity])
+  deleteWhere ([] :: [Filter ConfigBankConnectionEntity])
+  deleteWhere ([] :: [Filter ConfigMccCategoryEntity])
+  deleteWhere ([] :: [Filter ConfigDictionaryEntryEntity])
+  deleteWhere ([] :: [Filter ConfigurationEntity])
 
 -- -----------------------------------------------------------------------------
--- Event Handler
+-- Read model
 -- -----------------------------------------------------------------------------
 
--- | Updates the read model with new events from the global event stream.
---
--- This function:
---   1. Processes each event and updates the configuration data accordingly
---   2. Tracks the highest sequence number seen
---   3. Updates the TVar atomically
---
--- Events handled:
---   - ConfigurationCreatedEvent: Adds new configuration to the map
---   - BaseCurrencyChangedEvent: Updates base currency
---   - DefaultCurrencyChangedEvent: Updates default currency
---   - DictionaryEntryAddedEvent: Adds entry to dictionary (auto-creates dict if absent)
---   - DictionaryEntryRenamedEvent: Renames an existing entry
---   - DictionaryEntryRemovedEvent: Removes an entry from a dictionary
---
--- The function is idempotent - replaying the same events produces the same result.
---
--- Example:
--- >>> handleConfigurationEvents readModelTVar events
--- >>> config <- getConfiguration readModelTVar configId
-handleConfigurationEvents ::
-  (MonadIO m) =>
-  TVar ConfigurationReadModel ->
-  AccountingReadModelHandler m
-handleConfigurationEvents readModelTVar = EventHandler $ \events -> do
-  currentModel <- liftIO $ readTVarIO readModelTVar
+configurationReadModel :: ReadModel (SqlPersistT IO) AccountingEvent
+configurationReadModel =
+  ReadModel
+    { initialize = void (runMigrationSilent migrateConfiguration),
+      eventHandler = EventHandler applyConfigurationEvent,
+      checkpointStore = postgresqlCheckpointStore configurationProjectionName,
+      reset = resetConfiguration
+    }
 
-  let newSeq = maximumDef currentModel.latestSequence ((.position) <$> events)
-      updatedData = foldl processConfigurationEvent currentModel.configurations events
-
-  liftIO . atomically . writeTVar readModelTVar $
-    currentModel
-      { latestSequence = newSeq,
-        configurations = updatedData
-      }
-
--- | Processes a single event and updates the configurations map.
---
--- GlobalStreamEvent is nested: StreamEvent () SequenceNumber (VersionedStreamEvent event)
--- where VersionedStreamEvent event = StreamEvent UUID EventVersion event
--- So we need to unwrap twice to get the payload and stream key (UUID).
-processConfigurationEvent ::
-  Map ConfigurationId ConfigurationData ->
-  GlobalStreamEvent AccountingEvent ->
-  Map ConfigurationId ConfigurationData
-processConfigurationEvent configurations globalEvent =
-  let (streamUuid, payload) = unpackGlobalEvent globalEvent
-   in case payload of
-        ConfigurationCreatedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.insert
-                configId
-                ConfigurationData
-                  { baseCurrency = evt.baseCurrency,
-                    defaultCurrency = evt.defaultCurrency,
-                    dictionaries = Map.empty,
-                    banking = emptyBankingConfiguration,
-                    defaultIncomeCategory = Nothing,
-                    defaultExpenseCategory = Nothing,
-                    booksClosedThrough = Nothing,
-                    createdBy = evt.createdBy,
-                    version = 1
+-- | Apply a single global event to the configuration tables. The per-stream
+-- version (@globalEvent.payload.position@) is recorded as the row @version@.
+-- Mutations to a configuration's child rows also bump the parent row's version,
+-- and are no-ops when the configuration row is absent (mirroring the old
+-- in-memory @Map.adjust@).
+applyConfigurationEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
+applyConfigurationEvent globalEvent =
+  let inner = globalEvent.payload
+      EventVersion ver = inner.position
+   in case mkConfigurationIdSafe inner.key of
+        Nothing -> pure ()
+        Just configId -> case inner.payload of
+          ConfigurationCreatedEvent evt ->
+            void $
+              insertUnique
+                ConfigurationEntity
+                  { configurationEntityConfigId = configId,
+                    configurationEntityBaseCurrency = evt.baseCurrency,
+                    configurationEntityDefaultCurrency = evt.defaultCurrency,
+                    configurationEntityDefaultIncomeCategory = Nothing,
+                    configurationEntityDefaultExpenseCategory = Nothing,
+                    configurationEntityBooksClosedThrough = Nothing,
+                    configurationEntityCreatedBy = evt.createdBy,
+                    configurationEntityVersion = ver
                   }
-                configurations
-        BaseCurrencyChangedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { baseCurrency = evt.baseCurrency,
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        DefaultCurrencyChangedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { defaultCurrency = evt.defaultCurrency,
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        DictionaryEntryAddedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    let dictMap = config.dictionaries
-                        dict = Map.findWithDefault (DictionaryData Map.empty) evt.dictionaryId dictMap
-                        updatedEntries = Map.insert evt.entryId evt.name dict.entries
-                        updatedDict = dict {entries = updatedEntries}
-                     in config
-                          { dictionaries = Map.insert evt.dictionaryId updatedDict dictMap,
-                            version = config.version + 1
-                          }
-                )
-                configId
-                configurations
-        DictionaryEntryRenamedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    let dictMap = config.dictionaries
-                     in case Map.lookup evt.dictionaryId dictMap of
-                          Nothing -> config
-                          Just dict ->
-                            let updatedEntries = Map.insert evt.entryId evt.newName dict.entries
-                                updatedDict = dict {entries = updatedEntries}
-                             in config
-                                  { dictionaries = Map.insert evt.dictionaryId updatedDict dictMap,
-                                    version = config.version + 1
-                                  }
-                )
-                configId
-                configurations
-        DictionaryEntryRemovedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    let dictMap = config.dictionaries
-                     in case Map.lookup evt.dictionaryId dictMap of
-                          Nothing -> config
-                          Just dict ->
-                            let updatedEntries = Map.delete evt.entryId dict.entries
-                                updatedDict = dict {entries = updatedEntries}
-                             in config
-                                  { dictionaries = Map.insert evt.dictionaryId updatedDict dictMap,
-                                    version = config.version + 1
-                                  }
-                )
-                configId
-                configurations
-        DefaultIncomeCategorySetEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { defaultIncomeCategory = Just evt.categoryId,
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        DefaultExpenseCategorySetEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { defaultExpenseCategory = Just evt.categoryId,
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        BankingMccExpenseCategoryMapSetEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { banking = config.banking {mccExpenseCategoryMap = evt.mapping},
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        BooksClosedThroughSetEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { booksClosedThrough = Just evt.closedThrough,
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        BankConnectionAddedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    let conn =
-                          BankConnection
-                            { connectionId = evt.connectionId,
-                              provider = evt.provider,
-                              name = evt.name,
-                              encryptedToken = evt.encryptedToken,
-                              tokenHint = evt.tokenHint,
-                              enabled = evt.enabled,
-                              accountMap = Map.empty
-                            }
-                     in config
-                          { banking =
-                              config.banking
-                                { connections = Map.insert evt.connectionId conn config.banking.connections
-                                },
-                            version = config.version + 1
-                          }
-                )
-                configId
-                configurations
-        BankConnectionRenamedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { banking =
-                          config.banking
-                            { connections =
-                                Map.adjust
-                                  ( \c ->
-                                      c
-                                        { connectionId = c.connectionId,
-                                          provider = c.provider,
-                                          name = evt.name,
-                                          encryptedToken = c.encryptedToken,
-                                          tokenHint = c.tokenHint,
-                                          enabled = c.enabled,
-                                          accountMap = c.accountMap
-                                        }
-                                  )
-                                  evt.connectionId
-                                  config.banking.connections
-                            },
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        BankConnectionTokenChangedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { banking =
-                          config.banking
-                            { connections =
-                                Map.adjust
-                                  ( \c ->
-                                      c
-                                        { connectionId = c.connectionId,
-                                          provider = c.provider,
-                                          name = c.name,
-                                          encryptedToken = evt.encryptedToken,
-                                          tokenHint = evt.tokenHint,
-                                          enabled = c.enabled,
-                                          accountMap = c.accountMap
-                                        }
-                                  )
-                                  evt.connectionId
-                                  config.banking.connections
-                            },
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        BankConnectionEnabledSetEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { banking =
-                          config.banking
-                            { connections =
-                                Map.adjust
-                                  ( \c ->
-                                      c
-                                        { connectionId = c.connectionId,
-                                          provider = c.provider,
-                                          name = c.name,
-                                          encryptedToken = c.encryptedToken,
-                                          tokenHint = c.tokenHint,
-                                          enabled = evt.enabled,
-                                          accountMap = c.accountMap
-                                        }
-                                  )
-                                  evt.connectionId
-                                  config.banking.connections
-                            },
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        BankConnectionAccountMapSetEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { banking =
-                          config.banking
-                            { connections =
-                                Map.adjust
-                                  ( \c ->
-                                      c
-                                        { connectionId = c.connectionId,
-                                          provider = c.provider,
-                                          name = c.name,
-                                          encryptedToken = c.encryptedToken,
-                                          tokenHint = c.tokenHint,
-                                          enabled = c.enabled,
-                                          accountMap = evt.accountMap
-                                        }
-                                  )
-                                  evt.connectionId
-                                  config.banking.connections
-                            },
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        BankConnectionRemovedEvent evt ->
-          case mkConfigurationIdSafe streamUuid of
-            Nothing -> configurations
-            Just configId ->
-              Map.adjust
-                ( \config ->
-                    config
-                      { banking =
-                          config.banking
-                            { connections = Map.delete evt.connectionId config.banking.connections
-                            },
-                        version = config.version + 1
-                      }
-                )
-                configId
-                configurations
-        _ -> configurations -- Ignore other events
+          BaseCurrencyChangedEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityBaseCurrency = evt.baseCurrency, configurationEntityVersion = ver})
+          DefaultCurrencyChangedEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityDefaultCurrency = evt.defaultCurrency, configurationEntityVersion = ver})
+          DefaultIncomeCategorySetEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityDefaultIncomeCategory = Just evt.categoryId, configurationEntityVersion = ver})
+          DefaultExpenseCategorySetEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityDefaultExpenseCategory = Just evt.categoryId, configurationEntityVersion = ver})
+          BooksClosedThroughSetEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityBooksClosedThrough = Just evt.closedThrough, configurationEntityVersion = ver})
+          DictionaryEntryAddedEvent evt ->
+            whenConfig configId ver $
+              void $
+                upsertBy
+                  (UniqueConfigDictEntry configId evt.dictionaryId evt.entryId)
+                  (ConfigDictionaryEntryEntity configId evt.dictionaryId evt.entryId evt.name)
+                  [ConfigDictionaryEntryEntityName =. evt.name]
+          DictionaryEntryRenamedEvent evt ->
+            whenConfig configId ver $
+              updateWhere
+                [ ConfigDictionaryEntryEntityConfigId ==. configId,
+                  ConfigDictionaryEntryEntityDictionaryId ==. evt.dictionaryId,
+                  ConfigDictionaryEntryEntityEntryId ==. evt.entryId
+                ]
+                [ConfigDictionaryEntryEntityName =. evt.newName]
+          DictionaryEntryRemovedEvent evt ->
+            whenConfig configId ver $
+              deleteWhere
+                [ ConfigDictionaryEntryEntityConfigId ==. configId,
+                  ConfigDictionaryEntryEntityDictionaryId ==. evt.dictionaryId,
+                  ConfigDictionaryEntryEntityEntryId ==. evt.entryId
+                ]
+          BankingMccExpenseCategoryMapSetEvent evt ->
+            whenConfig configId ver $ do
+              deleteWhere [ConfigMccCategoryEntityConfigId ==. configId]
+              forM_ (Map.toList evt.mapping) $ \(mcc, cat) ->
+                insert_ (ConfigMccCategoryEntity configId mcc cat)
+          BankConnectionAddedEvent evt ->
+            whenConfig configId ver $ do
+              -- Adding (re)initializes the connection with an empty account map.
+              deleteWhere
+                [ ConfigBankAccountMapEntityConfigId ==. configId,
+                  ConfigBankAccountMapEntityConnectionId ==. evt.connectionId
+                ]
+              void $
+                upsertBy
+                  (UniqueConfigConn configId evt.connectionId)
+                  (ConfigBankConnectionEntity configId evt.connectionId evt.provider evt.name evt.encryptedToken evt.tokenHint evt.enabled)
+                  [ ConfigBankConnectionEntityProvider =. evt.provider,
+                    ConfigBankConnectionEntityName =. evt.name,
+                    ConfigBankConnectionEntityEncryptedToken =. evt.encryptedToken,
+                    ConfigBankConnectionEntityTokenHint =. evt.tokenHint,
+                    ConfigBankConnectionEntityEnabled =. evt.enabled
+                  ]
+          BankConnectionRenamedEvent evt ->
+            whenConfig configId ver $
+              updateWhere
+                [ConfigBankConnectionEntityConfigId ==. configId, ConfigBankConnectionEntityConnectionId ==. evt.connectionId]
+                [ConfigBankConnectionEntityName =. evt.name]
+          BankConnectionTokenChangedEvent evt ->
+            whenConfig configId ver $
+              updateWhere
+                [ConfigBankConnectionEntityConfigId ==. configId, ConfigBankConnectionEntityConnectionId ==. evt.connectionId]
+                [ ConfigBankConnectionEntityEncryptedToken =. evt.encryptedToken,
+                  ConfigBankConnectionEntityTokenHint =. evt.tokenHint
+                ]
+          BankConnectionEnabledSetEvent evt ->
+            whenConfig configId ver $
+              updateWhere
+                [ConfigBankConnectionEntityConfigId ==. configId, ConfigBankConnectionEntityConnectionId ==. evt.connectionId]
+                [ConfigBankConnectionEntityEnabled =. evt.enabled]
+          BankConnectionAccountMapSetEvent evt ->
+            whenConfig configId ver $ do
+              deleteWhere
+                [ ConfigBankAccountMapEntityConfigId ==. configId,
+                  ConfigBankAccountMapEntityConnectionId ==. evt.connectionId
+                ]
+              forM_ (Map.toList evt.accountMap) $ \(ext, acc) ->
+                insert_ (ConfigBankAccountMapEntity configId evt.connectionId ext acc)
+          BankConnectionRemovedEvent evt ->
+            whenConfig configId ver $ do
+              deleteWhere
+                [ ConfigBankAccountMapEntityConfigId ==. configId,
+                  ConfigBankAccountMapEntityConnectionId ==. evt.connectionId
+                ]
+              deleteWhere
+                [ConfigBankConnectionEntityConfigId ==. configId, ConfigBankConnectionEntityConnectionId ==. evt.connectionId]
+          _ -> pure ()
+
+-- | Read-modify-write the configuration row (no-op if absent).
+modifyConfig :: (MonadIO m) => ConfigurationId -> (ConfigurationEntity -> ConfigurationEntity) -> SqlPersistT m ()
+modifyConfig configId f = do
+  mEnt <- getBy (UniqueConfiguration configId)
+  case mEnt of
+    Nothing -> pure ()
+    Just (Entity k e) -> replace k (f e)
+
+-- | Run a child-row mutation only when the configuration exists, then advance
+-- the configuration row's version. Mirrors the old in-memory @Map.adjust@,
+-- which no-ops when the configuration is absent.
+whenConfig :: (MonadIO m) => ConfigurationId -> Int -> SqlPersistT m () -> SqlPersistT m ()
+whenConfig configId ver body = do
+  mEnt <- getBy (UniqueConfiguration configId)
+  case mEnt of
+    Nothing -> pure ()
+    Just _ -> do
+      body
+      updateWhere [ConfigurationEntityConfigId ==. configId] [ConfigurationEntityVersion =. ver]
 
 -- -----------------------------------------------------------------------------
 -- Query Functions
 -- -----------------------------------------------------------------------------
 
--- | Retrieves the configuration data for a specific configuration ID.
---
--- Returns 'Nothing' if the configuration doesn't exist in the read model.
---
--- Example:
--- >>> maybeConfig <- getConfiguration readModel configId
--- >>> case maybeConfig of
--- >>>   Just config -> print (config.baseCurrency)
--- >>>   Nothing -> putStrLn "Configuration not found"
-getConfiguration ::
-  (MonadIO m) =>
-  TVar ConfigurationReadModel ->
-  ConfigurationId ->
-  m (Maybe ConfigurationData)
-getConfiguration readModelTVar configId = do
-  model <- liftIO $ readTVarIO readModelTVar
-  return $ Map.lookup configId model.configurations
+-- | Retrieve the configuration data for a specific configuration ID, or
+-- 'Nothing' if it does not exist.
+getConfiguration :: (MonadIO m) => ConfigurationId -> SqlPersistT m (Maybe ConfigurationData)
+getConfiguration configId = do
+  mEnt <- getBy (UniqueConfiguration configId)
+  case mEnt of
+    Nothing -> pure Nothing
+    Just (Entity _ e) -> do
+      dicts <- loadDictionaries configId
+      bankingCfg <- loadBanking configId
+      pure $
+        Just
+          ConfigurationData
+            { baseCurrency = e.configurationEntityBaseCurrency,
+              defaultCurrency = e.configurationEntityDefaultCurrency,
+              dictionaries = dicts,
+              banking = bankingCfg,
+              defaultIncomeCategory = e.configurationEntityDefaultIncomeCategory,
+              defaultExpenseCategory = e.configurationEntityDefaultExpenseCategory,
+              booksClosedThrough = e.configurationEntityBooksClosedThrough,
+              createdBy = e.configurationEntityCreatedBy,
+              version = e.configurationEntityVersion
+            }
+
+-- | Assemble the configuration's dictionaries from their entry rows.
+loadDictionaries :: (MonadIO m) => ConfigurationId -> SqlPersistT m (Map DictionaryId DictionaryData)
+loadDictionaries configId = do
+  rows <- selectList [ConfigDictionaryEntryEntityConfigId ==. configId] []
+  pure $
+    Map.fromListWith
+      mergeDict
+      [ (r.configDictionaryEntryEntityDictionaryId, DictionaryData (Map.singleton r.configDictionaryEntryEntityEntryId r.configDictionaryEntryEntityName))
+      | Entity _ r <- rows
+      ]
+  where
+    mergeDict (DictionaryData a) (DictionaryData b) = DictionaryData (Map.union a b)
+
+-- | Assemble the configuration's banking configuration from the MCC-map,
+-- connection, and account-map rows.
+loadBanking :: (MonadIO m) => ConfigurationId -> SqlPersistT m BankingConfiguration
+loadBanking configId = do
+  mccRows <- selectList [ConfigMccCategoryEntityConfigId ==. configId] []
+  connRows <- selectList [ConfigBankConnectionEntityConfigId ==. configId] []
+  conns <- forM connRows $ \(Entity _ c) -> do
+    acctRows <-
+      selectList
+        [ ConfigBankAccountMapEntityConfigId ==. configId,
+          ConfigBankAccountMapEntityConnectionId ==. c.configBankConnectionEntityConnectionId
+        ]
+        []
+    let accountMap' =
+          Map.fromList
+            [ (a.configBankAccountMapEntityExternalAccountId, a.configBankAccountMapEntityAccountId)
+            | Entity _ a <- acctRows
+            ]
+    pure
+      ( c.configBankConnectionEntityConnectionId,
+        BankConnection
+          { connectionId = c.configBankConnectionEntityConnectionId,
+            provider = c.configBankConnectionEntityProvider,
+            name = c.configBankConnectionEntityName,
+            encryptedToken = c.configBankConnectionEntityEncryptedToken,
+            tokenHint = c.configBankConnectionEntityTokenHint,
+            enabled = c.configBankConnectionEntityEnabled,
+            accountMap = accountMap'
+          }
+      )
+  pure
+    emptyBankingConfiguration
+      { mccExpenseCategoryMap =
+          Map.fromList
+            [ (m.configMccCategoryEntityMcc, m.configMccCategoryEntityCategoryId)
+            | Entity _ m <- mccRows
+            ],
+        connections = Map.fromList conns
+      }

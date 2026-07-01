@@ -92,7 +92,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
-import Infrastructure.App (AppM, HasReadModel (..), HasTelegramClient (..), runDb)
+import Infrastructure.App (AppM, HasTelegramClient (..), runDb)
 import RIO
 import qualified RIO.Map as Map
 import qualified RIO.Text as T
@@ -753,8 +753,7 @@ getCategoryEntries telegramId dictId = do
   case maybeUser of
     Nothing -> return Nothing
     Just (_, userData) -> do
-      configRM <- view configurationReadModelL
-      maybeConfig <- liftIO $ getConfiguration configRM userData.configurationId
+      maybeConfig <- runDb (getConfiguration userData.configurationId)
       case maybeConfig of
         Nothing -> return Nothing
         Just configData ->
@@ -774,8 +773,7 @@ getDictionaryEntryNames telegramId = do
   case maybeUser of
     Nothing -> return Map.empty
     Just (_, userData) -> do
-      configRM <- view configurationReadModelL
-      maybeConfig <- liftIO $ getConfiguration configRM userData.configurationId
+      maybeConfig <- runDb (getConfiguration userData.configurationId)
       return $ case maybeConfig of
         Nothing -> Map.empty
         Just configData ->

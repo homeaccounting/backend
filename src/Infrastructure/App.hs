@@ -12,7 +12,7 @@
 -- Key Components:
 --   - AppEnv: Application environment containing all runtime dependencies
 --   - AppM: Application monad (type alias for RIO AppEnv)
---   - Type classes: HasDbPool, HasEventStore, HasReadModel for dependency access
+--   - Type classes: HasDbPool, HasEventStore for dependency access
 --   - Helper functions: For running the application monad
 --
 -- Architecture Benefits:
@@ -82,7 +82,6 @@ module Infrastructure.App
     -- * Type Classes for Resource Access
     HasDbPool (..),
     HasEventStore (..),
-    HasReadModel (..),
     HasAppConfig (..),
     HasDatabaseConfig (..),
     HasAuthConfig (..),
@@ -118,7 +117,6 @@ where
 
 -- Local imports
 import Application.LinkCodeStore (LinkCodeStore)
-import Application.ReadModels.Configuration (ConfigurationReadModel)
 import Control.Concurrent.STM (retry)
 import Control.Monad.Logger (LoggingT, filterLogger, runStdoutLoggingT)
 import qualified Control.Monad.Logger as ML
@@ -174,8 +172,7 @@ import Telegram.Types (BotState)
 --  - eventStoreWriter: Event store writer with event bus
 --  - eventStoreReader: Event store reader for loading aggregates
 --  - globalEventStoreReader: Global event reader for read models
---  - configurationReadModel / exchangeRateReadModel: in-memory read models
---    (User, Account, Transaction, BankImport are persistent SQL models)
+--    (all read models are persistent SQL, accessed via 'runDb')
 --
 -- Design Notes:
 --  - All fields are strict (!) for performance
@@ -199,8 +196,6 @@ data AppEnv = AppEnv
     eventStoreReader :: !(AccountingVersionedEventStoreReader IO),
     -- | Global event store reader for read models
     globalEventStoreReader :: !(AccountingGlobalEventStoreReader IO),
-    -- | In-memory configuration read model (STM)
-    configurationReadModel :: !(TVar ConfigurationReadModel),
     -- | JWT authentication configuration
     jwtConfig :: !JWTConfig,
     -- | OAuth authentication configuration
@@ -287,7 +282,6 @@ initializeAppEnv ::
   AccountingTaggedEventStoreWriter IO ->
   AccountingVersionedEventStoreReader IO ->
   AccountingGlobalEventStoreReader IO ->
-  TVar ConfigurationReadModel ->
   JWTConfig ->
   OAuthConfig ->
   TelegramConfig ->
@@ -297,7 +291,7 @@ initializeAppEnv ::
   BankingEnv ->
   LinkCodeStore ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader configurationReadModel jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -306,7 +300,6 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader configu
       eventStoreWriter = writer,
       eventStoreReader = reader,
       globalEventStoreReader = globalReader,
-      configurationReadModel = configurationReadModel,
       jwtConfig = jwtConfig,
       oauthConfig = oauthConfig,
       telegramConfig = telegramConfig,
@@ -445,23 +438,6 @@ instance HasEventStore AppEnv where
   eventStoreWriterL = lens (.eventStoreWriter) (\x y -> x {eventStoreWriter = y})
   eventStoreReaderL = lens (.eventStoreReader) (\x y -> x {eventStoreReader = y})
   globalEventStoreReaderL = lens (.globalEventStoreReader) (\x y -> x {globalEventStoreReader = y})
-
--- | Type class for environments that have in-memory read model access.
---
--- Provides lenses to the user and configuration read models. (Account,
--- Transaction, and BankImport are persistent SQL read models accessed via
--- 'runDb', not through this class.)
---
--- Example:
--- >>> getConfig :: (MonadReader env m, HasReadModel env, MonadIO m) => m ConfigurationData
--- >>> getConfig = do
--- >>>   readModel <- view configurationReadModelL
--- >>>   ...
-class HasReadModel env where
-  configurationReadModelL :: Lens' env (TVar ConfigurationReadModel)
-
-instance HasReadModel AppEnv where
-  configurationReadModelL = lens (.configurationReadModel) (\x y -> x {configurationReadModel = y})
 
 -- | Type class for environments that have auth configuration access.
 --

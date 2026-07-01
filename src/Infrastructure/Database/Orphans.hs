@@ -21,6 +21,7 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.UUID (UUID)
 import Database.Persist (PersistField (..), PersistValue (..))
 import Database.Persist.Sql (PersistFieldSql (..), SqlType (SqlString))
+import Domain.Banking.Types (BankConnectionId, BankProvider)
 import Domain.Core.Types
   ( AccountId,
     AccountRole,
@@ -29,8 +30,11 @@ import Domain.Core.Types
     Allocation (..),
     Allocations (..),
     ConfigurationId,
+    CreatedBy,
     Currency,
     DictionaryEntryId,
+    DictionaryId,
+    EntryName,
     ExchangeRate,
     ExternalTransactionId,
     Money,
@@ -62,6 +66,7 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (Provider (..), unProvider)
 import Domain.Transaction.Projection (StatusKind, parseStatusKind, renderStatusKind)
 import Eventium.Store.Sql.Orphans ()
+import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import RIO
 import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text as T
@@ -289,4 +294,56 @@ instance PersistField Provider where
   fromPersistValue v = Provider <$> fromPersistValue v
 
 instance PersistFieldSql Provider where
+  sqlType _ = SqlString
+
+-- Configuration read-model column types. The configuration projection is only
+-- ever fetched whole by id, so these columns are never filtered on — each is
+-- stored as its JSON token for a uniform, lossless round-trip.
+
+-- | 'DictionaryId' wraps 'Text' (a dictionary key like @"expense-category"@).
+instance PersistField DictionaryId where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql DictionaryId where
+  sqlType _ = SqlString
+
+-- | 'EntryName' wraps 'Text' (a dictionary entry's display name).
+instance PersistField EntryName where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql EntryName where
+  sqlType _ = SqlString
+
+-- | 'CreatedBy' identifies the configuration's creator.
+instance PersistField CreatedBy where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql CreatedBy where
+  sqlType _ = SqlString
+
+-- | 'BankConnectionId' wraps a 'UUID'.
+instance PersistField BankConnectionId where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql BankConnectionId where
+  sqlType _ = SqlString
+
+-- | 'BankProvider' is a small closed enum; stored as its JSON token.
+instance PersistField BankProvider where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql BankProvider where
+  sqlType _ = SqlString
+
+-- | 'EncryptedSecret' round-trips through its own (base64) JSON encoding.
+instance PersistField EncryptedSecret where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql EncryptedSecret where
   sqlType _ = SqlString
