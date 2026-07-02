@@ -15,17 +15,21 @@ import Test.Hspec.QuickCheck (prop)
 spec :: Spec
 spec = do
   describe "mkRange" $ do
-    it "both absent -> Right Nothing (no constraint)" $
-      mkRange (Nothing :: Maybe Int) Nothing `shouldBe` Right Nothing
+    it "both absent -> Right Nothing (no constraint)"
+      $ mkRange (Nothing :: Maybe Int) Nothing
+      `shouldBe` Right Nothing
 
-    it "only-from -> Right (Just ..)" $
-      mkRange (Just (1 :: Int)) Nothing `shouldBe` Right (Just (Range (Just 1) Nothing))
+    it "only-from -> Right (Just ..)"
+      $ mkRange (Just (1 :: Int)) Nothing
+      `shouldBe` Right (Just (Range (Just 1) Nothing))
 
-    it "from == to accepted" $
-      mkRange (Just (5 :: Int)) (Just 5) `shouldBe` Right (Just (Range (Just 5) (Just 5)))
+    it "from == to accepted"
+      $ mkRange (Just (5 :: Int)) (Just 5)
+      `shouldBe` Right (Just (Range (Just 5) (Just 5)))
 
-    it "from > to rejected" $
-      mkRange (Just (9 :: Int)) (Just 1) `shouldSatisfy` isLeft
+    it "from > to rejected"
+      $ mkRange (Just (9 :: Int)) (Just 1)
+      `shouldSatisfy` isLeft
 
   describe "within" $ do
     prop "matches the bound semantics" $ \(mf :: Maybe Int) mt x ->

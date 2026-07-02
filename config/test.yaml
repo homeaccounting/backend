@@ -91,3 +91,11 @@ banking:
     monobank:
       enabled: false
       api_base_url: "http://localhost:0"
+
+# LLM provider (OpenAI-compatible) for natural-language transaction prompting
+llm:
+  enabled: false
+  base_url: https://api.groq.com/openai/v1
+  model: llama-3.3-70b-versatile
+  api_key: ""
+  timeout_ms: 20000

@@ -123,6 +123,7 @@ import Infrastructure.Eventium
   )
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
+import Infrastructure.Llm.OpenAICompat (mkOpenAICompatClient)
 import Infrastructure.Version (VersionInfo, displayVersion, mkVersionInfo)
 import Network.HTTP.Client.TLS (newTlsManager)
 import RIO
@@ -349,6 +350,13 @@ initializeEnvironment logFunc config versionInfo = do
   logInfo "Creating HTTP manager..."
   httpManager <- liftIO newTlsManager
 
+  -- LLM client for transaction prompting (reuses the shared TLS manager);
+  -- Nothing when LLM support is disabled in config.
+  let llmClient =
+        if config.llm.enabled
+          then Just (mkOpenAICompatClient config.llm.baseUrl config.llm.model config.llm.apiKey config.llm.timeoutMs httpManager)
+          else Nothing
+
   -- 6d. Per-user bank-import serialization locks
   bankImportLocksVar <- liftIO $ newTVarIO Set.empty
 
@@ -389,6 +397,7 @@ initializeEnvironment logFunc config versionInfo = do
           versionInfo
           bankingEnv'
           linkCodeStore
+          llmClient
 
   logInfo "Application environment initialized successfully"
   return env

@@ -78,6 +78,7 @@ import Infrastructure.Config
     MonobankProviderConfig (..),
     ProcessManagerConfig (..),
     ServerConfig (..),
+    defaultLlmConfig,
   )
 import Infrastructure.Database (defaultSqlEventStoreConfig, runDbDirect)
 import Infrastructure.Eventium
@@ -269,6 +270,7 @@ mkAppEnv withProcessManager = do
         telegramConfig = config.telegram,
         botState = botState,
         telegramClientEnv = Nothing,
+        llmClient = Nothing,
         versionInfo = testVersionInfo,
         bankingEnv =
           BankingEnv
@@ -358,5 +360,6 @@ testAppConfig =
             -- Deterministic base64 of 32 bytes (0x07 repeated) so the test
             -- key ring is reproducible across runs and processes.
             tokenEncKey = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
-          }
+          },
+      llm = defaultLlmConfig
     }

@@ -89,3 +89,11 @@ banking:
     monobank:
       enabled: ${MONOBANK_ENABLED:-false}
       api_base_url: "${MONOBANK_API_BASE_URL:-https://api.monobank.ua}"
+
+# LLM provider (OpenAI-compatible) for natural-language transaction prompting
+llm:
+  enabled: ${LLM_ENABLED:-false}
+  base_url: ${LLM_BASE_URL:-https://api.groq.com/openai/v1}
+  model: ${LLM_MODEL:-llama-3.3-70b-versatile}
+  api_key: ${LLM_API_KEY:-}
+  timeout_ms: ${LLM_TIMEOUT_MS:-20000}

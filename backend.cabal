@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.5.3
+version:        0.6.0
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -47,11 +47,18 @@ library
       Application.Services.ConfigurationService
       Application.Services.ExchangeRatePublisher
       Application.Services.Internal
+      Application.Services.Prompt.Builder
+      Application.Services.Prompt.Transaction.Handler
+      Application.Services.Prompt.Transaction.Intent
+      Application.Services.Prompt.Transaction.Resolve
+      Application.Services.Prompt.Types
+      Application.Services.PromptService
       Application.Services.ReportingService
       Application.Services.TransactionHistoryService
       Application.Services.TransactionService
       Application.Services.UserService
       Data.Text.Display
+      Data.Text.Match
       Domain.Account
       Domain.Account.CommandHandler
       Domain.Account.Commands
@@ -106,6 +113,8 @@ library
       Infrastructure.ExchangeRate.ECB
       Infrastructure.ExchangeRate.NBU
       Infrastructure.ExchangeRate.Provider
+      Infrastructure.Llm.OpenAICompat
+      Infrastructure.Llm.Provider
       Infrastructure.Version
       Telegram
       Telegram.Api
@@ -120,6 +129,7 @@ library
       Web.API.BankingAPI
       Web.API.ConfigurationAPI
       Web.API.InfoAPI
+      Web.API.PromptAPI
       Web.API.ReportingAPI
       Web.API.TelegramWebhookAPI
       Web.API.TransactionAPI
@@ -175,6 +185,7 @@ library
     , postgresql-simple >=0.6 && <0.8
     , rio >=0.1.22 && <0.2
     , safe ==0.3.*
+    , scientific ==0.3.*
     , servant >=0.19 && <0.21
     , servant-client >=0.19 && <0.21
     , servant-server >=0.19 && <0.21
@@ -245,6 +256,7 @@ executable backend
     , postgresql-simple >=0.6 && <0.8
     , rio >=0.1.22 && <0.2
     , safe ==0.3.*
+    , scientific ==0.3.*
     , servant >=0.19 && <0.21
     , servant-client >=0.19 && <0.21
     , servant-server >=0.19 && <0.21
@@ -304,6 +316,10 @@ test-suite backend-test
       Application.Services.CrossKindAmendmentSpec
       Application.Services.ExchangeRatePublisherSpec
       Application.Services.InternalSpec
+      Application.Services.Prompt.BuilderSpec
+      Application.Services.Prompt.Transaction.IntentSpec
+      Application.Services.Prompt.Transaction.ResolveSpec
+      Application.Services.Prompt.TypesSpec
       Application.Services.ReportingServicePropertySpec
       Application.Services.ReportingServiceSpec
       Application.Services.TransactionAllocationsIntegrationSpec
@@ -313,6 +329,8 @@ test-suite backend-test
       Application.Services.TransactionServiceLabelsSpec
       Application.Services.TransactionServiceSpec
       Application.Services.UserServiceSpec
+      Data.Text.MatchPropertySpec
+      Data.Text.MatchSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
       Domain.Account.ReversalCommandHandlerSpec
@@ -349,6 +367,7 @@ test-suite backend-test
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.ProviderSpec
+      Infrastructure.ConfigLlmSpec
       Infrastructure.ConfigSpec
       Infrastructure.Crypto.SecretBoxSpec
       Infrastructure.Database.OrphansSpec
@@ -356,6 +375,7 @@ test-suite backend-test
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
       Infrastructure.ExchangeRateIntegrationSpec
+      Infrastructure.Llm.OpenAICompatSpec
       Integration.BankImportWorkflowSpec
       Integration.BaseCurrencyEditableIntegrationSpec
       Integration.BooksClosePeriodIntegrationSpec
@@ -367,6 +387,7 @@ test-suite backend-test
       Integration.TransactionCategoryIntegrationSpec
       Integration.TransactionLabelsIntegrationSpec
       Integration.TransactionMetadataEditIntegrationSpec
+      Integration.TransactionPromptIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.CommandsSpec
@@ -380,6 +401,7 @@ test-suite backend-test
       Testkit.Helpers
       Testkit.HspecWai
       Testkit.InMemoryEventStore
+      Testkit.Llm
       Testkit.Time
       Testkit.TransactionEditFixture
       Testkit.TransactionEvents
@@ -449,6 +471,7 @@ test-suite backend-test
     , postgresql-simple >=0.6 && <0.8
     , rio >=0.1.22 && <0.2
     , safe ==0.3.*
+    , scientific ==0.3.*
     , servant >=0.19 && <0.21
     , servant-client >=0.19 && <0.21
     , servant-server >=0.19 && <0.21

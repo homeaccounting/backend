@@ -87,6 +87,7 @@ module Infrastructure.App
     HasAuthConfig (..),
     HasBotState (..),
     HasTelegramClient (..),
+    HasLlmClient (..),
     HasVersionInfo (..),
     HasBankingEnv (..),
     HasBankImportLocks (..),
@@ -147,6 +148,7 @@ import Infrastructure.Eventium
     AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
   )
+import Infrastructure.Llm.Provider (LlmClient)
 import Infrastructure.Version (VersionInfo)
 import Network.HTTP.Client (Manager)
 import RIO
@@ -206,6 +208,8 @@ data AppEnv = AppEnv
     botState :: !(TVar BotState),
     -- | Telegram API client environment (Nothing if bot token is empty)
     telegramClientEnv :: !(Maybe ClientEnv),
+    -- | LLM client for transaction prompting (Nothing if LLM is disabled)
+    llmClient :: !(Maybe LlmClient),
     -- | Application version information
     versionInfo :: !VersionInfo,
     -- | Banking-subsystem runtime dependencies (dedup read model,
@@ -290,8 +294,9 @@ initializeAppEnv ::
   VersionInfo ->
   BankingEnv ->
   LinkCodeStore ->
+  Maybe LlmClient ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' llmClient' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -305,6 +310,7 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConf
       telegramConfig = telegramConfig,
       botState = botState,
       telegramClientEnv = telegramClientEnv,
+      llmClient = llmClient',
       versionInfo = versionInfo,
       bankingEnv = bankingEnv,
       linkCodeStore = linkCodeStore'
@@ -471,6 +477,13 @@ class HasTelegramClient env where
 
 instance HasTelegramClient AppEnv where
   telegramClientEnvL = lens (.telegramClientEnv) (\x y -> x {telegramClientEnv = y})
+
+-- | Type class for environments that have an LLM client.
+class HasLlmClient env where
+  llmClientL :: Lens' env (Maybe LlmClient)
+
+instance HasLlmClient AppEnv where
+  llmClientL = lens (.llmClient) (\x y -> x {llmClient = y})
 
 -- | Type class for environments that have version information.
 class HasVersionInfo env where

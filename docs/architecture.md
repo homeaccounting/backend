@@ -341,6 +341,7 @@ The Application Services layer sits between the Web handlers and the Domain laye
 | `AuthService` | Registration, login, OAuth, Telegram link-code issue/redeem, token refresh. Returns `Either DomainError AuthResult` |
 | `UserService` | User profile queries, password change, OAuth/Telegram unlinking. Returns `Either DomainError (UserId, UserSummaryData)` or `Either DomainError ()` |
 | `AuthorizationService` | Pure RBAC access control. No IO — evaluates permissions from data |
+| `PromptService` | Backs `POST /api/prompt` — natural-language transaction creation. Parses free text via a free open-weights LLM through an OpenAI-compatible provider (`Infrastructure.Llm`), then routes the recognised intent through an extensible intent architecture (`Application.Services.Prompt.*`). Reuses `TransactionService` to execute the resulting command |
 
 ### Error Handling
 

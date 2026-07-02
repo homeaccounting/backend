@@ -1,5 +1,5 @@
 name: backend
-version: 0.5.3
+version: 0.6.0
 synopsis: Accounting system backend with CQRS and Event Sourcing
 description: |
   A REST API for an accounting system built with CQRS and Event Sourcing patterns
@@ -30,6 +30,7 @@ dependencies:
   # JSON & serialization
   - aeson >= 2.0 && < 2.3
   - aeson-pretty >= 0.8 && < 0.9
+  - scientific >= 0.3 && < 0.4
 
   # Database & persistence
   - postgresql-simple >= 0.6 && < 0.8

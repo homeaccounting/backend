@@ -26,15 +26,19 @@ spec = do
       statusKind Cancelled `shouldBe` CancelledKind
 
   describe "parseStatusKind / renderStatusKind" $ do
-    it "round-trips every kind" $
-      forM_ [minBound .. maxBound] $ \k ->
+    it "round-trips every kind"
+      $ forM_ [minBound .. maxBound]
+      $ \k ->
         parseStatusKind (renderStatusKind k) `shouldBe` Just k
 
-    it "parses lowercase tokens" $
-      parseStatusKind "failed" `shouldBe` Just FailedKind
+    it "parses lowercase tokens"
+      $ parseStatusKind "failed"
+      `shouldBe` Just FailedKind
 
-    it "trims and lowercases" $
-      parseStatusKind "  Cancelled " `shouldBe` Just CancelledKind
+    it "trims and lowercases"
+      $ parseStatusKind "  Cancelled "
+      `shouldBe` Just CancelledKind
 
-    it "rejects unknown tokens" $
-      parseStatusKind "bogus" `shouldBe` Nothing
+    it "rejects unknown tokens"
+      $ parseStatusKind "bogus"
+      `shouldBe` Nothing

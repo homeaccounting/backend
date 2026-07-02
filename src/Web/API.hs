@@ -44,6 +44,7 @@ module Web.API
     module Web.API.TelegramWebhookAPI,
     module Web.API.BankingAPI,
     module Web.API.ReportingAPI,
+    module Web.API.PromptAPI,
   )
 where
 
@@ -54,6 +55,7 @@ import Web.API.AccountAPI
 import Web.API.AuthAPI
 import Web.API.BankingAPI
 import Web.API.ConfigurationAPI
+import Web.API.PromptAPI (PromptAPI, promptServer)
 import Web.API.ReportingAPI
 import Web.API.TelegramWebhookAPI
 import Web.API.TransactionAPI
@@ -84,6 +86,7 @@ type API =
     :<|> TelegramWebhookAPI
     :<|> BankingAPI
     :<|> ReportingAPI
+    :<|> PromptAPI
 
 -- | Proxy for the combined API.
 api :: Proxy API
@@ -108,3 +111,4 @@ server =
     :<|> telegramWebhookServer
     :<|> bankingServer
     :<|> reportingServer
+    :<|> promptServer

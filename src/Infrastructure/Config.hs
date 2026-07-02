@@ -29,6 +29,8 @@ module Infrastructure.Config
     EventStoreConfig (..),
     ProcessManagerConfig (..),
     ExchangeRateConfig (..),
+    LlmConfig (..),
+    defaultLlmConfig,
     BankingConfig (..),
     BankingProvidersConfig (..),
     MonobankProviderConfig (..),
@@ -116,7 +118,8 @@ data AppConfig = AppConfig
     oauth :: !OAuthConfig,
     telegram :: !TelegramConfig,
     exchangeRate :: !ExchangeRateConfig,
-    banking :: !BankingConfig
+    banking :: !BankingConfig,
+    llm :: !LlmConfig
   }
   deriving (Show, Eq, Generic)
 
@@ -135,6 +138,7 @@ instance FromJSON AppConfig where
       <*> v .: "telegram"
       <*> v .: "exchange_rate"
       <*> v .:? "banking" .!= defaultBankingConfig
+      <*> v .:? "llm" .!= defaultLlmConfig
 
 instance ToJSON AppConfig
 
@@ -326,6 +330,30 @@ instance FromJSON ExchangeRateConfig where
       <$> v .: "provider"
 
 instance ToJSON ExchangeRateConfig
+
+-- | LLM provider configuration (OpenAI-compatible endpoint).
+data LlmConfig = LlmConfig
+  { enabled :: !Bool,
+    baseUrl :: !Text,
+    model :: !Text,
+    apiKey :: !Text,
+    timeoutMs :: !Int
+  }
+  deriving (Show, Eq, Generic)
+
+instance FromJSON LlmConfig where
+  parseJSON = withObject "LlmConfig" $ \v ->
+    LlmConfig
+      <$> v .:? "enabled" .!= False
+      <*> v .:? "base_url" .!= "http://localhost:11434/v1"
+      <*> v .:? "model" .!= "qwen2.5:7b-instruct"
+      <*> v .:? "api_key" .!= ""
+      <*> v .:? "timeout_ms" .!= 20000
+
+instance ToJSON LlmConfig
+
+defaultLlmConfig :: LlmConfig
+defaultLlmConfig = LlmConfig False "http://localhost:11434/v1" "qwen2.5:7b-instruct" "" 20000
 
 -- | Banking integration configuration.
 data BankingConfig = BankingConfig
