@@ -141,8 +141,8 @@ requireEntryIn dictId entryId config =
 -- | Check if an entry is currently set as a global default category.
 isGlobalDefault :: CategoryId -> Configuration -> Bool
 isGlobalDefault eid config =
-  config.defaultIncomeCategory == Just eid
-    || config.defaultExpenseCategory == Just eid
+  config.defaults.incomeCategory == Just eid
+    || config.defaults.expenseCategory == Just eid
 
 -- | Check if an entry is referenced as a value in the banking MCC expense category map.
 isInMccMap :: CategoryId -> Configuration -> Bool
@@ -273,6 +273,20 @@ handleConfigurationCommand config (SetDefaultExpenseCategoryConfigurationCommand
         DefaultExpenseCategorySet
           { categoryId = categoryId
           }
+    ]
+-- Handle SetDefaultAccount command (emitted unconditionally; account ownership
+-- is validated in the service layer)
+handleConfigurationCommand _ (SetDefaultAccountConfigurationCommand SetDefaultAccount {..}) =
+  Right
+    [ DefaultAccountSetConfigurationEvent
+        DefaultAccountSet {accountId = accountId}
+    ]
+-- Handle SetDefaultSubtypeAccounts command (wholesale replace; ownership
+-- validated in the service layer)
+handleConfigurationCommand _ (SetDefaultSubtypeAccountsConfigurationCommand SetDefaultSubtypeAccounts {..}) =
+  Right
+    [ DefaultSubtypeAccountsSetConfigurationEvent
+        DefaultSubtypeAccountsSet {subtypeAccounts = subtypeAccounts}
     ]
 -- Handle SetBankingMccExpenseCategoryMap command
 handleConfigurationCommand config (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {..}) = do

@@ -30,8 +30,10 @@ import Domain.Configuration.Events
     BankConnectionTokenChanged (..),
     BankingMccExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
+    DefaultAccountSet (..),
     DefaultExpenseCategorySet (..),
     DefaultIncomeCategorySet (..),
+    DefaultSubtypeAccountsSet (..),
   )
 import Domain.Core.Types
 import Eventium (latestProjection)
@@ -63,8 +65,10 @@ configurationDefaultSpec =
   describe "configurationDefault" $ do
     it "has an empty banking configuration" $ do
       let b = configurationDefault.banking
-      configurationDefault.defaultIncomeCategory `shouldBe` Nothing
-      configurationDefault.defaultExpenseCategory `shouldBe` Nothing
+      configurationDefault.defaults.incomeCategory `shouldBe` Nothing
+      configurationDefault.defaults.expenseCategory `shouldBe` Nothing
+      configurationDefault.defaults.account `shouldBe` Nothing
+      configurationDefault.defaults.subtypeAccounts `shouldBe` Map.empty
       b.mccExpenseCategoryMap `shouldBe` Map.empty
 
 -- -----------------------------------------------------------------------------
@@ -370,7 +374,7 @@ bankingProjectionSpec = describe "banking projection" $ do
                   { categoryId = testEntryId1
                   }
             ]
-    config.defaultIncomeCategory `shouldBe` Just testEntryId1
+    config.defaults.incomeCategory `shouldBe` Just testEntryId1
 
   it "DefaultExpenseCategorySet sets the expense slot" $ do
     let config =
@@ -381,7 +385,27 @@ bankingProjectionSpec = describe "banking projection" $ do
                   { categoryId = testEntryId2
                   }
             ]
-    config.defaultExpenseCategory `shouldBe` Just testEntryId2
+    config.defaults.expenseCategory `shouldBe` Just testEntryId2
+
+  it "DefaultAccountSet sets the global default account" $ do
+    let config =
+          applyEvents
+            [ createdEvent,
+              DefaultAccountSetConfigurationEvent
+                DefaultAccountSet {accountId = testAccountId}
+            ]
+    config.defaults.account `shouldBe` Just testAccountId
+
+  it "DefaultSubtypeAccountsSet replaces the subtype-account map wholesale" $ do
+    let m1 = Map.singleton CashKind testAccountId
+        m2 = Map.singleton BankAccountKind (mockAccountIdN 2)
+        config =
+          applyEvents
+            [ createdEvent,
+              DefaultSubtypeAccountsSetConfigurationEvent DefaultSubtypeAccountsSet {subtypeAccounts = m1},
+              DefaultSubtypeAccountsSetConfigurationEvent DefaultSubtypeAccountsSet {subtypeAccounts = m2}
+            ]
+    config.defaults.subtypeAccounts `shouldBe` m2
 
   it "BankingMccExpenseCategoryMapSet replaces the mcc map wholesale" $ do
     let m1 = Map.singleton "5411" testEntryId1

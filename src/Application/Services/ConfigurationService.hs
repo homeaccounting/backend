@@ -30,6 +30,8 @@ module Application.Services.ConfigurationService
     removeDictionaryEntry,
     setDefaultIncomeCategory,
     setDefaultExpenseCategory,
+    setDefaultAccount,
+    setDefaultSubtypeAccounts,
     setBankingMccExpenseCategoryMap,
     addBankConnection,
     renameBankConnection,
@@ -49,10 +51,11 @@ module Application.Services.ConfigurationService
   )
 where
 
-import Application.ReadModels.Account (getAccessibleAccounts)
+import Application.ReadModels.Account (AccountData (..), getAccessibleAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
 import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..))
+import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
 import Application.Services.Internal
   ( getUserData,
     getUserExternalAccountId,
@@ -96,8 +99,10 @@ import Domain.Configuration.Commands
     SetBankConnectionAccountMap (..),
     SetBankConnectionEnabled (..),
     SetBankingMccExpenseCategoryMap (..),
+    SetDefaultAccount (..),
     SetDefaultExpenseCategory (..),
     SetDefaultIncomeCategory (..),
+    SetDefaultSubtypeAccounts (..),
   )
 import Domain.Configuration.Defaults
   ( DefaultEntry (..),
@@ -114,11 +119,13 @@ import Domain.Configuration.Defaults
 import Domain.Configuration.Projection
   ( BankConnection (..),
     BankingConfiguration (connections, mccExpenseCategoryMap),
+    ConfigurationDefaults (..),
   )
-import Domain.Core.Errors (DomainError (..))
+import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
   ( AccountId,
     AccountRole (..),
+    AccountSubtypeKind,
     CategoryId,
     ConfigurationId,
     CreatedBy (..),
@@ -129,6 +136,7 @@ import Domain.Core.Types
     MCC,
     UserId,
     defaultConfigurationId,
+    isRegular,
     mkConfigurationId,
     unAccountId,
     unConfigurationId,
@@ -292,6 +300,61 @@ setDefaultExpenseCategory userId categoryId = runExceptT $ do
     (unConfigurationId configId)
     (SetDefaultExpenseCategoryConfigurationCommand SetDefaultExpenseCategory {categoryId = categoryId})
   lift $ logInfo "Default expense category set successfully"
+
+-- | Reject unless every 'AccountId' is a __Regular__ account the user can write
+-- to. Cross-aggregate validation lives here, not in the pure command handler
+-- (which has no account view). The write-access decision is delegated to
+-- 'canModifyAccount' (the same auth check the transaction write-path uses); the
+-- extra "must be Regular" rule (default accounts must never point at the
+-- system-managed External account) is composed on top. On any invalid target
+-- the whole request is rejected with a @ValidationErr@.
+validateOwnedRegularAccounts :: UserId -> Text -> [AccountId] -> ExceptT DomainError AppM ()
+validateOwnedRegularAccounts userId field targets = do
+  accessible <- lift (runDb (getAccessibleAccounts userId))
+  let writable =
+        Set.fromList
+          [ accId
+          | (accId, accData, _role) <- accessible,
+            isRegular accData.accountType,
+            canModifyAccount userId (toAuthData accData)
+          ]
+  unless (all (`Set.member` writable) targets)
+    $ throwE (ValidationErr (mkValidationError field "account is not an owned regular account" ""))
+  where
+    toAuthData d =
+      AccountAuthData
+        { createdBy = d.createdBy,
+          accountType = d.accountType,
+          accessList = d.accessList
+        }
+
+-- | Set the global default account in the user's configuration. The target must
+-- be a Regular account the user owns/edits.
+setDefaultAccount :: UserId -> AccountId -> AppM (Either DomainError ())
+setDefaultAccount userId accountId = runExceptT $ do
+  lift $ logInfo $ "Setting default account for user " <> displayShow userId
+  validateOwnedRegularAccounts userId "account" [accountId]
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  runConfigurationCmd
+    defaultTranslateConfigurationError
+    id
+    (unConfigurationId configId)
+    (SetDefaultAccountConfigurationCommand SetDefaultAccount {accountId = accountId})
+  lift $ logInfo "Default account set successfully"
+
+-- | Replace the per-subtype default-account map wholesale. Every target account
+-- must be a Regular account the user owns/edits.
+setDefaultSubtypeAccounts :: UserId -> Map AccountSubtypeKind AccountId -> AppM (Either DomainError ())
+setDefaultSubtypeAccounts userId mapping = runExceptT $ do
+  lift $ logInfo $ "Setting default subtype accounts for user " <> displayShow userId
+  validateOwnedRegularAccounts userId "subtypeAccounts" (Map.elems mapping)
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  runConfigurationCmd
+    defaultTranslateConfigurationError
+    id
+    (unConfigurationId configId)
+    (SetDefaultSubtypeAccountsConfigurationCommand SetDefaultSubtypeAccounts {subtypeAccounts = mapping})
+  lift $ logInfo "Default subtype accounts set successfully"
 
 -- | Replace the MCC-to-expense-category map wholesale in the user's configuration.
 setBankingMccExpenseCategoryMap :: UserId -> Map MCC CategoryId -> AppM (Either DomainError ())
@@ -741,13 +804,20 @@ copyDictionaries newConfigUuidVal dictionaries = do
         Left err -> logWarn $ "Failed to clone dictionary entry: " <> displayShow err
         Right _ -> return ()
 
--- | Copy the global default income/expense categories from the source
--- configuration to the clone. Per-field failures are logged and skipped.
+-- | Copy the global defaults (income/expense categories, global default account,
+-- and per-subtype default accounts) from the source configuration to the clone.
+-- Per-field failures are logged and skipped.
 copyDefaults :: UUID -> ConfigurationData -> AppM ()
 copyDefaults newConfigUuidVal srcConfig = do
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
-  forM_ srcConfig.defaultIncomeCategory $ \eid -> do
+  let ConfigurationDefaults
+        { incomeCategory = mIncome,
+          expenseCategory = mExpense,
+          account = mAccount,
+          subtypeAccounts = subAccts
+        } = srcConfig.defaults
+  forM_ mIncome $ \eid -> do
     let cmd =
           SetDefaultIncomeCategoryConfigurationCommand
             SetDefaultIncomeCategory {categoryId = eid}
@@ -756,13 +826,31 @@ copyDefaults newConfigUuidVal srcConfig = do
       Left err -> logWarn $ "Failed to clone defaultIncomeCategory: " <> displayShow err
       Right _ -> return ()
 
-  forM_ srcConfig.defaultExpenseCategory $ \eid -> do
+  forM_ mExpense $ \eid -> do
     let cmd =
           SetDefaultExpenseCategoryConfigurationCommand
             SetDefaultExpenseCategory {categoryId = eid}
     copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
     case copyResult of
       Left err -> logWarn $ "Failed to clone defaultExpenseCategory: " <> displayShow err
+      Right _ -> return ()
+
+  forM_ mAccount $ \aid -> do
+    let cmd =
+          SetDefaultAccountConfigurationCommand
+            SetDefaultAccount {accountId = aid}
+    copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+    case copyResult of
+      Left err -> logWarn $ "Failed to clone defaultAccount: " <> displayShow err
+      Right _ -> return ()
+
+  unless (Map.null subAccts) $ do
+    let cmd =
+          SetDefaultSubtypeAccountsConfigurationCommand
+            SetDefaultSubtypeAccounts {subtypeAccounts = subAccts}
+    copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+    case copyResult of
+      Left err -> logWarn $ "Failed to clone defaultSubtypeAccounts: " <> displayShow err
       Right _ -> return ()
 
 -- | Copy banking config (MCC map and bank connections) from the source

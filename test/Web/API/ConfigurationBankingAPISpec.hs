@@ -51,7 +51,7 @@ import Test.Hspec
 import Test.Hspec.Wai
 import Testkit.AppEnv (mkAppSeeded)
 import Testkit.HspecWai (bearerHeader, jsonAuthHeaders, registerAndGetToken)
-import Web.API.ConfigurationAPI (BankingConfigurationDTO (..), ConfigurationResponse (..))
+import Web.API.ConfigurationAPI (BankingConfigurationDTO (..), ConfigurationDefaultsDTO (..), ConfigurationResponse (..))
 import Web.Types (ErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
@@ -95,7 +95,7 @@ updateDefaultsSpec =
     $ do
       it "returns 200 with updated defaultIncomeCategory when valid UUID supplied" $ do
         tok <- registerAndGetToken
-        let body = encode $ object ["defaultIncomeCategory" .= incomeOtherUUID]
+        let body = encode $ object ["incomeCategory" .= incomeOtherUUID]
         resp <-
           request
             "PUT"
@@ -106,12 +106,13 @@ updateDefaultsSpec =
           simpleStatus resp `shouldBe` status200
           case eitherDecode (simpleBody resp) :: Either String ConfigurationResponse of
             Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
-            Right cfg ->
-              cfg.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
+            Right cfg -> do
+              let ConfigurationResponse {defaults = ConfigurationDefaultsDTO {incomeCategory = mInc}} = cfg
+              mInc `shouldBe` Just incomeOtherUUID
 
       it "returns 200 with updated defaultExpenseCategory when valid UUID supplied" $ do
         tok <- registerAndGetToken
-        let body = encode $ object ["defaultExpenseCategory" .= expenseOtherUUID]
+        let body = encode $ object ["expenseCategory" .= expenseOtherUUID]
         resp <-
           request
             "PUT"
@@ -122,8 +123,9 @@ updateDefaultsSpec =
           simpleStatus resp `shouldBe` status200
           case eitherDecode (simpleBody resp) :: Either String ConfigurationResponse of
             Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
-            Right cfg ->
-              cfg.defaultExpenseCategory `shouldBe` Just expenseOtherUUID
+            Right cfg -> do
+              let ConfigurationResponse {defaults = ConfigurationDefaultsDTO {expenseCategory = mExp}} = cfg
+              mExp `shouldBe` Just expenseOtherUUID
 
       it "returns 200 with no state change for empty body {}" $ do
         tok <- registerAndGetToken
@@ -142,12 +144,13 @@ updateDefaultsSpec =
               -- The seeded configuration has the global defaults populated, and
               -- clone-on-write carries them forward.  An empty PUT body makes no
               -- changes, so the returned config must still reflect the seeded values.
-              cfg.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
-              cfg.defaultExpenseCategory `shouldBe` Just expenseOtherUUID
+              let ConfigurationResponse {defaults = ConfigurationDefaultsDTO {incomeCategory = mInc, expenseCategory = mExp}} = cfg
+              mInc `shouldBe` Just incomeOtherUUID
+              mExp `shouldBe` Just expenseOtherUUID
 
       it "returns 400 when income category UUID is not in the income-category dictionary" $ do
         tok <- registerAndGetToken
-        let body = encode $ object ["defaultIncomeCategory" .= unknownUUID]
+        let body = encode $ object ["incomeCategory" .= unknownUUID]
         resp <-
           request
             "PUT"
@@ -164,7 +167,7 @@ updateDefaultsSpec =
 
       it "returns 400 when expense category UUID is not in the expense-category dictionary" $ do
         tok <- registerAndGetToken
-        let body = encode $ object ["defaultExpenseCategory" .= unknownUUID]
+        let body = encode $ object ["expenseCategory" .= unknownUUID]
         resp <-
           request
             "PUT"
@@ -180,7 +183,18 @@ updateDefaultsSpec =
 
       it "returns 400 when the income category UUID is malformed" $ do
         tok <- registerAndGetToken
-        let body = encode $ object ["defaultIncomeCategory" .= ("not-a-uuid" :: Text)]
+        let body = encode $ object ["incomeCategory" .= ("not-a-uuid" :: Text)]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/defaults"
+            (jsonAuthHeaders tok)
+            body
+        liftIO $ simpleStatus resp `shouldBe` status400
+
+      it "returns 400 when the default account is not owned by the user" $ do
+        tok <- registerAndGetToken
+        let body = encode $ object ["account" .= unknownUUID]
         resp <-
           request
             "PUT"
@@ -190,7 +204,7 @@ updateDefaultsSpec =
         liftIO $ simpleStatus resp `shouldBe` status400
 
       it "returns 401 when no JWT is provided" $ do
-        let body = encode $ object ["defaultIncomeCategory" .= incomeOtherUUID]
+        let body = encode $ object ["incomeCategory" .= incomeOtherUUID]
         resp <-
           request
             "PUT"
@@ -291,7 +305,7 @@ getBankingInResponseSpec =
       it "returns a top-level defaultIncomeCategory after a PUT to /defaults" $ do
         tok <- registerAndGetToken
         -- Set the income default via PUT
-        let putBody = encode $ object ["defaultIncomeCategory" .= incomeOtherUUID]
+        let putBody = encode $ object ["incomeCategory" .= incomeOtherUUID]
         _ <-
           request
             "PUT"
@@ -309,5 +323,6 @@ getBankingInResponseSpec =
           simpleStatus resp `shouldBe` status200
           case eitherDecode (simpleBody resp) :: Either String ConfigurationResponse of
             Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
-            Right cfg ->
-              cfg.defaultIncomeCategory `shouldBe` Just incomeOtherUUID
+            Right cfg -> do
+              let ConfigurationResponse {defaults = ConfigurationDefaultsDTO {incomeCategory = mInc}} = cfg
+              mInc `shouldBe` Just incomeOtherUUID

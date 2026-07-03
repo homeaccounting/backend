@@ -23,6 +23,8 @@ module Domain.Configuration.Commands
     RemoveDictionaryEntry (..),
     SetDefaultIncomeCategory (..),
     SetDefaultExpenseCategory (..),
+    SetDefaultAccount (..),
+    SetDefaultSubtypeAccounts (..),
     SetBankingMccExpenseCategoryMap (..),
     CloseBooksThrough (..),
     AddBankConnection (..),
@@ -46,6 +48,7 @@ import Domain.Banking.Types
   )
 import Domain.Core.Types
   ( AccountId,
+    AccountSubtypeKind,
     CategoryId,
     CreatedBy,
     Currency,
@@ -75,6 +78,8 @@ configurationCommands =
     ''RemoveDictionaryEntry,
     ''SetDefaultIncomeCategory,
     ''SetDefaultExpenseCategory,
+    ''SetDefaultAccount,
+    ''SetDefaultSubtypeAccounts,
     ''SetBankingMccExpenseCategoryMap,
     ''CloseBooksThrough,
     ''AddBankConnection,
@@ -170,6 +175,20 @@ data SetDefaultIncomeCategory = SetDefaultIncomeCategory
 -- | Command to set the default category for imported expense transactions.
 data SetDefaultExpenseCategory = SetDefaultExpenseCategory
   { categoryId :: CategoryId
+  }
+  deriving (Show, Eq)
+
+-- | Command to set the global default account. Account existence/ownership is
+-- validated in the service layer (the aggregate has no account view).
+newtype SetDefaultAccount = SetDefaultAccount
+  { accountId :: AccountId
+  }
+  deriving (Show, Eq)
+
+-- | Command to replace the per-subtype default-account map wholesale. Account
+-- existence/ownership is validated in the service layer.
+newtype SetDefaultSubtypeAccounts = SetDefaultSubtypeAccounts
+  { subtypeAccounts :: Map AccountSubtypeKind AccountId
   }
   deriving (Show, Eq)
 
@@ -289,6 +308,8 @@ deriveJSON defaultOptions ''RenameDictionaryEntry
 deriveJSON defaultOptions ''RemoveDictionaryEntry
 deriveJSON defaultOptions ''SetDefaultIncomeCategory
 deriveJSON defaultOptions ''SetDefaultExpenseCategory
+deriveJSON defaultOptions ''SetDefaultAccount
+deriveJSON defaultOptions ''SetDefaultSubtypeAccounts
 deriveJSON defaultOptions ''SetBankingMccExpenseCategoryMap
 deriveJSON defaultOptions ''CloseBooksThrough
 deriveJSON defaultOptions ''AddBankConnection

@@ -87,9 +87,11 @@ import Domain.Configuration.Events
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
     ConfigurationCreated (..),
+    DefaultAccountSet (..),
     DefaultCurrencyChanged (..),
     DefaultExpenseCategorySet (..),
     DefaultIncomeCategorySet (..),
+    DefaultSubtypeAccountsSet (..),
     DictionaryEntryAdded (..),
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
@@ -97,18 +99,20 @@ import Domain.Configuration.Events
 import Domain.Configuration.Projection
   ( BankConnection (..),
     BankingConfiguration (..),
+    ConfigurationDefaults (..),
     emptyBankingConfiguration,
   )
 import Domain.Core.Types
   ( AccountId,
-    CategoryId,
     ConfigurationId,
     CreatedBy,
     Currency,
+    DefaultSubtypeAccounts (..),
     DictionaryEntryId,
     DictionaryId,
     EntryName,
     mkConfigurationIdSafe,
+    unDefaultSubtypeAccounts,
   )
 import Domain.Models (AccountingEvent (..))
 import Eventium
@@ -138,10 +142,8 @@ data ConfigurationData = ConfigurationData
     dictionaries :: Map DictionaryId DictionaryData,
     -- | Banking-specific configuration
     banking :: BankingConfiguration,
-    -- | Default category for income transactions when none is inferred from MCC
-    defaultIncomeCategory :: Maybe CategoryId,
-    -- | Default category for expense transactions when none is inferred from MCC
-    defaultExpenseCategory :: Maybe CategoryId,
+    -- | All per-configuration defaults (categories + accounts), grouped.
+    defaults :: ConfigurationDefaults,
     -- | Advance-only books-closed-through cutoff. 'Nothing' means no cutoff.
     booksClosedThrough :: Maybe UTCTime,
     -- | Who created this configuration
@@ -171,6 +173,8 @@ ConfigurationEntity sql=configurations
     defaultCurrency Currency
     defaultIncomeCategory DictionaryEntryId Maybe
     defaultExpenseCategory DictionaryEntryId Maybe
+    defaultAccount AccountId Maybe
+    defaultSubtypeAccounts DefaultSubtypeAccounts
     booksClosedThrough UTCTime Maybe
     createdBy CreatedBy
     version Int
@@ -256,6 +260,8 @@ applyConfigurationEvent globalEvent =
                     configurationEntityDefaultCurrency = evt.defaultCurrency,
                     configurationEntityDefaultIncomeCategory = Nothing,
                     configurationEntityDefaultExpenseCategory = Nothing,
+                    configurationEntityDefaultAccount = Nothing,
+                    configurationEntityDefaultSubtypeAccounts = DefaultSubtypeAccounts Map.empty,
                     configurationEntityBooksClosedThrough = Nothing,
                     configurationEntityCreatedBy = evt.createdBy,
                     configurationEntityVersion = ver
@@ -268,6 +274,10 @@ applyConfigurationEvent globalEvent =
             modifyConfig configId (\e -> e {configurationEntityDefaultIncomeCategory = Just evt.categoryId, configurationEntityVersion = ver})
           DefaultExpenseCategorySetEvent evt ->
             modifyConfig configId (\e -> e {configurationEntityDefaultExpenseCategory = Just evt.categoryId, configurationEntityVersion = ver})
+          DefaultAccountSetEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityDefaultAccount = Just evt.accountId, configurationEntityVersion = ver})
+          DefaultSubtypeAccountsSetEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityDefaultSubtypeAccounts = DefaultSubtypeAccounts evt.subtypeAccounts, configurationEntityVersion = ver})
           BooksClosedThroughSetEvent evt ->
             modifyConfig configId (\e -> e {configurationEntityBooksClosedThrough = Just evt.closedThrough, configurationEntityVersion = ver})
           DictionaryEntryAddedEvent evt ->
@@ -390,8 +400,13 @@ getConfiguration configId = do
               defaultCurrency = e.configurationEntityDefaultCurrency,
               dictionaries = dicts,
               banking = bankingCfg,
-              defaultIncomeCategory = e.configurationEntityDefaultIncomeCategory,
-              defaultExpenseCategory = e.configurationEntityDefaultExpenseCategory,
+              defaults =
+                ConfigurationDefaults
+                  { incomeCategory = e.configurationEntityDefaultIncomeCategory,
+                    expenseCategory = e.configurationEntityDefaultExpenseCategory,
+                    account = e.configurationEntityDefaultAccount,
+                    subtypeAccounts = unDefaultSubtypeAccounts e.configurationEntityDefaultSubtypeAccounts
+                  },
               booksClosedThrough = e.configurationEntityBooksClosedThrough,
               createdBy = e.configurationEntityCreatedBy,
               version = e.configurationEntityVersion

@@ -47,7 +47,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime, utctDay)
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
-import Domain.Configuration.Projection (BankingConfiguration (..))
+import Domain.Configuration.Projection (BankingConfiguration (..), ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
@@ -204,9 +204,10 @@ resolveCategory ::
   Maybe MCC ->
   Either DomainError (CategoryId, CategoryResolution)
 resolveCategory banking cfg direction maybeMcc =
-  let (dictId, deflt) = case direction of
-        ClassifiedIncome -> (incomeCategoryDictId, cfg.defaultIncomeCategory)
-        ClassifiedExpense -> (expenseCategoryDictId, cfg.defaultExpenseCategory)
+  let ConfigurationDefaults {incomeCategory = mIncomeDefault, expenseCategory = mExpenseDefault} = cfg.defaults
+      (dictId, deflt) = case direction of
+        ClassifiedIncome -> (incomeCategoryDictId, mIncomeDefault)
+        ClassifiedExpense -> (expenseCategoryDictId, mExpenseDefault)
       dictEntries =
         maybe Map.empty (.entries) (Map.lookup dictId cfg.dictionaries)
       mccHit = case direction of

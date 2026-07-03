@@ -14,7 +14,7 @@ import Domain.Configuration.CommandHandler
     handleConfigurationCommand,
   )
 import Domain.Configuration.Commands (RemoveDictionaryEntry (..))
-import Domain.Configuration.Projection (Configuration (..), emptyBankingConfiguration)
+import Domain.Configuration.Projection (Configuration (..), emptyBankingConfiguration, emptyConfigurationDefaults)
 import Domain.Core.Types
   ( CreatedBy (System),
     Currency (USD),
@@ -47,8 +47,7 @@ seedConfig dictId =
       createdBy = System,
       isCreated = True,
       booksClosedThrough = Nothing,
-      defaultIncomeCategory = Nothing,
-      defaultExpenseCategory = Nothing
+      defaults = emptyConfigurationDefaults
     }
 
 spec :: Spec

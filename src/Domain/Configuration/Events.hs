@@ -30,6 +30,8 @@ module Domain.Configuration.Events
     DictionaryEntryRemoved (..),
     DefaultIncomeCategorySet (..),
     DefaultExpenseCategorySet (..),
+    DefaultAccountSet (..),
+    DefaultSubtypeAccountsSet (..),
     BankingMccExpenseCategoryMapSet (..),
     BooksClosedThroughSet (..),
     BankConnectionAdded (..),
@@ -53,6 +55,7 @@ import Domain.Banking.Types
   )
 import Domain.Core.Types
   ( AccountId,
+    AccountSubtypeKind,
     CategoryId,
     CreatedBy,
     Currency,
@@ -82,6 +85,8 @@ configurationEvents =
     ''DictionaryEntryRemoved,
     ''DefaultIncomeCategorySet,
     ''DefaultExpenseCategorySet,
+    ''DefaultAccountSet,
+    ''DefaultSubtypeAccountsSet,
     ''BankingMccExpenseCategoryMapSet,
     ''BooksClosedThroughSet,
     ''BankConnectionAdded,
@@ -161,6 +166,18 @@ data DefaultIncomeCategorySet = DefaultIncomeCategorySet
 -- | Event emitted when the default expense category is set.
 data DefaultExpenseCategorySet = DefaultExpenseCategorySet
   { categoryId :: CategoryId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the global default account is set.
+newtype DefaultAccountSet = DefaultAccountSet
+  { accountId :: AccountId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the per-subtype default-account map is set (bulk replace).
+newtype DefaultSubtypeAccountsSet = DefaultSubtypeAccountsSet
+  { subtypeAccounts :: Map AccountSubtypeKind AccountId
   }
   deriving (Show, Eq)
 
@@ -253,6 +270,8 @@ deriveJSON defaultOptions ''DictionaryEntryRenamed
 deriveJSON defaultOptions ''DictionaryEntryRemoved
 deriveJSON defaultOptions ''DefaultIncomeCategorySet
 deriveJSON defaultOptions ''DefaultExpenseCategorySet
+deriveJSON defaultOptions ''DefaultAccountSet
+deriveJSON defaultOptions ''DefaultSubtypeAccountsSet
 deriveJSON defaultOptions ''BankingMccExpenseCategoryMapSet
 deriveJSON defaultOptions ''BooksClosedThroughSet
 deriveJSON defaultOptions ''BankConnectionAdded

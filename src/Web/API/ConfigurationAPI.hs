@@ -32,6 +32,7 @@ module Web.API.ConfigurationAPI
 
     -- * Request/Response Types
     ConfigurationResponse (..),
+    ConfigurationDefaultsDTO (..),
     BankingConfigurationDTO (..),
     BankConnectionDTO (..),
     DictionaryResponse (..),
@@ -72,9 +73,11 @@ import Domain.Banking.Types
 import Domain.Configuration.Projection
   ( BankConnection (..),
     BankingConfiguration (..),
+    ConfigurationDefaults (..),
   )
 import Domain.Core.Types
-  ( DictionaryId (..),
+  ( AccountSubtypeKind,
+    DictionaryId (..),
     UserId,
     mkAccountId,
     mkDictionaryEntryId,
@@ -316,16 +319,32 @@ toBankingDTO b =
       connections = map toBankConnectionDTO (Map.elems b.connections)
     }
 
+-- | All per-configuration defaults, grouped for wire transport
+-- (@configuration.defaults@).
+data ConfigurationDefaultsDTO = ConfigurationDefaultsDTO
+  { -- | Global default category for imported/inferred income transactions.
+    incomeCategory :: Maybe UUID,
+    -- | Global default category for imported/inferred expense transactions.
+    expenseCategory :: Maybe UUID,
+    -- | Global fallback account (no account named / subtype unidentifiable).
+    account :: Maybe UUID,
+    -- | Default account per account subtype, keyed by 'AccountSubtypeKind'.
+    subtypeAccounts :: Map AccountSubtypeKind UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ConfigurationDefaultsDTO
+
+instance FromJSON ConfigurationDefaultsDTO
+
 -- | Configuration response DTO.
 data ConfigurationResponse = ConfigurationResponse
   { baseCurrency :: Text,
     defaultCurrency :: Text,
     dictionaries :: Map Text DictionaryResponse,
     banking :: BankingConfigurationDTO,
-    -- | Global default category for imported income transactions.
-    defaultIncomeCategory :: Maybe UUID,
-    -- | Global default category for imported expense transactions.
-    defaultExpenseCategory :: Maybe UUID,
+    -- | All per-configuration defaults (categories + accounts), grouped.
+    defaults :: ConfigurationDefaultsDTO,
     booksClosedThrough :: Maybe UTCTime,
     -- | Whether the user's base currency can still be changed. False once any
     -- transaction has posted against the user's External account (which anchors
@@ -419,11 +438,14 @@ instance ToJSON UpdateBankingRequest
 instance FromJSON UpdateBankingRequest
 
 -- | Partial-update body for PUT /api/users/me/configuration/defaults.
--- Set-only: a present UUID sets the field; absent OR null means "no change"
+-- Set-only: a present value sets the field; absent OR null means "no change"
 -- (matching the existing banking-defaults semantics — there is no clear path).
+-- @subtypeAccounts@, when present, replaces the whole per-subtype map.
 data UpdateDefaultsRequest = UpdateDefaultsRequest
-  { defaultIncomeCategory :: Maybe UUID,
-    defaultExpenseCategory :: Maybe UUID
+  { incomeCategory :: Maybe UUID,
+    expenseCategory :: Maybe UUID,
+    account :: Maybe UUID,
+    subtypeAccounts :: Maybe (Map AccountSubtypeKind UUID)
   }
   deriving (Show, Eq, Generic)
 
@@ -573,23 +595,42 @@ updateBankingHandler user req = do
 
 -- | Handler for PUT /api/users/me/configuration/defaults
 --
--- Partial update of the global default categories: absent (or null) fields are
--- left unchanged; present values are validated and applied via the
--- Configuration service. Set-only — there is no clear path.
+-- Partial update of the grouped defaults: absent (or null) fields are left
+-- unchanged; present values are validated and applied via the Configuration
+-- service. Set-only for the scalar fields — there is no clear path;
+-- @subtypeAccounts@, when present, replaces the whole per-subtype map (send
+-- @{}@ to clear it). Account ownership is validated in the service layer.
 updateDefaultsHandler :: AuthenticatedUser -> UpdateDefaultsRequest -> AppM ConfigurationResponse
 updateDefaultsHandler user req = do
   let uid = user.userId
 
-  forM_ req.defaultIncomeCategory $ \uuid -> do
-    cid <- validateFieldCtx "defaultIncomeCategory" (tshow uuid) (mkDictionaryEntryId uuid)
+  forM_ req.incomeCategory $ \uuid -> do
+    cid <- validateFieldCtx "incomeCategory" (tshow uuid) (mkDictionaryEntryId uuid)
     result <- ConfigService.setDefaultIncomeCategory uid cid
     case result of
       Left err -> throwDomainError err
       Right () -> pure ()
 
-  forM_ req.defaultExpenseCategory $ \uuid -> do
-    cid <- validateFieldCtx "defaultExpenseCategory" (tshow uuid) (mkDictionaryEntryId uuid)
+  forM_ req.expenseCategory $ \uuid -> do
+    cid <- validateFieldCtx "expenseCategory" (tshow uuid) (mkDictionaryEntryId uuid)
     result <- ConfigService.setDefaultExpenseCategory uid cid
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  forM_ req.account $ \uuid -> do
+    aid <- validateFieldCtx "account" (tshow uuid) (mkAccountId uuid)
+    result <- ConfigService.setDefaultAccount uid aid
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  forM_ req.subtypeAccounts $ \rawMap -> do
+    m <-
+      Map.traverseWithKey
+        (\_ uuid -> validateFieldCtx "subtypeAccounts" (tshow uuid) (mkAccountId uuid))
+        rawMap
+    result <- ConfigService.setDefaultSubtypeAccounts uid m
     case result of
       Left err -> throwDomainError err
       Right () -> pure ()
@@ -784,19 +825,31 @@ toConfigurationResponse ::
   ConfigurationData ->
   ConfigurationResponse
 toConfigurationResponse editable featureEnabled configData =
-  ConfigurationResponse
-    { baseCurrency = tshow configData.baseCurrency,
-      defaultCurrency = tshow configData.defaultCurrency,
-      dictionaries =
-        Map.mapKeys unDictionaryId
-          $ Map.map toDictionaryResponse configData.dictionaries,
-      banking = toBankingDTO configData.banking,
-      defaultIncomeCategory = unDictionaryEntryId <$> configData.defaultIncomeCategory,
-      defaultExpenseCategory = unDictionaryEntryId <$> configData.defaultExpenseCategory,
-      booksClosedThrough = configData.booksClosedThrough,
-      baseCurrencyEditable = editable,
-      bankingFeatureEnabled = featureEnabled
-    }
+  let ConfigurationDefaults
+        { incomeCategory = mIncome,
+          expenseCategory = mExpense,
+          account = mAccount,
+          subtypeAccounts = subAccts
+        } = configData.defaults
+      defaultsDTO =
+        ConfigurationDefaultsDTO
+          { incomeCategory = unDictionaryEntryId <$> mIncome,
+            expenseCategory = unDictionaryEntryId <$> mExpense,
+            account = unAccountId <$> mAccount,
+            subtypeAccounts = Map.map unAccountId subAccts
+          }
+   in ConfigurationResponse
+        { baseCurrency = tshow configData.baseCurrency,
+          defaultCurrency = tshow configData.defaultCurrency,
+          dictionaries =
+            Map.mapKeys unDictionaryId
+              $ Map.map toDictionaryResponse configData.dictionaries,
+          banking = toBankingDTO configData.banking,
+          defaults = defaultsDTO,
+          booksClosedThrough = configData.booksClosedThrough,
+          baseCurrencyEditable = editable,
+          bankingFeatureEnabled = featureEnabled
+        }
 
 -- | Whether the banking feature is globally enabled (banking + Monobank both
 -- on). Read directly from the app config; this is the same predicate the

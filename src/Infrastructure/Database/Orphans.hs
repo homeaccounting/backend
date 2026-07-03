@@ -26,12 +26,14 @@ import Domain.Core.Types
   ( AccountId,
     AccountRole,
     AccountStatus,
+    AccountSubtypeKind,
     AccountType,
     Allocation (..),
     Allocations (..),
     ConfigurationId,
     CreatedBy,
     Currency,
+    DefaultSubtypeAccounts,
     DictionaryEntryId,
     DictionaryId,
     EntryName,
@@ -167,6 +169,20 @@ instance PersistField AccountType where
   fromPersistValue = jsonFromPersist
 
 instance PersistFieldSql AccountType where
+  sqlType _ = SqlString
+
+instance PersistField AccountSubtypeKind where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql AccountSubtypeKind where
+  sqlType _ = SqlString
+
+instance PersistField DefaultSubtypeAccounts where
+  toPersistValue = jsonToPersist
+  fromPersistValue = jsonFromPersist
+
+instance PersistFieldSql DefaultSubtypeAccounts where
   sqlType _ = SqlString
 
 instance PersistField AccountRole where

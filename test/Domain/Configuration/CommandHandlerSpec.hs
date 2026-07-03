@@ -30,8 +30,10 @@ import Domain.Configuration.Events
     BankConnectionTokenChanged (..),
     BankingMccExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
+    DefaultAccountSet (..),
     DefaultExpenseCategorySet (..),
     DefaultIncomeCategorySet (..),
+    DefaultSubtypeAccountsSet (..),
   )
 import Domain.Core.Types
 import Eventium (latestProjection)
@@ -52,6 +54,8 @@ spec = do
   removeDictionaryEntrySpec
   setDefaultIncomeCategorySpec
   setDefaultExpenseCategorySpec
+  setDefaultAccountSpec
+  setDefaultSubtypeAccountsSpec
   setBankingMccExpenseCategoryMapSpec
   removeDictionaryEntryBankingGuardSpec
   addBankConnectionSpec
@@ -778,6 +782,51 @@ setDefaultExpenseCategorySpec = describe "SetDefaultExpenseCategory Command" $ d
               DefaultExpenseCategorySetConfigurationEvent evt ->
                 evt.categoryId `shouldBe` testCategoryId1
               _ -> expectationFailure "Expected DefaultExpenseCategorySet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- SetDefaultAccount / SetDefaultSubtypeAccounts Tests
+-- -----------------------------------------------------------------------------
+
+-- | The pure handler emits the account defaults unconditionally; account
+-- existence/ownership is validated in the service layer, not here.
+setDefaultAccountSpec :: Spec
+setDefaultAccountSpec = describe "SetDefaultAccount Command" $ do
+  context "Given a created configuration" $ do
+    describe "When issuing SetDefaultAccount" $ do
+      it "Then emits DefaultAccountSet event unconditionally" $ do
+        let config = createdConfig
+            command =
+              SetDefaultAccountConfigurationCommand
+                SetDefaultAccount {accountId = mockAccountId (read "66666666-6666-6666-6666-666666666666")}
+            result = handleConfigurationCommand config command
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              DefaultAccountSetConfigurationEvent evt ->
+                evt.accountId `shouldBe` mockAccountId (read "66666666-6666-6666-6666-666666666666")
+              _ -> expectationFailure "Expected DefaultAccountSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+setDefaultSubtypeAccountsSpec :: Spec
+setDefaultSubtypeAccountsSpec = describe "SetDefaultSubtypeAccounts Command" $ do
+  context "Given a created configuration" $ do
+    describe "When issuing SetDefaultSubtypeAccounts" $ do
+      it "Then emits DefaultSubtypeAccountsSet event unconditionally" $ do
+        let m = Map.singleton CashKind (mockAccountId (read "66666666-6666-6666-6666-666666666666"))
+            config = createdConfig
+            command =
+              SetDefaultSubtypeAccountsConfigurationCommand
+                SetDefaultSubtypeAccounts {subtypeAccounts = m}
+            result = handleConfigurationCommand config command
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              DefaultSubtypeAccountsSetConfigurationEvent evt ->
+                evt.subtypeAccounts `shouldBe` m
+              _ -> expectationFailure "Expected DefaultSubtypeAccountsSet event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
 -- -----------------------------------------------------------------------------

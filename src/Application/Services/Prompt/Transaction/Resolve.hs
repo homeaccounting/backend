@@ -26,19 +26,23 @@ module Application.Services.Prompt.Transaction.Resolve
   )
 where
 
+import Application.ReadModels.Account (RegularAccountData (..))
 import Application.Services.Prompt.Transaction.Intent
   ( IntentKind (..),
     TransactionIntent (..),
   )
 import Application.Services.Prompt.Types (ResolveError (..))
+import qualified Data.Map.Strict as Map
 import Data.Scientific (Scientific)
 import qualified Data.Set as Set
 import qualified Data.Text as DT
 import Data.Text.Match (MatchResult (..), matchByName)
 import Data.Time (UTCTime (..), defaultTimeLocale, parseTimeM)
 import Data.Time.Calendar (Day)
+import Domain.Configuration.Projection (ConfigurationDefaults (..))
 import Domain.Core.Types
   ( AccountId,
+    AccountSubtypeKind (..),
     Allocations,
     CategoryId,
     Currency,
@@ -47,6 +51,7 @@ import Domain.Core.Types
     mkAllocation,
     mkAllocations,
     mkMoney,
+    moneyCurrency,
     parseCurrency,
   )
 import RIO
@@ -56,13 +61,15 @@ import qualified RIO.Text as T
 -- the canonical set the LLM was told to choose from; defaults cover the "no
 -- category matched" fallback.
 data ResolveContext = ResolveContext
-  { -- | @(id, canonical name, native currency)@ per account.
-    accounts :: ![(AccountId, Text, Currency)],
+  { -- | The user's regular accounts (id, name, native currency via balance,
+    -- and subtype kind), reusing the account read model's projection.
+    accounts :: ![RegularAccountData],
     incomeCategories :: ![(CategoryId, Text)],
     expenseCategories :: ![(CategoryId, Text)],
     labels :: ![(LabelId, Text)],
-    defaultIncomeCategory :: !(Maybe CategoryId),
-    defaultExpenseCategory :: !(Maybe CategoryId)
+    -- | The user's configured defaults (category + account), reused verbatim
+    -- from the configuration read model.
+    defaults :: !ConfigurationDefaults
   }
 
 -- | A fully-resolved, validated transaction ready for the write path.
@@ -93,7 +100,7 @@ resolveExpense ctx prompt ti = do
   (aid, aname, acur) <- resolveAccount ctx "sourceAccount" ti.sourceAccount
   currency <- resolveCurrency acur ti.currency
   money <- resolveAmount currency ti.amount
-  cid <- resolveCategory ti.category ctx.expenseCategories ctx.defaultExpenseCategory
+  cid <- resolveCategory ti.category ctx.expenseCategories ctx.defaults.expenseCategory
   allocs <- buildAllocations ExpenseKind cid money
   cname <- categoryName ctx.expenseCategories cid
   mdate <- resolveDate ti.date
@@ -106,7 +113,7 @@ resolveIncome ctx prompt ti = do
   (aid, aname, acur) <- resolveAccount ctx "targetAccount" ti.targetAccount
   currency <- resolveCurrency acur ti.currency
   money <- resolveAmount currency ti.amount
-  cid <- resolveCategory ti.category ctx.incomeCategories ctx.defaultIncomeCategory
+  cid <- resolveCategory ti.category ctx.incomeCategories ctx.defaults.incomeCategory
   allocs <- buildAllocations IncomeKind cid money
   cname <- categoryName ctx.incomeCategories cid
   mdate <- resolveDate ti.date
@@ -127,22 +134,65 @@ resolveTransfer ctx prompt ti = do
       interp = "Transfer " <> amountText ti.amount <> " " <> tshow currency <> " from ‘" <> sname <> "’ to ‘" <> tname <> "’"
   Right (ResolvedTransfer src tgt money Set.empty desc mdate, interp)
 
--- | Resolve an account name against the context, or fail on the given field.
+-- | Resolve an account reference against the context, following the #26
+-- precedence ladder:
+--
+--   1. a specific account __name__ match wins;
+--   2. else a recognised __subtype keyword__ ("cash"/"bank"/"card"/"wallet")
+--      → that subtype's default account;
+--   3. else exactly __one__ account of that subtype → use it;
+--   4. else the __global__ default account (also the "omitted account" case);
+--   5. else 'NoMatch' / 'Ambiguous' → error.
+--
+-- Returns @(id, canonical name, native currency)@, dropping the subtype kind.
 resolveAccount ::
   ResolveContext ->
   Text ->
   Maybe Text ->
   Either ResolveError (AccountId, Text, Currency)
 resolveAccount ctx fld = \case
-  Nothing -> Left (ResolveError fld "no account specified")
-  Just name -> case matchByName (\(_, n, _) -> n) name ctx.accounts of
-    Matched acc -> Right acc
-    NoMatch ->
-      Left (ResolveError fld ("No account matches '" <> name <> "'. Your accounts: " <> accountNames))
+  -- Omitted account: global default only (step 4), else a clean "not specified".
+  Nothing -> case globalDefault of
+    Just acc -> Right acc
+    Nothing -> Left (ResolveError fld "no account specified")
+  Just name -> case matchByName (.name) name ctx.accounts of
+    Matched acc -> Right (project acc) -- step 1
     Ambiguous _ ->
       Left (ResolveError fld ("Account name '" <> name <> "' is ambiguous. Your accounts: " <> accountNames))
+    NoMatch -> case keywordSubtype name of
+      -- A subtype keyword was recognised: subtype default (2), else the unique
+      -- account of that subtype (3), else the global default (4), else error.
+      Just kind -> case subtypeDefault kind of
+        Just acc -> Right acc
+        Nothing -> case accountsOfKind kind of
+          [only] -> Right (project only)
+          _ -> maybe (Left (noMatch name)) Right globalDefault
+      -- A specific but unknown name: do not silently use the global default.
+      Nothing -> Left (noMatch name)
   where
-    accountNames = T.intercalate ", " [n | (_, n, _) <- ctx.accounts]
+    accountNames = T.intercalate ", " [a.name | a <- ctx.accounts]
+    noMatch name = ResolveError fld ("No account matches '" <> name <> "'. Your accounts: " <> accountNames)
+    -- Project a resolved account to @(id, name, native currency)@.
+    project a = (a.accountId, a.name, moneyCurrency a.balance)
+    byId aid = case [a | a <- ctx.accounts, a.accountId == aid] of
+      (a : _) -> Just (project a)
+      [] -> Nothing
+    globalDefault = ctx.defaults.account >>= byId
+    subtypeDefault kind = Map.lookup kind ctx.defaults.subtypeAccounts >>= byId
+    accountsOfKind kind = [a | a <- ctx.accounts, a.subtype == kind]
+
+-- | Recognise an account-subtype keyword in the free-text account field. The
+-- @card@ keyword aliases 'BankAccountKind' (cards are typically bank cards).
+-- Match is case-insensitive and substring-based; e-wallet checked before bank
+-- so "wallet" never falls through.
+keywordSubtype :: Text -> Maybe AccountSubtypeKind
+keywordSubtype t
+  | any (`T.isInfixOf` s) ["e-wallet", "ewallet", "wallet"] = Just EWalletKind
+  | any (`T.isInfixOf` s) ["bank", "card"] = Just BankAccountKind
+  | "cash" `T.isInfixOf` s = Just CashKind
+  | otherwise = Nothing
+  where
+    s = T.toLower (T.strip t)
 
 -- | Explicit currency (parsed) or the account's native currency.
 resolveCurrency :: Currency -> Maybe Text -> Either ResolveError Currency

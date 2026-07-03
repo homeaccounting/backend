@@ -26,15 +26,20 @@ import Application.Services.ConfigurationService
     removeDictionaryEntry,
     renameDictionaryEntry,
     seedDefaultConfiguration,
+    setDefaultAccount,
+    setDefaultSubtypeAccounts,
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreditAccount (..))
+import Domain.Configuration.Projection (ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
-  ( CreatedBy (..),
+  ( AccountSubtypeKind (..),
+    CreatedBy (..),
     Currency (..),
+    defaultCash,
     defaultConfigurationId,
     unAccountId,
     unsafeEntryName,
@@ -45,6 +50,8 @@ import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand)
 import RIO
 import Test.Hspec
+import Testkit.Fixtures (createAccount)
+import Testkit.Helpers (mockAccountId)
 import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 spec :: Spec
@@ -54,6 +61,7 @@ spec = describe "ConfigurationService" $ do
   changeBaseCurrencySpec
   dictionaryCRUDSpec
   registrationAssignsDefaultConfigSpec
+  defaultAccountsSpec
 
 -- -----------------------------------------------------------------------------
 -- seedDefaultConfiguration
@@ -358,7 +366,7 @@ dictionaryCRUDSpec =
                       -- Removal is rejected for any entry that is a global default OR when
                       -- it is the last entry. We remove all non-default entries, then verify
                       -- the global-default entry also cannot be removed.
-                      let bankingDefaultId = config.defaultIncomeCategory
+                      let ConfigurationDefaults {incomeCategory = bankingDefaultId} = config.defaults
                           allEntries = Map.keys dict.entries
                           nonDefaultEntries = filter (\eid -> Just eid /= bankingDefaultId) allEntries
                       -- Remove all non-default entries (all should succeed)
@@ -397,3 +405,66 @@ registrationAssignsDefaultConfigSpec =
             Nothing -> expectationFailure "User not found in read model"
             Just userData ->
               userData.configurationId `shouldBe` defaultConfigurationId
+
+-- -----------------------------------------------------------------------------
+-- Default accounts (global + per-subtype) with ownership validation
+-- -----------------------------------------------------------------------------
+
+defaultAccountsSpec :: Spec
+defaultAccountsSpec =
+  describe "default accounts" $ do
+    it "rejects a default account the user does not own" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "defacct-reject@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let bogus = mockAccountId (UUID.fromWords 9 9 9 9)
+          result <- runRIO env $ setDefaultAccount authResult.userId bogus
+          case result of
+            Left (ValidationErr _) -> pure ()
+            other -> expectationFailure $ "Expected ValidationErr, got: " <> show other
+
+    it "sets an owned global default account and reflects it in the read model" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "defacct-ok@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          aid <- createAccount env authResult.userId "Wallet" defaultCash UAH 0
+          result <- runRIO env $ setDefaultAccount authResult.userId aid
+          result `shouldSatisfy` isRight
+          maybeUser <- runDbIn env (getUser authResult.userId)
+          case maybeUser of
+            Nothing -> expectationFailure "User not found"
+            Just userData -> do
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
+              case maybeCfg of
+                Nothing -> expectationFailure "Config not found"
+                Just cfg -> do
+                  let ConfigurationDefaults {account = mAcc} = cfg.defaults
+                  mAcc `shouldBe` Just aid
+
+    it "sets an owned per-subtype default account map and reflects it" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "defacct-sub@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          aid <- createAccount env authResult.userId "Cash" defaultCash UAH 0
+          let m = Map.singleton CashKind aid
+          result <- runRIO env $ setDefaultSubtypeAccounts authResult.userId m
+          result `shouldSatisfy` isRight
+          maybeUser <- runDbIn env (getUser authResult.userId)
+          case maybeUser of
+            Nothing -> expectationFailure "User not found"
+            Just userData -> do
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
+              case maybeCfg of
+                Nothing -> expectationFailure "Config not found"
+                Just cfg -> do
+                  let ConfigurationDefaults {subtypeAccounts = subs} = cfg.defaults
+                  subs `shouldBe` m

@@ -20,7 +20,7 @@ module Application.Services.Prompt.Transaction.Handler
   )
 where
 
-import Application.ReadModels.Account (getUserRegularAccounts)
+import Application.ReadModels.Account (RegularAccountData (..), getUserRegularAccounts)
 import Application.ReadModels.Configuration
   ( ConfigurationData (..),
     DictionaryData (..),
@@ -50,15 +50,12 @@ import Domain.Configuration.Defaults
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
-  ( AccountId,
-    DictionaryEntryId,
+  ( DictionaryEntryId,
     DictionaryId,
     EntryName,
     UserId,
-    moneyCurrency,
     unEntryName,
   )
-import qualified Domain.Core.Types as Core (Currency)
 import Infrastructure.App (AppM, runDb)
 import RIO
 
@@ -72,20 +69,17 @@ import RIO
 gatherContext :: UserId -> AppM (Either DomainError (PromptContext, ResolveContext))
 gatherContext uid = do
   accts <- runDb (getUserRegularAccounts uid)
-  let resolveAccts = [(aid, name, moneyCurrency m) | (aid, name, m) <- accts]
-      acctNames = [name | (_, name, _) <- accts]
   getConfigurationForUser uid >>= \case
     Left e -> pure (Left e)
-    Right cfg -> pure (Right (buildContexts resolveAccts acctNames cfg))
+    Right cfg -> pure (Right (buildContexts accts cfg))
 
 -- | Assemble the prompt and resolve contexts from the user's accounts and
 -- configuration. Pure given the fetched data.
 buildContexts ::
-  [(AccountId, Text, Core.Currency)] ->
-  [Text] ->
+  [RegularAccountData] ->
   ConfigurationData ->
   (PromptContext, ResolveContext)
-buildContexts resolveAccts acctNames cfg =
+buildContexts accts cfg =
   let entriesOf dictId =
         [ (cid, unEntryName nm)
         | (cid, nm) <- entriesOfDict dictId cfg
@@ -95,19 +89,18 @@ buildContexts resolveAccts acctNames cfg =
       labelEntries = entriesOf labelsDictId
       pctx =
         PromptContext
-          { accountNames = acctNames,
+          { accountNames = [a.name | a <- accts],
             incomeCategoryNames = [n | (_, n) <- incomeCats],
             expenseCategoryNames = [n | (_, n) <- expenseCats],
             labelNames = [n | (_, n) <- labelEntries]
           }
       rctx =
         ResolveContext
-          { accounts = resolveAccts,
+          { accounts = accts,
             incomeCategories = incomeCats,
             expenseCategories = expenseCats,
             labels = labelEntries,
-            defaultIncomeCategory = cfg.defaultIncomeCategory,
-            defaultExpenseCategory = cfg.defaultExpenseCategory
+            defaults = cfg.defaults
           }
    in (pctx, rctx)
 

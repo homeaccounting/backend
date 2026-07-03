@@ -29,6 +29,7 @@
 module Application.ReadModels.Account
   ( -- * Query result type
     AccountData (..),
+    RegularAccountData (..),
 
     -- * Read model
     accountReadModel,
@@ -94,12 +95,13 @@ import Domain.Core.Types
     AccountId,
     AccountRole (..),
     AccountStatus (..),
+    AccountSubtypeKind,
     AccountType (..),
     Money,
     TransactionId,
     UserId,
+    accountTypeSubtypeKind,
     addMoney,
-    isRegular,
     mkAccountIdSafe,
     subtractMoney,
     unAccountId,
@@ -141,6 +143,21 @@ data AccountData = AccountData
 instance ToJSON AccountData
 
 instance FromJSON AccountData
+
+-- | A user's own regular (non-'External') account, projected to the fields
+-- callers need for name/subtype resolution (the prompt resolver, Telegram).
+-- Carries the payload-free 'AccountSubtypeKind' rather than the full subtype.
+data RegularAccountData = RegularAccountData
+  { accountId :: AccountId,
+    name :: Text,
+    balance :: Money,
+    subtype :: AccountSubtypeKind
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON RegularAccountData
+
+instance FromJSON RegularAccountData
 
 -- -----------------------------------------------------------------------------
 -- Schema
@@ -349,13 +366,18 @@ getAccessibleAccountIds userId = do
   pure $ Set.fromList [r.accountAccessEntityAccountId | Entity _ r <- accessRows]
 
 -- | A user's own regular (non-External) accounts as (id, name, balance).
-getUserRegularAccounts :: (MonadIO m) => UserId -> SqlPersistT m [(AccountId, Text, Money)]
+getUserRegularAccounts :: (MonadIO m) => UserId -> SqlPersistT m [RegularAccountData]
 getUserRegularAccounts userId = do
   rows <- selectList [AccountEntityCreatedBy ==. userId] []
   pure
-    [ (e.accountEntityAccountId, e.accountEntityName, e.accountEntityBalance)
+    [ RegularAccountData
+        { accountId = e.accountEntityAccountId,
+          name = e.accountEntityName,
+          balance = e.accountEntityBalance,
+          subtype = kind
+        }
     | Entity _ e <- rows,
-      isRegular e.accountEntityAccountType
+      Just kind <- [accountTypeSubtypeKind e.accountEntityAccountType]
     ]
 
 -- | Whether an account exists.

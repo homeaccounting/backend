@@ -40,6 +40,7 @@ import Domain.Configuration.Defaults
 import Domain.Configuration.Projection
   ( BankConnection (..),
     BankingConfiguration (..),
+    ConfigurationDefaults (..),
   )
 import Domain.Core.Types
   ( CreatedBy (..),
@@ -80,10 +81,9 @@ seedBankingDefaultsSpec =
       case maybeConfig of
         Nothing -> expectationFailure "Default configuration not found in read model"
         Just cfg -> do
-          cfg.defaultIncomeCategory
-            `shouldBe` Just income.other.entryId
-          cfg.defaultExpenseCategory
-            `shouldBe` Just expense.other.entryId
+          let ConfigurationDefaults {incomeCategory = mInc, expenseCategory = mExp} = cfg.defaults
+          mInc `shouldBe` Just income.other.entryId
+          mExp `shouldBe` Just expense.other.entryId
           cfg.banking.mccExpenseCategoryMap
             `shouldBe` defaultMccExpenseCategoryMap
 
@@ -121,10 +121,9 @@ cloneBankingDefaultsSpec =
                 Nothing -> expectationFailure "Cloned configuration not found in read model"
                 Just clonedCfg -> do
                   -- Banking defaults must have been carried over from the source
-                  clonedCfg.defaultIncomeCategory
-                    `shouldBe` Just income.other.entryId
-                  clonedCfg.defaultExpenseCategory
-                    `shouldBe` Just expense.other.entryId
+                  let ConfigurationDefaults {incomeCategory = mInc, expenseCategory = mExp} = clonedCfg.defaults
+                  mInc `shouldBe` Just income.other.entryId
+                  mExp `shouldBe` Just expense.other.entryId
                   clonedCfg.banking.mccExpenseCategoryMap
                     `shouldBe` defaultMccExpenseCategoryMap
 

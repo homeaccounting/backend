@@ -19,6 +19,10 @@ module Domain.Configuration.Projection
     BankingConfiguration (mccExpenseCategoryMap, connections),
     emptyBankingConfiguration,
 
+    -- * Defaults Sub-record
+    ConfigurationDefaults (..),
+    emptyConfigurationDefaults,
+
     -- * Bank Connections
     BankConnection (..),
 
@@ -54,9 +58,11 @@ import Domain.Configuration.Events
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
     ConfigurationCreated (..),
+    DefaultAccountSet (..),
     DefaultCurrencyChanged (..),
     DefaultExpenseCategorySet (..),
     DefaultIncomeCategorySet (..),
+    DefaultSubtypeAccountsSet (..),
     DictionaryEntryAdded (..),
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
@@ -64,6 +70,7 @@ import Domain.Configuration.Events
   )
 import Domain.Core.Types
   ( AccountId,
+    AccountSubtypeKind,
     CategoryId,
     CreatedBy (..),
     Currency (..),
@@ -121,6 +128,32 @@ emptyBankingConfiguration =
       connections = Map.empty
     }
 
+-- | All per-configuration defaults, grouped in one sub-record (mirrors the
+-- 'BankingConfiguration' sub-record).
+--
+--   * 'incomeCategory' / 'expenseCategory' — global default categories used when
+--     none is inferred (e.g. from MCC or an NL prompt).
+--   * 'account' — the global fallback account (no account named, or subtype
+--     unidentifiable).
+--   * 'subtypeAccounts' — the default account per account subtype.
+data ConfigurationDefaults = ConfigurationDefaults
+  { incomeCategory :: !(Maybe CategoryId),
+    expenseCategory :: !(Maybe CategoryId),
+    account :: !(Maybe AccountId),
+    subtypeAccounts :: !(Map AccountSubtypeKind AccountId)
+  }
+  deriving (Show, Eq)
+
+-- | The empty defaults used as the initial state.
+emptyConfigurationDefaults :: ConfigurationDefaults
+emptyConfigurationDefaults =
+  ConfigurationDefaults
+    { incomeCategory = Nothing,
+      expenseCategory = Nothing,
+      account = Nothing,
+      subtypeAccounts = Map.empty
+    }
+
 -- | The Configuration aggregate state.
 --
 -- This represents the current state of a configuration, reconstructed from its
@@ -150,10 +183,8 @@ data Configuration = Configuration
     -- | Books-closed-through cutoff. 'Nothing' until 'CloseBooksThrough' has
     -- been accepted at least once. Advances monotonically.
     booksClosedThrough :: Maybe UTCTime,
-    -- | Default category for income transactions when none is inferred from MCC
-    defaultIncomeCategory :: !(Maybe CategoryId),
-    -- | Default category for expense transactions when none is inferred from MCC
-    defaultExpenseCategory :: !(Maybe CategoryId)
+    -- | All per-configuration defaults (categories + accounts), grouped.
+    defaults :: ConfigurationDefaults
   }
   deriving (Show, Eq)
 
@@ -171,8 +202,7 @@ configurationDefault =
       createdBy = System,
       isCreated = False,
       booksClosedThrough = Nothing,
-      defaultIncomeCategory = Nothing,
-      defaultExpenseCategory = Nothing
+      defaults = emptyConfigurationDefaults
     }
 
 -- -----------------------------------------------------------------------------
@@ -232,8 +262,7 @@ handleConfigurationEvent Configuration {..} (BaseCurrencyChangedConfigurationEve
       createdBy = createdBy,
       isCreated = isCreated,
       booksClosedThrough = booksClosedThrough,
-      defaultIncomeCategory = defaultIncomeCategory,
-      defaultExpenseCategory = defaultExpenseCategory
+      defaults = defaults
     }
 handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfigurationEvent evt) =
   Configuration
@@ -244,8 +273,7 @@ handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfiguration
       createdBy = createdBy,
       isCreated = isCreated,
       booksClosedThrough = booksClosedThrough,
-      defaultIncomeCategory = defaultIncomeCategory,
-      defaultExpenseCategory = defaultExpenseCategory
+      defaults = defaults
     }
 handleConfigurationEvent config (DictionaryEntryAddedConfigurationEvent DictionaryEntryAdded {..}) =
   let newEntry = DictionaryEntry {entryId = entryId, name = name}
@@ -277,9 +305,24 @@ handleConfigurationEvent config (DictionaryEntryRemovedConfigurationEvent Dictio
           config.dictionaries
    in config {dictionaries = updatedDicts}
 handleConfigurationEvent config (DefaultIncomeCategorySetConfigurationEvent evt) =
-  config {defaultIncomeCategory = Just evt.categoryId}
+  config {defaults = config.defaults {incomeCategory = Just evt.categoryId}}
 handleConfigurationEvent config (DefaultExpenseCategorySetConfigurationEvent evt) =
-  config {defaultExpenseCategory = Just evt.categoryId}
+  config {defaults = config.defaults {expenseCategory = Just evt.categoryId}}
+handleConfigurationEvent config (DefaultAccountSetConfigurationEvent evt) =
+  config {defaults = config.defaults {account = Just evt.accountId}}
+handleConfigurationEvent config (DefaultSubtypeAccountsSetConfigurationEvent evt) =
+  -- Rebuild the sub-record explicitly: 'subtypeAccounts' is a duplicate field
+  -- name (shared with the event/command), so a bare record update is ambiguous.
+  let d = config.defaults
+   in config
+        { defaults =
+            ConfigurationDefaults
+              { incomeCategory = d.incomeCategory,
+                expenseCategory = d.expenseCategory,
+                account = d.account,
+                subtypeAccounts = evt.subtypeAccounts
+              }
+        }
 handleConfigurationEvent config (BankingMccExpenseCategoryMapSetConfigurationEvent evt) =
   config {banking = config.banking {mccExpenseCategoryMap = evt.mapping}}
 handleConfigurationEvent config (BooksClosedThroughSetConfigurationEvent evt) =

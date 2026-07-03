@@ -10,12 +10,15 @@
 -- invariant for the id types used as columns.
 module Infrastructure.Database.OrphansSpec (spec) where
 
+import qualified Data.Map.Strict as Map
 import Database.Persist (PersistField (..))
 import Domain.Core.Types
   ( AccountRole (..),
     AccountStatus (..),
+    AccountSubtypeKind (..),
     AccountType (..),
     Currency (..),
+    DefaultSubtypeAccounts (..),
     ExternalTransactionId,
     defaultBankAccount,
     unsafeExternalTransactionId,
@@ -86,6 +89,20 @@ spec = describe "Infrastructure.Database.Orphans" $ do
     mapM_ roundTrips [Opened, Closed]
     roundTrips External
     roundTrips (Regular defaultBankAccount)
+
+  it "AccountSubtypeKind round-trips through PersistValue" $ do
+    let roundTrips x = fromPersistValue (toPersistValue x) `shouldBe` Right x
+    mapM_ roundTrips [minBound .. maxBound :: AccountSubtypeKind]
+
+  prop "DefaultSubtypeAccounts round-trips through PersistValue (JSON column)"
+    $ forAll genAccountId
+    $ \a ->
+      let m = DefaultSubtypeAccounts (Map.fromList [(CashKind, a), (BankAccountKind, a)])
+       in fromPersistValue (toPersistValue m) `shouldBe` Right m
+
+  it "empty DefaultSubtypeAccounts round-trips through PersistValue"
+    $ fromPersistValue (toPersistValue (DefaultSubtypeAccounts Map.empty))
+    `shouldBe` Right (DefaultSubtypeAccounts Map.empty)
 
   prop "DictionaryEntryId round-trips through PersistValue"
     $ forAll genDictionaryEntryId

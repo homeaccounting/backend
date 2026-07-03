@@ -91,6 +91,10 @@ module Domain.Core.Types
     defaultAssetProperties,
     defaultLoanProperties,
     AccountSubtype (..),
+    AccountSubtypeKind (..),
+    accountSubtypeKind,
+    DefaultSubtypeAccounts (..),
+    unDefaultSubtypeAccounts,
     defaultCash,
     defaultBankAccount,
     defaultEWallet,
@@ -99,6 +103,7 @@ module Domain.Core.Types
     AccountType (..),
     isRegular,
     isExternal,
+    accountTypeSubtypeKind,
     AccountRole (..),
     AccountAccess (..),
     AccountStatus (..),
@@ -142,7 +147,7 @@ module Domain.Core.Types
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, withText, (.:), (.=))
+import Data.Aeson (FromJSON (..), FromJSONKey (..), ToJSON (..), ToJSONKey (..), defaultJSONKeyOptions, genericFromJSONKey, genericToJSONKey, object, withObject, withText, (.:), (.=))
 import qualified Data.Aeson as Aeson
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
@@ -888,6 +893,52 @@ defaultAsset = Asset defaultAssetProperties
 defaultLoan :: AccountSubtype
 defaultLoan = Loan defaultLoanProperties
 
+-- | Payload-free discriminator over 'AccountSubtype' constructors, for use as a
+-- map key and wire tag (mirrors the query-side 'StatusKind' pattern).
+data AccountSubtypeKind
+  = CashKind
+  | BankAccountKind
+  | EWalletKind
+  | AssetKind
+  | LoanKind
+  deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
+instance ToJSON AccountSubtypeKind
+
+instance FromJSON AccountSubtypeKind
+
+-- | Object-keyed JSON so a @Map AccountSubtypeKind _@ serialises as a JSON
+-- object keyed by the constructor name (e.g. @"CashKind"@).
+instance ToJSONKey AccountSubtypeKind where
+  toJSONKey = genericToJSONKey defaultJSONKeyOptions
+
+instance FromJSONKey AccountSubtypeKind where
+  fromJSONKey = genericFromJSONKey defaultJSONKeyOptions
+
+-- | Payload-free projection of an 'AccountSubtype'.
+accountSubtypeKind :: AccountSubtype -> AccountSubtypeKind
+accountSubtypeKind (Cash _) = CashKind
+accountSubtypeKind (BankAccount _) = BankAccountKind
+accountSubtypeKind (EWallet _) = EWalletKind
+accountSubtypeKind (Asset _) = AssetKind
+accountSubtypeKind (Loan _) = LoanKind
+
+-- | Newtype wrapper so the per-subtype default-account map can carry a
+-- 'Database.Persist.PersistField' instance (stored as one JSON column) without
+-- an orphan instance on 'Map'.
+newtype DefaultSubtypeAccounts = DefaultSubtypeAccounts
+  { unDefaultSubtypeAccounts :: Map AccountSubtypeKind AccountId
+  }
+  deriving (Show, Eq, Generic)
+
+-- | Extract the underlying map from a 'DefaultSubtypeAccounts'.
+unDefaultSubtypeAccounts :: DefaultSubtypeAccounts -> Map AccountSubtypeKind AccountId
+unDefaultSubtypeAccounts (DefaultSubtypeAccounts m) = m
+
+instance ToJSON DefaultSubtypeAccounts
+
+instance FromJSON DefaultSubtypeAccounts
+
 -- | Business behavior classification for accounts.
 --
 -- Regular accounts are user-created and carry an AccountSubtype for UI categorization.
@@ -907,6 +958,12 @@ isRegular External = False
 -- 'isRegular'.
 isExternal :: AccountType -> Bool
 isExternal = not . isRegular
+
+-- | The payload-free subtype discriminator of a 'Regular' account, or 'Nothing'
+-- for the system-managed 'External' account.
+accountTypeSubtypeKind :: AccountType -> Maybe AccountSubtypeKind
+accountTypeSubtypeKind (Regular st) = Just (accountSubtypeKind st)
+accountTypeSubtypeKind External = Nothing
 
 instance ToJSON AccountType where
   toJSON External = toJSON ("External" :: Text)
