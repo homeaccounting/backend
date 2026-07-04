@@ -3,6 +3,7 @@
 module Telegram.FormattingSpec (spec) where
 
 import Application.ReadModels.Transaction (TransactionData (..))
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
@@ -10,17 +11,21 @@ import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( CategoryId,
+  ( AccountId,
+    CategoryId,
     Currency (..),
     LabelId,
     TransactionType (..),
+    mkAllocation,
+    mkExchangeRate,
+    mkExpenseAllocations,
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
   )
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Telegram.Formatting (formatTransactionLine)
+import Telegram.Formatting (formatRecordedTransaction, formatTransactionLine)
 import Test.Hspec
 import Testkit.Helpers (singletonExpense, singletonIncome)
 
@@ -80,8 +85,29 @@ expenseFor c = singletonExpense c (unsafeMoney USD 300)
 incomeFor :: CategoryId -> TransactionType
 incomeFor c = singletonIncome c (unsafeMoney USD 300)
 
+-- Account name map: account 1 = "Cash", account 2 = "Savings".
+acctNames :: Map.Map AccountId T.Text
+acctNames =
+  Map.fromList
+    [ (unsafeAccountId (uuidFromInt 1), "Cash"),
+      (unsafeAccountId (uuidFromInt 2), "Savings")
+    ]
+
+-- A multi-allocation expense: 4.00 to Food (with a comment) and 16.00 to
+-- Salary (no comment), totalling 20.00.
+multiExpense :: TransactionType
+multiExpense =
+  let a1 = either (error . show) id (mkAllocation foodCat (unsafeMoney USD 4) (Just "latte"))
+      a2 = either (error . show) id (mkAllocation salaryCat (unsafeMoney USD 16) Nothing)
+   in Expense (mkExpenseAllocations (a1 :| [a2]))
+
 spec :: Spec
-spec = describe "formatTransactionLine" $ do
+spec = do
+  lineSpec
+  recordedSpec
+
+lineSpec :: Spec
+lineSpec = describe "formatTransactionLine" $ do
   it "annotates Expense rows with the resolved category name" $ do
     let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 5), sampleTxn (expenseFor foodCat))
     line `shouldSatisfy` T.isInfixOf "Expense \x00B7 Food"
@@ -126,3 +152,68 @@ spec = describe "formatTransactionLine" $ do
     let txn = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [orphanLabel]}
     let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 13), txn)
     line `shouldNotSatisfy` T.isInfixOf "["
+
+recordedSpec :: Spec
+recordedSpec = describe "formatRecordedTransaction" $ do
+  it "renders an expense header, total-account line, bullet, and date" $ do
+    let out = formatRecordedTransaction names acctNames (sampleTxn (expenseFor foodCat))
+    out `shouldSatisfy` T.isInfixOf "\9989 Expense recorded"
+    out `shouldSatisfy` T.isInfixOf "300.00 USD \xB7 Cash"
+    out `shouldSatisfy` T.isInfixOf "\x2022 Food 300.00"
+    out `shouldSatisfy` T.isInfixOf "2026-04-18 14:30"
+
+  it "renders income against the target account" $ do
+    let out = formatRecordedTransaction names acctNames (sampleTxn (incomeFor salaryCat))
+    out `shouldSatisfy` T.isInfixOf "\9989 Income recorded"
+    out `shouldSatisfy` T.isInfixOf "\x2022 Salary 300.00"
+
+  it "renders one bullet per allocation with per-allocation comment" $ do
+    let out = formatRecordedTransaction names acctNames (sampleTxn multiExpense)
+    out `shouldSatisfy` T.isInfixOf "\x2022 Food 4.00 \x2014 latte"
+    out `shouldSatisfy` T.isInfixOf "\x2022 Salary 16.00"
+    out `shouldNotSatisfy` T.isInfixOf "Salary 16.00 \x2014"
+
+  it "falls back to the bare amount when a category is unresolved" $ do
+    let out = formatRecordedTransaction names acctNames (sampleTxn (expenseFor orphanCat))
+    out `shouldSatisfy` T.isInfixOf "\x2022 300.00"
+
+  it "omits the account suffix when the account is unresolved" $ do
+    let out = formatRecordedTransaction names Map.empty (sampleTxn (expenseFor foodCat))
+    out `shouldSatisfy` T.isInfixOf "300.00 USD"
+    out `shouldNotSatisfy` T.isInfixOf "\xB7"
+
+  it "renders a same-currency transfer with one amount and no rate" $ do
+    let out = formatRecordedTransaction names acctNames (sampleTxn Transfer)
+    out `shouldSatisfy` T.isInfixOf "\9989 Transfer recorded"
+    out `shouldSatisfy` T.isInfixOf "Cash \x2192 Savings"
+    out `shouldSatisfy` T.isInfixOf "300.00 USD"
+    out `shouldNotSatisfy` T.isInfixOf "Rate:"
+
+  it "renders a cross-currency transfer with both amounts and a rate" $ do
+    let er = either (error . show) id (mkExchangeRate USD UAH (toRational (41.5 :: Double)))
+        txn =
+          (sampleTxn Transfer)
+            { sourceAmount = unsafeMoney USD 100,
+              targetAmount = unsafeMoney UAH 4150,
+              exchangeRate = Just er
+            }
+        out = formatRecordedTransaction names acctNames txn
+    out `shouldSatisfy` T.isInfixOf "100.00 USD \x2192 4150.00 UAH"
+    out `shouldSatisfy` T.isInfixOf "Rate: 41.50"
+
+  it "falls back to a short id for an unresolved transfer endpoint" $ do
+    let out = formatRecordedTransaction names Map.empty (sampleTxn Transfer)
+    out `shouldSatisfy` T.isInfixOf "00000000 \x2192 00000000"
+
+  it "appends a Pending marker but not for Completed" $ do
+    let completed = formatRecordedTransaction names acctNames (sampleTxn (expenseFor foodCat))
+        pending = formatRecordedTransaction names acctNames ((sampleTxn (expenseFor foodCat)) {status = Pending})
+    completed `shouldNotSatisfy` T.isInfixOf "["
+    pending `shouldSatisfy` T.isInfixOf "[Pending]"
+
+  it "appends resolved labels sorted and omits when empty" $ do
+    let withLabels = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [kyivLabel, lunchLabel]}
+        out = formatRecordedTransaction names acctNames withLabels
+    out `shouldSatisfy` T.isInfixOf "Labels: kyiv, lunch"
+    formatRecordedTransaction names acctNames (sampleTxn (expenseFor foodCat))
+      `shouldNotSatisfy` T.isInfixOf "Labels:"

@@ -22,6 +22,9 @@ module Telegram.Formatting
     -- * Listing Renderers
     formatTransactionLine,
     formatCommandList,
+
+    -- * Confirmation Renderer
+    formatRecordedTransaction,
   )
 where
 
@@ -29,19 +32,25 @@ import Application.ReadModels.Transaction (TransactionData (..))
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, formatTime)
+import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( Allocation (..),
+  ( AccountId,
+    Allocation (..),
+    Allocations,
     Currency (..),
     DictionaryEntryId,
     Money,
     TransactionId,
     TransactionType (..),
     allAllocations,
+    exchangeRateValue,
     moneyCurrency,
+    unAccountId,
     unMoney,
   )
 import Domain.Transaction.Projection (TransactionStatus (..))
@@ -132,3 +141,105 @@ formatTransactionLine entryNames (_txId, td) =
 -- | Render the canonical bot command list as @\"/cmd - description\"@ lines.
 formatCommandList :: [Text]
 formatCommandList = map (\(cmd, desc) -> cmd <> " - " <> desc) botCommands
+
+-- Confirmation Renderer
+
+-- | Render a just-recorded transaction as a multi-line confirmation used by
+-- all Telegram recording paths (@/income@, @/expense@, @/transfer@, and the
+-- natural-language prompt). @entryNames@ resolves category and label ids;
+-- @accountNames@ resolves the user's own account ids. Both maps degrade
+-- gracefully: an unresolved category falls back to the bare amount, an
+-- unresolved account is dropped (expense/income) or shown as a short id
+-- (transfer, to preserve the @A -> B@ arrow). Total over all
+-- 'TransactionType' and 'TransactionStatus' constructors.
+formatRecordedTransaction ::
+  Map DictionaryEntryId Text ->
+  Map AccountId Text ->
+  TransactionData ->
+  Text
+formatRecordedTransaction entryNames accountNames td =
+  case td.transactionType of
+    Income allocs -> categorised "Income" td.targetAmount td.targetAccountId allocs
+    Expense allocs -> categorised "Expense" td.sourceAmount td.sourceAccountId allocs
+    Transfer -> transfer
+    Adjustment -> adjustment
+  where
+    header :: Text -> Text
+    header kind = "\9989 " <> kind <> " recorded" <> statusMarker
+
+    statusMarker :: Text
+    statusMarker = case td.status of
+      Completed -> ""
+      Pending -> "  [Pending]"
+      Cancelled -> "  [Cancelled]"
+      Failed reason -> "  [Failed: " <> reason <> "]"
+
+    amountText :: Money -> Text
+    amountText m = formatMoney m <> " " <> showCurrency (moneyCurrency m)
+
+    accountSuffix :: AccountId -> Text
+    accountSuffix aid = maybe "" (" \xB7 " <>) (Map.lookup aid accountNames)
+
+    accountRef :: AccountId -> Text
+    accountRef aid =
+      fromMaybe
+        (T.take 8 (T.pack (UUID.toString (unAccountId aid))))
+        (Map.lookup aid accountNames)
+
+    labelLines :: [Text]
+    labelLines =
+      let ns = sort [n | lid <- Set.toList td.labels, Just n <- [Map.lookup lid entryNames]]
+       in ["Labels: " <> T.intercalate ", " ns | not (null ns)]
+
+    bullet :: Allocation -> Text
+    bullet a =
+      let amt = formatMoney a.amount
+          labelled = case Map.lookup a.categoryId entryNames of
+            Just n -> n <> " " <> amt
+            Nothing -> amt
+          commentTail = case a.comment of
+            Just c | not (T.null c) -> " \x2014 " <> c
+            _ -> ""
+       in "\x2022 " <> labelled <> commentTail
+
+    categorised :: Text -> Money -> AccountId -> Allocations -> Text
+    categorised kind total accId allocs =
+      T.intercalate "\n" $
+        [ header kind,
+          amountText total <> accountSuffix accId
+        ]
+          <> fmap bullet (allAllocations allocs)
+          <> labelLines
+          <> [formatDate td.date]
+
+    transfer :: Text
+    transfer =
+      let crossCurrency = moneyCurrency td.sourceAmount /= moneyCurrency td.targetAmount
+          amountLine =
+            if crossCurrency
+              then amountText td.sourceAmount <> " \x2192 " <> amountText td.targetAmount
+              else amountText td.sourceAmount
+          rateLines = case td.exchangeRate of
+            Just er | crossCurrency -> ["Rate: " <> formatRate (exchangeRateValue er)]
+            _ -> []
+       in T.intercalate "\n" $
+            [ header "Transfer",
+              accountRef td.sourceAccountId <> " \x2192 " <> accountRef td.targetAccountId,
+              amountLine
+            ]
+              <> rateLines
+              <> labelLines
+              <> [formatDate td.date]
+
+    adjustment :: Text
+    adjustment =
+      T.intercalate "\n" $
+        [ header "Adjustment",
+          amountText td.sourceAmount <> accountSuffix td.sourceAccountId
+        ]
+          <> labelLines
+          <> [formatDate td.date]
+
+-- | Render an exchange rate to two decimal places.
+formatRate :: Rational -> Text
+formatRate r = T.pack $ showFFloat (Just 2) (fromRational r :: Double) ""

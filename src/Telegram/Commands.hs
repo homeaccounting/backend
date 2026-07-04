@@ -35,7 +35,7 @@ module Telegram.Commands
     handleTransactions,
     handleCancel,
     handleHelp,
-    runPrompt,
+    handlePromptText,
 
     -- * Helpers
     sendMsg,
@@ -106,7 +106,7 @@ import Telegram.Api (answerCallback, sendMessageWithKeyboard, sendTextMessage)
 import qualified Telegram.Bot.API as TG
 import Telegram.Formatting
   ( formatCommandList,
-    formatMoney,
+    formatRecordedTransaction,
     formatTransactionLine,
     showCurrency,
   )
@@ -163,7 +163,7 @@ handleMessage botState telegramId chatId text = do
     -- No active conversation: treat any free text as a natural-language prompt
     -- (issue #28). The user's currently-selected account, if any, is applied.
     Nothing ->
-      runPrompt botState telegramId chatId text
+      handlePromptText botState telegramId chatId text
     Just CreateAccountEnterName ->
       handleCreateAccountName botState telegramId chatId text
     Just (IncomeEnterAmount cat) ->
@@ -467,12 +467,12 @@ handleHelp _telegramId chatId = do
 --
 -- With inline text (@/prompt coffee 4.50@) the transaction is recorded
 -- immediately. With no argument we explain the feature; because 'handleMessage'
--- already routes any idle free-text message through 'runPrompt', the user can
+-- already routes any idle free-text message through 'handlePromptText', the user can
 -- simply type their next message and it will be recorded.
 handlePromptCommand :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
 handlePromptCommand botState telegramId chatId args =
   case T.strip <$> args of
-    Just t | not (T.null t) -> runPrompt botState telegramId chatId t
+    Just t | not (T.null t) -> handlePromptText botState telegramId chatId t
     _ ->
       sendMsg chatId
         $ T.unlines
@@ -487,8 +487,8 @@ handlePromptCommand botState telegramId chatId args =
 -- The user's currently-selected account (via /accounts), if any, is passed
 -- through so it fills the transaction's primary account slot; otherwise the
 -- account is resolved from the text by the existing rules (issue #28).
-runPrompt :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-runPrompt botState telegramId chatId text = do
+handlePromptText :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+handlePromptText botState telegramId chatId text = do
   maybeUserId <- getUserIdForTelegram telegramId
   case maybeUserId of
     Nothing -> sendMsg chatId "I couldn't find your account. Use /start first."
@@ -496,8 +496,8 @@ runPrompt botState telegramId chatId text = do
       selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
       result <- PromptService.handlePrompt userId (fst <$> selected) text
       case result of
-        Right (TransactionCreated interp _ _) ->
-          sendMsg chatId ("\9989 " <> interp)
+        Right (TransactionCreated _interp _txId txData) ->
+          replyRecordedTransaction telegramId chatId txData
         Left (PromptDomainError de) ->
           sendMsg chatId ("\9888\65039 " <> renderDomainError de)
         Left PromptFeatureDisabled ->
@@ -627,7 +627,7 @@ handleIncomeDescription botState telegramId chatId cat money description = do
                       logError $ "Income transfer failed: " <> display failureReason
                       sendMsg chatId $ "Income recording failed: " <> failureReason
                     _ ->
-                      sendMsg chatId $ "Income recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
+                      replyRecordedTransaction telegramId chatId txData
 
 -- -----------------------------------------------------------------------------
 -- Expense Flow Handlers
@@ -699,7 +699,7 @@ handleExpenseDescription botState telegramId chatId cat money description = do
                       logError $ "Expense transfer failed: " <> display failureReason
                       sendMsg chatId $ "Expense recording failed: " <> failureReason
                     _ ->
-                      sendMsg chatId $ "Expense recorded: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
+                      replyRecordedTransaction telegramId chatId txData
 
 -- -----------------------------------------------------------------------------
 -- Transfer Flow Handlers
@@ -772,7 +772,7 @@ handleTransferDescription botState telegramId chatId srcId tgtId money descripti
             logError $ "Transfer failed: " <> display failureReason
             sendMsg chatId $ "Transfer failed: " <> failureReason
           _ ->
-            sendMsg chatId $ "Transfer completed: " <> formatMoney money <> " " <> showCurrency (moneyCurrency money)
+            replyRecordedTransaction telegramId chatId txData
 
 -- -----------------------------------------------------------------------------
 -- Category Parsers
@@ -843,6 +843,21 @@ getDictionaryEntryNames telegramId = do
                 $ entriesFor incomeCategoryDictId
                 <> entriesFor expenseCategoryDictId
                 <> entriesFor labelsDictId
+
+-- | Send the shared, structured confirmation for a just-recorded
+-- transaction. Resolves category/label names and the user's own account
+-- names from existing read-model helpers, then delegates rendering to the
+-- pure 'formatRecordedTransaction'. The displayed account is always the
+-- user's own regular account (source for expense, target for income, both
+-- for transfer), so 'getUserRegularAccounts' suffices — no External-account
+-- lookup is needed.
+replyRecordedTransaction :: TelegramId -> Int64 -> TransactionData -> AppM ()
+replyRecordedTransaction telegramId chatId td = do
+  entryNames <- getDictionaryEntryNames telegramId
+  maybeAccounts <- getUserRegularAccounts telegramId
+  let accountNames =
+        Map.fromList [(aid, n) | (aid, n, _) <- fromMaybe [] maybeAccounts]
+  sendMsg chatId (formatRecordedTransaction entryNames accountNames td)
 
 -- -----------------------------------------------------------------------------
 -- User/Account Lookup Helpers
