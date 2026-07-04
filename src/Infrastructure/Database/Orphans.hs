@@ -16,7 +16,7 @@
 -- depend on them without redefining — and risking conflicting — instances.
 module Infrastructure.Database.Orphans () where
 
-import Data.Aeson (FromJSON, ToJSON, Value, eitherDecodeStrict', encode, object, parseJSON, toJSON, withObject, (.:), (.=))
+import Data.Aeson (FromJSON, ToJSON, Value, eitherDecodeStrict', encode, object, parseJSON, toJSON, withObject, (.:), (.:?), (.=))
 import Data.Aeson.Types (Parser, parseEither)
 import Data.UUID (UUID)
 import Database.Persist (PersistField (..), PersistValue (..))
@@ -223,13 +223,15 @@ moneyParser v = do
   either (fail . T.unpack) pure (mkMoney cur r)
 
 allocToValue :: Allocation -> Value
-allocToValue (Allocation cid amt) = object ["categoryId" .= cid, "amount" .= moneyToValue amt]
+allocToValue (Allocation cid amt cmt) =
+  object ["categoryId" .= cid, "amount" .= moneyToValue amt, "comment" .= cmt]
 
 allocParser :: Value -> Parser Allocation
 allocParser = withObject "Allocation" $ \o -> do
   cid <- o .: "categoryId"
   amt <- (o .: "amount") >>= moneyParser
-  pure (Allocation cid amt)
+  cmt <- o .:? "comment"
+  pure (Allocation cid amt cmt)
 
 allocsToValue :: Allocations -> Value
 allocsToValue (Allocations incs exps) =

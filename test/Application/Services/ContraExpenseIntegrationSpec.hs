@@ -207,8 +207,8 @@ spec = describe "Application.Services / ContraExpense end-to-end" $ do
     let total = money 5500
         allocs =
           mkMixedAllocations
-            (Allocation h.harnessSalary (money 5000) :| [])
-            (Allocation h.harnessRent (money 500) :| [])
+            (Allocation h.harnessSalary (money 5000) Nothing :| [])
+            (Allocation h.harnessRent (money 500) Nothing :| [])
 
     balanceBefore <- balanceOf h.harnessEnv h.harnessAccount
 
@@ -239,15 +239,15 @@ spec = describe "Application.Services / ContraExpense end-to-end" $ do
     let incomeTotal = money 5500
         incomeAllocs =
           mkMixedAllocations
-            (Allocation h.harnessSalary (money 5000) :| [])
-            (Allocation h.harnessRent (money 500) :| [])
+            (Allocation h.harnessSalary (money 5000) Nothing :| [])
+            (Allocation h.harnessRent (money 500) Nothing :| [])
     _ <- postIncome h incomeTotal incomeAllocs
 
     -- Post a standalone $500 rent expense.
     let expenseTotal = money 500
         expenseAllocs =
           mkExpenseAllocations
-            (Allocation h.harnessRent expenseTotal :| [])
+            (Allocation h.harnessRent expenseTotal Nothing :| [])
     _ <- postExpense h expenseTotal expenseAllocs
 
     -- expenseNet(Rent) = 500 (expense txn) − 500 (income txn contra slice) = 0
@@ -260,7 +260,7 @@ spec = describe "Application.Services / ContraExpense end-to-end" $ do
     let total = money 40
         allocs =
           mkExpenseAllocations
-            (Allocation h.harnessRefundCat total :| [])
+            (Allocation h.harnessRefundCat total Nothing :| [])
 
     balanceBefore <- balanceOf h.harnessEnv h.harnessAccount
 

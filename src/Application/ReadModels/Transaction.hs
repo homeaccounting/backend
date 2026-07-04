@@ -506,7 +506,7 @@ findReferencingTransactions entryId = do
   where
     referencesEntry eid tt = case allocationsOf tt of
       Nothing -> False
-      Just allocs -> any (\(Allocation cid _) -> cid == eid) (allAllocations allocs)
+      Just allocs -> any (\(Allocation cid _ _) -> cid == eid) (allAllocations allocs)
 
 -- | Transactions eligible for reporting: 'Completed', touching a visible
 -- account, within the optional inclusive business-date window. Returned as

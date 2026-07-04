@@ -406,7 +406,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
       throwE err
     Right ok -> pure ok
   lift $ logCategoryResolution tx direction cfg categoryId resolution
-  allocation <- case mkAllocation categoryId money of
+  allocation <- case mkAllocation categoryId money Nothing of
     Right a -> pure a
     Left err -> do
       lift $ logWarn $ "Allocation construction failed for tx " <> display tx.externalId <> ": " <> displayShow err

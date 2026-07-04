@@ -346,7 +346,8 @@ instance FromJSON AccountListResponse
 -- rest of the create DTOs).
 data CategoryAmount = CategoryAmount
   { category :: UUID,
-    amount :: Double
+    amount :: Double,
+    comment :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -539,7 +540,8 @@ instance FromJSON AmendTransactionRequest
 -- (@{ "amount": <number>, "currency": <text> }@).
 data AllocationResponse = AllocationResponse
   { categoryId :: Text,
-    amount :: Money
+    amount :: Money,
+    comment :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -1137,10 +1139,11 @@ allocationsResponseOf tt = case allocationsOf tt of
       (map toAllocationResponse incs)
       (map toAllocationResponse exps)
   where
-    toAllocationResponse (Allocation cid amt) =
+    toAllocationResponse (Allocation cid amt cmt) =
       AllocationResponse
         { categoryId = T.pack $ UUID.toString $ unDictionaryEntryId cid,
-          amount = amt
+          amount = amt,
+          comment = cmt
         }
 
 -- -----------------------------------------------------------------------------

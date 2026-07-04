@@ -373,11 +373,15 @@ genEmail = do
 -- Allocation Generators
 -- -----------------------------------------------------------------------------
 
+-- | Generate an optional comment for an 'Allocation'.
+genMaybeComment :: Gen (Maybe Text)
+genMaybeComment = oneof [pure Nothing, Just <$> elements ["овочі", "квіти", "яйця", "misc"]]
+
 -- | Generate a single 'Allocation' with a strictly positive amount in
 -- a random currency. Matches the 'amount > 0' invariant enforced by
 -- the 'TransactionType' smart constructors.
 instance Arbitrary Allocation where
-  arbitrary = Allocation <$> arbitrary <*> genPositiveMoney
+  arbitrary = Allocation <$> arbitrary <*> genPositiveMoney <*> genMaybeComment
 
 -- | Deterministic helper: split a total into positive allocations summing
 -- exactly to it, one per supplied category id, with the rounding residual
@@ -392,8 +396,8 @@ partitionMoneyExact totalRat cur (c : cs) =
   let n = 1 + length cs
       slice = totalRat / fromIntegral n
       residual = totalRat - slice * fromIntegral n
-   in Allocation c (unsafeMoney cur (slice + residual))
-        : fmap (\ci -> Allocation ci (unsafeMoney cur slice)) cs
+   in Allocation c (unsafeMoney cur (slice + residual)) Nothing
+        : fmap (\ci -> Allocation ci (unsafeMoney cur slice) Nothing) cs
 
 -- | Generate a non-empty list of positive allocations summing exactly to
 -- 'moneyTotal', all sharing the moneyTotal's currency.
@@ -438,7 +442,7 @@ genTransactionType =
                 expPart = t - incPart
             ic <- genDictionaryEntryId
             ec <- genDictionaryEntryId
-            pure ([Allocation ic (unsafeMoney cur incPart)], [Allocation ec (unsafeMoney cur expPart)])
+            pure ([Allocation ic (unsafeMoney cur incPart) Nothing], [Allocation ec (unsafeMoney cur expPart) Nothing])
           else do
             i <- genAllocationListSummingTo incTotal
             pure (i, [])

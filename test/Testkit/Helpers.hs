@@ -344,8 +344,8 @@ partitionMoney total (c :| cs)
           n = 1 + length cs
           slice = totalRat / fromIntegral n
           residual = totalRat - slice * fromIntegral n
-          firstAlloc = Allocation c (unsafeMoney cur (slice + residual))
-          rest = fmap (\ci -> Allocation ci (unsafeMoney cur slice)) cs
+          firstAlloc = Allocation c (unsafeMoney cur (slice + residual)) Nothing
+          rest = fmap (\ci -> Allocation ci (unsafeMoney cur slice) Nothing) cs
        in mkExpenseAllocations (firstAlloc :| rest)
 
 -- | Build a degenerate single-allocation 'Allocations' for one category
@@ -357,12 +357,12 @@ partitionMoney total (c :| cs)
 -- The amount is taken as-is — callers are responsible for ensuring it
 -- is strictly positive.
 singletonAllocation :: DictionaryEntryId -> Money -> Allocations
-singletonAllocation c m = mkIncomeAllocations (Allocation c m :| [])
+singletonAllocation c m = mkIncomeAllocations (Allocation c m Nothing :| [])
 
 -- | Single-allocation 'Allocations' in the @expenses@ bucket — the
 -- expense-side counterpart of 'singletonAllocation'.
 expenseSingletonAllocation :: DictionaryEntryId -> Money -> Allocations
-expenseSingletonAllocation c m = mkExpenseAllocations (Allocation c m :| [])
+expenseSingletonAllocation c m = mkExpenseAllocations (Allocation c m Nothing :| [])
 
 -- | Build an 'Income' 'TransactionType' with a single allocation. The
 -- amount supplied IS the categorised total (degenerate length-1

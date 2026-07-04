@@ -244,7 +244,7 @@ defaultTransactionType =
       Right m -> m
       Left _ -> error "transactionDefault: mkDefaultMoney 1 should never fail"
     placeholderAlloc =
-      case mkAllocation (unsafeDictionaryEntryId nil) placeholderUnit of
+      case mkAllocation (unsafeDictionaryEntryId nil) placeholderUnit Nothing of
         Right a -> a
         Left err -> error ("transactionDefault: mkAllocation should never fail: " <> show err)
 

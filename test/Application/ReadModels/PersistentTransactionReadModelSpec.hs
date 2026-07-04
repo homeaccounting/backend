@@ -105,7 +105,7 @@ cancelled txId =
 
 -- | An expense transaction type with a single allocation against @c@.
 expenseOn :: CategoryId -> TransactionType
-expenseOn c = Expense (mkExpenseAllocations (Allocation c (unsafeMoney USD 100) NE.:| []))
+expenseOn c = Expense (mkExpenseAllocations (Allocation c (unsafeMoney USD 100) Nothing NE.:| []))
 
 seedEnv :: [Eventium.GlobalStreamEvent AccountingEvent] -> IO AppEnv
 seedEnv = seedGlobals applyTransactionEvent

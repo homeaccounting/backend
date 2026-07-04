@@ -241,7 +241,7 @@ buildAllocations cur req = do
   let total = Money (sum [a.amount.amount | a <- allAllocations allocs]) cur
   pure (total, allocs)
   where
-    toAlloc c ca = mkAllocation (unsafeDictionaryEntryId ca.category) (toDomainMoney c ca.amount)
+    toAlloc c ca = mkAllocation (unsafeDictionaryEntryId ca.category) (toDomainMoney c ca.amount) ca.comment
 
 -- | Handler for POST /api/transactions/income - Record an income transaction.
 incomeHandler :: AuthenticatedUser -> IncomeRequest -> AppM TransactionResponse

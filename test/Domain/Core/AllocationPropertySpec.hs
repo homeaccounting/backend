@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
@@ -6,8 +7,10 @@
 module Domain.Core.AllocationPropertySpec (spec) where
 
 import Data.Aeson (decode, encode)
+import Data.Either (isLeft)
+import Data.UUID (fromWords)
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (Allocation (..), DictionaryEntryId, Money, mkAllocation, unMoney)
+import Domain.Core.Types (Allocation (..), Currency (..), DictionaryEntryId, Money, mkAllocation, mkDefaultMoney, unMoney, unsafeDictionaryEntryId, unsafeMoney)
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Property, (===), (==>))
@@ -31,16 +34,37 @@ spec = describe "Allocation" $ do
   prop "mkAllocation accepts any strictly positive amount" $
     \(cid :: DictionaryEntryId) (m :: Money) ->
       (unMoney m > 0) ==>
-        ( case mkAllocation cid m of
+        ( case mkAllocation cid m Nothing of
             Right a -> a.amount === m
             Left e -> error ("expected Right, got Left " <> show e)
         )
   prop "mkAllocation rejects non-positive amounts" $
     \(cid :: DictionaryEntryId) (m :: Money) ->
       ( (unMoney m <= 0) ==>
-          ( case mkAllocation cid m of
+          ( case mkAllocation cid m Nothing of
               Left (ValidationErr _) -> True
               _ -> False
           )
       ) ::
         Property
+  -- a valid comment passes through unchanged
+  it "preserves a non-blank comment" $ do
+    let m = either (error "mkDefaultMoney") id (mkDefaultMoney 10)
+        cid = unsafeDictionaryEntryId (fromWords 1 0 0 0)
+    fmap (.comment) (mkAllocation cid m (Just "огірки розсада"))
+      `shouldBe` Right (Just "огірки розсада")
+  -- blank / whitespace-only normalizes to Nothing
+  it "normalizes a blank comment to Nothing" $ do
+    let m = either (error "mkDefaultMoney") id (mkDefaultMoney 10)
+        cid = unsafeDictionaryEntryId (fromWords 1 0 0 0)
+    fmap (.comment) (mkAllocation cid m (Just "   ")) `shouldBe` Right Nothing
+    fmap (.comment) (mkAllocation cid m (Just "")) `shouldBe` Right Nothing
+  -- Nothing stays Nothing
+  it "keeps a Nothing comment as Nothing" $ do
+    let cid = unsafeDictionaryEntryId (fromWords 1 0 0 0)
+    fmap (.comment) (mkAllocation cid (unsafeMoney USD 5) Nothing) `shouldBe` Right Nothing
+  -- positivity still enforced when comment is Nothing
+  it "still rejects non-positive amounts" $ do
+    let cid = unsafeDictionaryEntryId (fromWords 1 0 0 0)
+        bad = unsafeMoney USD (-1)
+    mkAllocation cid bad Nothing `shouldSatisfy` isLeft

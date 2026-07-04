@@ -10,23 +10,34 @@
 -- invariant for the id types used as columns.
 module Infrastructure.Database.OrphansSpec (spec) where
 
+import Data.Aeson (Value, encode, object, (.=))
 import qualified Data.Map.Strict as Map
-import Database.Persist (PersistField (..))
+import Data.UUID (fromWords)
+import Database.Persist (PersistField (..), PersistValue (..))
 import Domain.Core.Types
   ( AccountRole (..),
     AccountStatus (..),
     AccountSubtypeKind (..),
     AccountType (..),
+    Allocation (..),
+    Allocations (..),
     Currency (..),
     DefaultSubtypeAccounts (..),
     ExternalTransactionId,
+    TransactionType (..),
     defaultBankAccount,
+    mkAllocation,
+    mkAllocations,
+    mkIncome,
+    unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
+    unsafeMoney,
   )
 import Domain.ExchangeRate.Events (Provider (..))
 import Domain.Transaction.Projection (StatusKind (..))
 import Infrastructure.Database.Orphans ()
 import RIO
+import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text as T
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
@@ -146,3 +157,59 @@ spec = describe "Infrastructure.Database.Orphans" $ do
     $ forAll genProvider
     $ \p ->
       fromPersistValue (toPersistValue p) `shouldBe` Right p
+
+  -- Allocation comment codec — tested via TransactionType PersistField
+  -- (allocToValue / allocParser are module-private; TransactionType is the
+  -- public surface that exercises them end-to-end).
+
+  it "allocation comment round-trips through TransactionType PersistValue" $ do
+    let cid = unsafeDictionaryEntryId (fromWords 1 0 0 0)
+        amt = unsafeMoney USD 5
+        alloc = either (error . show) id (mkAllocation cid amt (Just "квіти"))
+        allocs = either (error . show) id (mkAllocations [alloc] [])
+        total = amt
+        tt = either (error . show) id (mkIncome total allocs)
+    fromPersistValue (toPersistValue tt) `shouldBe` Right tt
+
+  it "allocation with Nothing comment round-trips through TransactionType PersistValue" $ do
+    let cid = unsafeDictionaryEntryId (fromWords 3 0 0 0)
+        amt = unsafeMoney USD 7
+        alloc = either (error . show) id (mkAllocation cid amt Nothing)
+        allocs = either (error . show) id (mkAllocations [alloc] [])
+        total = amt
+        tt = either (error . show) id (mkIncome total allocs)
+    fromPersistValue (toPersistValue tt) `shouldBe` Right tt
+
+  it "allocation without comment key is tolerated by TransactionType codec (legacy)" $ do
+    -- Construct the old wire format (no "comment" key) by hand and feed it
+    -- into fromPersistValue; result must decode with comment = Nothing.
+    let cid = unsafeDictionaryEntryId (fromWords 2 0 0 0)
+        amt = unsafeMoney USD 10
+        -- Build the legacy JSON object the old codec would have produced:
+        -- amount encoded as toJSON (show rational, currency)
+        legacyAllocObj :: Value
+        legacyAllocObj =
+          object
+            [ "categoryId" .= cid,
+              -- moneyToValue encodes Money as (show rational, currency); "10 % 1" is the 'show' of the Rational 10.
+              "amount" .= (["10 % 1", "USD"] :: [Text])
+            ]
+        legacyJson :: Value
+        legacyJson =
+          object
+            [ "kind" .= ("income" :: Text),
+              "allocations"
+                .= object
+                  [ "incomes" .= ([legacyAllocObj] :: [Value]),
+                    "expenses" .= ([] :: [Value])
+                  ]
+            ]
+        persistVal = PersistText (decodeUtf8Lenient . BL.toStrict . encode $ legacyJson)
+        result = fromPersistValue persistVal :: Either Text TransactionType
+    case result of
+      Left err -> expectationFailure ("decode failed: " <> T.unpack err)
+      Right (Income (Allocations [decoded] [])) -> do
+        decoded.comment `shouldBe` Nothing
+        decoded.categoryId `shouldBe` cid
+        decoded.amount `shouldBe` amt
+      Right other -> expectationFailure ("unexpected TransactionType shape: " <> show other)

@@ -5,7 +5,8 @@
 module Application.Services.Prompt.TypesSpec (spec) where
 
 import Application.Services.Prompt.Transaction.Intent
-  ( IntentKind (..),
+  ( IntentAllocation (..),
+    IntentKind (..),
     TransactionIntent (..),
   )
 import Application.Services.Prompt.Types
@@ -24,11 +25,11 @@ spec :: Spec
 spec = describe "Application.Services.Prompt.Types" $ do
   describe "decodePromptIntent" $ do
     it "decodes a well-formed transaction envelope" $ do
-      let bs = "{\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":\"123\",\"sourceAccount\":\"Cash\",\"category\":\"Food\"}"
+      let bs = "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}]}"
       case decodePromptIntent bs of
         Right (CreateTransactionIntent ti) -> do
           ti.kind `shouldBe` ExpenseKind
-          ti.amount `shouldBe` "123"
+          map (.amount) ti.allocations `shouldBe` ["123"]
         other -> expectationFailure ("expected CreateTransactionIntent, got: " <> show other)
 
     it "rejects an unknown intent name" $ do
@@ -44,5 +45,6 @@ spec = describe "Application.Services.Prompt.Types" $ do
       decodePromptIntent bs `shouldSatisfy` isMalformed
 
     it "treats a transaction with a bad payload as malformed" $ do
-      let bs = "{\"intent\":\"transaction\",\"kind\":\"expense\"}"
+      -- 'kind' is required by the transaction parser; omitting it is malformed.
+      let bs = "{\"intent\":\"transaction\",\"sourceAccount\":\"Cash\"}"
       decodePromptIntent bs `shouldSatisfy` isMalformed

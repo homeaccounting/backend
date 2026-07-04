@@ -93,5 +93,5 @@ spec = describe "TransactionType" $ do
 -- bucket (where 'genValid' places its slices), leaving the rest intact.
 perturbExpenses :: (Money -> Money) -> Allocations -> Allocations
 perturbExpenses f a = case a.expenses of
-  (Allocation cid m : rest) -> a {expenses = Allocation cid (f m) : rest}
+  (Allocation cid m mc : rest) -> a {expenses = Allocation cid (f m) mc : rest}
   [] -> a

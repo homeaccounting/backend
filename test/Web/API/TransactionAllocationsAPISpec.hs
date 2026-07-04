@@ -130,8 +130,8 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       -- Replace with a 10 + 15 split summing to the original 25 USD.
       let newAllocs =
             Allocations
-              [ Allocation seed.seedCategory (unsafeMoney USD 10),
-                Allocation secondCat (unsafeMoney USD 15)
+              [ Allocation seed.seedCategory (unsafeMoney USD 10) Nothing,
+                Allocation secondCat (unsafeMoney USD 15) Nothing
               ]
               []
       let path =
@@ -172,7 +172,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       txId <- seedIncomeTransaction seed Set.empty
       -- Seed transaction is 25 USD; submit a 10 USD allocation only.
       let bad =
-            Allocations [Allocation seed.seedCategory (unsafeMoney USD 10)] []
+            Allocations [Allocation seed.seedCategory (unsafeMoney USD 10) Nothing] []
       let path =
             encodeUtf8
               $ "/api/transactions/"
@@ -189,7 +189,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       token <- seedToken seed
       txId <- seedTransfer seed
       let bad =
-            Allocations [Allocation seed.seedCategory (unsafeMoney USD 10)] []
+            Allocations [Allocation seed.seedCategory (unsafeMoney USD 10) Nothing] []
       let path =
             encodeUtf8
               $ "/api/transactions/"
@@ -208,7 +208,7 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       token <- seedToken seed
       txId <- seedIncomeTransaction seed Set.empty
       let body =
-            Allocations [Allocation seed.seedCategory (unsafeMoney USD 25)] []
+            Allocations [Allocation seed.seedCategory (unsafeMoney USD 25) Nothing] []
       let path =
             encodeUtf8
               $ "/api/transactions/"
@@ -274,8 +274,8 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
       reimburseCat <- addExpenseCategory seed "ShapeReimburse"
       let newAllocs =
             Allocations
-              [Allocation seed.seedCategory (unsafeMoney USD 15)]
-              [Allocation reimburseCat (unsafeMoney USD 10)]
+              [Allocation seed.seedCategory (unsafeMoney USD 15) Nothing]
+              [Allocation reimburseCat (unsafeMoney USD 10) Nothing]
           path =
             encodeUtf8 $ "/api/transactions/" <> uuidText (unTransactionId txId) <> "/allocations"
       resp <- httpRequest seed.seedApp "PATCH" path (authHeaders token) (mkAllocBody newAllocs)
@@ -290,3 +290,75 @@ spec = describe "Transaction allocations HTTP endpoint" $ do
           sliceShouldMatch inc (uuidText (unDictionaryEntryId seed.seedCategory)) 15 "USD"
           sliceShouldMatch exp' (uuidText (unDictionaryEntryId reimburseCat)) 10 "USD"
         _ -> expectationFailure "expected exactly one income and one expense slice"
+
+  -- ---------------------------------------------------------------------------
+  -- POST /api/transactions/income — allocation comment threading
+  -- ---------------------------------------------------------------------------
+
+  describe "POST /api/transactions/income allocation comment threading" $ do
+    it "preserves a non-empty comment from CategoryAmount through to AllocationResponse" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "alloc-comment-present@test.com"
+      token <- seedToken seed
+      let body =
+            encode
+              $ object
+                [ "accountId" .= uuidText (unAccountId seed.seedAccount),
+                  "currency" .= ("USD" :: Text),
+                  "allocations"
+                    .= object
+                      [ "incomes"
+                          .= [ object
+                                 [ "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                                   "amount" .= (30 :: Double),
+                                   "comment" .= ("комент" :: Text)
+                                 ]
+                             ],
+                        "expenses" .= ([] :: [Value])
+                      ],
+                  "description" .= ("Salary with comment" :: Text),
+                  "date" .= (Nothing :: Maybe Text),
+                  "labels" .= ([] :: [Text])
+                ]
+      resp <- httpRequest seed.seedApp "POST" "/api/transactions/income" (authHeaders token) body
+      simpleStatus resp `shouldBe` status200
+      case eitherDecode (simpleBody resp) :: Either String TransactionResponse of
+        Left err -> expectationFailure $ "bad JSON: " <> err
+        Right tr -> do
+          length tr.allocations.incomes `shouldBe` 1
+          -- Destructure positionally to avoid DuplicateRecordFields/HasField ambiguity.
+          case tr.allocations.incomes of
+            [AllocationResponse _ _ cmt] -> cmt `shouldBe` Just ("комент" :: Text)
+            _ -> expectationFailure "expected exactly one income allocation"
+
+    it "yields Nothing comment when CategoryAmount omits the comment field" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "alloc-comment-absent@test.com"
+      token <- seedToken seed
+      let body =
+            encode
+              $ object
+                [ "accountId" .= uuidText (unAccountId seed.seedAccount),
+                  "currency" .= ("USD" :: Text),
+                  "allocations"
+                    .= object
+                      [ "incomes"
+                          .= [ object
+                                 [ "category" .= uuidText (unDictionaryEntryId seed.seedCategory),
+                                   "amount" .= (20 :: Double)
+                                 ]
+                             ],
+                        "expenses" .= ([] :: [Value])
+                      ],
+                  "description" .= ("Salary no comment" :: Text),
+                  "date" .= (Nothing :: Maybe Text),
+                  "labels" .= ([] :: [Text])
+                ]
+      resp <- httpRequest seed.seedApp "POST" "/api/transactions/income" (authHeaders token) body
+      simpleStatus resp `shouldBe` status200
+      case eitherDecode (simpleBody resp) :: Either String TransactionResponse of
+        Left err -> expectationFailure $ "bad JSON: " <> err
+        Right tr -> do
+          length tr.allocations.incomes `shouldBe` 1
+          -- Destructure positionally to avoid DuplicateRecordFields/HasField ambiguity.
+          case tr.allocations.incomes of
+            [AllocationResponse _ _ cmt] -> cmt `shouldBe` (Nothing :: Maybe Text)
+            _ -> expectationFailure "expected exactly one income allocation"

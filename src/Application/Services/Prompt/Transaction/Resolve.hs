@@ -28,11 +28,13 @@ where
 
 import Application.ReadModels.Account (RegularAccountData (..))
 import Application.Services.Prompt.Transaction.Intent
-  ( IntentKind (..),
+  ( IntentAllocation (..),
+    IntentKind (..),
     TransactionIntent (..),
   )
 import Application.Services.Prompt.Types (ResolveError (..))
 import qualified Data.Map.Strict as Map
+import Data.Ratio (denominator, numerator)
 import Data.Scientific (Scientific)
 import qualified Data.Set as Set
 import qualified Data.Text as DT
@@ -53,7 +55,9 @@ import Domain.Core.Types
     mkMoney,
     moneyCurrency,
     parseCurrency,
+    unMoney,
   )
+import Numeric (showFFloat)
 import RIO
 import qualified RIO.Text as T
 
@@ -99,26 +103,40 @@ resolveExpense :: ResolveContext -> Text -> TransactionIntent -> Either ResolveE
 resolveExpense ctx prompt ti = do
   (aid, aname, acur) <- resolveAccount ctx "sourceAccount" ti.sourceAccount
   currency <- resolveCurrency acur ti.currency
-  money <- resolveAmount currency ti.amount
-  cid <- resolveCategory ti.category ctx.expenseCategories ctx.defaults.expenseCategory
-  allocs <- buildAllocations ExpenseKind cid money
-  cname <- categoryName ctx.expenseCategories cid
+  lns <- resolveAllocLines currency ctx.expenseCategories ctx.defaults.expenseCategory ti.allocations
+  (money, allocs) <- buildAllocations ExpenseKind currency lns
   mdate <- resolveDate ti.date
-  let desc = resolveDescription prompt ti.description
-      interp = "Expense " <> amountText ti.amount <> " " <> tshow currency <> " from ‘" <> aname <> "’, category " <> cname
+  let desc = resolveDescription (summariseAllocations ctx.expenseCategories lns) ti.description
+      interp =
+        "Expense "
+          <> showAmount (unMoney money)
+          <> " "
+          <> tshow currency
+          <> " from ‘"
+          <> aname
+          <> "’, "
+          <> tshow (length lns)
+          <> " item(s)"
   Right (ResolvedExpense aid money allocs Set.empty desc mdate, interp)
 
 resolveIncome :: ResolveContext -> Text -> TransactionIntent -> Either ResolveError (Resolved, Text)
 resolveIncome ctx prompt ti = do
   (aid, aname, acur) <- resolveAccount ctx "targetAccount" ti.targetAccount
   currency <- resolveCurrency acur ti.currency
-  money <- resolveAmount currency ti.amount
-  cid <- resolveCategory ti.category ctx.incomeCategories ctx.defaults.incomeCategory
-  allocs <- buildAllocations IncomeKind cid money
-  cname <- categoryName ctx.incomeCategories cid
+  lns <- resolveAllocLines currency ctx.incomeCategories ctx.defaults.incomeCategory ti.allocations
+  (money, allocs) <- buildAllocations IncomeKind currency lns
   mdate <- resolveDate ti.date
-  let desc = resolveDescription prompt ti.description
-      interp = "Income " <> amountText ti.amount <> " " <> tshow currency <> " to ‘" <> aname <> "’, category " <> cname
+  let desc = resolveDescription (summariseAllocations ctx.incomeCategories lns) ti.description
+      interp =
+        "Income "
+          <> showAmount (unMoney money)
+          <> " "
+          <> tshow currency
+          <> " to ‘"
+          <> aname
+          <> "’, "
+          <> tshow (length lns)
+          <> " item(s)"
   Right (ResolvedIncome aid money allocs Set.empty desc mdate, interp)
 
 resolveTransfer :: ResolveContext -> Text -> TransactionIntent -> Either ResolveError (Resolved, Text)
@@ -128,10 +146,11 @@ resolveTransfer ctx prompt ti = do
     Nothing -> Left (ResolveError "targetAccount" "transfer needs a destination account")
     Just _ -> resolveAccount ctx "targetAccount" ti.targetAccount
   currency <- resolveCurrency scur ti.currency
-  money <- resolveAmount currency ti.amount
+  amt <- maybe (Left (ResolveError "amount" "transfer needs an amount")) Right ti.amount
+  money <- resolveAmount currency amt
   mdate <- resolveDate ti.date
   let desc = resolveDescription prompt ti.description
-      interp = "Transfer " <> amountText ti.amount <> " " <> tshow currency <> " from ‘" <> sname <> "’ to ‘" <> tname <> "’"
+      interp = "Transfer " <> amountText amt <> " " <> tshow currency <> " from ‘" <> sname <> "’ to ‘" <> tname <> "’"
   Right (ResolvedTransfer src tgt money Set.empty desc mdate, interp)
 
 -- | Resolve an account reference against the context, following the #26
@@ -218,6 +237,13 @@ resolveAmount currency raw =
 amountText :: Text -> Text
 amountText = T.strip . DT.replace "," "."
 
+-- | Render a money amount for the human-readable interpretation string:
+-- whole numbers show without decimals, fractional amounts to 2 places.
+showAmount :: Rational -> Text
+showAmount r
+  | denominator r == 1 = tshow (numerator r)
+  | otherwise = T.pack (showFFloat (Just 2) (fromRational r :: Double) "")
+
 -- | Match a category within the kind's list, else fall back to the default.
 resolveCategory ::
   Maybe Text ->
@@ -234,20 +260,36 @@ resolveCategory mName cats def = case mName >>= matched of
       Matched (cid, _) -> Just cid
       _ -> Nothing
 
--- | Build the single-allocation 'Allocations' for the kind.
-buildAllocations :: IntentKind -> CategoryId -> Money -> Either ResolveError Allocations
-buildAllocations kind cid money = do
-  alloc <- first toResolveErr (mkAllocation cid money)
+-- | Resolve each line's category (match → default) into (categoryId, money, comment).
+resolveAllocLines ::
+  Currency ->
+  [(CategoryId, Text)] ->
+  Maybe CategoryId ->
+  [IntentAllocation] ->
+  Either ResolveError [(CategoryId, Money, Maybe Text)]
+resolveAllocLines currency cats def =
+  traverse $ \ia -> do
+    money <- resolveAmount currency ia.amount
+    cid <- resolveCategory ia.category cats def
+    pure (cid, money, ia.comment)
+
+-- | Build the kind's 'Allocations' from resolved lines and derive the total.
+buildAllocations ::
+  IntentKind ->
+  Currency ->
+  [(CategoryId, Money, Maybe Text)] ->
+  Either ResolveError (Money, Allocations)
+buildAllocations kind currency lns = do
+  allocs <- traverse (\(cid, m, cmt) -> first toResolveErr (mkAllocation cid m cmt)) lns
   let (incs, exps) = case kind of
-        IncomeKind -> ([alloc], [])
-        _ -> ([], [alloc])
-  first toResolveErr (mkAllocations incs exps)
+        IncomeKind -> (allocs, [])
+        ExpenseKind -> ([], allocs)
+        TransferKind -> ([], allocs) -- unreachable: transfer uses resolveTransfer
+  as <- first toResolveErr (mkAllocations incs exps) -- rejects empty list (both buckets empty)
+  total <- first (ResolveError "amount") (mkMoney currency (sum [unMoney m | (_, m, _) <- lns]))
+  pure (total, as)
   where
     toResolveErr err = ResolveError "allocations" (tshow err)
-
--- | The canonical name for a resolved category id (falls back to the id text).
-categoryName :: [(CategoryId, Text)] -> CategoryId -> Either ResolveError Text
-categoryName cats cid = Right (fromMaybe (tshow cid) (lookup cid cats))
 
 -- | Strict ISO @YYYY-MM-DD@ parse to a 'UTCTime' at midnight.
 resolveDate :: Maybe Text -> Either ResolveError (Maybe UTCTime)
@@ -257,8 +299,22 @@ resolveDate = \case
     Just day -> Right (Just (UTCTime day 0))
     Nothing -> Left (ResolveError "date" ("Cannot parse date '" <> s <> "' (expected YYYY-MM-DD)"))
 
--- | The intent description if present and non-blank, else the original prompt.
+-- | The intent description if present and non-blank, else the given fallback
+-- (an allocation summary for income/expense, the original prompt for transfer).
 resolveDescription :: Text -> Maybe Text -> Text
-resolveDescription prompt = \case
+resolveDescription fallback = \case
   Just d | not (T.null (T.strip d)) -> d
-  _ -> prompt
+  _ -> fallback
+
+-- | A short human summary of the resolved allocation lines, used as the
+-- transaction description when the model didn't supply one: each line's
+-- comment if present, else its category name, joined by ", ".
+--
+-- Callers guarantee @lns@ is non-empty ('buildAllocations' rejects the empty
+-- case), so the join is never @""@.
+summariseAllocations :: [(CategoryId, Text)] -> [(CategoryId, Money, Maybe Text)] -> Text
+summariseAllocations cats =
+  T.intercalate ", " . map lineLabel
+  where
+    lineLabel (cid, _, mcmt) = fromMaybe (categoryLabel cid) mcmt
+    categoryLabel cid = fromMaybe "Other" (lookup cid cats)

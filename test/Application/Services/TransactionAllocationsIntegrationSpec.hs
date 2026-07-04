@@ -171,8 +171,8 @@ spec = describe "Application.Services / allocations round-trip" $ do
         allocs1 =
           Allocations
             []
-            [ Allocation h.harnessGroceries (money 800),
-              Allocation h.harnessRestaurants (money 200)
+            [ Allocation h.harnessGroceries (money 800) Nothing,
+              Allocation h.harnessRestaurants (money 200) Nothing
             ]
     initResult <-
       runAppM h.harnessEnv
@@ -199,9 +199,9 @@ spec = describe "Application.Services / allocations round-trip" $ do
     let allocs2 =
           Allocations
             []
-            [ Allocation h.harnessGroceries (money 300),
-              Allocation h.harnessRestaurants (money 300),
-              Allocation h.harnessSnacks (money 400)
+            [ Allocation h.harnessGroceries (money 300) Nothing,
+              Allocation h.harnessRestaurants (money 300) Nothing,
+              Allocation h.harnessSnacks (money 400) Nothing
             ]
     setResult <-
       runAppM h.harnessEnv
@@ -224,9 +224,9 @@ spec = describe "Application.Services / allocations round-trip" $ do
         newAllocs =
           Allocations
             []
-            [ Allocation h.harnessGroceries (money 600),
-              Allocation h.harnessRestaurants (money 600),
-              Allocation h.harnessSnacks (money 800)
+            [ Allocation h.harnessGroceries (money 600) Nothing,
+              Allocation h.harnessRestaurants (money 600) Nothing,
+              Allocation h.harnessSnacks (money 800) Nothing
             ]
         amend =
           AmendTransaction

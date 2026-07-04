@@ -261,8 +261,8 @@ spec = do
     it "rejected when newTransactionType is Expense with a non-empty incomes bucket (ContraIncomeNotSupported)" $ do
       let contraAllocs =
             mkMixedAllocations
-              (Allocation incomeCat (unsafeMoney USD 40) :| [])
-              (Allocation expenseCat (unsafeMoney USD 160) :| [])
+              (Allocation incomeCat (unsafeMoney USD 40) Nothing :| [])
+              (Allocation expenseCat (unsafeMoney USD 160) Nothing :| [])
           contraAmendCmd =
             AmendTransactionTransactionCommand
               AmendTransaction

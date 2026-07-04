@@ -416,6 +416,7 @@ test-suite backend-test
       Web.API.TransactionLabelsAPISpec
       Web.QuerySpec
       Web.ReportingResponseSpec
+      Web.TypesSpec
       Paths_backend
   hs-source-dirs:
       test

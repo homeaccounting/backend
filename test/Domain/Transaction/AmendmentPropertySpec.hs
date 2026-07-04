@@ -93,7 +93,7 @@ import Prelude (last)
 
 -- | Sum of every allocation amount across both buckets, as a 'Rational'.
 allocationSum :: Allocations -> Rational
-allocationSum a = sum [unMoney m | Allocation _ m <- allAllocations a]
+allocationSum a = sum [unMoney m | Allocation _ m _ <- allAllocations a]
 
 txId :: TransactionId
 txId = unsafeTransactionId (UUID.fromWords 88 0 0 0)
@@ -295,12 +295,12 @@ spec = describe "Transaction amendment projection" $ do
           Income allocs ->
             property
               $ all
-                (\(Allocation _cid m) -> moneyCurrency m == moneyCurrency cmd.newTargetAmount)
+                (\(Allocation _cid m _) -> moneyCurrency m == moneyCurrency cmd.newTargetAmount)
                 (allAllocations allocs)
           Expense allocs ->
             property
               $ all
-                (\(Allocation _cid m) -> moneyCurrency m == moneyCurrency cmd.newSourceAmount)
+                (\(Allocation _cid m _) -> moneyCurrency m == moneyCurrency cmd.newSourceAmount)
                 (allAllocations allocs)
           _ -> property True
 

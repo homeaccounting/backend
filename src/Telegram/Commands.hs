@@ -551,7 +551,7 @@ handleIncomeDescription botState telegramId chatId cat money description = do
           selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
-            Just (accountId, _name) -> case mkAllocation categoryEntryId money of
+            Just (accountId, _name) -> case mkAllocation categoryEntryId money Nothing of
               Left allocErr -> do
                 logError $ "Income failed (invalid allocation): " <> displayShow allocErr
                 sendMsg chatId $ "Income recording failed: " <> tshow allocErr
@@ -623,7 +623,7 @@ handleExpenseDescription botState telegramId chatId cat money description = do
           selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
           case selected of
             Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
-            Just (accountId, _name) -> case mkAllocation categoryEntryId money of
+            Just (accountId, _name) -> case mkAllocation categoryEntryId money Nothing of
               Left allocErr -> do
                 logError $ "Expense failed (invalid allocation): " <> displayShow allocErr
                 sendMsg chatId $ "Expense recording failed: " <> tshow allocErr

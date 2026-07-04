@@ -45,11 +45,11 @@ expenseCat = unsafeDictionaryEntryId (UUID.fromWords 2 0 0 0)
 
 -- | Length-1 allocation for an Income, totalling 100 USD.
 incomeAllocs :: Allocations
-incomeAllocs = mkIncomeAllocations (Allocation incomeCat (unsafeMoney USD 100) :| [])
+incomeAllocs = mkIncomeAllocations (Allocation incomeCat (unsafeMoney USD 100) Nothing :| [])
 
 -- | Length-1 allocation for an Expense, totalling 100 USD.
 expenseAllocs :: Allocations
-expenseAllocs = mkExpenseAllocations (Allocation expenseCat (unsafeMoney USD 100) :| [])
+expenseAllocs = mkExpenseAllocations (Allocation expenseCat (unsafeMoney USD 100) Nothing :| [])
 
 completedIncome :: Transaction
 completedIncome =
@@ -116,7 +116,7 @@ spec = do
   describe "SetTransactionAllocations" $ do
     it "accepted on Income with same kind + matching sum" $ do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 4 0 0 0)
-          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) :| [])
+          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations
@@ -127,7 +127,7 @@ spec = do
 
     it "accepted on Expense with same kind + matching sum" $ do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 5 0 0 0)
-          newAllocs = mkExpenseAllocations (Allocation newCat (unsafeMoney USD 100) :| [])
+          newAllocs = mkExpenseAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations
@@ -138,7 +138,7 @@ spec = do
 
     it "rejected on internal Transfer with CannotSetAllocationsOnUncategorisedTransaction" $ do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 6 0 0 0)
-          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) :| [])
+          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations
@@ -150,7 +150,7 @@ spec = do
 
     it "rejected when allocations do not sum to the existing categorised total" $ do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 8 0 0 0)
-          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 50) :| [])
+          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 50) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations
@@ -162,7 +162,7 @@ spec = do
 
     it "rejected in Pending state with CannotEditUncompletedTransaction" $ do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 9 0 0 0)
-          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) :| [])
+          newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations

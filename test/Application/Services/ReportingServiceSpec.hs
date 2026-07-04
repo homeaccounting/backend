@@ -26,7 +26,7 @@ import Testkit.Helpers
 expenseTo :: CategoryId -> Rational -> TransactionData
 expenseTo c amt =
   let m = unsafeMoney UAH amt
-      tt = Expense (mkExpenseAllocations (Allocation c m :| []))
+      tt = Expense (mkExpenseAllocations (Allocation c m Nothing :| []))
    in mockTransactionData (mockAccountIdN 1) (mockAccountIdN 9) m m Nothing tt
 
 -- | A reimbursement: an Income txn that carries an expense-bucket (contra)
@@ -34,8 +34,8 @@ expenseTo c amt =
 reimbursementTo :: CategoryId -> Rational -> TransactionData
 reimbursementTo c amt =
   let m = unsafeMoney UAH amt
-      incSlice = Allocation (mockCategoryIdN 99) (unsafeMoney UAH 1)
-      tt = Income (mkMixedAllocations (incSlice :| []) (Allocation c m :| []))
+      incSlice = Allocation (mockCategoryIdN 99) (unsafeMoney UAH 1) Nothing
+      tt = Income (mkMixedAllocations (incSlice :| []) (Allocation c m Nothing :| []))
    in mockTransactionData (mockAccountIdN 9) (mockAccountIdN 1) (unsafeMoney UAH (amt + 1)) (unsafeMoney UAH (amt + 1)) Nothing tt
 
 spec :: Spec
@@ -53,8 +53,24 @@ spec = describe "ReportingService pure aggregation" $ do
             (unsafeMoney USD 10)
             (unsafeMoney UAH 400)
             (Just er)
-            (Expense (mkExpenseAllocations (Allocation (mockCategoryIdN 1) (unsafeMoney USD 10) :| [])))
+            (Expense (mkExpenseAllocations (Allocation (mockCategoryIdN 1) (unsafeMoney USD 10) Nothing :| [])))
     R.allocationBase td (unsafeMoney USD 10) `shouldBe` unsafeMoney UAH 400
+
+  it "sums two allocations on the same category into a single spending entry" $ do
+    -- Two expense allocations on one category (distinct comments) must aggregate
+    -- to a single Map entry summing their amounts; comments do not affect it.
+    let c = mockCategoryIdN 1
+        m = unsafeMoney UAH 200
+        m' = unsafeMoney UAH 160
+        tt =
+          Expense
+            ( mkExpenseAllocations
+                (Allocation c m (Just "eggs") :| [Allocation c m' (Just "veg")])
+            )
+        td = mockTransactionData (mockAccountIdN 1) (mockAccountIdN 9) (unsafeMoney UAH 360) (unsafeMoney UAH 360) Nothing tt
+        result = R.aggregateSpending UAH [td]
+    Map.lookup c result `shouldBe` Just (unsafeMoney UAH 360)
+    Map.size result `shouldBe` 1
 
   it "spending nets a reimbursement (expense-bucket on an Income txn) down" $ do
     let c = mockCategoryIdN 1
@@ -69,7 +85,7 @@ spec = describe "ReportingService pure aggregation" $ do
             (unsafeMoney UAH 500)
             (unsafeMoney UAH 500)
             Nothing
-            (Income (mkIncomeAllocations (Allocation (mockCategoryIdN 5) (unsafeMoney UAH 500) :| [])))
+            (Income (mkIncomeAllocations (Allocation (mockCategoryIdN 5) (unsafeMoney UAH 500) Nothing :| [])))
         (i, e, n) = R.aggregateIncomeExpense UAH [inc, expenseTo (mockCategoryIdN 2) 200]
     i `shouldBe` unsafeMoney UAH 500
     e `shouldBe` unsafeMoney UAH 200

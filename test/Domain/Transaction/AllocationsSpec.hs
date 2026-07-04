@@ -96,7 +96,7 @@ spec = describe "Allocations / worked examples" $ do
       let total = unsafeMoney UAH 1000
           allocs =
             Core.mkExpenseAllocations
-              (Allocation groceryStaples (unsafeMoney UAH 800) :| [Allocation groceryTreats (unsafeMoney UAH 200)])
+              (Allocation groceryStaples (unsafeMoney UAH 800) Nothing :| [Allocation groceryTreats (unsafeMoney UAH 200) Nothing])
       case Core.mkExpense total allocs of
         Right (Expense _) -> pure ()
         Right other ->
@@ -106,7 +106,7 @@ spec = describe "Allocations / worked examples" $ do
 
     it "accepts the degenerate length-1 allocation equal to the total" $ do
       let total = unsafeMoney USD 50
-          allocs = Core.mkIncomeAllocations (Allocation soloSalary (unsafeMoney USD 50) :| [])
+          allocs = Core.mkIncomeAllocations (Allocation soloSalary (unsafeMoney USD 50) Nothing :| [])
       case Core.mkIncome total allocs of
         Right (Income _) -> pure ()
         Right other ->
@@ -119,7 +119,7 @@ spec = describe "Allocations / worked examples" $ do
           -- 800 + 100 = 900 ≠ 1000
           allocs =
             Core.mkExpenseAllocations
-              (Allocation groceryStaples (unsafeMoney UAH 800) :| [Allocation groceryTreats (unsafeMoney UAH 100)])
+              (Allocation groceryStaples (unsafeMoney UAH 800) Nothing :| [Allocation groceryTreats (unsafeMoney UAH 100) Nothing])
       case Core.mkExpense total allocs of
         Left (ValidationErr ve) ->
           ve.validationField `shouldBe` "allocations"
@@ -131,7 +131,7 @@ spec = describe "Allocations / worked examples" $ do
           -- categorised side is UAH but one allocation is USD
           allocs =
             Core.mkExpenseAllocations
-              (Allocation groceryStaples (unsafeMoney UAH 500) :| [Allocation groceryTreats (unsafeMoney USD 500)])
+              (Allocation groceryStaples (unsafeMoney UAH 500) Nothing :| [Allocation groceryTreats (unsafeMoney USD 500) Nothing])
       case Core.mkExpense total allocs of
         Left (ValidationErr ve) ->
           ve.validationField `shouldBe` "currency"
@@ -141,7 +141,7 @@ spec = describe "Allocations / worked examples" $ do
   describe "two-bucket allocations" $ do
     it "accepts a standalone refund: Income with empty incomes, $40 in expenses" $ do
       let total = unsafeMoney USD 40
-          allocs = Core.mkExpenseAllocations (Allocation rentCat (unsafeMoney USD 40) :| [])
+          allocs = Core.mkExpenseAllocations (Allocation rentCat (unsafeMoney USD 40) Nothing :| [])
       case Core.mkIncome total allocs of
         Right (Income _) -> pure ()
         other -> expectationFailure $ "expected Right (Income …), got " <> show other
@@ -150,16 +150,16 @@ spec = describe "Allocations / worked examples" $ do
       let total = unsafeMoney USD 5500
           allocs =
             Core.mkMixedAllocations
-              (Allocation salaryCat (unsafeMoney USD 5000) :| [])
-              (Allocation rentCat (unsafeMoney USD 500) :| [])
+              (Allocation salaryCat (unsafeMoney USD 5000) Nothing :| [])
+              (Allocation rentCat (unsafeMoney USD 500) Nothing :| [])
       Core.mkIncome total allocs `shouldSatisfy` isRight
 
     it "rejects an Expense carrying a non-empty income bucket (contra-income)" $ do
       let total = unsafeMoney USD 500
           allocs =
             Core.mkMixedAllocations
-              (Allocation salaryCat (unsafeMoney USD 100) :| [])
-              (Allocation rentCat (unsafeMoney USD 400) :| [])
+              (Allocation salaryCat (unsafeMoney USD 100) Nothing :| [])
+              (Allocation rentCat (unsafeMoney USD 400) Nothing :| [])
       Core.mkExpense total allocs `shouldBe` Left ContraIncomeNotSupported
 
     it "rejects both-empty allocations with AllocationsEmpty" $ do
@@ -169,15 +169,15 @@ spec = describe "Allocations / worked examples" $ do
       let total = unsafeMoney USD 5500
           allocs =
             Core.mkMixedAllocations
-              (Allocation salaryCat (unsafeMoney USD 5000) :| [])
-              (Allocation rentCat (unsafeMoney USD 400) :| []) -- 5400 ≠ 5500
+              (Allocation salaryCat (unsafeMoney USD 5000) Nothing :| [])
+              (Allocation rentCat (unsafeMoney USD 400) Nothing :| []) -- 5400 ≠ 5500
       case Core.mkIncome total allocs of
         Left (ValidationErr ve) -> ve.validationField `shouldBe` "allocations"
         other -> expectationFailure $ "expected sum ValidationErr, got " <> show other
 
   describe "SetTransactionAllocations on a Transfer" $ do
     it "is rejected with CannotSetAllocationsOnUncategorisedTransaction" $ do
-      let allocs = Core.mkExpenseAllocations (Allocation groceryStaples (unsafeMoney UAH 10) :| [])
+      let allocs = Core.mkExpenseAllocations (Allocation groceryStaples (unsafeMoney UAH 10) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations
@@ -209,8 +209,8 @@ spec = describe "Allocations / worked examples" $ do
           tgtAmount = unsafeMoney USD 400
           contraBadAllocs =
             Core.mkMixedAllocations
-              (Allocation salaryCat (unsafeMoney USD 40) :| [])
-              (Allocation rentCat (unsafeMoney USD 360) :| [])
+              (Allocation salaryCat (unsafeMoney USD 40) Nothing :| [])
+              (Allocation rentCat (unsafeMoney USD 360) Nothing :| [])
           cmd =
             InitiateTransactionTransactionCommand
               InitiateTransaction
@@ -247,13 +247,13 @@ spec = describe "Allocations / worked examples" $ do
               & #sourceAmount
               .~ expenseAmount
               & #transactionType
-              .~ Expense (Core.mkExpenseAllocations (Allocation rentCat expenseAmount :| []))
+              .~ Expense (Core.mkExpenseAllocations (Allocation rentCat expenseAmount Nothing :| []))
           -- New allocations have $50 in the income bucket + $450 in expense.
           -- Sum = $500 = sourceAmount, so sum/currency checks pass first.
           contraNewAllocs =
             Core.mkMixedAllocations
-              (Allocation salaryCat (unsafeMoney USD 50) :| [])
-              (Allocation rentCat (unsafeMoney USD 450) :| [])
+              (Allocation salaryCat (unsafeMoney USD 50) Nothing :| [])
+              (Allocation rentCat (unsafeMoney USD 450) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations
@@ -278,7 +278,7 @@ spec = describe "Allocations / worked examples" $ do
       let targetAmt = unsafeMoney USD 500
           -- Old allocations sum to $300, NOT to targetAmount ($500).
           -- This makes the old-sum vs targetAmount distinction meaningful.
-          oldAllocs = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 300) :| [])
+          oldAllocs = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 300) Nothing :| [])
           completedIncome =
             transactionDefault
               & #status
@@ -288,7 +288,7 @@ spec = describe "Allocations / worked examples" $ do
               & #transactionType
               .~ Income oldAllocs
           -- New allocations sum exactly to targetAmount ($500).
-          newAllocs = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 500) :| [])
+          newAllocs = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 500) Nothing :| [])
           txId = unsafeTransactionId (UUID.fromWords 300 0 0 0)
           cmd =
             SetTransactionAllocationsTransactionCommand
@@ -314,7 +314,7 @@ spec = describe "Allocations / worked examples" $ do
     it "Income: new allocations summing to old allocation total (not targetAmount) are rejected" $ do
       let targetAmt = unsafeMoney USD 500
           -- Old allocations sum to $300.
-          oldAllocs = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 300) :| [])
+          oldAllocs = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 300) Nothing :| [])
           completedIncome =
             transactionDefault
               & #status
@@ -324,7 +324,7 @@ spec = describe "Allocations / worked examples" $ do
               & #transactionType
               .~ Income oldAllocs
           -- New allocations sum to old alloc total ($300), NOT targetAmount ($500).
-          newAllocsOldSum = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 300) :| [])
+          newAllocsOldSum = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 300) Nothing :| [])
           cmd =
             SetTransactionAllocationsTransactionCommand
               SetTransactionAllocations

@@ -70,7 +70,7 @@ completedIncome =
     & #status
     .~ Completed
     & #transactionType
-    .~ Income (mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| []))
+    .~ Income (mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) Nothing :| []))
     & #description
     .~ "Original"
     & #at
@@ -95,7 +95,7 @@ mkInitiated =
       description = "",
       by = transactionDefault ^. #initiatedBy,
       at = t0,
-      transactionType = Income (mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| [])),
+      transactionType = Income (mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) Nothing :| [])),
       externalTransactionId = Nothing,
       labels = Set.empty
     }

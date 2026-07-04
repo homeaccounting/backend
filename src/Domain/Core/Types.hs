@@ -1041,11 +1041,13 @@ instance FromJSON AccountStatus
 data Allocation = Allocation
   { categoryId :: CategoryId
   , amount     :: {m : Money | (amount m) > 0}
+  , comment    :: Maybe Text
   }
 @-}
 data Allocation = Allocation
   { categoryId :: CategoryId,
-    amount :: Money
+    amount :: Money,
+    comment :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -1053,26 +1055,30 @@ instance ToJSON Allocation
 
 instance FromJSON Allocation
 
--- | Smart constructor for an 'Allocation'.
---
--- Enforces the per-allocation invariant @amount > 0@. Currency
--- consistency and sum-equals-total invariants belong to the enclosing
--- 'TransactionType' and are checked by 'mkIncome' / 'mkExpense'.
+-- | Smart constructor for an 'Allocation'. Enforces @amount > 0@; the
+-- optional comment is trimmed and blank text normalizes to 'Nothing'.
 --
 -- >>> import Data.UUID (fromWords)
 -- >>> let c = unsafeDictionaryEntryId (fromWords 1 0 0 0)
 -- >>> let Right m = mkDefaultMoney 10
--- >>> mkAllocation c m
--- Right (Allocation {categoryId = ..., amount = Money {amount = 10 % 1, currency = USD}})
-mkAllocation :: CategoryId -> Money -> Either DomainError Allocation
-mkAllocation cid m
-  | unMoney m > 0 = Right (Allocation cid m)
+-- >>> fmap (.amount) (mkAllocation c m Nothing)
+-- Right (Money {amount = 10 % 1, currency = USD})
+mkAllocation :: CategoryId -> Money -> Maybe Text -> Either DomainError Allocation
+mkAllocation cid m mcomment
+  | unMoney m > 0 = Right (Allocation cid m (normalizeComment mcomment))
   | otherwise =
       Left . ValidationErr $
         mkValidationError
           "amount"
           "Allocation amount must be positive"
           (T.pack (show (unMoney m)))
+
+-- | Trim a comment; blank / whitespace-only becomes 'Nothing'.
+normalizeComment :: Maybe Text -> Maybe Text
+normalizeComment mt = do
+  t <- mt
+  let s = T.strip t
+  if T.null s then Nothing else Just s
 
 -- | The categorised side of a transaction, split into two buckets by the
 -- dictionary the categories come from. The contra effect (a reimbursement

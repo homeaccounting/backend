@@ -118,7 +118,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "commits an expense from a resolved account and category (happy path)" $ do
     h <- setupHarness "prompt-expense@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":\"123\",\"sourceAccount\":\"Cash\",\"category\":\"Food\"}"
+          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user "cash 123 food")
     case result of
@@ -132,7 +132,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "falls back to the default category when the named category is unknown" $ do
     h <- setupHarness "prompt-default-cat@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":\"50\",\"sourceAccount\":\"Cash\",\"category\":\"Xyz\"}"
+          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"50\",\"category\":\"Xyz\",\"comment\":\"cash 50 xyz\"}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user "cash 50 xyz")
     case result of
@@ -141,10 +141,52 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
         expenseCategoryOf td `shouldBe` Just defaultExpenseCategoryId
       other -> expectationFailure ("expected TransactionCreated, got: " <> show other)
 
+  it "preserves five per-line allocations (comments + categories) without merging" $ do
+    h <- setupHarness "prompt-multi-alloc@example.com"
+    -- The issue's example: one expense with five allocation lines; four share
+    -- "Food", one has a null category (falls back to the default). No merge of
+    -- duplicate categories; each line keeps its own comment. Cyrillic comments
+    -- must round-trip exactly (Text literal is Unicode, so no truncation).
+    let json =
+          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[\
+          \{\"amount\":\"200\",\"category\":\"Food\",\"comment\":\"огірки розсада\"},\
+          \{\"amount\":\"700\",\"category\":null,\"comment\":\"квіти\"},\
+          \{\"amount\":\"200\",\"category\":\"Food\",\"comment\":\"яйця\"},\
+          \{\"amount\":\"500\",\"category\":\"Food\",\"comment\":\"овочі\"},\
+          \{\"amount\":\"160\",\"category\":\"Food\",\"comment\":\"огірки зелень\"}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user "огірки розсада 200 квіти 700 яйця 200 овочі 500 огірки зелень 160")
+    case result of
+      Right (TransactionCreated _ _ td) -> do
+        td.sourceAccountId `shouldBe` h.cashAccount
+        case allocationsOf td.transactionType of
+          Just allocs -> do
+            length allocs.expenses `shouldBe` 5
+            map (.comment) allocs.expenses
+              `shouldBe` [ Just "огірки розсада",
+                           Just "квіти",
+                           Just "яйця",
+                           Just "овочі",
+                           Just "огірки зелень"
+                         ]
+            sum (map (unMoney . (.amount)) allocs.expenses) `shouldBe` 1760
+            -- The four "Food" lines (positions 1,3,4,5) share one category id;
+            -- the null-category line (position 2) resolves to the default,
+            -- which differs from "Food".
+            map (.categoryId) allocs.expenses
+              `shouldBe` [ foodCategoryId,
+                           defaultExpenseCategoryId,
+                           foodCategoryId,
+                           foodCategoryId,
+                           foodCategoryId
+                         ]
+          Nothing -> expectationFailure "expected Expense allocations"
+      other -> expectationFailure ("expected TransactionCreated, got: " <> show other)
+
   it "rejects an unresolvable account (PromptDomainError)" $ do
     h <- setupHarness "prompt-bad-acct@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":\"10\",\"sourceAccount\":\"Nope\",\"category\":\"Food\"}"
+          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Nope\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":\"nope 10 food\"}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user "nope 10 food")
     case result of
@@ -172,7 +214,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "retries once on a malformed response then commits on the valid retry" $ do
     h <- setupHarness "prompt-retry-recover@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":\"123\",\"sourceAccount\":\"Cash\",\"category\":\"Food\"}"
+          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}"
     client <- queueLlmClient ["not json", json]
     let e = withLlmClient client h.env
     result <- runAppM e (handlePrompt h.user "cash 123 food")
@@ -213,7 +255,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "commits income into the target account with the resolved income category" $ do
     h <- setupHarness "prompt-income@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"income\",\"amount\":\"5000\",\"targetAccount\":\"Cash\",\"category\":\"Salary\"}"
+          "{\"intent\":\"transaction\",\"kind\":\"income\",\"targetAccount\":\"Cash\",\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":\"salary 5000 to cash\"}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user "salary 5000 to cash")
     case result of

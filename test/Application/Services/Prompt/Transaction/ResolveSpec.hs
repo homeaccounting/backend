@@ -7,7 +7,8 @@ module Application.Services.Prompt.Transaction.ResolveSpec (spec) where
 
 import Application.ReadModels.Account (RegularAccountData (..))
 import Application.Services.Prompt.Transaction.Intent
-  ( IntentKind (..),
+  ( IntentAllocation (..),
+    IntentKind (..),
     TransactionIntent (..),
   )
 import Application.Services.Prompt.Transaction.Resolve
@@ -26,6 +27,7 @@ import Domain.Core.Types
     AccountSubtypeKind (..),
     Allocation (..),
     Allocations (..),
+    CategoryId,
     Currency (..),
     Money,
     mkMoney,
@@ -65,15 +67,29 @@ sampleCtx =
           }
     }
 
+-- | The "Food" expense category id and the "Other" default category id used by
+-- 'sampleCtx' (Food = id 1; the income/expense default = id 9).
+foodId, otherId :: CategoryId
+foodId = mockCategoryIdN 1
+otherId = mockCategoryIdN 9
+
+-- | A single line item with the given amount, category, and no comment.
+line :: Text -> Maybe Text -> IntentAllocation
+line amt cat = IntentAllocation {amount = amt, category = cat, comment = Nothing}
+
+-- | Attach a comment to a line item.
+withComment :: IntentAllocation -> Text -> IntentAllocation
+withComment ia c = ia {comment = Just c}
+
 baseExpense :: TransactionIntent
 baseExpense =
   TransactionIntent
     { kind = ExpenseKind,
-      amount = "123",
+      amount = Nothing,
+      allocations = [line "123" (Just "Food")],
       currency = Nothing,
       sourceAccount = Just "Cash",
       targetAccount = Nothing,
-      category = Just "Food",
       description = Nothing,
       date = Nothing
     }
@@ -84,7 +100,7 @@ baseIncome =
     { kind = IncomeKind,
       sourceAccount = Nothing,
       targetAccount = Just "Card",
-      category = Just "Salary"
+      allocations = [line "123" (Just "Salary")]
     }
 
 baseTransfer :: TransactionIntent
@@ -93,9 +109,17 @@ baseTransfer =
     { kind = TransferKind,
       sourceAccount = Just "Cash",
       targetAccount = Just "Card",
-      category = Nothing,
-      amount = "200"
+      allocations = [],
+      amount = Just "200"
     }
+
+-- | 'baseExpense' with a single allocation whose amount is @amt@ (category "Food").
+expAmount :: Text -> TransactionIntent
+expAmount amt = baseExpense {allocations = [line amt (Just "Food")]}
+
+-- | 'baseExpense' with a single allocation whose category name is @cat@.
+expCategory :: Maybe Text -> TransactionIntent
+expCategory cat = baseExpense {allocations = [line "123" cat]}
 
 uah :: Rational -> Money
 uah r = case mkMoney UAH r of
@@ -119,7 +143,7 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
           lbls `shouldBe` Set.empty
           mdate `shouldBe` Nothing
           interp `shouldSatisfy` ("Cash" `T.isInfixOf`)
-          interp `shouldSatisfy` ("Food" `T.isInfixOf`)
+          interp `shouldSatisfy` ("item" `T.isInfixOf`)
         other -> expectationFailure ("unexpected: " <> show other)
 
   describe "income" $ do
@@ -163,7 +187,7 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
 
   describe "category" $ do
     it "falls back to the default when the category is unknown" $ do
-      case resolveIntent sampleCtx "x" baseExpense {category = Just "Xyz"} of
+      case resolveIntent sampleCtx "x" (expCategory (Just "Xyz")) of
         Right (ResolvedExpense _ _ allocs _ _ _, _) ->
           fmap (.categoryId) (headMaybe allocs.expenses) `shouldBe` Just (mockCategoryIdN 9)
         other -> expectationFailure ("unexpected: " <> show other)
@@ -179,32 +203,147 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
                       subtypeAccounts = Map.empty
                     }
               }
-      errField (resolveIntent ctx "x" baseExpense {category = Just "Xyz"})
+      errField (resolveIntent ctx "x" (expCategory (Just "Xyz")))
         `shouldBe` Just "category"
+
+  describe "allocations" $ do
+    it "resolves the 5-line example: one allocation per line, comment = original text, no merge" $ do
+      let ti =
+            TransactionIntent
+              ExpenseKind
+              Nothing
+              [ IntentAllocation "200" (Just "Food") (Just "огірки розсада"),
+                IntentAllocation "700" Nothing (Just "квіти"), -- no match → default "Other"
+                IntentAllocation "200" (Just "Food") (Just "яйця"),
+                IntentAllocation "500" (Just "Food") (Just "овочі"),
+                IntentAllocation "160" (Just "Food") (Just "огірки зелень")
+              ]
+              Nothing
+              (Just "Cash")
+              Nothing
+              Nothing
+              Nothing
+      case resolveIntent sampleCtx "prompt" ti of
+        Right (ResolvedExpense _ total allocs _ _ _, interp) -> do
+          length allocs.expenses `shouldBe` 5
+          map (.comment) allocs.expenses
+            `shouldBe` map Just ["огірки розсада", "квіти", "яйця", "овочі", "огірки зелень"]
+          map (.categoryId) allocs.expenses
+            `shouldBe` [foodId, otherId, foodId, foodId, foodId]
+          unMoney total `shouldBe` 1760
+          interp `shouldSatisfy` (\t -> "1760" `T.isInfixOf` t && not ("%" `T.isInfixOf` t))
+        other -> expectationFailure (show other)
+
+    it "still resolves a transfer via the top-level amount" $ do
+      let ti = TransactionIntent TransferKind (Just "200") [] Nothing (Just "Cash") (Just "Card") Nothing Nothing
+      resolveIntent sampleCtx "p" ti `shouldSatisfy` isRight
+
+    it "errors when an income/expense has no allocations" $ do
+      let ti = TransactionIntent ExpenseKind Nothing [] Nothing (Just "Cash") Nothing Nothing Nothing
+      resolveIntent sampleCtx "p" ti `shouldSatisfy` isLeft
+
+  describe "description" $ do
+    it "description defaults to a summary of the allocation lines" $ do
+      let ti =
+            baseExpense
+              { description = Nothing,
+                allocations =
+                  [ line "200" (Just "Food") `withComment` "огірки розсада",
+                    line "700" (Just "Food") `withComment` "квіти",
+                    line "200" (Just "Food") `withComment` "яйця",
+                    line "500" (Just "Food") `withComment` "овочі",
+                    line "160" (Just "Food") `withComment` "огірки зелень"
+                  ]
+              }
+      case resolveIntent sampleCtx "the whole raw prompt" ti of
+        Right (ResolvedExpense _ _ _ _ desc _, _) ->
+          desc `shouldBe` "огірки розсада, квіти, яйця, овочі, огірки зелень"
+        other -> expectationFailure ("unexpected: " <> show other)
+
+    it "summary uses the category name when a line has no comment" $ do
+      let ti =
+            baseExpense
+              { description = Nothing,
+                allocations =
+                  [ line "100" (Just "Food") `withComment` "milk",
+                    line "50" (Just "Food")
+                  ]
+              }
+      case resolveIntent sampleCtx "the whole raw prompt" ti of
+        Right (ResolvedExpense _ _ _ _ desc _, _) ->
+          desc `shouldBe` "milk, Food"
+        other -> expectationFailure ("unexpected: " <> show other)
+
+    it "an explicit model description is used verbatim" $ do
+      let ti =
+            baseExpense
+              { description = Just "weekly groceries",
+                allocations =
+                  [ line "100" (Just "Food") `withComment` "milk",
+                    line "50" (Just "Food")
+                  ]
+              }
+      case resolveIntent sampleCtx "the whole raw prompt" ti of
+        Right (ResolvedExpense _ _ _ _ desc _, _) ->
+          desc `shouldBe` "weekly groceries"
+        other -> expectationFailure ("unexpected: " <> show other)
+
+    it "single-allocation description equals that line's item" $ do
+      let ti =
+            baseExpense
+              { description = Nothing,
+                allocations = [line "100" (Just "Food") `withComment` "milk"]
+              }
+      case resolveIntent sampleCtx "the whole raw prompt" ti of
+        Right (ResolvedExpense _ _ _ _ desc _, _) ->
+          desc `shouldBe` "milk"
+        other -> expectationFailure ("unexpected: " <> show other)
+
+    it "labels a default-category line with no comment as \"Other\" (never a UUID)" $ do
+      -- category null → default cid (otherId, id 9), comment null, and otherId
+      -- is absent from sampleCtx.expenseCategories, so the summary must use the
+      -- neutral sentinel "Other" rather than leaking a DictionaryEntryId/UUID.
+      let ti =
+            baseExpense
+              { description = Nothing,
+                allocations = [line "100" Nothing]
+              }
+      case resolveIntent sampleCtx "the whole raw prompt" ti of
+        Right (ResolvedExpense _ _ allocs _ desc _, _) -> do
+          fmap (.categoryId) (headMaybe allocs.expenses) `shouldBe` Just otherId
+          desc `shouldBe` "Other"
+          desc `shouldNotSatisfy` ("DictionaryEntryId" `T.isInfixOf`)
+        other -> expectationFailure ("unexpected: " <> show other)
+
+    it "a transfer with no description still falls back to the prompt" $ do
+      case resolveIntent sampleCtx "move 200 cash to card" baseTransfer {description = Nothing} of
+        Right (ResolvedTransfer _ _ _ _ desc _, _) ->
+          desc `shouldBe` "move 200 cash to card"
+        other -> expectationFailure ("unexpected: " <> show other)
 
   describe "amount" $ do
     it "accepts a comma decimal separator" $ do
-      let comma = resolveIntent sampleCtx "x" baseExpense {amount = "123,50"}
-          dot = resolveIntent sampleCtx "x" baseExpense {amount = "123.50"}
+      let comma = resolveIntent sampleCtx "x" (expAmount "123,50")
+          dot = resolveIntent sampleCtx "x" (expAmount "123.50")
       fmap (money . fst) comma `shouldBe` fmap (money . fst) dot
 
     it "rejects zero"
-      $ errField (resolveIntent sampleCtx "x" baseExpense {amount = "0"})
+      $ errField (resolveIntent sampleCtx "x" (expAmount "0"))
       `shouldBe` Just "amount"
 
     it "rejects negative"
-      $ errField (resolveIntent sampleCtx "x" baseExpense {amount = "-5"})
+      $ errField (resolveIntent sampleCtx "x" (expAmount "-5"))
       `shouldBe` Just "amount"
 
     it "rejects non-numeric"
-      $ errField (resolveIntent sampleCtx "x" baseExpense {amount = "abc"})
+      $ errField (resolveIntent sampleCtx "x" (expAmount "abc"))
       `shouldBe` Just "amount"
 
     it "parses a decimal amount exactly (no binary-float error)" $ do
       -- "0.1" must resolve to the exact Rational 1/10. The old Double path
       -- yields toRational (0.1 :: Double) /= 1 % 10, so this fails there and
       -- passes only with the Scientific parse.
-      case resolveIntent sampleCtx "x" baseExpense {amount = "0.1"} of
+      case resolveIntent sampleCtx "x" (expAmount "0.1") of
         Right (ResolvedExpense _ m _ _ _ _, _) -> unMoney m `shouldBe` 1 % 10
         other -> expectationFailure ("unexpected: " <> show other)
 
@@ -212,7 +351,7 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
       n > 0 ==>
         let dotTxt = T.pack (show n) <> ".50"
             commaTxt = T.pack (show n) <> ",50"
-            r t = fmap (money . fst) (resolveIntent sampleCtx "x" baseExpense {amount = t})
+            r t = fmap (money . fst) (resolveIntent sampleCtx "x" (expAmount t))
          in r dotTxt == r commaTxt
 
   describe "currency" $ do

@@ -48,7 +48,7 @@ import Prelude (last)
 -- | A canonical 100-USD income allocation singleton used to seed completed
 -- transactions for the projection tests.
 seedIncomeAllocs :: Allocations
-seedIncomeAllocs = mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) :| [])
+seedIncomeAllocs = mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) Nothing :| [])
 
 -- | Default TransactionPostingInitiated event shape; callers override individual
 -- fields via record update.
@@ -131,8 +131,8 @@ spec = describe "Transaction projection / labels + allocations edits" $ do
     projected ^. #labels `shouldBe` Set.singleton l1
 
   it "TransactionAllocationsChanged rewrites an Income allocation list in place" $ do
-    let original = mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 40 0 0 0)) (unsafeMoney USD 100) :| [])
-        replacement = mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 50 0 0 0)) (unsafeMoney USD 100) :| [])
+    let original = mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 40 0 0 0)) (unsafeMoney USD 100) Nothing :| [])
+        replacement = mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 50 0 0 0)) (unsafeMoney USD 100) Nothing :| [])
         txId = unsafeTransactionId (UUID.fromWords 77 0 0 0)
         evts =
           [ seedInitiatedEvent (Income original),
@@ -147,8 +147,8 @@ spec = describe "Transaction projection / labels + allocations edits" $ do
     projected ^. #transactionType `shouldBe` Income replacement
 
   it "TransactionAllocationsChanged rewrites an Expense allocation list in place" $ do
-    let original = mkExpenseAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 41 0 0 0)) (unsafeMoney USD 100) :| [])
-        replacement = mkExpenseAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 51 0 0 0)) (unsafeMoney USD 100) :| [])
+    let original = mkExpenseAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 41 0 0 0)) (unsafeMoney USD 100) Nothing :| [])
+        replacement = mkExpenseAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 51 0 0 0)) (unsafeMoney USD 100) Nothing :| [])
         txId = unsafeTransactionId (UUID.fromWords 77 0 0 0)
         evts =
           [ seedInitiatedEvent (Expense original),
@@ -185,7 +185,7 @@ spec = describe "Transaction projection / labels + allocations edits" $ do
     $ \(NonEmpty cats) ->
       let txId = unsafeTransactionId (UUID.fromWords 77 0 0 0)
           seed = seedInitiatedEvent (Income seedIncomeAllocs)
-          mkAllocs c = mkIncomeAllocations (Allocation c (unsafeMoney USD 100) :| [])
+          mkAllocs c = mkIncomeAllocations (Allocation c (unsafeMoney USD 100) Nothing :| [])
           changeEvents =
             [ TransactionAllocationsChangedTransactionEvent
                 TransactionAllocationsChanged

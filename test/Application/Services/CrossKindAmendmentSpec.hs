@@ -288,7 +288,7 @@ spec = describe "amendTransaction — cross-kind synthesis" $ do
     let unknownEntryId =
           unsafeDictionaryEntryId
             (UUID.fromWords 0xDEADBEEF 0xDEADBEEF 0xDEADBEEF 0xDEADBEEF)
-        badAllocs = mkIncomeAllocations (Allocation unknownEntryId (unsafeMoney Core.USD 100) :| [])
+        badAllocs = mkIncomeAllocations (Allocation unknownEntryId (unsafeMoney Core.USD 100) Nothing :| [])
         cmd =
           buildAmend
             txId
