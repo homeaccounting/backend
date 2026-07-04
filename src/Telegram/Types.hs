@@ -63,6 +63,7 @@ botCommands =
     ("/signup", "Create a new account via Telegram"),
     ("/accounts", "View & select accounts"),
     ("/newaccount", "Create a new account"),
+    ("/prompt", "Record a transaction from a text description"),
     ("/income", "Record income"),
     ("/expense", "Record expense"),
     ("/transfer", "Transfer between accounts"),

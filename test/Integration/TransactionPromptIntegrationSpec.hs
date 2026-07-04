@@ -120,7 +120,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     let json =
           "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}"
         e = withLlmClient (constLlmClient json) h.env
-    result <- runAppM e (handlePrompt h.user "cash 123 food")
+    result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
     case result of
       Right (TransactionCreated interp _ td) -> do
         td.sourceAccountId `shouldBe` h.cashAccount
@@ -134,7 +134,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     let json =
           "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"50\",\"category\":\"Xyz\",\"comment\":\"cash 50 xyz\"}]}"
         e = withLlmClient (constLlmClient json) h.env
-    result <- runAppM e (handlePrompt h.user "cash 50 xyz")
+    result <- runAppM e (handlePrompt h.user Nothing "cash 50 xyz")
     case result of
       Right (TransactionCreated _ _ td) -> do
         unMoney td.sourceAmount `shouldBe` 50
@@ -155,7 +155,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
           \{\"amount\":\"500\",\"category\":\"Food\",\"comment\":\"овочі\"},\
           \{\"amount\":\"160\",\"category\":\"Food\",\"comment\":\"огірки зелень\"}]}"
         e = withLlmClient (constLlmClient json) h.env
-    result <- runAppM e (handlePrompt h.user "огірки розсада 200 квіти 700 яйця 200 овочі 500 огірки зелень 160")
+    result <- runAppM e (handlePrompt h.user Nothing "огірки розсада 200 квіти 700 яйця 200 овочі 500 огірки зелень 160")
     case result of
       Right (TransactionCreated _ _ td) -> do
         td.sourceAccountId `shouldBe` h.cashAccount
@@ -188,7 +188,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     let json =
           "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Nope\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":\"nope 10 food\"}]}"
         e = withLlmClient (constLlmClient json) h.env
-    result <- runAppM e (handlePrompt h.user "nope 10 food")
+    result <- runAppM e (handlePrompt h.user Nothing "nope 10 food")
     case result of
       Left (PromptDomainError _) -> pure ()
       other -> expectationFailure ("expected Left (PromptDomainError _), got: " <> show other)
@@ -196,7 +196,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "yields PromptFeatureDisabled when the LLM feature is disabled (no client injected)" $ do
     h <- setupHarness "prompt-disabled@example.com"
     -- env.llmClient is Nothing on the base test env.
-    result <- runAppM h.env (handlePrompt h.user "cash 123 food")
+    result <- runAppM h.env (handlePrompt h.user Nothing "cash 123 food")
     case result of
       Left PromptFeatureDisabled -> pure ()
       other -> expectationFailure ("expected Left PromptFeatureDisabled, got: " <> show other)
@@ -206,7 +206,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     -- Use the disabled (no-client) env: a PromptDomainError here proves the
     -- empty-text guard ran before the client/feature check, so the LLM (absent
     -- anyway) is never consulted.
-    result <- runAppM h.env (handlePrompt h.user "   ")
+    result <- runAppM h.env (handlePrompt h.user Nothing "   ")
     case result of
       Left err | isDomainErr err -> pure ()
       other -> expectationFailure ("expected Left (PromptDomainError _), got: " <> show other)
@@ -217,7 +217,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
           "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}"
     client <- queueLlmClient ["not json", json]
     let e = withLlmClient client h.env
-    result <- runAppM e (handlePrompt h.user "cash 123 food")
+    result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
     case result of
       Right (TransactionCreated _ _ td) -> do
         td.sourceAccountId `shouldBe` h.cashAccount
@@ -229,7 +229,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     h <- setupHarness "prompt-retry-exhausted@example.com"
     client <- queueLlmClient ["not json", "still not json"]
     let e = withLlmClient client h.env
-    result <- runAppM e (handlePrompt h.user "cash 123 food")
+    result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
     case result of
       Left err | isUpstream err -> pure ()
       other -> expectationFailure ("expected Left (PromptUpstreamError _), got: " <> show other)
@@ -239,7 +239,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     -- Empty queue: the very first 'complete' returns Left "stub exhausted".
     client <- queueLlmClient []
     let e = withLlmClient client h.env
-    result <- runAppM e (handlePrompt h.user "cash 123 food")
+    result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
     case result of
       Left err | isUpstream err -> pure ()
       other -> expectationFailure ("expected Left (PromptUpstreamError _), got: " <> show other)
@@ -247,7 +247,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "rejects an unknown intent with a domain error (400)" $ do
     h <- setupHarness "prompt-unknown-intent@example.com"
     let e = withLlmClient (constLlmClient "{\"intent\":\"build_report\"}") h.env
-    result <- runAppM e (handlePrompt h.user "give me a report")
+    result <- runAppM e (handlePrompt h.user Nothing "give me a report")
     case result of
       Left err | isDomainErr err -> pure ()
       other -> expectationFailure ("expected Left (PromptDomainError _), got: " <> show other)
@@ -257,7 +257,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     let json =
           "{\"intent\":\"transaction\",\"kind\":\"income\",\"targetAccount\":\"Cash\",\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":\"salary 5000 to cash\"}]}"
         e = withLlmClient (constLlmClient json) h.env
-    result <- runAppM e (handlePrompt h.user "salary 5000 to cash")
+    result <- runAppM e (handlePrompt h.user Nothing "salary 5000 to cash")
     case result of
       Right (TransactionCreated _ _ td) -> do
         -- Income flows External -> Cash, so Cash is the *target* leg.
@@ -265,6 +265,34 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
         unMoney td.targetAmount `shouldBe` 5000
         incomeCategoryOf td `shouldBe` Just salaryCategoryId
       other -> expectationFailure ("expected TransactionCreated (income), got: " <> show other)
+
+  it "records against the selected account when the prompt names none" $ do
+    h <- setupHarness "prompt-selected-acct@example.com"
+    -- A second account so the selection is distinguishable from any inference
+    -- default. The LLM returns no sourceAccount; the selection must fill it.
+    card <- createAccount h.env h.user "Card" defaultCash Core.UAH 0
+    let json =
+          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"allocations\":[{\"amount\":\"42\",\"category\":\"Food\",\"comment\":\"snack\"}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user (Just card) "snack 42")
+    case result of
+      Right (TransactionCreated _ _ td) -> do
+        td.sourceAccountId `shouldBe` card
+        unMoney td.sourceAmount `shouldBe` 42
+      other -> expectationFailure ("expected TransactionCreated against the selected account, got: " <> show other)
+
+  it "lets an account named in the prompt override the selection" $ do
+    h <- setupHarness "prompt-selected-override@example.com"
+    card <- createAccount h.env h.user "Card" defaultCash Core.UAH 0
+    -- The prompt explicitly names "Cash"; even with "Card" selected, the
+    -- explicit name must win.
+    let json =
+          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":\"cash 10 food\"}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user (Just card) "cash 10 food")
+    case result of
+      Right (TransactionCreated _ _ td) -> td.sourceAccountId `shouldBe` h.cashAccount
+      other -> expectationFailure ("expected the explicitly-named account, got: " <> show other)
 
   it "commits a transfer between two resolved regular accounts" $ do
     h <- setupHarness "prompt-transfer@example.com"
@@ -274,7 +302,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     let json =
           "{\"intent\":\"transaction\",\"kind\":\"transfer\",\"amount\":\"200\",\"sourceAccount\":\"Cash\",\"targetAccount\":\"Card\"}"
         e = withLlmClient (constLlmClient json) h.env
-    result <- runAppM e (handlePrompt h.user "move 200 from cash to card")
+    result <- runAppM e (handlePrompt h.user Nothing "move 200 from cash to card")
     case result of
       Right (TransactionCreated _ _ td) -> do
         td.sourceAccountId `shouldBe` h.cashAccount

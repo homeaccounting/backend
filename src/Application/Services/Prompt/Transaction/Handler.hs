@@ -50,7 +50,8 @@ import Domain.Configuration.Defaults
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
-  ( DictionaryEntryId,
+  ( AccountId,
+    DictionaryEntryId,
     DictionaryId,
     EntryName,
     UserId,
@@ -66,20 +67,24 @@ import RIO
 -- Regular accounts come from the account read model; income/expense categories
 -- and labels come from the user's configuration. A missing configuration is a
 -- genuine inconsistency and is surfaced as @Left DomainError@.
-gatherContext :: UserId -> AppM (Either DomainError (PromptContext, ResolveContext))
-gatherContext uid = do
+-- The @selected@ argument is the account the client currently has selected
+-- (issue #28), threaded into the 'ResolveContext' so the resolver can prefer it
+-- over inference for the primary account slot.
+gatherContext :: UserId -> Maybe AccountId -> AppM (Either DomainError (PromptContext, ResolveContext))
+gatherContext uid selected = do
   accts <- runDb (getUserRegularAccounts uid)
   getConfigurationForUser uid >>= \case
     Left e -> pure (Left e)
-    Right cfg -> pure (Right (buildContexts accts cfg))
+    Right cfg -> pure (Right (buildContexts accts cfg selected))
 
 -- | Assemble the prompt and resolve contexts from the user's accounts and
 -- configuration. Pure given the fetched data.
 buildContexts ::
   [RegularAccountData] ->
   ConfigurationData ->
+  Maybe AccountId ->
   (PromptContext, ResolveContext)
-buildContexts accts cfg =
+buildContexts accts cfg selected =
   let entriesOf dictId =
         [ (cid, unEntryName nm)
         | (cid, nm) <- entriesOfDict dictId cfg
@@ -100,7 +105,8 @@ buildContexts accts cfg =
             incomeCategories = incomeCats,
             expenseCategories = expenseCats,
             labels = labelEntries,
-            defaults = cfg.defaults
+            defaults = cfg.defaults,
+            selectedAccount = selected
           }
    in (pctx, rctx)
 

@@ -11,25 +11,36 @@
 -- so tests assert only on read-model side-effects, not reply text.
 module Telegram.CommandsSpec (spec) where
 
+import Application.ReadModels.Account (RegularAccountData (..), getUserRegularAccounts)
 import Application.ReadModels.User (getUserByTelegramId)
 import Application.Services.AuthService
   ( TelegramLinkCodeResult (..),
     findOrCreateTelegramBotUser,
     issueTelegramLinkCode,
   )
+import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Domain.Core.Types
   ( TelegramId (..),
     TelegramIdentity (..),
+    defaultCash,
+    unMoney,
   )
+import qualified Domain.Core.Types as Core (Currency (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
+import qualified RIO.Map as Map
 import qualified RIO.Text as T
-import Telegram.Commands (handleSignup, handleStart)
-import Telegram.Types (emptyBotState)
+import Telegram.Commands (handleMessage, handleSignup, handleStart)
+import Telegram.Types (BotState (..), emptyBotState)
 import Test.Hspec
-import Testkit.Fixtures (registerUser)
-import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
+import Testkit.Fixtures (createAccount, registerUser)
+import Testkit.InMemoryEventStore
+  ( createTestAppEnv,
+    createTestAppEnvWithProcessManager,
+    runDbIn,
+  )
+import Testkit.Llm (constLlmClient, withLlmClient)
 
 -- -----------------------------------------------------------------------------
 -- Helpers
@@ -120,6 +131,41 @@ spec = do
       case result of
         Nothing -> expectationFailure "expected Telegram identity to still be linked after /start"
         Just (linkedUid, _) -> linkedUid `shouldBe` uid
+
+  describe "handleMessage (natural-language prompt)" $ do
+    it "records a free-text expense against the currently-selected account" $ do
+      baseEnv <- createTestAppEnvWithProcessManager
+      runAppM baseEnv seedDefaultConfiguration
+      registered <- runAppM baseEnv (findOrCreateTelegramBotUser freshTgIdent)
+      uid <- case registered of
+        Left err -> fail ("findOrCreateTelegramBotUser failed: " <> show err)
+        Right (userId, _) -> pure userId
+
+      -- Two accounts: the expense must land on the *selected* one (Card), not
+      -- the other, proving the selection is threaded through the bot path.
+      -- USD matches the auto-created External account, so the expense is
+      -- same-currency and needs no seeded exchange rate. Both start at 100 so
+      -- the expense posts (no overdraft) and the debited account is unambiguous.
+      cash <- createAccount baseEnv uid "Cash" defaultCash Core.USD 100
+      card <- createAccount baseEnv uid "Card" defaultCash Core.USD 100
+
+      botState <-
+        newTVarIO
+          emptyBotState {selectedAccounts = Map.singleton freshTgIdent.id (card, "Card")}
+
+      -- The LLM returns an expense with no account named; the selection fills it.
+      let json =
+            "{\"intent\":\"transaction\",\"kind\":\"expense\",\"allocations\":[{\"amount\":\"42\",\"category\":\"Food\",\"comment\":\"snack\"}]}"
+          env = withLlmClient (constLlmClient json) baseEnv
+      runAppM env (handleMessage botState freshTgIdent.id testChatId "snack 42")
+
+      accounts <- runDbIn env (getUserRegularAccounts uid)
+      let balanceOf nm =
+            listToMaybe [unMoney bal | RegularAccountData {name = n, balance = bal} <- accounts, n == nm]
+      -- The selected account (Card) is debited; the other (Cash) is untouched.
+      balanceOf "Card" `shouldBe` Just 58
+      balanceOf "Cash" `shouldBe` Just 100
+      cash `shouldNotBe` card
 
   describe "handleSignup" $ do
     it "/signup from an unknown Telegram ID creates the user" $ do

@@ -41,7 +41,7 @@ import Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import Data.Time (getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Domain.Core.Types (UserId)
+import Domain.Core.Types (AccountId, UserId)
 import Infrastructure.App (AppM, llmClientL)
 import Infrastructure.Llm.Provider
   ( LlmClient (..),
@@ -57,8 +57,14 @@ import qualified RIO.Text as T
 -- | Handle a natural-language prompt for the given user, committing the
 -- resulting operation and returning its 'PromptResult'. All failures surface as
 -- a pure 'PromptError' for the Web boundary to map to HTTP.
-handlePrompt :: UserId -> Text -> AppM (Either PromptError PromptResult)
-handlePrompt uid userText
+--
+-- @selected@ is the account the client currently has selected (issue #28), if
+-- any. When present it fills the transaction's primary account slot (source for
+-- expense/transfer, target for income), overriding the resolver's inference; an
+-- explicit account name in the prompt still wins over it. See
+-- 'Application.Services.Prompt.Transaction.Resolve.resolvePrimaryAccount'.
+handlePrompt :: UserId -> Maybe AccountId -> Text -> AppM (Either PromptError PromptResult)
+handlePrompt uid selected userText
   | T.null (T.strip userText) =
       pure
         ( Left
@@ -68,7 +74,7 @@ handlePrompt uid userText
         )
   | otherwise = runExceptT $ do
       client <- ExceptT (fmap (maybe (Left PromptFeatureDisabled) Right) (view llmClientL))
-      (pctx, rctx) <- ExceptT (fmap (first PromptDomainError) (Txn.gatherContext uid))
+      (pctx, rctx) <- ExceptT (fmap (first PromptDomainError) (Txn.gatherContext uid selected))
       now <- liftIO getCurrentTime
       let today = T.pack (formatTime defaultTimeLocale "%Y-%m-%d" now)
           baseMsgs = buildMessages today [transactionIntentName] [transactionGuide pctx] userText

@@ -27,6 +27,7 @@ module Telegram.Commands
     handleSignup,
     handleLogin,
     handleAccounts,
+    handlePromptCommand,
     handleNewAccount,
     handleTransfer,
     handleIncome,
@@ -34,6 +35,7 @@ module Telegram.Commands
     handleTransactions,
     handleCancel,
     handleHelp,
+    runPrompt,
 
     -- * Helpers
     sendMsg,
@@ -61,12 +63,15 @@ import Application.ReadModels.User
 import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTelegramLinkCode)
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
+import Application.Services.Prompt.Types (PromptError (..), PromptResult (..))
+import qualified Application.Services.PromptService as PromptService
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateTransfer)
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Set as Set
 import Data.Time (addUTCTime, getCurrentTime)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Core.Errors (renderDomainError)
 import Domain.Core.Page (Page (..))
 import Domain.Core.Range (mkRange)
 import Domain.Core.Types
@@ -128,6 +133,7 @@ handleCommand botState tgIdentity chatId text = do
     "/signup" -> handleSignup botState tgIdentity chatId args
     "/login" -> handleLogin botState telegramId chatId args
     "/accounts" -> handleAccounts botState telegramId chatId
+    "/prompt" -> handlePromptCommand botState telegramId chatId args
     "/newaccount" -> handleNewAccount botState telegramId chatId
     "/transfer" -> handleTransfer botState telegramId chatId
     "/income" -> handleIncome botState telegramId chatId
@@ -154,6 +160,10 @@ handleMessage :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
 handleMessage botState telegramId chatId text = do
   state <- atomically $ Map.lookup telegramId . (.conversations) <$> readTVar botState
   case state of
+    -- No active conversation: treat any free text as a natural-language prompt
+    -- (issue #28). The user's currently-selected account, if any, is applied.
+    Nothing ->
+      runPrompt botState telegramId chatId text
     Just CreateAccountEnterName ->
       handleCreateAccountName botState telegramId chatId text
     Just (IncomeEnterAmount cat) ->
@@ -168,8 +178,10 @@ handleMessage botState telegramId chatId text = do
       handleTransferAmount botState telegramId chatId srcId tgtId text
     Just (TransferEnterDescription srcId tgtId money) ->
       handleTransferDescription botState telegramId chatId srcId tgtId money text
-    _ ->
-      sendMsg chatId "I don't understand. Use /help to see available commands."
+    -- A keyboard-driven step (selecting an account/category/currency) is in
+    -- progress: a stray text message isn't a prompt, so nudge instead.
+    Just _ ->
+      sendMsg chatId "Please tap one of the buttons above, or /cancel to start over."
 
 -- -----------------------------------------------------------------------------
 -- Callback Query Handler
@@ -290,6 +302,8 @@ sendWelcome isNew chatId =
     $ [ if isNew
           then "Welcome to HomeAccounting Bot!\n\nYour account has been created successfully."
           else "Welcome back to HomeAccounting Bot!",
+        "",
+        "\128172 Just type what you spent or earned \8212 e.g. \8220coffee 4.50\8221 or \8220salary 5000\8221 \8212 and I'll record it. Pick an account with /accounts to file it there.",
         "",
         "Available commands:"
       ]
@@ -444,6 +458,52 @@ handleHelp _telegramId chatId = do
     $ T.unlines
     $ ["HomeAccounting Bot Commands:", ""]
     ++ formatCommandList
+
+-- -----------------------------------------------------------------------------
+-- Prompt (natural language) — issue #28
+-- -----------------------------------------------------------------------------
+
+-- | Handle @/prompt [text]@.
+--
+-- With inline text (@/prompt coffee 4.50@) the transaction is recorded
+-- immediately. With no argument we explain the feature; because 'handleMessage'
+-- already routes any idle free-text message through 'runPrompt', the user can
+-- simply type their next message and it will be recorded.
+handlePromptCommand :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
+handlePromptCommand botState telegramId chatId args =
+  case T.strip <$> args of
+    Just t | not (T.null t) -> runPrompt botState telegramId chatId t
+    _ ->
+      sendMsg chatId
+        $ T.unlines
+          [ "Tell me what to record, e.g. \8220coffee 4.50\8221 or \8220groceries 500, taxi 120\8221.",
+            "",
+            "Tip: you can just type it directly \8212 no /prompt needed. Use /accounts to pick which account it goes to."
+          ]
+
+-- | Interpret free text as a transaction via the natural-language prompt
+-- pipeline and reply with the outcome.
+--
+-- The user's currently-selected account (via /accounts), if any, is passed
+-- through so it fills the transaction's primary account slot; otherwise the
+-- account is resolved from the text by the existing rules (issue #28).
+runPrompt :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+runPrompt botState telegramId chatId text = do
+  maybeUserId <- getUserIdForTelegram telegramId
+  case maybeUserId of
+    Nothing -> sendMsg chatId "I couldn't find your account. Use /start first."
+    Just userId -> do
+      selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
+      result <- PromptService.handlePrompt userId (fst <$> selected) text
+      case result of
+        Right (TransactionCreated interp _ _) ->
+          sendMsg chatId ("\9989 " <> interp)
+        Left (PromptDomainError de) ->
+          sendMsg chatId ("\9888\65039 " <> renderDomainError de)
+        Left PromptFeatureDisabled ->
+          sendMsg chatId "Text prompts aren't available right now. Try /income, /expense or /transfer."
+        Left (PromptUpstreamError _) ->
+          sendMsg chatId "Sorry, I couldn't process that. Please rephrase, or use /help to see the commands."
 
 -- -----------------------------------------------------------------------------
 -- Callback Handlers

@@ -64,7 +64,8 @@ sampleCtx =
             expenseCategory = Just (mockCategoryIdN 9),
             account = Nothing,
             subtypeAccounts = Map.empty
-          }
+          },
+      selectedAccount = Nothing
     }
 
 -- | The "Food" expense category id and the "Other" default category id used by
@@ -419,6 +420,64 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
       $ errField (resolveIntent precedenceCtx "x" baseTransfer {targetAccount = Nothing})
       `shouldBe` Just "targetAccount"
 
+  describe "selected account" $ do
+    it "fills an omitted expense source (overriding the global default)"
+      $
+      -- Without a selection an omitted source resolves to the global default
+      -- (id 9); the selection must take that slot instead.
+      primaryAccount (resolveIntent (sel 1 precedenceCtx) "x" baseExpense {sourceAccount = Nothing})
+      `shouldBe` Right (mockAccountIdN 1)
+
+    it "overrides subtype-keyword inference"
+      $
+      -- 'from the bank' would infer the BankAccount subtype default (id 2); the
+      -- selection (id 1) must win over that inference.
+      primaryAccount (resolveIntent (sel 1 precedenceCtx) "x" baseExpense {sourceAccount = Just "from the bank"})
+      `shouldBe` Right (mockAccountIdN 1)
+
+    it "an explicit account name in the prompt still beats the selection"
+      $
+      -- 'Visa' names a real account (id 3); an explicit name outranks the
+      -- ambient selection (id 1).
+      primaryAccount (resolveIntent (sel 1 precedenceCtx) "x" baseExpense {sourceAccount = Just "Visa"})
+      `shouldBe` Right (mockAccountIdN 3)
+
+    it "fills an omitted income target" $ do
+      let inc = baseIncome {targetAccount = Nothing, allocations = [line "10" (Just "Salary")]}
+      primaryAccount (resolveIntent (sel 1 precedenceCtx) "x" inc)
+        `shouldBe` Right (mockAccountIdN 1)
+
+    it "fills a transfer's omitted source but never its target" $ do
+      let tr = baseTransfer {sourceAccount = Nothing, targetAccount = Just "Checking"}
+      case resolveIntent (sel 1 precedenceCtx) "x" tr of
+        Right (ResolvedTransfer src tgt _ _ _ _, _) -> do
+          src `shouldBe` mockAccountIdN 1
+          tgt `shouldBe` mockAccountIdN 2
+        other -> expectationFailure ("unexpected: " <> show other)
+
+    it "does not fill a transfer's omitted target from the selection"
+      $ errField (resolveIntent (sel 1 precedenceCtx) "x" baseTransfer {sourceAccount = Just "MyCash", targetAccount = Nothing})
+      `shouldBe` Just "targetAccount"
+
+    it "ignores an unknown selected account id (falls back to inference)"
+      $
+      -- id 777 is not one of the user's accounts, so it is ignored and the
+      -- omitted source falls back to the global default (id 9).
+      primaryAccount (resolveIntent (sel 777 precedenceCtx) "x" baseExpense {sourceAccount = Nothing})
+      `shouldBe` Right (mockAccountIdN 9)
+
+-- | Set the given account (by mock ordinal) as the selected account.
+sel :: Word32 -> ResolveContext -> ResolveContext
+sel n ctx = ctx {selectedAccount = Just (mockAccountIdN n)}
+
+-- | The primary (own-side) account id of any resolved transaction: source for
+-- expense/transfer, target for income.
+primaryAccount :: Either ResolveError (Resolved, Text) -> Either ResolveError AccountId
+primaryAccount (Right (ResolvedExpense aid _ _ _ _ _, _)) = Right aid
+primaryAccount (Right (ResolvedIncome aid _ _ _ _ _, _)) = Right aid
+primaryAccount (Right (ResolvedTransfer src _ _ _ _ _, _)) = Right src
+primaryAccount (Left e) = Left e
+
 usd :: Rational -> Money
 usd r = case mkMoney USD r of
   Right m -> m
@@ -459,7 +518,8 @@ precedenceCtx =
             expenseCategory = Just (mockCategoryIdN 9),
             account = Just (mockAccountIdN 9),
             subtypeAccounts = Map.fromList [(BankAccountKind, mockAccountIdN 2)]
-          }
+          },
+      selectedAccount = Nothing
     }
 
 -- | Resolve 'baseExpense' with the given source account against 'precedenceCtx'.

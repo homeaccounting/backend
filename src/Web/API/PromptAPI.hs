@@ -32,6 +32,9 @@ module Web.API.PromptAPI
 
     -- * Handler (exported for testing)
     promptHandler,
+
+    -- * DTOs (exported for testing)
+    PromptRequest (..),
   )
 where
 
@@ -41,6 +44,7 @@ import Application.Services.Prompt.Types
   )
 import qualified Application.Services.PromptService as PromptService
 import Data.Aeson (FromJSON, ToJSON (..), object, (.=))
+import Domain.Core.Types (AccountId)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
@@ -68,9 +72,17 @@ type PromptAPI =
 -- DTOs
 -- -----------------------------------------------------------------------------
 
--- | Request body: the raw natural-language prompt text.
-newtype PromptRequest = PromptRequest {text :: Text}
-  deriving (Generic)
+-- | Request body: the raw natural-language prompt text, plus the account the
+-- client currently has selected, if any (issue #28). When @account@ is present
+-- it fills the transaction's primary account slot, overriding name-based
+-- resolution (an explicit account named in @text@ still wins). @account@ is
+-- optional: a body carrying only @text@ decodes with @account = Nothing@ and
+-- resolution proceeds by the existing rules.
+data PromptRequest = PromptRequest
+  { text :: Text,
+    account :: Maybe AccountId
+  }
+  deriving (Show, Generic)
 
 instance FromJSON PromptRequest
 
@@ -107,7 +119,7 @@ promptServer = promptHandler
 -- HTTP at this boundary.
 promptHandler :: AuthenticatedUser -> PromptRequest -> AppM PromptResponse
 promptHandler user req = do
-  result <- PromptService.handlePrompt user.userId req.text
+  result <- PromptService.handlePrompt user.userId req.account req.text
   case result of
     Right (TransactionCreated interp tid tdata) ->
       pure (TransactionResult interp (fromTransactionData tid tdata))

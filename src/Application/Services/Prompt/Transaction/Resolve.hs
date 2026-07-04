@@ -73,7 +73,14 @@ data ResolveContext = ResolveContext
     labels :: ![(LabelId, Text)],
     -- | The user's configured defaults (category + account), reused verbatim
     -- from the configuration read model.
-    defaults :: !ConfigurationDefaults
+    defaults :: !ConfigurationDefaults,
+    -- | The account the client currently has selected (issue #28), if any.
+    -- When set and valid, it fills the transaction's __primary__ account slot
+    -- (source for expense/transfer, target for income), overriding the
+    -- resolver's inference — but an explicit account __name__ in the prompt
+    -- still wins over it. An unknown id here is ignored (falls back to
+    -- inference). Never fills a transfer's destination.
+    selectedAccount :: !(Maybe AccountId)
   }
 
 -- | A fully-resolved, validated transaction ready for the write path.
@@ -95,13 +102,13 @@ data Resolved
 -- interpretation, or the first 'ResolveError' encountered.
 resolveIntent :: ResolveContext -> Text -> TransactionIntent -> Either ResolveError (Resolved, Text)
 resolveIntent ctx prompt ti = case ti.kind of
-  ExpenseKind -> resolveExpense ctx prompt ti
-  IncomeKind -> resolveIncome ctx prompt ti
+  ExpenseKind -> resolveExpense ctx ti
+  IncomeKind -> resolveIncome ctx ti
   TransferKind -> resolveTransfer ctx prompt ti
 
-resolveExpense :: ResolveContext -> Text -> TransactionIntent -> Either ResolveError (Resolved, Text)
-resolveExpense ctx prompt ti = do
-  (aid, aname, acur) <- resolveAccount ctx "sourceAccount" ti.sourceAccount
+resolveExpense :: ResolveContext -> TransactionIntent -> Either ResolveError (Resolved, Text)
+resolveExpense ctx ti = do
+  (aid, aname, acur) <- resolvePrimaryAccount ctx "sourceAccount" ti.sourceAccount
   currency <- resolveCurrency acur ti.currency
   lns <- resolveAllocLines currency ctx.expenseCategories ctx.defaults.expenseCategory ti.allocations
   (money, allocs) <- buildAllocations ExpenseKind currency lns
@@ -119,9 +126,9 @@ resolveExpense ctx prompt ti = do
           <> " item(s)"
   Right (ResolvedExpense aid money allocs Set.empty desc mdate, interp)
 
-resolveIncome :: ResolveContext -> Text -> TransactionIntent -> Either ResolveError (Resolved, Text)
-resolveIncome ctx prompt ti = do
-  (aid, aname, acur) <- resolveAccount ctx "targetAccount" ti.targetAccount
+resolveIncome :: ResolveContext -> TransactionIntent -> Either ResolveError (Resolved, Text)
+resolveIncome ctx ti = do
+  (aid, aname, acur) <- resolvePrimaryAccount ctx "targetAccount" ti.targetAccount
   currency <- resolveCurrency acur ti.currency
   lns <- resolveAllocLines currency ctx.incomeCategories ctx.defaults.incomeCategory ti.allocations
   (money, allocs) <- buildAllocations IncomeKind currency lns
@@ -141,7 +148,7 @@ resolveIncome ctx prompt ti = do
 
 resolveTransfer :: ResolveContext -> Text -> TransactionIntent -> Either ResolveError (Resolved, Text)
 resolveTransfer ctx prompt ti = do
-  (src, sname, scur) <- resolveAccount ctx "sourceAccount" ti.sourceAccount
+  (src, sname, scur) <- resolvePrimaryAccount ctx "sourceAccount" ti.sourceAccount
   (tgt, tname, _) <- case ti.targetAccount of
     Nothing -> Left (ResolveError "targetAccount" "transfer needs a destination account")
     Just _ -> resolveAccount ctx "targetAccount" ti.targetAccount
@@ -152,6 +159,42 @@ resolveTransfer ctx prompt ti = do
   let desc = resolveDescription prompt ti.description
       interp = "Transfer " <> amountText amt <> " " <> tshow currency <> " from ‘" <> sname <> "’ to ‘" <> tname <> "’"
   Right (ResolvedTransfer src tgt money Set.empty desc mdate, interp)
+
+-- | Resolve the transaction's __primary__ (own-side) account, honouring a
+-- client selection (issue #28). Precedence:
+--
+--   1. an explicit account __name__ in the prompt that matches a real account
+--      wins (the user's words outrank ambient UI state);
+--   2. else a valid 'selectedAccount' takes the slot, overriding inference;
+--   3. else fall back to the #26 'resolveAccount' inference ladder.
+--
+-- Used only for the primary slot (source for expense/transfer, target for
+-- income); a transfer's destination always goes through 'resolveAccount' so the
+-- selection can never fill it.
+resolvePrimaryAccount ::
+  ResolveContext ->
+  Text ->
+  Maybe Text ->
+  Either ResolveError (AccountId, Text, Currency)
+resolvePrimaryAccount ctx fld mname
+  | Just acc <- mname >>= explicitMatch = Right acc
+  | Just acc <- ctx.selectedAccount >>= accountById ctx = Right acc
+  | otherwise = resolveAccount ctx fld mname
+  where
+    explicitMatch name = case matchByName (.name) name ctx.accounts of
+      Matched a -> Just (projectAccount a)
+      _ -> Nothing
+
+-- | Project a resolved account to @(id, canonical name, native currency)@.
+projectAccount :: RegularAccountData -> (AccountId, Text, Currency)
+projectAccount a = (a.accountId, a.name, moneyCurrency a.balance)
+
+-- | Look up one of the user's accounts by id, projected. 'Nothing' when the id
+-- is not among the user's regular accounts (e.g. a stale selection).
+accountById :: ResolveContext -> AccountId -> Maybe (AccountId, Text, Currency)
+accountById ctx aid = case [a | a <- ctx.accounts, a.accountId == aid] of
+  (a : _) -> Just (projectAccount a)
+  [] -> Nothing
 
 -- | Resolve an account reference against the context, following the #26
 -- precedence ladder:
@@ -175,7 +218,7 @@ resolveAccount ctx fld = \case
     Just acc -> Right acc
     Nothing -> Left (ResolveError fld "no account specified")
   Just name -> case matchByName (.name) name ctx.accounts of
-    Matched acc -> Right (project acc) -- step 1
+    Matched acc -> Right (projectAccount acc) -- step 1
     Ambiguous _ ->
       Left (ResolveError fld ("Account name '" <> name <> "' is ambiguous. Your accounts: " <> accountNames))
     NoMatch -> case keywordSubtype name of
@@ -184,20 +227,15 @@ resolveAccount ctx fld = \case
       Just kind -> case subtypeDefault kind of
         Just acc -> Right acc
         Nothing -> case accountsOfKind kind of
-          [only] -> Right (project only)
+          [only] -> Right (projectAccount only)
           _ -> maybe (Left (noMatch name)) Right globalDefault
       -- A specific but unknown name: do not silently use the global default.
       Nothing -> Left (noMatch name)
   where
     accountNames = T.intercalate ", " [a.name | a <- ctx.accounts]
     noMatch name = ResolveError fld ("No account matches '" <> name <> "'. Your accounts: " <> accountNames)
-    -- Project a resolved account to @(id, name, native currency)@.
-    project a = (a.accountId, a.name, moneyCurrency a.balance)
-    byId aid = case [a | a <- ctx.accounts, a.accountId == aid] of
-      (a : _) -> Just (project a)
-      [] -> Nothing
-    globalDefault = ctx.defaults.account >>= byId
-    subtypeDefault kind = Map.lookup kind ctx.defaults.subtypeAccounts >>= byId
+    globalDefault = ctx.defaults.account >>= accountById ctx
+    subtypeDefault kind = Map.lookup kind ctx.defaults.subtypeAccounts >>= accountById ctx
     accountsOfKind kind = [a | a <- ctx.accounts, a.subtype == kind]
 
 -- | Recognise an account-subtype keyword in the free-text account field. The
