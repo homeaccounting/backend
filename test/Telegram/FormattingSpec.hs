@@ -47,6 +47,7 @@ sampleTxn tt =
       transactionType = tt,
       date = UTCTime (fromGregorian 2026 4 18) (secondsToDiffTime (14 * 3600 + 30 * 60)),
       labels = Set.empty,
+      relations = [],
       amendmentCount = 0
     }
 

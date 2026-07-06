@@ -139,7 +139,8 @@ spec = describe "TransactionService" $ do
                 at = mockTime,
                 transactionType = Transfer,
                 externalTransactionId = Nothing,
-                labels = Set.empty
+                labels = Set.empty,
+                relation = Nothing
               }
       result <- runAppM env $ initiateTransaction transferCmd
       shouldBeRight result
@@ -164,7 +165,8 @@ spec = describe "TransactionService" $ do
                 at = mockTime,
                 transactionType = Transfer,
                 externalTransactionId = Nothing,
-                labels = Set.empty
+                labels = Set.empty,
+                relation = Nothing
               }
       createResult <- runAppM env $ initiateTransaction transferCmd
       let (txId, _) = fromRight' createResult
@@ -199,7 +201,8 @@ spec = describe "TransactionService" $ do
                 at = mockTime,
                 transactionType = Transfer,
                 externalTransactionId = Nothing,
-                labels = Set.empty
+                labels = Set.empty,
+                relation = Nothing
               }
       result1 <- runAppM env $ initiateTransaction (mkTransferCmd 100 "First")
       result2 <- runAppM env $ initiateTransaction (mkTransferCmd 200 "Second")
@@ -224,7 +227,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "Cross-currency transfer" Nothing (Just now)
+      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "Cross-currency transfer" Nothing (Just now) Nothing
       shouldBeRight result
       let (_, transaction) = fromRight' result
       -- Source: 100 USD, Target: 90 EUR (100 * 9/10)
@@ -235,7 +238,7 @@ spec = describe "TransactionService" $ do
     it "skips conversion for same-currency transfer" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts -- both USD
       now <- getCurrentTime
-      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoney 100) Set.empty "Same currency" Nothing (Just now)
+      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoney 100) Set.empty "Same currency" Nothing (Just now) Nothing
       shouldBeRight result
       let (_, transaction) = fromRight' result
       transaction.sourceAmount `shouldBe` mockMoney 100
@@ -248,7 +251,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "User rate" (Just (17 % 20)) (Just now)
+      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "User rate" (Just (17 % 20)) (Just now) Nothing
       shouldBeRight result
       let (_, transaction) = fromRight' result
       transaction.sourceAmount `shouldBe` mockMoneyWith USD 100
@@ -261,7 +264,7 @@ spec = describe "TransactionService" $ do
       (env, fromAccId, toAccId) <- setupCrossCurrencyAccounts rates USD EUR
 
       now <- getCurrentTime
-      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "No rate for pair" Nothing (Just now)
+      result <- runAppM env $ initiateTransfer testUserId1 fromAccId toAccId (mockMoneyWith USD 100) Set.empty "No rate for pair" Nothing (Just now) Nothing
       shouldBeLeft result
       case result of
         Left (ExchangeRateUnavailable _) -> pure ()

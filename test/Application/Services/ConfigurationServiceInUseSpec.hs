@@ -120,7 +120,8 @@ seedTransaction env userId tt labels = do
               at = UTCTime (fromGregorian 2026 4 1) 0,
               transactionType = tt,
               externalTransactionId = Nothing,
-              labels = labels
+              labels = labels,
+              relation = Nothing
             }
   res <- applyTransactionCommand env.eventStoreWriter env.eventStoreReader id txUuid cmd
   case res of
@@ -239,6 +240,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
           (unsafeMoney Core.USD 50)
           (Set.singleton labelId)
           "holiday spending"
+          Nothing
           Nothing
           Nothing
     (txId, _td) <- case txResult of

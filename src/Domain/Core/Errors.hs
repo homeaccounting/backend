@@ -176,6 +176,17 @@ data DomainError
   | -- | 'AmendTransaction' issued while a cancellation saga is in flight on the
     -- same transaction.
     CannotAmendDuringCancellation
+  | -- | A refund income was linked to a target transaction that is not an
+    -- Expense. Only expenses can be refunded.
+    RefundTargetMustBeExpense
+  | -- | A refund was linked to a Cancelled target transaction. A cancelled
+    -- expense has no balance to refund.
+    CannotRefundCancelledTransaction
+  | -- | A relationship was requested between a transaction and itself.
+    CannotRelateTransactionToItself
+  | -- | A relationship was requested against a target that already declares an
+    -- outbound edge of the same kind. Relations are depth-1 only (no chaining).
+    CannotChainRelations
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -305,3 +316,7 @@ renderDomainError err = case err of
     "Transaction cannot be cancelled while an amendment is in progress"
   CannotAmendDuringCancellation ->
     "Transaction cannot be amended while a cancellation is in progress"
+  RefundTargetMustBeExpense -> "Refund target must be an expense transaction"
+  CannotRefundCancelledTransaction -> "Cannot refund a cancelled transaction"
+  CannotRelateTransactionToItself -> "A transaction cannot be related to itself"
+  CannotChainRelations -> "Relations cannot be chained (depth-1 only)"

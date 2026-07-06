@@ -142,7 +142,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     at = mockTime,
                     transactionType = Transfer,
                     externalTransactionId = Nothing,
-                    labels = Set.empty
+                    labels = Set.empty,
+                    relation = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -179,7 +180,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     at = mockTime,
                     transactionType = Transfer,
                     externalTransactionId = Just extTxId,
-                    labels = labels
+                    labels = labels,
+                    relation = Nothing
                   }
         case handleTransactionCommand transaction command of
           Right events -> case head events of
@@ -206,7 +208,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     at = mockTime,
                     transactionType = Transfer,
                     externalTransactionId = Nothing,
-                    labels = Set.empty
+                    labels = Set.empty,
+                    relation = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -233,7 +236,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     at = mockTime,
                     transactionType = Transfer,
                     externalTransactionId = Nothing,
-                    labels = Set.empty
+                    labels = Set.empty,
+                    relation = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -257,7 +261,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     at = mockTime,
                     transactionType = Transfer,
                     externalTransactionId = Nothing,
-                    labels = Set.empty
+                    labels = Set.empty,
+                    relation = Nothing
                   }
         let result = handleTransactionCommand transaction command
 
@@ -284,7 +289,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     at = mockTime,
                     transactionType = Transfer,
                     externalTransactionId = Nothing,
-                    labels = Set.empty
+                    labels = Set.empty,
+                    relation = Nothing
                   }
         let result = handleTransactionCommand transaction command
 

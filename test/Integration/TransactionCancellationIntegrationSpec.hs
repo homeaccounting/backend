@@ -99,6 +99,7 @@ seedTransfer env uid src tgt amt = do
         "Test transfer"
         Nothing
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "seedTransfer failed: " <> show err
     Right r -> pure r
@@ -322,6 +323,7 @@ booksCloseSpec =
             "Backdated"
             Nothing
             (Just txDate)
+            Nothing
       (txId, _td) <- case res of
         Left err -> fail $ "initiateTransfer failed: " <> show err
         Right r -> pure r

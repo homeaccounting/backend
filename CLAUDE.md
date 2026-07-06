@@ -143,6 +143,7 @@ cabal test all --test-option='--rerun'
 - Properties verified at compile-time by LiquidHaskell should NOT have redundant runtime tests
 - Test error handling explicitly: verify `Left` results carry correct `errorContext` and messages
 - Use mock constructors from `Testkit/Helpers.hs` to bypass validation in non-validation tests
+- **Reuse existing test infrastructure** (`test/Testkit/*` — `Fixtures.hs`, `Helpers.hs`, `Generators.hs`, `InMemoryEventStore.hs`, etc.) rather than re-defining setup helpers per spec. Before writing a fixture (user registration, default account, dictionary lookup, event seeding, …), check whether Testkit already provides it. If a needed helper is missing **and generic**, add it to the appropriate `Testkit` module and reuse it — do not copy-paste a local one-off.
 
 ## Code Style
 

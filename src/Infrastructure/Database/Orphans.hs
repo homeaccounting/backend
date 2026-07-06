@@ -41,6 +41,7 @@ import Domain.Core.Types
     ExternalTransactionId,
     Money,
     OAuthProvider,
+    RelationKind,
     TelegramId (..),
     TransactionId,
     TransactionType (..),
@@ -57,6 +58,8 @@ import Domain.Core.Types
     mkTransactionIdSafe,
     mkUserIdSafe,
     moneyCurrency,
+    parseRelationKind,
+    renderRelationKind,
     unAccountId,
     unConfigurationId,
     unDictionaryEntryId,
@@ -294,6 +297,17 @@ instance PersistField StatusKind where
     maybe (Left ("Invalid StatusKind token: " <> t)) Right (parseStatusKind t)
 
 instance PersistFieldSql StatusKind where
+  sqlType _ = SqlString
+
+-- | 'RelationKind' stored as its lowercase wire token (a queryable enum column
+-- for the transaction_relations reverse index).
+instance PersistField RelationKind where
+  toPersistValue = PersistText . renderRelationKind
+  fromPersistValue v = do
+    t <- fromPersistValue v
+    maybe (Left ("Invalid RelationKind token: " <> t)) Right (parseRelationKind t)
+
+instance PersistFieldSql RelationKind where
   sqlType _ = SqlString
 
 -- | 'Currency' is a small closed enum; stored as its JSON token so the

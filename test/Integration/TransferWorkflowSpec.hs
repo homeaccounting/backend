@@ -202,7 +202,8 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             at = mockTime,
             transactionType = Transfer,
             externalTransactionId = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            relation = Nothing
           }
 
   -- Step 2: Complete the transfer (simulates TransactionPostingManager behavior)
@@ -242,7 +243,8 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             at = mockTime,
             transactionType = Transfer,
             externalTransactionId = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            relation = Nothing
           }
 
   return txUuid
@@ -686,7 +688,8 @@ categorizedTransferSpec =
                 at = mockTime,
                 transactionType = singletonIncome testSalaryCatId (unsafeMoney USD 3000),
                 externalTransactionId = Nothing,
-                labels = Set.empty
+                labels = Set.empty,
+                relation = Nothing
               }
 
       -- Verify transaction read model has correct type
@@ -759,7 +762,8 @@ categorizedTransferSpec =
                 at = mockTime,
                 transactionType = singletonExpense testFoodCatId (unsafeMoney USD 150),
                 externalTransactionId = Nothing,
-                labels = Set.empty
+                labels = Set.empty,
+                relation = Nothing
               }
 
       -- Verify transaction read model has correct type
@@ -804,7 +808,8 @@ categorizedTransferSpec =
                 at = mockTime,
                 transactionType = Transfer,
                 externalTransactionId = Nothing,
-                labels = Set.empty
+                labels = Set.empty,
+                relation = Nothing
               }
 
       -- Verify transaction read model has correct type
@@ -839,7 +844,8 @@ categorizedTransferSpec =
                 at = mockTime,
                 transactionType = Transfer,
                 externalTransactionId = Just extTxId,
-                labels = expectedLabels
+                labels = expectedLabels,
+                relation = Nothing
               }
 
       maybeTx <- runDbIn env (getTransaction (unsafeTransactionId txUuid))

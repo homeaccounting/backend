@@ -66,6 +66,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           Set.empty
           "Audit-base"
           Nothing
+          Nothing
     (txId, _) <- case create of
       Right r -> pure r
       Left err -> fail $ "initiateIncome failed: " <> show err
@@ -96,6 +97,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           Set.empty
           "With labels"
           Nothing
+          Nothing
     (txId, _) <- case create of
       Right r -> pure r
       Left err -> fail $ "initiateIncome failed: " <> show err
@@ -124,6 +126,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           (incomeAllocs owner (unsafeMoney Core.USD 10))
           Set.empty
           "Owner only"
+          Nothing
           Nothing
     (txId, _) <- case create of
       Right r -> pure r

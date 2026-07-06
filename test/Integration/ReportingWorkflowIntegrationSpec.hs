@@ -146,7 +146,8 @@ postTransaction env fromUuid toUuid userUuid amt cur desc txType = do
             at = mockTime,
             transactionType = txType,
             externalTransactionId = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            relation = Nothing
           }
   return txUuid
 
@@ -186,7 +187,8 @@ postCrossCurrencyTransaction env fromUuid toUuid userUuid (srcAmt, srcCur) (tgtA
             at = mockTime,
             transactionType = txType,
             externalTransactionId = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            relation = Nothing
           }
   return txUuid
 

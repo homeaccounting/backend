@@ -36,6 +36,7 @@ module Domain.Transaction.Events
     TransactionAmendmentFailed (..),
     TransactionCancellationInitiated (..),
     TransactionCancellationCompleted (..),
+    TransactionRelationAdded (..),
   )
 where
 
@@ -46,7 +47,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -70,7 +71,8 @@ transactionEvents =
     ''TransactionAmendmentCompleted,
     ''TransactionAmendmentFailed,
     ''TransactionCancellationInitiated,
-    ''TransactionCancellationCompleted
+    ''TransactionCancellationCompleted,
+    ''TransactionRelationAdded
   ]
 
 -- -----------------------------------------------------------------------------
@@ -297,6 +299,19 @@ data TransactionCancellationCompleted = TransactionCancellationCompleted
   }
   deriving (Show, Eq)
 
+-- | Event emitted when a typed relationship from this transaction to another is
+-- recorded. The owning ("from") endpoint is the stream key — it is NOT a payload
+-- field, mirroring 'TransactionPostingInitiated' which also carries no self-id
+-- (the pure InitiateTransaction handler cannot know the freshly-generated
+-- aggregate id). The read model reads "from" from the stream key.
+data TransactionRelationAdded = TransactionRelationAdded
+  { -- | The referenced (pre-existing) transaction — the "to" endpoint.
+    relatedTransactionId :: TransactionId,
+    -- | The kind of relationship.
+    relationKind :: RelationKind
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -333,3 +348,4 @@ deriveJSON defaultOptions ''TransactionAmendmentCompleted
 deriveJSON defaultOptions ''TransactionAmendmentFailed
 deriveJSON defaultOptions ''TransactionCancellationInitiated
 deriveJSON defaultOptions ''TransactionCancellationCompleted
+deriveJSON defaultOptions ''TransactionRelationAdded

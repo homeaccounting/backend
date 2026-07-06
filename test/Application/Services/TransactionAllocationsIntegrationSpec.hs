@@ -184,6 +184,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
           Set.empty
           "Initial grocery + restaurant split"
           Nothing
+          Nothing
     (txId, _seedTd) <- unwrap "initiateExpense" initResult
 
     -- Step 2: GET reflects the two-allocation Expense.

@@ -229,6 +229,7 @@ spec = do
             "Test"
             Nothing
             Nothing
+            Nothing
       txId <- case txRes of
         Left err -> expectationFailure ("initiateTransfer failed: " <> show err) >> undefined
         Right (tid, _) -> pure tid
@@ -260,6 +261,7 @@ spec = do
             "Backdated"
             Nothing
             (Just txDate)
+            Nothing
       txId <- case txRes of
         Left err -> expectationFailure ("initiateTransfer failed: " <> show err) >> undefined
         Right (tid, _) -> pure tid
@@ -413,6 +415,7 @@ seedFailedTransfer seed = do
         (unsafeMoney Core.USD 999999)
         Set.empty
         "Seed failed transfer"
+        Nothing
         Nothing
         Nothing
   case res of

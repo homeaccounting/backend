@@ -303,6 +303,7 @@ test-suite backend-test
       Application.ReadModels.TransactionFilterSpec
       Application.ReadModels.TransactionListPropertySpec
       Application.ReadModels.TransactionListSpec
+      Application.ReadModels.TransactionRelationsSpec
       Application.Services.AccountServiceIntegrationSpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
@@ -320,6 +321,7 @@ test-suite backend-test
       Application.Services.Prompt.Transaction.IntentSpec
       Application.Services.Prompt.Transaction.ResolveSpec
       Application.Services.Prompt.TypesSpec
+      Application.Services.RefundValidationSpec
       Application.Services.ReportingServicePropertySpec
       Application.Services.ReportingServiceSpec
       Application.Services.TransactionAllocationsIntegrationSpec
@@ -362,6 +364,8 @@ test-suite backend-test
       Domain.Transaction.EventsSpec
       Domain.Transaction.LabelsAndCategorySpec
       Domain.Transaction.LabelsProjectionSpec
+      Domain.Transaction.RelationsCommandHandlerSpec
+      Domain.Transaction.RelationsProjectionPropertySpec
       Domain.Transaction.StatusKindSpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.OAuthSpec
@@ -389,6 +393,7 @@ test-suite backend-test
       Integration.TransactionLabelsIntegrationSpec
       Integration.TransactionMetadataEditIntegrationSpec
       Integration.TransactionPromptIntegrationSpec
+      Integration.TransactionRelationsIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.CommandsSpec
@@ -415,6 +420,7 @@ test-suite backend-test
       Web.API.TransactionAllocationsAPISpec
       Web.API.TransactionAPISpec
       Web.API.TransactionLabelsAPISpec
+      Web.API.TransactionRelationsAPISpec
       Web.QuerySpec
       Web.ReportingResponseSpec
       Web.TypesSpec

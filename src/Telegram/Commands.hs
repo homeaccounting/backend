@@ -617,7 +617,7 @@ handleIncomeDescription botState telegramId chatId cat money description = do
                 sendMsg chatId $ "Income recording failed: " <> tshow allocErr
               Right alloc -> do
                 let allocations = mkIncomeAllocations (alloc :| [])
-                result <- initiateIncome userId accountId money allocations Set.empty description Nothing
+                result <- initiateIncome userId accountId money allocations Set.empty description Nothing Nothing
                 case result of
                   Left err -> do
                     logError $ "Income failed: " <> displayShow err
@@ -689,7 +689,7 @@ handleExpenseDescription botState telegramId chatId cat money description = do
                 sendMsg chatId $ "Expense recording failed: " <> tshow allocErr
               Right alloc -> do
                 let allocations = mkExpenseAllocations (alloc :| [])
-                result <- initiateExpense userId accountId money allocations Set.empty description Nothing
+                result <- initiateExpense userId accountId money allocations Set.empty description Nothing Nothing
                 case result of
                   Left err -> do
                     logError $ "Expense failed: " <> displayShow err
@@ -762,7 +762,7 @@ handleTransferDescription botState telegramId chatId srcId tgtId money descripti
   case maybeUserId of
     Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
     Just userId -> do
-      result <- initiateTransfer userId srcId tgtId money Set.empty description Nothing Nothing
+      result <- initiateTransfer userId srcId tgtId money Set.empty description Nothing Nothing Nothing
       case result of
         Left err -> do
           logError $ "Transfer failed: " <> displayShow err

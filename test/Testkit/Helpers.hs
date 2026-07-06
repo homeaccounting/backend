@@ -241,6 +241,7 @@ mockTransactionData src tgt srcAmt tgtAmt rate tt =
       transactionType = tt,
       date = fixtureTime,
       labels = mempty,
+      relations = [],
       amendmentCount = 0
     }
 

@@ -72,6 +72,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Set.empty
             "Original"
             Nothing
+            Nothing
       (txId, _) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -96,6 +97,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             (incomeAllocs owner (unsafeMoney Core.USD 25))
             Set.empty
             "Owner only"
+            Nothing
             Nothing
       (txId, _) <- case create of
         Right r -> pure r
@@ -123,6 +125,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             (unsafeMoney Core.USD 10)
             Set.empty
             "Pending"
+            Nothing
             Nothing
             Nothing
       (txId, _) <- case create of
@@ -154,6 +157,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Set.empty
             "Seed"
             Nothing
+            Nothing
       (txId, _) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -179,6 +183,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Set.empty
             "Seed"
             (Just originalAt)
+            Nothing
       (txId, _) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -214,6 +219,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Set.empty
             "Backdated seed (open period)"
             (Just originalAt)
+            Nothing
       (txId, _) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -248,6 +254,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             (unsafeMoney Core.USD 10)
             Set.empty
             "Pending"
+            Nothing
             Nothing
             Nothing
       (txId, _) <- case create of
@@ -285,6 +292,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Set.empty
             "Backdated"
             (Just backdated)
+            Nothing
       result
         `shouldBe` Left
           CannotEditClosedPeriod
@@ -313,6 +321,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             Set.empty
             "Backdated"
             (Just backdated)
+            Nothing
       result
         `shouldBe` Left
           CannotEditClosedPeriod
@@ -343,6 +352,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             "Backdated"
             Nothing
             (Just backdated)
+            Nothing
       result
         `shouldBe` Left
           CannotEditClosedPeriod

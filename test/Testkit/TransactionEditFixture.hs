@@ -158,6 +158,7 @@ seedIncomeTransaction seed labels = do
         labels
         "Seed"
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "seedIncomeTransaction failed: " <> show err
     Right (txId, _) -> pure txId
@@ -176,6 +177,7 @@ seedTransfer seed = do
         (unsafeMoney Core.USD 10)
         Set.empty
         "Seed transfer"
+        Nothing
         Nothing
         Nothing
   case res of

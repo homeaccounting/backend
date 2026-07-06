@@ -448,7 +448,8 @@ creditAccountAt env accountId atTime amt = do
             at = atTime,
             transactionType = Transfer,
             externalTransactionId = Nothing,
-            labels = mempty
+            labels = mempty,
+            relation = Nothing
           }
   _ <-
     applyAccountCommand

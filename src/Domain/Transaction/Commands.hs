@@ -36,6 +36,7 @@ module Domain.Transaction.Commands
     FailTransactionAmendment (..),
     CancelTransaction (..),
     CompleteTransactionCancellation (..),
+    AddTransactionRelation (..),
   )
 where
 
@@ -43,7 +44,7 @@ import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -67,7 +68,8 @@ transactionCommands =
     ''CompleteTransactionAmendment,
     ''FailTransactionAmendment,
     ''CancelTransaction,
-    ''CompleteTransactionCancellation
+    ''CompleteTransactionCancellation,
+    ''AddTransactionRelation
   ]
 
 -- -----------------------------------------------------------------------------
@@ -118,7 +120,12 @@ data InitiateTransaction = InitiateTransaction
     -- | Identifier for this transaction in an external system (e.g., Monobank)
     externalTransactionId :: Maybe ExternalTransactionId,
     -- | Labels to attach to the transfer (may be empty).
-    labels :: Set LabelId
+    labels :: Set LabelId,
+    -- | Optional at-creation typed relationship to a pre-existing transaction
+    -- (e.g., a 'Refund' edge to the refunded expense). When 'Just', the handler
+    -- emits a 'TransactionRelationAdded' event alongside the posting event; the
+    -- owning ("from") endpoint is the freshly-created transaction.
+    relation :: Maybe RelationSpec
   }
   deriving (Show, Eq)
 
@@ -382,6 +389,18 @@ data CompleteTransactionCancellation = CompleteTransactionCancellation
   }
   deriving (Show, Eq)
 
+-- | Post-hoc command to record a typed relationship on an already-existing
+-- (Completed) transaction. Used by the merge/split domain operations to write
+-- 'Merge'/'Split' lineage; not exposed as a public "create arbitrary edge"
+-- endpoint. At-creation edges (Refund) are recorded via 'InitiateTransaction.relation'
+-- instead. 'transactionId' is the owning ("from") aggregate the command routes to.
+data AddTransactionRelation = AddTransactionRelation
+  { transactionId :: TransactionId,
+    relatedTransactionId :: TransactionId,
+    relationKind :: RelationKind
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -399,3 +418,4 @@ deriveJSON defaultOptions ''CompleteTransactionAmendment
 deriveJSON defaultOptions ''FailTransactionAmendment
 deriveJSON defaultOptions ''CancelTransaction
 deriveJSON defaultOptions ''CompleteTransactionCancellation
+deriveJSON defaultOptions ''AddTransactionRelation

@@ -470,6 +470,46 @@ mapDomainError BankConnectionAccountConflict =
               details = Nothing
             }
     }
+mapDomainError RefundTargetMustBeExpense =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Refund target must be an expense transaction",
+              code = "REFUND_TARGET_MUST_BE_EXPENSE",
+              details = Nothing
+            }
+    }
+mapDomainError CannotRefundCancelledTransaction =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot refund a cancelled transaction",
+              code = "CANNOT_REFUND_CANCELLED_TRANSACTION",
+              details = Nothing
+            }
+    }
+mapDomainError CannotRelateTransactionToItself =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "A transaction cannot be related to itself",
+              code = "CANNOT_RELATE_TRANSACTION_TO_ITSELF",
+              details = Nothing
+            }
+    }
+mapDomainError CannotChainRelations =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Relations cannot be chained (depth-1 only)",
+              code = "CANNOT_CHAIN_RELATIONS",
+              details = Nothing
+            }
+    }
 mapDomainError (BankConnectionAccountInvalid field) =
   err400
     { errBody =

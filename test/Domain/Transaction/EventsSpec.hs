@@ -20,16 +20,27 @@ import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( unsafeDictionaryEntryId,
+  ( RelationKind (..),
+    TransactionId,
+    unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
+    unsafeTransactionId,
   )
-import Domain.Transaction.Events (TransactionPostingInitiated (..))
+import Domain.Transaction.Events
+  ( TransactionPostingInitiated (..),
+    TransactionRelationAdded (..),
+  )
 import RIO
 import Test.Hspec
 import Testkit.Helpers (mockAccountId, mockMoney, mockUserId, singletonIncome)
 
 spec :: Spec
-spec = describe "TransactionPostingInitiated JSON" $ do
+spec = do
+  postingInitiatedSpec
+  relationAddedSpec
+
+postingInitiatedSpec :: Spec
+postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
   it "decodes legacy payloads without externalTransactionId as Nothing" $ do
     let legacy = stripKey "externalTransactionId" (encode sampleEvent)
     case eitherDecode legacy :: Either String TransactionPostingInitiated of
@@ -50,6 +61,16 @@ spec = describe "TransactionPostingInitiated JSON" $ do
     case eitherDecode legacy :: Either String TransactionPostingInitiated of
       Left err -> expectationFailure $ "legacy decode failed: " <> err
       Right decoded -> decoded.labels `shouldBe` Set.empty
+
+relationAddedSpec :: Spec
+relationAddedSpec = describe "TransactionRelationAdded JSON" $ do
+  it "TransactionRelationAdded round-trips through JSON" $ do
+    let evt = TransactionRelationAdded sampleRelatedTxId Refund
+    (decode (encode evt) :: Maybe TransactionRelationAdded) `shouldBe` Just evt
+
+-- | A fixed related transaction id for the relation round-trip test.
+sampleRelatedTxId :: TransactionId
+sampleRelatedTxId = unsafeTransactionId (UUID.fromWords 99 0 0 0)
 
 -- | A minimal valid 'TransactionPostingInitiated' for serialisation tests.
 sampleEvent :: TransactionPostingInitiated

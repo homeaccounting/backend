@@ -70,6 +70,8 @@ module Web.Types
     AllocationsResponse (..),
     TransactionListResponse (..),
     TransactionStatusResponse (..),
+    TransactionRelation (..),
+    TransactionRelationsResponse (..),
 
     -- * Reporting Response DTOs
     CategorySpend (..),
@@ -124,7 +126,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
@@ -380,7 +382,11 @@ data IncomeRequest
     allocations :: AllocationsRequest,
     description :: Text,
     date :: Maybe UTCTime,
-    labels :: Maybe [UUID]
+    labels :: Maybe [UUID],
+    -- | Optional typed relation from the new income to a pre-existing
+    -- transaction (e.g. a 'refund' of an expense, or a generic 'associated'
+    -- link). Absent in JSON decodes to 'Nothing' (generic instance).
+    relation :: Maybe TransactionRelation
   }
   deriving (Show, Eq, Generic)
 
@@ -620,13 +626,47 @@ data TransactionResponse
     labels :: [UUID],
     -- | Count of completed amendments on this transaction. Always @0@
     -- on a transaction that has never been amended.
-    amendmentCount :: Word
+    amendmentCount :: Word,
+    -- | Outbound typed relationships declared by this transaction (e.g. a
+    -- 'Refund' edge to the expense it refunds). Empty for transactions with
+    -- no declared edges.
+    relations :: [TransactionRelation]
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransactionResponse
 
 instance FromJSON TransactionResponse
+
+-- | A single typed relationship edge, used for BOTH request and response. It
+-- names the /other/ endpoint ('relatedTransactionId') plus the kind wire token
+-- ('relationKind'); the subject transaction is always implicit from context —
+-- the new income on create, the response's own @id@ on
+-- 'TransactionResponse.relations', or the @:id@ path param on
+-- @GET \/:id\/relations@ (per 'outbound'\/'inbound' grouping). @relationKind@ is
+-- @"refund"@ \/ @"merge"@ \/ @"split"@ \/ @"associated"@; the service enforces
+-- the per-kind rules.
+data TransactionRelation = TransactionRelation
+  { relatedTransactionId :: UUID,
+    relationKind :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON TransactionRelation
+
+instance FromJSON TransactionRelation
+
+-- | Response for @GET \/api\/transactions\/:id\/relations@: the edges pointing
+-- out of ('outbound') and into ('inbound') the transaction.
+data TransactionRelationsResponse = TransactionRelationsResponse
+  { outbound :: [TransactionRelation],
+    inbound :: [TransactionRelation]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON TransactionRelationsResponse
+
+instance FromJSON TransactionRelationsResponse
 
 -- | Response envelope for GET /api/transactions.
 --
@@ -1032,12 +1072,9 @@ currencyToText GBP = "GBP"
 -- | Converts TransactionData (read model) to TransactionResponse.
 --
 -- This is the preferred conversion function as it uses the read model
--- instead of requiring event replay.
---
--- Example:
--- >>> let transaction = TransactionData fromId toId (Money 300.0) "Rent" Completed
--- >>> fromTransactionData txId transaction
--- TransactionResponse txId fromId toId 300.0 "Rent" "Completed" Nothing
+-- instead of requiring event replay. The transaction's declared outbound
+-- edges (e.g. a 'Refund' link) are surfaced as 'relations', sourced directly
+-- from 'TransactionData.relations' (batch-loaded on every query path).
 fromTransactionData :: TransactionId -> TransactionData -> TransactionResponse
 fromTransactionData txId TransactionData {..} =
   TransactionResponse
@@ -1058,7 +1095,11 @@ fromTransactionData txId TransactionData {..} =
       allocations = allocationsResponseOf transactionType,
       date = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" date,
       labels = sort [unDictionaryEntryId eid | eid <- Set.toList labels],
-      amendmentCount = amendmentCount
+      amendmentCount = amendmentCount,
+      relations =
+        [ TransactionRelation (unTransactionId rel) (renderRelationKind k)
+        | (rel, k) <- relations
+        ]
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -1090,7 +1131,8 @@ fromTransaction txId tx =
       allocations = allocationsResponseOf tx.transactionType,
       date = "",
       labels = sort [unDictionaryEntryId eid | eid <- Set.toList tx.labels],
-      amendmentCount = tx.amendmentCount
+      amendmentCount = tx.amendmentCount,
+      relations = []
     }
 
 -- | Converts TransactionStatus to Text representation.

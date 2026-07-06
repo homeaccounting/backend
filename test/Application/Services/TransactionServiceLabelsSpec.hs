@@ -177,6 +177,7 @@ spec = describe "TransactionService / labels" $ do
             (Set.fromList [fx.labelA, fx.labelB])
             "Paycheck"
             Nothing
+            Nothing
       case result of
         Right (_, td) ->
           td.labels `shouldBe` Set.fromList [fx.labelA, fx.labelB]
@@ -197,6 +198,7 @@ spec = describe "TransactionService / labels" $ do
             (Set.singleton alien)
             "Paycheck"
             Nothing
+            Nothing
       case result of
         Left (LabelNotFound _) -> pure ()
         other -> expectationFailure $ "expected LabelNotFound, got: " <> show other
@@ -215,6 +217,7 @@ spec = describe "TransactionService / labels" $ do
             (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 25))
             (Set.singleton fx.labelA)
             "Initial"
+            Nothing
             Nothing
       (txId, _) <- case create of
         Right r -> pure r
@@ -249,6 +252,7 @@ spec = describe "TransactionService / labels" $ do
             "Pending edit probe"
             Nothing
             Nothing
+            Nothing
       (txId, _) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateTransfer failed: " <> show err
@@ -277,6 +281,7 @@ spec = describe "TransactionService / labels" $ do
             Set.empty
             "Seed"
             Nothing
+            Nothing
       (txId, _) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -302,6 +307,7 @@ spec = describe "TransactionService / labels" $ do
             (singletonAllocation owner.incomeCategory (unsafeMoney Core.USD 25))
             Set.empty
             "Owner only"
+            Nothing
             Nothing
       (txId, _) <- case create of
         Right r -> pure r
@@ -335,6 +341,7 @@ spec = describe "TransactionService / labels" $ do
             Set.empty
             "Paycheck"
             Nothing
+            Nothing
       (txId, _) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -363,6 +370,7 @@ spec = describe "TransactionService / labels" $ do
             (unsafeMoney Core.USD 10)
             Set.empty
             "Move funds"
+            Nothing
             Nothing
             Nothing
       (txId, _) <- case create of
@@ -395,6 +403,7 @@ spec = describe "TransactionService / labels" $ do
             (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 10))
             Set.empty
             "Paycheck"
+            Nothing
             Nothing
       (txId, _) <- case create of
         Right r -> pure r

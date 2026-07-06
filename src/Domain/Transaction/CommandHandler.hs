@@ -45,12 +45,14 @@ import Domain.Core.Types
   ( Allocation (..),
     Allocations (..),
     Money (..),
+    RelationSpec (..),
     TransactionType (..),
     allAllocations,
     allocationsOf,
     moneyCurrency,
     unAccountId,
     unMoney,
+    unTransactionId,
   )
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
@@ -120,6 +122,10 @@ data TransactionError
   | -- | 'AmendTransaction' supplied a 'newTransactionType' whose kind is
     --   'Adjustment'. Cross-kind amendment into Adjustment is unsupported.
     CannotAmendToAdjustmentKind
+  | -- | 'AddTransactionRelation' referenced the owning transaction as its own
+    -- related endpoint (@transactionId == relatedTransactionId@). A transaction
+    -- cannot be related to itself.
+    RelationSelfLink
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -198,22 +204,36 @@ handleTransactionCommand transaction (InitiateTransactionTransactionCommand Init
                         *> (if null allocs.incomes then Right () else Left ContraIncomeNotSupported)
                     Transfer -> Right ()
                     Adjustment -> Right ()
-                  Right
-                    [ TransactionPostingInitiatedTransactionEvent
-                        TransactionPostingInitiated
-                          { sourceAccountId = sourceAccountId,
-                            targetAccountId = targetAccountId,
-                            sourceAmount = sourceAmount,
-                            targetAmount = targetAmount,
-                            exchangeRate = exchangeRate,
-                            description = description,
-                            by = initiatedBy,
-                            at = at,
-                            transactionType = transactionType,
-                            externalTransactionId = externalTransactionId,
-                            labels = labels
-                          }
-                    ]
+                  let postingEvt =
+                        TransactionPostingInitiatedTransactionEvent
+                          TransactionPostingInitiated
+                            { sourceAccountId = sourceAccountId,
+                              targetAccountId = targetAccountId,
+                              sourceAmount = sourceAmount,
+                              targetAmount = targetAmount,
+                              exchangeRate = exchangeRate,
+                              description = description,
+                              by = initiatedBy,
+                              at = at,
+                              transactionType = transactionType,
+                              externalTransactionId = externalTransactionId,
+                              labels = labels
+                            }
+                  -- No self-link check here: the freshly-generated aggregate id
+                  -- is unknown to the pure handler (a fresh UUID can never equal
+                  -- an existing target, so a self-link is structurally
+                  -- impossible on the create path). The service is the
+                  -- authoritative guard.
+                  Right $
+                    postingEvt : case relation of
+                      Nothing -> []
+                      Just spec ->
+                        [ TransactionRelationAddedTransactionEvent
+                            TransactionRelationAdded
+                              { relatedTransactionId = spec.relatedTransactionId,
+                                relationKind = spec.relationKind
+                              }
+                        ]
       | otherwise -> Left TransactionAlreadyInitiated
     _ -> Left TransactionAlreadyInitiated
 -- Handle CompleteTransactionPosting command
@@ -402,6 +422,22 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
                 by = by
               }
         ]
+-- Handle AddTransactionRelation command
+--
+-- Post-hoc relation edge (Merge/Split lineage). Completed-only. The self-link
+-- check is pure here because the command carries the owning aggregate id.
+handleTransactionCommand transaction (AddTransactionRelationTransactionCommand AddTransactionRelation {..})
+  | unTransactionId transactionId == unTransactionId relatedTransactionId = Left RelationSelfLink
+  | otherwise = case transaction ^. #status of
+      Completed ->
+        Right
+          [ TransactionRelationAddedTransactionEvent
+              TransactionRelationAdded
+                { relatedTransactionId = relatedTransactionId,
+                  relationKind = relationKind
+                }
+          ]
+      _ -> Left CannotEditUncompletedTransaction
 
 -- -----------------------------------------------------------------------------
 -- Allocation invariants (handler-boundary)

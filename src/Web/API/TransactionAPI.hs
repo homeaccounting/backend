@@ -53,6 +53,7 @@ module Web.API.TransactionAPI
     amendTransactionHandler,
     transactionHistoryHandler,
     cancelTransactionHandler,
+    relationsHandler,
   )
 where
 
@@ -65,7 +66,7 @@ import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Page (Page (..), mkPage)
 import Domain.Core.Range (mkRange)
-import Domain.Core.Types (Allocation (..), Allocations, Currency, Money (..), TransactionType (..), allAllocations, mkAccountId, mkAllocation, mkAllocations, mkDictionaryEntryId, mkTransactionId, parseCurrency, unsafeDictionaryEntryId)
+import Domain.Core.Types (Allocation (..), Allocations, Currency, Money (..), RelationSpec (..), TransactionType (..), allAllocations, mkAccountId, mkAllocation, mkAllocations, mkDictionaryEntryId, mkTransactionId, parseCurrency, parseRelationKind, renderRelationKind, unTransactionId, unsafeDictionaryEntryId)
 import Domain.Transaction.Commands (AmendTransaction (..))
 import Domain.Transaction.Projection (StatusKind)
 import Infrastructure.App (AppM)
@@ -85,6 +86,8 @@ import Web.Types
     SetTransactionAllocationsRequest (..),
     SetTransactionLabelsRequest (..),
     TransactionListResponse (..),
+    TransactionRelation (..),
+    TransactionRelationsResponse (..),
     TransactionResponse,
     TransferRequest (..),
     fromTransactionData,
@@ -190,6 +193,13 @@ type TransactionAPI =
       :> Capture "id" UUID
       :> "history"
       :> Get '[JSON] TransactionHistory
+    -- GET /api/transactions/:id/relations - Outbound + inbound typed relations.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "relations"
+      :> Get '[JSON] TransactionRelationsResponse
     -- GET /api/transactions/:id - Get transaction status (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -224,6 +234,7 @@ transactionServer =
     :<|> changeDateHandler
     :<|> amendTransactionHandler
     :<|> transactionHistoryHandler
+    :<|> relationsHandler
     :<|> getTransactionHandler
     :<|> cancelTransactionHandler
 
@@ -252,10 +263,23 @@ incomeHandler user request = do
   cur <- validateField "currency" $ parseCurrency request.currency
   (total, allocations) <- either throwDomainError pure (buildAllocations cur request.allocations)
   labelSet <- validateField "labels" $ parseLabelIds request.labels
-  result <- TransactionService.initiateIncome userId accountId total allocations labelSet request.description request.date
+  mRelation <- traverse parseRelation request.relation
+  result <- TransactionService.initiateIncome userId accountId total allocations labelSet request.description request.date mRelation
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
+
+-- | Parse a 'TransactionRelation' DTO into a domain 'RelationSpec': the
+-- referenced transaction id and the relation kind wire token. The kind is
+-- validated against 'parseRelationKind'; the service enforces the per-kind
+-- target rules.
+parseRelation :: TransactionRelation -> AppM RelationSpec
+parseRelation req = do
+  tid <- validateField "relation.relatedTransactionId" (mkTransactionId req.relatedTransactionId)
+  kind <-
+    validateField "relation.relationKind"
+      $ maybe (Left ("Unknown relation kind: " <> req.relationKind)) Right (parseRelationKind req.relationKind)
+  pure (RelationSpec {relatedTransactionId = tid, relationKind = kind})
 
 -- | Handler for POST /api/transactions/expense - Record an expense transaction.
 expenseHandler :: AuthenticatedUser -> ExpenseRequest -> AppM TransactionResponse
@@ -266,7 +290,8 @@ expenseHandler user request = do
   cur <- validateField "currency" $ parseCurrency request.currency
   (total, allocations) <- either throwDomainError pure (buildAllocations cur request.allocations)
   labelSet <- validateField "labels" $ parseLabelIds request.labels
-  result <- TransactionService.initiateExpense userId accountId total allocations labelSet request.description request.date
+  -- The public expense endpoint does not expose relation edges (yet).
+  result <- TransactionService.initiateExpense userId accountId total allocations labelSet request.description request.date Nothing
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -282,7 +307,7 @@ transferHandler user request = do
   let money = toDomainMoney cur request.amount
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   let maybeRate = fmap toRational request.exchangeRate
-  result <- TransactionService.initiateTransfer userId fromAccId toAccId money labelSet request.description maybeRate request.date
+  result <- TransactionService.initiateTransfer userId fromAccId toAccId money labelSet request.description maybeRate request.date Nothing
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -404,6 +429,33 @@ transactionHistoryHandler user rawId = do
     Right (Just history) -> pure history
     Right Nothing ->
       throwDomainError (NotFound "Transaction" (tshow transactionId))
+    Left err -> throwDomainError err
+
+-- | Handler for GET /api/transactions/:id/relations — outbound + inbound
+-- typed relationship edges, gated on caller visibility (404 if not visible or
+-- absent, via the service's 'ensureCanAccessTransaction').
+relationsHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  AppM TransactionRelationsResponse
+relationsHandler user rawId = do
+  transactionId <- validateField "id" (mkTransactionId rawId)
+  result <- TransactionService.getRelations user.userId transactionId
+  case result of
+    Right (outbound, inbound) ->
+      pure
+        TransactionRelationsResponse
+          { -- outbound: subject -> rel (the subject id is the @:id@ path param)
+            outbound =
+              [ TransactionRelation (unTransactionId rel) (renderRelationKind k)
+              | (rel, k) <- outbound
+              ],
+            -- inbound: frm -> subject; the element names the other end (frm)
+            inbound =
+              [ TransactionRelation (unTransactionId frm) (renderRelationKind k)
+              | (frm, k) <- inbound
+              ]
+          }
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions - list transactions visible to the caller.

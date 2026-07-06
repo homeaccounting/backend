@@ -99,6 +99,7 @@ seedIncome h categoryId = do
         Set.empty
         "Paycheck"
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "initiateIncome failed: " <> show err
     Right (txId, _) -> pure txId
@@ -115,6 +116,7 @@ seedTransfer h = do
         (unsafeMoney Core.USD 10)
         Set.empty
         "Move funds"
+        Nothing
         Nothing
         Nothing
   case res of

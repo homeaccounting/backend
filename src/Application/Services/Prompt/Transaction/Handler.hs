@@ -138,8 +138,8 @@ runCreateTransaction uid rctx userText ti =
   where
     dispatch = \case
       ResolvedIncome target total allocs labels desc date ->
-        TransactionService.initiateIncome uid target total allocs labels desc date
+        TransactionService.initiateIncome uid target total allocs labels desc date Nothing
       ResolvedExpense source total allocs labels desc date ->
-        TransactionService.initiateExpense uid source total allocs labels desc date
+        TransactionService.initiateExpense uid source total allocs labels desc date Nothing
       ResolvedTransfer source dest amount labels desc date ->
-        TransactionService.initiateTransfer uid source dest amount labels desc Nothing date
+        TransactionService.initiateTransfer uid source dest amount labels desc Nothing date Nothing

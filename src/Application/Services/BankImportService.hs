@@ -467,5 +467,6 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
           at = bankTx.time,
           transactionType = transactionType,
           externalTransactionId = Just bankTx.externalId,
-          labels = Set.empty
+          labels = Set.empty,
+          relation = Nothing
         }

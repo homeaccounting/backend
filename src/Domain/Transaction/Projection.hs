@@ -45,6 +45,9 @@ module Domain.Transaction.Projection
     -- * Projection
     transactionProjection,
 
+    -- * Event Handler (exported for testing)
+    handleTransactionEvent,
+
     -- * Helper Functions
     transactionDefault,
   )
@@ -430,6 +433,9 @@ handleTransactionEvent transaction (TransactionCancellationCompletedTransactionE
     .~ Cancelled
     & #cancellationInProgress
     .~ False
+handleTransactionEvent transaction (TransactionRelationAddedTransactionEvent _) =
+  -- Relationships are a read-model concern; the aggregate never gates on them.
+  transaction
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

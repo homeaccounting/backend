@@ -143,6 +143,7 @@ seedIncome ck amt = do
         Set.empty
         "Seed"
         Nothing
+        Nothing
   case res of
     Right r -> pure r
     Left err -> fail $ "seedIncome failed: " <> show err
@@ -161,6 +162,7 @@ seedTransfer ck amt = do
         (unsafeMoney Core.USD amt)
         Set.empty
         "Seed"
+        Nothing
         Nothing
         Nothing
   case res of

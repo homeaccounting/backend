@@ -43,6 +43,7 @@ module Application.ReadModels.Transaction
     applyTransactionEvent,
     TransactionEntity (..),
     TransactionLabelEntity (..),
+    TransactionRelationEntity (..),
 
     -- * Queries (run via 'runDb')
     getTransaction,
@@ -51,6 +52,10 @@ module Application.ReadModels.Transaction
     findReferencingTransactions,
     reportableTransactions,
     countTransactions,
+    relationsFrom,
+    relationsFromMany,
+    reverseRelations,
+    relationsTo,
 
     -- * Helpers
     touchesVisible,
@@ -94,6 +99,7 @@ import Domain.Core.Types
     ExchangeRate,
     LabelId,
     Money,
+    RelationKind (..),
     TransactionId,
     TransactionType,
     allAllocations,
@@ -113,6 +119,7 @@ import Domain.Models
     TransactionLabelsSet (..),
     TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
+    TransactionRelationAdded (..),
   )
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..), statusFromKind)
 import Eventium
@@ -144,6 +151,11 @@ data TransactionData = TransactionData
     transactionType :: TransactionType,
     date :: UTCTime,
     labels :: Set LabelId,
+    -- | Outbound typed relationship edges declared by this transaction as
+    -- @(relatedTransactionId, kind)@ — e.g. a 'Refund' edge to the expense it
+    -- refunds. Assembled from the @transaction_relations@ rows (batch-loaded on
+    -- every query path, mirroring 'labels'). Empty when none are declared.
+    relations :: [(TransactionId, RelationKind)],
     -- | Count of 'TransactionAmendmentCompleted' events folded on this
     -- transaction. @0@ when never amended.
     amendmentCount :: Word
@@ -216,6 +228,12 @@ TransactionLabelEntity sql=transaction_labels
     labelId LabelId
     UniqueTransactionLabel transactionId labelId
     deriving Show Eq
+TransactionRelationEntity sql=transaction_relations
+    transactionId TransactionId
+    relatedTransactionId TransactionId
+    relationKind RelationKind
+    UniqueTransactionRelation transactionId relatedTransactionId relationKind
+    deriving Show Eq
 |]
 
 -- | Projection/checkpoint name for this read model.
@@ -225,6 +243,7 @@ transactionProjectionName = CheckpointName "transaction"
 -- | Clear both transaction tables. The checkpoint is reset by 'rebuildReadModel'.
 resetTransaction :: (MonadIO m) => SqlPersistT m ()
 resetTransaction = do
+  deleteWhere ([] :: [Filter TransactionRelationEntity])
   deleteWhere ([] :: [Filter TransactionLabelEntity])
   deleteWhere ([] :: [Filter TransactionEntity])
 
@@ -239,7 +258,9 @@ createTransactionIndexes =
       [ "CREATE INDEX IF NOT EXISTS idx_transactions_source ON transactions (source_account_id)",
         "CREATE INDEX IF NOT EXISTS idx_transactions_target ON transactions (target_account_id)",
         "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date)",
-        "CREATE INDEX IF NOT EXISTS idx_transaction_labels_label ON transaction_labels (label_id)"
+        "CREATE INDEX IF NOT EXISTS idx_transaction_labels_label ON transaction_labels (label_id)",
+        "CREATE INDEX IF NOT EXISTS idx_transaction_relations_from ON transaction_relations (transaction_id)",
+        "CREATE INDEX IF NOT EXISTS idx_transaction_relations_to_kind ON transaction_relations (related_transaction_id, relation_kind)"
       ]
 
 -- -----------------------------------------------------------------------------
@@ -326,6 +347,8 @@ applyTransactionEvent globalEvent =
           TransactionAmendmentInitiatedEvent _ -> pure ()
           TransactionAmendmentFailedEvent _ -> pure ()
           TransactionCancellationInitiatedEvent _ -> pure ()
+          TransactionRelationAddedEvent evt ->
+            void (insertUnique (TransactionRelationEntity txId evt.relatedTransactionId evt.relationKind))
           _ -> pure ()
 
 -- | Read-modify-write a transaction row (no-op if absent).
@@ -346,8 +369,8 @@ setLabels txId ls = do
 -- Reconstruction
 -- -----------------------------------------------------------------------------
 
-entToData :: TransactionEntity -> [LabelId] -> TransactionData
-entToData e ls =
+entToData :: TransactionEntity -> [LabelId] -> [(TransactionId, RelationKind)] -> TransactionData
+entToData e ls rels =
   TransactionData
     { sourceAccountId = e.transactionEntitySourceAccountId,
       targetAccountId = e.transactionEntityTargetAccountId,
@@ -359,6 +382,7 @@ entToData e ls =
       transactionType = e.transactionEntityTransactionType,
       date = e.transactionEntityDate,
       labels = Set.fromList ls,
+      relations = rels,
       amendmentCount = fromIntegral (max 0 e.transactionEntityAmendmentCount)
     }
 
@@ -380,13 +404,22 @@ loadLabelsMany txIds = do
       [(r.transactionLabelEntityTransactionId, [r.transactionLabelEntityLabelId]) | Entity _ r <- rows]
 
 -- | Materialize a page of entity rows into '(id, TransactionData)' pairs,
--- batch-loading their labels.
+-- batch-loading their labels and outbound relations (each a single indexed
+-- query — no N+1).
 withLabels :: (MonadIO m) => [Entity TransactionEntity] -> SqlPersistT m [(TransactionId, TransactionData)]
 withLabels rows = do
-  labelMap <- loadLabelsMany [e.transactionEntityTransactionId | Entity _ e <- rows]
+  let ids = [e.transactionEntityTransactionId | Entity _ e <- rows]
+  labelMap <- loadLabelsMany ids
+  relMap <- relationsFromMany ids
   pure
-    [ (e.transactionEntityTransactionId, entToData e (Map.findWithDefault [] e.transactionEntityTransactionId labelMap))
-    | Entity _ e <- rows
+    [ ( tid,
+        entToData
+          e
+          (Map.findWithDefault [] tid labelMap)
+          (Map.findWithDefault [] tid relMap)
+      )
+    | Entity _ e <- rows,
+      let tid = e.transactionEntityTransactionId
     ]
 
 -- -----------------------------------------------------------------------------
@@ -398,13 +431,16 @@ withLabels rows = do
 countTransactions :: (MonadIO m) => SqlPersistT m Int
 countTransactions = count ([] :: [Filter TransactionEntity])
 
--- | Transaction by id, with its labels, or 'Nothing'.
+-- | Transaction by id, with its labels and outbound relations, or 'Nothing'.
 getTransaction :: (MonadIO m) => TransactionId -> SqlPersistT m (Maybe TransactionData)
 getTransaction txId = do
   mEnt <- getBy (UniqueTransactionId txId)
   case mEnt of
     Nothing -> pure Nothing
-    Just (Entity _ e) -> Just . entToData e <$> loadLabels txId
+    Just (Entity _ e) -> do
+      ls <- loadLabels txId
+      rels <- relationsFrom txId
+      pure (Just (entToData e ls rels))
 
 -- | List transactions visible to the caller (touching at least one account in
 -- @visible@ on either leg), filtered by 'TransactionFilter' and paginated by
@@ -528,6 +564,57 @@ reportableTransactions visible mFrom mTo
               ++ maybe [] (\t -> [TransactionEntityDate <=. t]) mTo
       rows <- selectList filters []
       map snd <$> withLabels rows
+
+-- -----------------------------------------------------------------------------
+-- Relation queries
+-- -----------------------------------------------------------------------------
+
+-- | Outbound edges declared by a transaction: (relatedTransactionId, kind).
+relationsFrom :: (MonadIO m) => TransactionId -> SqlPersistT m [(TransactionId, RelationKind)]
+relationsFrom txId = do
+  rows <- selectList [TransactionRelationEntityTransactionId ==. txId] []
+  pure [(r.transactionRelationEntityRelatedTransactionId, r.transactionRelationEntityRelationKind) | Entity _ r <- rows]
+
+-- | Outbound edges for many transactions in one query (avoids N+1 on list responses).
+relationsFromMany :: (MonadIO m) => [TransactionId] -> SqlPersistT m (Map TransactionId [(TransactionId, RelationKind)])
+relationsFromMany [] = pure Map.empty
+relationsFromMany txIds = do
+  rows <- selectList [TransactionRelationEntityTransactionId <-. txIds] []
+  pure $
+    Map.fromListWith
+      (<>)
+      [ ( r.transactionRelationEntityTransactionId,
+          [(r.transactionRelationEntityRelatedTransactionId, r.transactionRelationEntityRelationKind)]
+        )
+      | Entity _ r <- rows
+      ]
+
+-- | Inbound edges of a given kind pointing at a transaction. For 'Refund' the
+-- cancelled-"from" edges are skipped (auto-orphan, decision 3); for 'Merge'/'Split'
+-- the "from" is deliberately cancelled (lineage) and is kept.
+-- e.g. refundsOf = reverseRelations _ Refund.
+reverseRelations :: (MonadIO m) => TransactionId -> RelationKind -> SqlPersistT m [TransactionId]
+reverseRelations txId kind = do
+  rows <- selectList [TransactionRelationEntityRelatedTransactionId ==. txId, TransactionRelationEntityRelationKind ==. kind] []
+  let froms = [r.transactionRelationEntityTransactionId | Entity _ r <- rows]
+  if kind == Refund then nonCancelledTransactions froms else pure froms
+
+-- | All inbound edges (any kind) pointing at a transaction. Refund edges from a
+-- Cancelled source are skipped; Merge/Split lineage is kept even when cancelled.
+relationsTo :: (MonadIO m) => TransactionId -> SqlPersistT m [(TransactionId, RelationKind)]
+relationsTo txId = do
+  rows <- selectList [TransactionRelationEntityRelatedTransactionId ==. txId] []
+  let pairs = [(r.transactionRelationEntityTransactionId, r.transactionRelationEntityRelationKind) | Entity _ r <- rows]
+      refundFroms = [f | (f, Refund) <- pairs]
+  liveRefund <- Set.fromList <$> nonCancelledTransactions refundFroms
+  pure [p | p@(f, k) <- pairs, k /= Refund || Set.member f liveRefund]
+
+-- | Filter a list of "from" transaction ids down to those NOT Cancelled.
+nonCancelledTransactions :: (MonadIO m) => [TransactionId] -> SqlPersistT m [TransactionId]
+nonCancelledTransactions [] = pure []
+nonCancelledTransactions ids = do
+  rows <- selectList [TransactionEntityTransactionId <-. ids, TransactionEntityStatusKind !=. CancelledKind] []
+  pure [e.transactionEntityTransactionId | Entity _ e <- rows]
 
 -- -----------------------------------------------------------------------------
 -- Pure helpers

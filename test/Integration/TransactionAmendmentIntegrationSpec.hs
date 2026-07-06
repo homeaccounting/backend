@@ -74,6 +74,7 @@ seedIncome seed accId amount = do
         Set.empty
         "Seed"
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "seedIncome failed: " <> show err
     Right r -> pure r
@@ -90,6 +91,7 @@ seedTransfer seed src tgt amount = do
         (unsafeMoney Core.USD (toRational amount))
         Set.empty
         "Seed transfer"
+        Nothing
         Nothing
         Nothing
   case res of

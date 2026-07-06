@@ -114,6 +114,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             Set.empty
             "Seed"
             Nothing
+            Nothing
       (txId, original) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -144,6 +145,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             (incomeAllocs fx (unsafeMoney Core.USD 100))
             Set.empty
             "Seed"
+            Nothing
             Nothing
       (txId, original) <- case create of
         Right r -> pure r
@@ -182,6 +184,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             "Seed"
             Nothing
             Nothing
+            Nothing
       (txId, _td) <- case transfer of
         Right r -> pure r
         Left err -> fail $ "initiateTransfer failed: " <> show err
@@ -212,6 +215,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             (expenseAllocs fx (unsafeMoney Core.USD 25))
             Set.empty
             "Coffee"
+            Nothing
             Nothing
       (txId, original) <- case create of
         Right r -> pure r
@@ -248,6 +252,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             Set.empty
             "Backdated seed"
             (Just originalAt)
+            Nothing
       (txId, original) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateIncome failed: " <> show err
@@ -284,6 +289,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             (unsafeMoney Core.USD 50)
             Set.empty
             "A→B"
+            Nothing
             Nothing
             Nothing
       (txId, _original) <- case transfer of
@@ -329,6 +335,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             (expenseAllocs fx (unsafeMoney Core.UAH 200))
             Set.empty
             "Groceries"
+            Nothing
             Nothing
       txId <- case create of
         Right (tid, _) -> pure tid

@@ -128,6 +128,12 @@ module Domain.Core.Types
     mkMixedAllocations,
     allAllocations,
 
+    -- * Transaction Relationships
+    RelationKind (..),
+    renderRelationKind,
+    parseRelationKind,
+    RelationSpec (..),
+
     -- * OAuth Types
     OAuthProvider (..),
     OAuthIdentity (..),
@@ -1272,6 +1278,60 @@ mkExpense categorisedTotal a = do
   if null a.incomes
     then pure (Expense a)
     else Left ContraIncomeNotSupported
+
+-- -----------------------------------------------------------------------------
+-- Transaction Relationships
+-- -----------------------------------------------------------------------------
+
+-- | The kind of a typed relationship between two transactions. See
+-- docs/specs/2026-07-05-transaction-relationships-design.md.
+--
+--   * 'Refund'     — an Income transaction partially/fully refunds an Expense.
+--   * 'Merge'      — a cancelled source transaction was merged into a target.
+--   * 'Split'      — a newly-created result was split from an origin.
+--   * 'Associated' — a generic user-declared link between two related
+--     transactions of any kind (e.g. a delivery expense tied to the goods
+--     purchase, or two incomes that are parts of one payment). Endpoint kinds
+--     are unrestricted.
+--
+-- Direction is a documented convention (the owning/self transaction is the
+-- "from" endpoint; the referenced one is 'relatedTransactionId'), not encoded
+-- in the constructor names.
+data RelationKind = Refund | Merge | Split | Associated
+  deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
+instance ToJSON RelationKind
+
+instance FromJSON RelationKind
+
+-- | An at-creation relationship request threaded through 'InitiateTransaction':
+-- the referenced (pre-existing) transaction and the kind of edge to record. The
+-- owning ("from") transaction is the one being created, so it is not named here.
+data RelationSpec = RelationSpec
+  { relatedTransactionId :: TransactionId,
+    relationKind :: RelationKind
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON RelationSpec
+
+instance FromJSON RelationSpec
+
+-- | Render a 'RelationKind' to its lowercase wire/DB token.
+renderRelationKind :: RelationKind -> Text
+renderRelationKind Refund = "refund"
+renderRelationKind Merge = "merge"
+renderRelationKind Split = "split"
+renderRelationKind Associated = "associated"
+
+-- | Parse a wire/DB token (trimmed, case-insensitive) to a 'RelationKind'.
+parseRelationKind :: Text -> Maybe RelationKind
+parseRelationKind raw = case T.toLower (T.strip raw) of
+  "refund" -> Just Refund
+  "merge" -> Just Merge
+  "split" -> Just Split
+  "associated" -> Just Associated
+  _ -> Nothing
 
 -- -----------------------------------------------------------------------------
 -- OAuth Types

@@ -224,7 +224,8 @@ spec = describe "Allocations / worked examples" $ do
                   at = Time.UTCTime (Time.fromGregorian 2025 1 1) 0,
                   transactionType = Expense contraBadAllocs,
                   externalTransactionId = Nothing,
-                  labels = Set.empty
+                  labels = Set.empty,
+                  relation = Nothing
                 }
       -- transactionDefault has sourceAmount = 0 (uninitialised) so the
       -- handler treats it as "not yet initiated" and proceeds to validation.

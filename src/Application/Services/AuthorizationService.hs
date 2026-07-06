@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- |
 -- Module      : Application.Services.AuthorizationService
@@ -45,21 +46,37 @@ module Application.Services.AuthorizationService
     canTransfer,
     getUserAccessibleAccounts,
     checkAccountAccess,
+
+    -- * Transaction Access Guards
+    ensureCanModifyTransaction,
+    ensureCanAccessTransaction,
   )
 where
 
+import Application.ReadModels.Account (AccountData (..))
+import qualified Application.ReadModels.Account as AccountRM
+import Application.ReadModels.Transaction (TransactionData (..))
+import qualified Application.ReadModels.Transaction as ReadModel
+import Application.Services.Internal (guardE, liftMaybeM)
 import Control.Concurrent.STM (TVar, readTVarIO)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (runExceptT)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (catMaybes)
+import qualified Data.Text as T
+import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountAccess (..),
     AccountId,
     AccountRole (..),
     AccountType (..),
+    TransactionId,
     UserId,
   )
 import GHC.Generics (Generic)
+import Infrastructure.App (AppM, runDb)
 
 -- -----------------------------------------------------------------------------
 -- Result Types
@@ -234,6 +251,66 @@ canTransfer userId sourceData targetData sourceId targetId
         AccessDenied -> TransferDenied NoAccessToTarget
   -- All checks passed
   | otherwise = TransferAuthorized
+
+-- -----------------------------------------------------------------------------
+-- Transaction Access Guards
+-- -----------------------------------------------------------------------------
+
+-- | Enforce Editor+ access on one of the transaction's accounts and
+-- return the matching 'TransactionData' on success. Missing
+-- transactions surface as 'NotFound'.
+ensureCanModifyTransaction ::
+  UserId ->
+  TransactionId ->
+  AppM (Either DomainError TransactionData)
+ensureCanModifyTransaction userId transactionId =
+  ensureTransactionAccess
+    transactionId
+    (canModifyAccount userId)
+    (AccountError "User does not have edit access to this transaction")
+
+-- | Read-only sibling of 'ensureCanModifyTransaction': require any role
+-- (Viewer+) on one of the transaction's accounts and return its
+-- 'TransactionData'. Missing transactions surface as 'NotFound'. Used by
+-- relation validation, which only needs visibility of the endpoints.
+ensureCanAccessTransaction ::
+  UserId ->
+  TransactionId ->
+  AppM (Either DomainError TransactionData)
+ensureCanAccessTransaction userId transactionId =
+  ensureTransactionAccess
+    transactionId
+    ( \ad -> case canAccessAccount userId ad of
+        AccessGranted _ -> True
+        AccessDenied -> False
+    )
+    (NotFound "Transaction" (T.pack (show transactionId)))
+
+-- | Shared load-transaction-and-check logic behind the transaction access
+-- guards. Loads the transaction (else 'NotFound'), loads both leg accounts,
+-- and grants access when the predicate holds on either leg's
+-- 'AccountAuthData'; otherwise fails with the supplied denial error.
+ensureTransactionAccess ::
+  TransactionId ->
+  (AccountAuthData -> Bool) ->
+  DomainError ->
+  AppM (Either DomainError TransactionData)
+ensureTransactionAccess transactionId isAllowed denial = runExceptT $ do
+  transaction <-
+    liftMaybeM
+      (NotFound "Transaction" (T.pack (show transactionId)))
+      (runDb (ReadModel.getTransaction transactionId))
+  mSrc <- lift (runDb (AccountRM.getAccount transaction.sourceAccountId))
+  mTgt <- lift (runDb (AccountRM.getAccount transaction.targetAccountId))
+  let toAuthData acc =
+        AccountAuthData
+          { createdBy = acc.createdBy,
+            accountType = acc.accountType,
+            accessList = acc.accessList
+          }
+      allowed = any (isAllowed . toAuthData) (catMaybes [mSrc, mTgt])
+  guardE allowed denial
+  pure transaction
 
 -- | Get all accounts a user can access with their roles.
 --

@@ -36,6 +36,9 @@ module Application.Services.TransactionService
     changeTransactionDate,
     amendTransaction,
     cancelTransaction,
+    recordTransactionRelation,
+    getOutboundRelations,
+    getRelations,
 
     -- * Re-exported helpers for sibling services
     resolveAndInitiate,
@@ -52,7 +55,12 @@ import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryD
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), TransactionFilter)
 import qualified Application.ReadModels.Transaction as ReadModel
-import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
+import Application.Services.AuthorizationService
+  ( AccountAuthData (..),
+    canModifyAccount,
+    ensureCanAccessTransaction,
+    ensureCanModifyTransaction,
+  )
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Application.Services.Internal
   ( getUserExternalAccountId,
@@ -80,6 +88,8 @@ import Domain.Core.Types
     ExchangeRate,
     LabelId,
     Money,
+    RelationKind (..),
+    RelationSpec (..),
     TransactionId,
     TransactionKind (..),
     TransactionType (..),
@@ -105,7 +115,8 @@ import Domain.Models
   )
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
-      ( AmendTransactionTransactionCommand,
+      ( AddTransactionRelationTransactionCommand,
+        AmendTransactionTransactionCommand,
         CancelTransactionTransactionCommand,
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
@@ -117,7 +128,8 @@ import Domain.Transaction.CommandHandler
   )
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
-  ( AmendTransaction (..),
+  ( AddTransactionRelation (..),
+    AmendTransaction (..),
     CancelTransaction (..),
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
@@ -128,6 +140,7 @@ import Domain.Transaction.Commands
 import Domain.Transaction.Events
   ( TransactionAmendmentFailed (..),
   )
+import Domain.Transaction.Projection (TransactionStatus (..))
 import Eventium (CommandHandlerError (..), EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App
   ( AppM,
@@ -231,8 +244,9 @@ initiateIncome ::
   Set LabelId ->
   Text ->
   Maybe UTCTime ->
+  Maybe RelationSpec ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount allocations labels description maybeTransferDate =
+initiateIncome userId targetAccountId amount allocations labels description maybeTransferDate maybeRelation =
   runExceptT $ do
     lift $ logInfo "Initiating income transfer..."
     now <- liftIO getCurrentTime
@@ -256,6 +270,11 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
         tgtCurrency = moneyCurrency targetData.balance
     -- Validate each allocation references a known category in its bucket.
     ExceptT (validateAllocationsAgainstDictionary userId allocations)
+    -- Optional relation edge: validate the target per its kind.
+    rel <-
+      case maybeRelation of
+        Nothing -> pure Nothing
+        Just spec -> ExceptT (validateRelationTarget userId spec) >> pure (Just spec)
     -- Income: user provides amount in target (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency False Nothing
@@ -273,7 +292,8 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
                   at = date,
                   transactionType = tt,
                   externalTransactionId = Nothing,
-                  labels = labels
+                  labels = labels,
+                  relation = rel
                 }
       )
 
@@ -290,8 +310,9 @@ initiateExpense ::
   Set LabelId ->
   Text ->
   Maybe UTCTime ->
+  Maybe RelationSpec ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount allocations labels description maybeTransferDate =
+initiateExpense userId sourceAccountId amount allocations labels description maybeTransferDate maybeRelation =
   runExceptT $ do
     lift $ logInfo "Initiating expense transfer..."
     now <- liftIO getCurrentTime
@@ -315,6 +336,11 @@ initiateExpense userId sourceAccountId amount allocations labels description may
         tgtCurrency = moneyCurrency targetData.balance
     -- Validate each allocation references a known category in its bucket.
     ExceptT (validateAllocationsAgainstDictionary userId allocations)
+    -- Optional relation edge: validate the target per its kind.
+    rel <-
+      case maybeRelation of
+        Nothing -> pure Nothing
+        Just spec -> ExceptT (validateRelationTarget userId spec) >> pure (Just spec)
     -- Expense: user provides amount in source (Regular) currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True Nothing
@@ -332,7 +358,8 @@ initiateExpense userId sourceAccountId amount allocations labels description may
                   at = date,
                   transactionType = tt,
                   externalTransactionId = Nothing,
-                  labels = labels
+                  labels = labels,
+                  relation = rel
                 }
       )
 
@@ -349,8 +376,9 @@ initiateTransfer ::
   Text ->
   Maybe Rational ->
   Maybe UTCTime ->
+  Maybe RelationSpec ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateTransfer userId sourceAccountId targetAccountId amount labels description maybeUserRate maybeTransferDate =
+initiateTransfer userId sourceAccountId targetAccountId amount labels description maybeUserRate maybeTransferDate maybeRelation =
   runExceptT $ do
     lift $ logInfo "Initiating internal transfer..."
     now <- liftIO getCurrentTime
@@ -376,6 +404,11 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
       )
     let srcCurrency = moneyCurrency sourceData.balance
         tgtCurrency = moneyCurrency targetData.balance
+    -- Optional relation edge: validate the target per its kind.
+    rel <-
+      case maybeRelation of
+        Nothing -> pure Nothing
+        Just spec -> ExceptT (validateRelationTarget userId spec) >> pure (Just spec)
     -- Internal: user provides amount in source currency
     ExceptT
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate
@@ -392,7 +425,8 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
                   at = date,
                   transactionType = Transfer,
                   externalTransactionId = Nothing,
-                  labels = labels
+                  labels = labels,
+                  relation = rel
                 }
       )
 
@@ -415,7 +449,7 @@ setTransactionLabels userId transactionId labels = runExceptT $ do
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  _transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  _transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   ExceptT (validateLabels userId labels)
   let cmd =
         SetTransactionLabelsTransactionCommand
@@ -450,7 +484,7 @@ setTransactionAllocations userId transactionId newAllocations = runExceptT $ do
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   -- Existing TX must be Income/Expense; pick the matching dictionary
   -- for the existing kind. Uncategorised aggregates are rejected up
   -- front so we can validate each allocation's category id against
@@ -490,7 +524,7 @@ changeTransactionDescription userId transactionId newDescription = runExceptT $ 
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  _transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  _transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   let cmd =
         ChangeTransactionDescriptionTransactionCommand
           ChangeTransactionDescription
@@ -518,7 +552,7 @@ changeTransactionDate userId transactionId newAt = runExceptT $ do
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   ExceptT (guardBooksClosed userId transaction.date)
   ExceptT (guardBooksClosed userId newAt)
   let cmd =
@@ -560,7 +594,7 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   ExceptT (guardBooksClosed userId transaction.date)
   (newSrcAcc, newTgtAcc) <-
     ExceptT
@@ -644,7 +678,7 @@ cancelTransaction userId transactionId = runExceptT $ do
     <> displayShow transactionId
     <> " for user "
     <> displayShow userId
-  transaction <- ExceptT (ensureEditorAccess userId transactionId)
+  transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   ExceptT (guardBooksClosed userId transaction.date)
   ExceptT
     ( dispatchAndAwaitCancellation
@@ -709,29 +743,67 @@ validateLabels userId labels
         [] -> pure ()
         (eid : _) -> throwE (LabelNotFound (tshow (unDictionaryEntryId eid)))
 
--- | Enforce Editor+ access on one of the transaction's accounts and
--- return the matching 'TransactionData' on success. Missing
--- transactions surface as 'NotFound'.
-ensureEditorAccess ::
+-- | Validate the target ("to") endpoint of a relation edge, per kind:
+--   * visible to the caller (else NotFound),
+--   * Refund: target must be an Expense and not Cancelled,
+--   * Merge/Split: no cancelled/kind restriction,
+--   * depth-1: target must not already declare an outbound edge of the same kind.
+-- Self-link is NOT checked here (callers handle it: vacuous at creation; explicit in recordTransactionRelation).
+validateRelationTarget :: UserId -> RelationSpec -> AppM (Either DomainError ())
+validateRelationTarget userId spec = runExceptT $ do
+  target <- ExceptT (ensureCanAccessTransaction userId spec.relatedTransactionId)
+  case spec.relationKind of
+    Refund -> do
+      case target.transactionType of
+        Expense _ -> pure ()
+        _ -> throwE RefundTargetMustBeExpense
+      when (target.status == Cancelled) $ throwE CannotRefundCancelledTransaction
+    Merge -> pure ()
+    Split -> pure ()
+    Associated -> pure () -- generic link; endpoint kinds unrestricted
+  outbound <- lift (getOutboundRelations spec.relatedTransactionId)
+  when (any ((== spec.relationKind) . snd) outbound) $ throwE CannotChainRelations
+
+-- | Outbound edges declared by a transaction: @(relatedTransactionId, kind)@.
+getOutboundRelations :: TransactionId -> AppM [(TransactionId, RelationKind)]
+getOutboundRelations txId = runDb (ReadModel.relationsFrom txId)
+
+-- | Outbound + inbound relation edges of a transaction, gated on caller
+-- visibility. Enforces the same access check ('ensureCanAccessTransaction') used by
+-- relation validation, so a caller who cannot see the transaction gets a
+-- 'NotFound'. Returns @(outbound, inbound)@ where each edge is
+-- @(otherEndpointId, kind)@.
+getRelations ::
   UserId ->
   TransactionId ->
-  AppM (Either DomainError TransactionData)
-ensureEditorAccess userId transactionId = runExceptT $ do
-  transaction <-
-    liftMaybeM
-      (NotFound "Transaction" (tshow transactionId))
-      (runDb (ReadModel.getTransaction transactionId))
-  mSrc <- lift (runDb (AccountRM.getAccount transaction.sourceAccountId))
-  mTgt <- lift (runDb (AccountRM.getAccount transaction.targetAccountId))
-  let toAuthData acc =
-        AccountAuthData
-          { createdBy = acc.createdBy,
-            accountType = acc.accountType,
-            accessList = acc.accessList
-          }
-      allowed = any (canModifyAccount userId . toAuthData) $ catMaybes [mSrc, mTgt]
-  guardE allowed (AccountError "User does not have edit access to this transaction")
-  pure transaction
+  AppM (Either DomainError ([(TransactionId, RelationKind)], [(TransactionId, RelationKind)]))
+getRelations userId txId = runExceptT $ do
+  _ <- ExceptT (ensureCanAccessTransaction userId txId)
+  outbound <- lift (getOutboundRelations txId)
+  inbound <- lift (runDb (ReadModel.relationsTo txId))
+  pure (outbound, inbound)
+
+-- | Record a typed relationship on an existing transaction (Merge/Split
+-- lineage). Runs common + per-kind validation, then dispatches
+-- 'AddTransactionRelation' on the "from" stream. NOT a public endpoint — used
+-- by the future merge/split domain operations.
+recordTransactionRelation ::
+  UserId ->
+  TransactionId ->
+  TransactionId ->
+  RelationKind ->
+  AppM (Either DomainError ())
+recordTransactionRelation userId fromId toId kind = runExceptT $ do
+  when (unTransactionId fromId == unTransactionId toId)
+    $ throwE CannotRelateTransactionToItself
+  _ <- ExceptT (ensureCanAccessTransaction userId fromId)
+  -- Common visibility + per-kind + depth-1 validation of the "to" endpoint.
+  ExceptT (validateRelationTarget userId (RelationSpec toId kind))
+  runTransactionCmd
+    translateTransactionError
+    id
+    (unTransactionId fromId)
+    (AddTransactionRelationTransactionCommand (AddTransactionRelation fromId toId kind))
 
 -- | Dispatch an edit command (SetTransactionLabels or
 -- ChangeTransactionCategory) and return the resulting 'TransactionData'
@@ -969,6 +1041,8 @@ translateTransactionError (CommandRejected TxCh.CannotAmendDuringCancellation) =
   CannotAmendDuringCancellation
 translateTransactionError (CommandRejected TxCh.CannotAmendToAdjustmentKind) =
   CannotAmendToAdjustmentKind
+translateTransactionError (CommandRejected TxCh.RelationSelfLink) =
+  CannotRelateTransactionToItself
 translateTransactionError other =
   TransactionError (T.pack (show other))
 
