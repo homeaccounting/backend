@@ -130,7 +130,9 @@ spec = describe "Persistent Transaction read model" $ do
           [ "idx_transactions_source",
             "idx_transactions_target",
             "idx_transactions_date",
-            "idx_transaction_labels_label"
+            "idx_transaction_labels_label",
+            "idx_transaction_relations_from",
+            "idx_transaction_relations_to_kind"
           ]
 
   describe "tenant isolation" $ do
