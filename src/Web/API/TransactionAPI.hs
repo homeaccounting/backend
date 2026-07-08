@@ -54,6 +54,8 @@ module Web.API.TransactionAPI
     transactionHistoryHandler,
     cancelTransactionHandler,
     relationsHandler,
+    addRelationHandler,
+    removeRelationHandler,
   )
 where
 
@@ -61,12 +63,14 @@ import Application.ReadModels.Transaction (mkTransactionFilter)
 import Application.Services.TransactionHistoryService (TransactionHistory)
 import qualified Application.Services.TransactionHistoryService as TransactionHistoryService
 import qualified Application.Services.TransactionService as TransactionService
+import Data.Aeson (encode)
+import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Page (Page (..), mkPage)
 import Domain.Core.Range (mkRange)
-import Domain.Core.Types (Allocation (..), Allocations, Currency, Money (..), RelationSpec (..), TransactionType (..), allAllocations, mkAccountId, mkAllocation, mkAllocations, mkDictionaryEntryId, mkTransactionId, parseCurrency, parseRelationKind, renderRelationKind, unTransactionId, unsafeDictionaryEntryId)
+import Domain.Core.Types (Allocation (..), Allocations, Currency, Money (..), RelationKind (..), RelationSpec (..), TransactionType (..), allAllocations, mkAccountId, mkAllocation, mkAllocations, mkDictionaryEntryId, mkTransactionId, parseCurrency, parseRelationKind, renderRelationKind, unTransactionId, unsafeDictionaryEntryId)
 import Domain.Transaction.Commands (AmendTransaction (..))
 import Domain.Transaction.Projection (StatusKind)
 import Infrastructure.App (AppM)
@@ -90,12 +94,13 @@ import Web.Types
     TransactionRelationsResponse (..),
     TransactionResponse,
     TransferRequest (..),
+    ValidationErrorResponse (..),
     fromTransactionData,
     parseLabelIds,
     parseOptionalExchangeRate,
     toDomainMoney,
   )
-import Web.Validation (validateDateNotInFuture, validateField)
+import Web.Validation (missingParam, validateDateNotInFuture, validateField)
 
 -- -----------------------------------------------------------------------------
 -- API Type Definition
@@ -200,6 +205,27 @@ type TransactionAPI =
       :> Capture "id" UUID
       :> "relations"
       :> Get '[JSON] TransactionRelationsResponse
+    -- POST /api/transactions/:id/relations - Add a typed relation edge
+    -- (refund/associated only) from :id to relatedTransactionId, then return
+    -- the refreshed transaction.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "relations"
+      :> ReqBody '[JSON] TransactionRelation
+      :> Post '[JSON] TransactionResponse
+    -- DELETE /api/transactions/:id/relations - Remove a typed relation edge
+    -- (refund/associated only) between :id and relatedTransactionId, then
+    -- return the refreshed owner transaction.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "relations"
+      :> QueryParam "relatedTransactionId" UUID
+      :> QueryParam "relationKind" Text
+      :> Delete '[JSON] TransactionResponse
     -- GET /api/transactions/:id - Get transaction status (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -235,6 +261,8 @@ transactionServer =
     :<|> amendTransactionHandler
     :<|> transactionHistoryHandler
     :<|> relationsHandler
+    :<|> addRelationHandler
+    :<|> removeRelationHandler
     :<|> getTransactionHandler
     :<|> cancelTransactionHandler
 
@@ -456,6 +484,80 @@ relationsHandler user rawId = do
               | (frm, k) <- inbound
               ]
           }
+    Left err -> throwDomainError err
+
+-- | Handler for POST /api/transactions/:id/relations — add a typed relation
+-- edge from @:id@ (the owner/from) to @relatedTransactionId@, then re-fetch and
+-- return the updated transaction.
+--
+-- Only @refund@ and @associated@ kinds are accepted here (merge/split are
+-- produced by dedicated flows); any other token is rejected with a 422 via
+-- 'requireLinkableKind'. All per-kind target rules (refund source/cap, depth-1,
+-- self-link, duplicate/reciprocal) are enforced downstream by
+-- 'TransactionService.addTransactionRelation'.
+addRelationHandler :: AuthenticatedUser -> UUID -> TransactionRelation -> AppM TransactionResponse
+addRelationHandler user rawId req = do
+  txId <- validateField "id" (mkTransactionId rawId)
+  relId <- validateField "relatedTransactionId" (mkTransactionId req.relatedTransactionId)
+  kind <- requireLinkableKind req.relationKind
+  result <- TransactionService.addTransactionRelation user.userId txId relId kind
+  case result of
+    Right () -> do
+      refreshed <- TransactionService.getTransaction (unTransactionId txId)
+      either throwDomainError (\(tid, td) -> pure (fromTransactionData tid td)) refreshed
+    Left err -> throwDomainError err
+
+-- | Parse a wire relation-kind token, accepting ONLY @refund@/@associated@.
+-- Everything else — an unknown token or the lineage kinds @merge@/@split@ (which
+-- are produced by dedicated flows, not added retroactively) — is rejected
+-- with a 422 Unprocessable Entity carrying a field-scoped validation body. The
+-- 422 status is per the relations design spec
+-- (@docs/specs/2026-07-07-transaction-relations-design.md@).
+requireLinkableKind :: Text -> AppM RelationKind
+requireLinkableKind token = case parseRelationKind token of
+  Just Refund -> pure Refund
+  Just Associated -> pure Associated
+  _ -> throwIO $ err422 {errBody = encode body}
+  where
+    body =
+      ValidationErrorResponse
+        { message = "Validation failed",
+          fieldErrors =
+            Map.singleton
+              "relationKind"
+              ("relationKind must be one of: refund, associated; got: " <> token)
+        }
+
+-- | Handler for DELETE /api/transactions/:id/relations — remove a typed relation
+-- edge between @:id@ and @relatedTransactionId@, then re-fetch and return the
+-- updated owner (@:id@) transaction.
+--
+-- Only @refund@\/@associated@ kinds are accepted (lineage @merge@\/@split@ is
+-- rejected with a 422 via 'requireLinkableKind'; the service additionally maps a
+-- lineage kind to 'CannotRemoveLineageRelation'). An absent edge yields a 404
+-- via 'RelationNotFound'. Both query params are required; a missing one is a
+-- field-scoped validation error (consistent with the module's 'validateField'
+-- idiom, i.e. a 400 'ValidationErr').
+--
+-- Unlike the sibling cancel route this returns a JSON body (the refreshed owner
+-- 'TransactionResponse') so the client can refresh in a single round-trip,
+-- matching the add endpoint. The remove service returns @()@, so the updated
+-- owner is re-fetched here via 'TransactionService.getTransaction'.
+removeRelationHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  Maybe UUID ->
+  Maybe Text ->
+  AppM TransactionResponse
+removeRelationHandler user rawId mRel mKind = do
+  txId <- validateField "id" (mkTransactionId rawId)
+  relId <- maybe (missingParam "relatedTransactionId") (validateField "relatedTransactionId" . mkTransactionId) mRel
+  kind <- maybe (missingParam "relationKind") requireLinkableKind mKind
+  result <- TransactionService.removeTransactionRelation user.userId txId relId kind
+  case result of
+    Right () -> do
+      refreshed <- TransactionService.getTransaction (unTransactionId txId)
+      either throwDomainError (\(tid, td) -> pure (fromTransactionData tid td)) refreshed
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/transactions - list transactions visible to the caller.

@@ -120,6 +120,7 @@ import Domain.Models
     TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
     TransactionRelationAdded (..),
+    TransactionRelationRemoved (..),
   )
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..), statusFromKind)
 import Eventium
@@ -349,6 +350,12 @@ applyTransactionEvent globalEvent =
           TransactionCancellationInitiatedEvent _ -> pure ()
           TransactionRelationAddedEvent evt ->
             void (insertUnique (TransactionRelationEntity txId evt.relatedTransactionId evt.relationKind))
+          TransactionRelationRemovedEvent evt ->
+            deleteWhere
+              [ TransactionRelationEntityTransactionId ==. txId,
+                TransactionRelationEntityRelatedTransactionId ==. evt.relatedTransactionId,
+                TransactionRelationEntityRelationKind ==. evt.relationKind
+              ]
           _ -> pure ()
 
 -- | Read-modify-write a transaction row (no-op if absent).

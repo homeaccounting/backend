@@ -5,10 +5,10 @@
 -- |
 -- Module      : Application.Services.RefundValidationSpec
 -- Description : Service-level refund-target validation and the Merge/Split
---               relation hook ('recordTransactionRelation').
+--               relation hook ('addTransactionRelation').
 --
 -- Exercises the refund-target validation threaded through 'initiateIncome'
--- (Task 9d) and the generic 'recordTransactionRelation' hook (Task 9e):
+-- (Task 9d) and the generic 'addTransactionRelation' hook (Task 9e):
 --
 --   * a refund income linked to a Completed expense records a @Refund@ edge,
 --     visible via 'getOutboundRelations';
@@ -17,7 +17,7 @@
 --   * a refund whose target is Cancelled is rejected with
 --     'CannotRefundCancelledTransaction';
 --   * a refund whose target is absent is rejected with 'NotFound';
---   * 'recordTransactionRelation … Merge' on a Completed target records the
+--   * 'addTransactionRelation … Merge' on a Completed target records the
 --     edge and the reverse index surfaces it.
 --
 -- Uses the in-memory event-store harness with the posting process manager so
@@ -35,7 +35,7 @@ import Application.Services.TransactionService
     getOutboundRelations,
     initiateExpense,
     initiateIncome,
-    recordTransactionRelation,
+    addTransactionRelation,
   )
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))
@@ -232,13 +232,13 @@ spec = describe "TransactionService refund + relation hooks" $ do
         Left (NotFound "Transaction" _) -> pure ()
         other -> expectationFailure ("expected NotFound Transaction, got: " <> show other)
 
-  describe "recordTransactionRelation (Merge/Split hook)" $ do
+  describe "addTransactionRelation (Merge/Split hook)" $ do
     it "records a Merge edge on a Completed target and the reverse index shows it" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupFixture env "merge-ok@test.com"
       fromId <- postExpense env fx
       toId <- postExpense env fx
-      res <- runAppM env (recordTransactionRelation fx.userId fromId toId Merge)
+      res <- runAppM env (addTransactionRelation fx.userId fromId toId Merge)
       case res of
         Left err -> expectationFailure ("expected success, got: " <> show err)
         Right () -> do
@@ -252,7 +252,7 @@ spec = describe "TransactionService refund + relation hooks" $ do
       fx <- setupFixture env "associated-ok@test.com"
       incomeId <- postIncome env fx
       expenseId <- postExpense env fx
-      res <- runAppM env (recordTransactionRelation fx.userId incomeId expenseId Associated)
+      res <- runAppM env (addTransactionRelation fx.userId incomeId expenseId Associated)
       case res of
         Left err -> expectationFailure ("expected success, got: " <> show err)
         Right () -> do
@@ -263,7 +263,7 @@ spec = describe "TransactionService refund + relation hooks" $ do
       env <- createTestAppEnvWithProcessManager
       fx <- setupFixture env "merge-self@test.com"
       txId <- postExpense env fx
-      res <- runAppM env (recordTransactionRelation fx.userId txId txId Merge)
+      res <- runAppM env (addTransactionRelation fx.userId txId txId Merge)
       res `shouldBe` Left CannotRelateTransactionToItself
 
     it "rejects chaining onto a target that already declares an outbound edge (depth-1)" $ do
@@ -273,11 +273,11 @@ spec = describe "TransactionService refund + relation hooks" $ do
       txB <- postExpense env fx
       txC <- postExpense env fx
       -- A -> B (Merge): A now declares an outbound Merge edge.
-      first <- runAppM env (recordTransactionRelation fx.userId txA txB Merge)
+      first <- runAppM env (addTransactionRelation fx.userId txA txB Merge)
       case first of
         Left err -> expectationFailure ("expected first edge to succeed, got: " <> show err)
         Right () -> pure ()
       -- C -> A (Merge): A is the target but already has an outbound Merge edge,
       -- so the depth-1 guard rejects the chain.
-      second <- runAppM env (recordTransactionRelation fx.userId txC txA Merge)
+      second <- runAppM env (addTransactionRelation fx.userId txC txA Merge)
       second `shouldBe` Left CannotChainRelations

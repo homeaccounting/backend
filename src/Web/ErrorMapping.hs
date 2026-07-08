@@ -510,6 +510,56 @@ mapDomainError CannotChainRelations =
               details = Nothing
             }
     }
+mapDomainError RefundSourceMustBeIncomeWithContra =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "A refund's source must be an income carrying a contra allocation",
+              code = "REFUND_SOURCE_MUST_BE_INCOME_WITH_CONTRA",
+              details = Nothing
+            }
+    }
+mapDomainError RefundExceedsRefundableAmount =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Refund exceeds the target expense's remaining refundable amount",
+              code = "REFUND_EXCEEDS_REFUNDABLE_AMOUNT",
+              details = Nothing
+            }
+    }
+mapDomainError RelationAlreadyExists =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "The relation already exists",
+              code = "RELATION_ALREADY_EXISTS",
+              details = Nothing
+            }
+    }
+mapDomainError RelationNotFound =
+  err404
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "The relation does not exist",
+              code = "RELATION_NOT_FOUND",
+              details = Nothing
+            }
+    }
+mapDomainError CannotRemoveLineageRelation =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Merge/Split lineage relations cannot be removed",
+              code = "CANNOT_REMOVE_LINEAGE_RELATION",
+              details = Nothing
+            }
+    }
 mapDomainError (BankConnectionAccountInvalid field) =
   err400
     { errBody =

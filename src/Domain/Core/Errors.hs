@@ -187,6 +187,23 @@ data DomainError
   | -- | A relationship was requested against a target that already declares an
     -- outbound edge of the same kind. Relations are depth-1 only (no chaining).
     CannotChainRelations
+  | -- | A Refund relation's source ("from") transaction is not an income
+    -- carrying a contra (expense-bucket) allocation. Only such an income can
+    -- refund an expense.
+    RefundSourceMustBeIncomeWithContra
+  | -- | Adding this Refund would push the total refunded amount (existing
+    -- refunds plus this one) above the target expense's refundable amount.
+    RefundExceedsRefundableAmount
+  | -- | The requested relation edge already exists (a duplicate forward edge,
+    -- or — for 'Associated' — a reciprocal edge in the opposite direction).
+    RelationAlreadyExists
+  | -- | A removal was requested for a relation edge that does not exist in
+    -- either direction (never created, or already removed). Idempotent removal
+    -- surfaces the second removal as this.
+    RelationNotFound
+  | -- | A removal was requested for a 'Merge'/'Split' lineage edge. Lineage
+    -- edges are structural provenance and are not user-removable.
+    CannotRemoveLineageRelation
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -320,3 +337,11 @@ renderDomainError err = case err of
   CannotRefundCancelledTransaction -> "Cannot refund a cancelled transaction"
   CannotRelateTransactionToItself -> "A transaction cannot be related to itself"
   CannotChainRelations -> "Relations cannot be chained (depth-1 only)"
+  RefundSourceMustBeIncomeWithContra ->
+    "A refund's source must be an income carrying a contra allocation"
+  RefundExceedsRefundableAmount ->
+    "Refund exceeds the target expense's remaining refundable amount"
+  RelationAlreadyExists -> "The relation already exists"
+  RelationNotFound -> "The relation does not exist"
+  CannotRemoveLineageRelation ->
+    "Merge/Split lineage relations cannot be removed"

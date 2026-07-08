@@ -11,6 +11,7 @@ module Web.Validation
   ( validateField,
     validateFieldCtx,
     validateDateNotInFuture,
+    missingParam,
   )
 where
 
@@ -25,6 +26,12 @@ validateField :: (MonadIO m) => Text -> Either Text a -> m a
 validateField _ (Right a) = pure a
 validateField field (Left err) =
   throwDomainError $ ValidationErr $ mkValidationError field err err
+
+-- | Throw a field-scoped validation error for a missing required parameter
+-- (e.g. an absent required query param), reusing the 'validateField' idiom —
+-- a 400 'ValidationErr' scoped to @field@.
+missingParam :: (MonadIO m) => Text -> m a
+missingParam field = validateField field (Left "is required")
 
 -- | Like 'validateField' but with a custom context value for the error.
 validateFieldCtx :: (MonadIO m) => Text -> Text -> Either Text a -> m a

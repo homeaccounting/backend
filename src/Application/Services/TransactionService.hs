@@ -36,7 +36,8 @@ module Application.Services.TransactionService
     changeTransactionDate,
     amendTransaction,
     cancelTransaction,
-    recordTransactionRelation,
+    addTransactionRelation,
+    removeTransactionRelation,
     getOutboundRelations,
     getRelations,
 
@@ -94,6 +95,7 @@ import Domain.Core.Types
     TransactionKind (..),
     TransactionType (..),
     UserId,
+    allocationsOf,
     convert,
     deriveTransactionKind,
     exchangeRateValue,
@@ -104,6 +106,7 @@ import Domain.Core.Types
     mkTransactionId,
     moneyCurrency,
     unDictionaryEntryId,
+    unMoney,
     unTransactionId,
   )
 import Domain.Models
@@ -121,6 +124,7 @@ import Domain.Transaction.CommandHandler
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
         InitiateTransactionTransactionCommand,
+        RemoveTransactionRelationTransactionCommand,
         SetTransactionAllocationsTransactionCommand,
         SetTransactionLabelsTransactionCommand
       ),
@@ -134,6 +138,7 @@ import Domain.Transaction.Commands
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
     InitiateTransaction (..),
+    RemoveTransactionRelation (..),
     SetTransactionAllocations (..),
     SetTransactionLabels (..),
   )
@@ -748,7 +753,7 @@ validateLabels userId labels
 --   * Refund: target must be an Expense and not Cancelled,
 --   * Merge/Split: no cancelled/kind restriction,
 --   * depth-1: target must not already declare an outbound edge of the same kind.
--- Self-link is NOT checked here (callers handle it: vacuous at creation; explicit in recordTransactionRelation).
+-- Self-link is NOT checked here (callers handle it: vacuous at creation; explicit in addTransactionRelation).
 validateRelationTarget :: UserId -> RelationSpec -> AppM (Either DomainError ())
 validateRelationTarget userId spec = runExceptT $ do
   target <- ExceptT (ensureCanAccessTransaction userId spec.relatedTransactionId)
@@ -783,20 +788,27 @@ getRelations userId txId = runExceptT $ do
   inbound <- lift (runDb (ReadModel.relationsTo txId))
   pure (outbound, inbound)
 
--- | Record a typed relationship on an existing transaction (Merge/Split
--- lineage). Runs common + per-kind validation, then dispatches
--- 'AddTransactionRelation' on the "from" stream. NOT a public endpoint — used
--- by the future merge/split domain operations.
-recordTransactionRelation ::
+-- | Add a typed relationship edge on an existing transaction. Runs common +
+-- per-kind validation, then dispatches 'AddTransactionRelation' on the "from"
+-- stream. Named for the command it dispatches and to mirror
+-- 'removeTransactionRelation'. Also used by the future merge/split domain
+-- operations (which supply their own edge direction).
+addTransactionRelation ::
   UserId ->
   TransactionId ->
   TransactionId ->
   RelationKind ->
   AppM (Either DomainError ())
-recordTransactionRelation userId fromId toId kind = runExceptT $ do
+addTransactionRelation userId fromId toId kind = runExceptT $ do
   when (unTransactionId fromId == unTransactionId toId)
     $ throwE CannotRelateTransactionToItself
   _ <- ExceptT (ensureCanAccessTransaction userId fromId)
+  -- Reject a duplicate forward edge (or a reciprocal 'Associated' edge) before
+  -- the per-kind depth-1 check, so an existing edge surfaces as
+  -- 'RelationAlreadyExists' rather than 'CannotChainRelations'.
+  ExceptT (validateNoExistingEdge fromId toId kind)
+  -- Refund-specific source shape + refundable-amount cap guards.
+  ExceptT (validateRefundSourceAndCap userId fromId toId kind)
   -- Common visibility + per-kind + depth-1 validation of the "to" endpoint.
   ExceptT (validateRelationTarget userId (RelationSpec toId kind))
   runTransactionCmd
@@ -804,6 +816,94 @@ recordTransactionRelation userId fromId toId kind = runExceptT $ do
     id
     (unTransactionId fromId)
     (AddTransactionRelationTransactionCommand (AddTransactionRelation fromId toId kind))
+
+-- | Remove a previously-added typed relationship between two transactions.
+-- Mirror of 'addTransactionRelation'. The edge may be initiated from either
+-- endpoint: the stored direction is resolved by inspecting both transactions'
+-- outbound edges, and the 'RemoveTransactionRelation' command is dispatched on
+-- whichever endpoint owns the "from" side.
+--
+-- Guards, in order:
+--   * 'Merge'/'Split' lineage edges are structural provenance and are refused
+--     ('CannotRemoveLineageRelation') — checked BEFORE existence so a lineage
+--     edge never masquerades as 'RelationNotFound'.
+--   * Caller must be able to access the acting endpoint.
+--   * If neither direction carries the @(other, kind)@ edge, the removal is
+--     'RelationNotFound' (also the idempotent second-removal outcome).
+removeTransactionRelation ::
+  UserId ->
+  TransactionId ->
+  TransactionId ->
+  RelationKind ->
+  AppM (Either DomainError ())
+removeTransactionRelation userId actingId otherId kind = runExceptT $ do
+  when (kind == Merge || kind == Split) $ throwE CannotRemoveLineageRelation
+  _ <- ExceptT (ensureCanAccessTransaction userId actingId)
+  fwd <- lift (getOutboundRelations actingId)
+  rev <- lift (getOutboundRelations otherId)
+  fromId <-
+    if (otherId, kind) `elem` fwd
+      then pure actingId
+      else
+        if (actingId, kind) `elem` rev
+          then pure otherId
+          else throwE RelationNotFound
+  let toId = if fromId == actingId then otherId else actingId
+  runTransactionCmd
+    translateTransactionError
+    id
+    (unTransactionId fromId)
+    (RemoveTransactionRelationTransactionCommand (RemoveTransactionRelation fromId toId kind))
+
+-- | Total of an income's contra (expense-bucket) allocations, as a plain
+-- 'Rational'. Zero for any transaction without expense-bucket allocations.
+contraTotal :: TransactionData -> Rational
+contraTotal td = case allocationsOf td.transactionType of
+  Just a -> sum [unMoney al.amount | al <- a.expenses]
+  Nothing -> 0
+
+-- | True when the transaction is an 'Income' carrying at least one contra
+-- (expense-bucket) allocation — the only shape that can refund an expense.
+isIncomeWithContra :: TransactionData -> Bool
+isIncomeWithContra td = case td.transactionType of
+  Income _ -> not (null (maybe [] (.expenses) (allocationsOf td.transactionType)))
+  _ -> False
+
+-- | For a 'Refund' edge, verify the source ("from") is an income-with-contra
+-- and that adding it does not push the total refunded amount above the
+-- target expense's refundable amount. Non-Refund kinds pass through.
+validateRefundSourceAndCap ::
+  UserId ->
+  TransactionId ->
+  TransactionId ->
+  RelationKind ->
+  AppM (Either DomainError ())
+validateRefundSourceAndCap userId fromId toId Refund = runExceptT $ do
+  src <- ExceptT (ensureCanAccessTransaction userId fromId)
+  unless (isIncomeWithContra src) $ throwE RefundSourceMustBeIncomeWithContra
+  target <- ExceptT (ensureCanAccessTransaction userId toId)
+  priorIds <- lift (runDb (ReadModel.reverseRelations toId Refund))
+  priors <- lift (traverse contraOfId priorIds)
+  when (contraTotal src + sum priors > unMoney target.sourceAmount)
+    $ throwE RefundExceedsRefundableAmount
+  where
+    contraOfId tid = either (const 0) (contraTotal . snd) <$> getTransaction (unTransactionId tid)
+validateRefundSourceAndCap _ _ _ _ = pure (Right ())
+
+-- | Reject a relation edge that already exists: a duplicate forward edge
+-- @from -> to@ of the same kind, or — for 'Associated' — a reciprocal edge
+-- @to -> from@ (Association is undirected).
+validateNoExistingEdge ::
+  TransactionId ->
+  TransactionId ->
+  RelationKind ->
+  AppM (Either DomainError ())
+validateNoExistingEdge fromId toId kind = runExceptT $ do
+  fwd <- lift (getOutboundRelations fromId)
+  when ((toId, kind) `elem` fwd) $ throwE RelationAlreadyExists
+  when (kind == Associated) $ do
+    rev <- lift (getOutboundRelations toId)
+    when ((fromId, Associated) `elem` rev) $ throwE RelationAlreadyExists
 
 -- | Dispatch an edit command (SetTransactionLabels or
 -- ChangeTransactionCategory) and return the resulting 'TransactionData'

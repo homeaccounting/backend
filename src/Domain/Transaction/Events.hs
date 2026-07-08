@@ -37,6 +37,7 @@ module Domain.Transaction.Events
     TransactionCancellationInitiated (..),
     TransactionCancellationCompleted (..),
     TransactionRelationAdded (..),
+    TransactionRelationRemoved (..),
   )
 where
 
@@ -72,7 +73,8 @@ transactionEvents =
     ''TransactionAmendmentFailed,
     ''TransactionCancellationInitiated,
     ''TransactionCancellationCompleted,
-    ''TransactionRelationAdded
+    ''TransactionRelationAdded,
+    ''TransactionRelationRemoved
   ]
 
 -- -----------------------------------------------------------------------------
@@ -312,6 +314,18 @@ data TransactionRelationAdded = TransactionRelationAdded
   }
   deriving (Show, Eq)
 
+-- | Event emitted when a previously-recorded typed relationship from this
+-- transaction to another is removed. The mirror of 'TransactionRelationAdded';
+-- the owning ("from") endpoint is the stream key, not a payload field. The read
+-- model deletes the matching @(from, to, kind)@ edge.
+data TransactionRelationRemoved = TransactionRelationRemoved
+  { -- | The referenced (pre-existing) transaction — the "to" endpoint.
+    relatedTransactionId :: TransactionId,
+    -- | The kind of relationship that was removed.
+    relationKind :: RelationKind
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -349,3 +363,4 @@ deriveJSON defaultOptions ''TransactionAmendmentFailed
 deriveJSON defaultOptions ''TransactionCancellationInitiated
 deriveJSON defaultOptions ''TransactionCancellationCompleted
 deriveJSON defaultOptions ''TransactionRelationAdded
+deriveJSON defaultOptions ''TransactionRelationRemoved

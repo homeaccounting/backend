@@ -37,6 +37,7 @@ module Domain.Transaction.Commands
     CancelTransaction (..),
     CompleteTransactionCancellation (..),
     AddTransactionRelation (..),
+    RemoveTransactionRelation (..),
   )
 where
 
@@ -69,7 +70,8 @@ transactionCommands =
     ''FailTransactionAmendment,
     ''CancelTransaction,
     ''CompleteTransactionCancellation,
-    ''AddTransactionRelation
+    ''AddTransactionRelation,
+    ''RemoveTransactionRelation
   ]
 
 -- -----------------------------------------------------------------------------
@@ -401,6 +403,18 @@ data AddTransactionRelation = AddTransactionRelation
   }
   deriving (Show, Eq)
 
+-- | Post-hoc command to remove a previously-recorded typed relationship from an
+-- already-existing (Completed) transaction. The mirror of 'AddTransactionRelation';
+-- 'transactionId' is the owning ("from") aggregate the command routes to.
+-- Direction resolution + kind restriction (lineage edges are not removable) is
+-- enforced at the service layer, not in the pure handler.
+data RemoveTransactionRelation = RemoveTransactionRelation
+  { transactionId :: TransactionId,
+    relatedTransactionId :: TransactionId,
+    relationKind :: RelationKind
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -419,3 +433,4 @@ deriveJSON defaultOptions ''FailTransactionAmendment
 deriveJSON defaultOptions ''CancelTransaction
 deriveJSON defaultOptions ''CompleteTransactionCancellation
 deriveJSON defaultOptions ''AddTransactionRelation
+deriveJSON defaultOptions ''RemoveTransactionRelation

@@ -436,6 +436,9 @@ handleTransactionEvent transaction (TransactionCancellationCompletedTransactionE
 handleTransactionEvent transaction (TransactionRelationAddedTransactionEvent _) =
   -- Relationships are a read-model concern; the aggregate never gates on them.
   transaction
+handleTransactionEvent transaction (TransactionRelationRemovedTransactionEvent _) =
+  -- Relationships are a read-model concern; the aggregate never gates on them.
+  transaction
 
 -- -----------------------------------------------------------------------------
 -- Projection Definition

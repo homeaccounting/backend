@@ -438,6 +438,23 @@ handleTransactionCommand transaction (AddTransactionRelationTransactionCommand A
                 }
           ]
       _ -> Left CannotEditUncompletedTransaction
+-- Handle RemoveTransactionRelation command
+--
+-- Mirror of 'AddTransactionRelation': Completed-only, self-link check is pure
+-- here because the command carries the owning aggregate id. Direction
+-- resolution + lineage-kind restriction are enforced at the service layer.
+handleTransactionCommand transaction (RemoveTransactionRelationTransactionCommand RemoveTransactionRelation {..})
+  | unTransactionId transactionId == unTransactionId relatedTransactionId = Left RelationSelfLink
+  | otherwise = case transaction ^. #status of
+      Completed ->
+        Right
+          [ TransactionRelationRemovedTransactionEvent
+              TransactionRelationRemoved
+                { relatedTransactionId = relatedTransactionId,
+                  relationKind = relationKind
+                }
+          ]
+      _ -> Left CannotEditUncompletedTransaction
 
 -- -----------------------------------------------------------------------------
 -- Allocation invariants (handler-boundary)
