@@ -40,11 +40,12 @@ import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck ((==>))
 import Testkit.Helpers (mockAccountIdN, mockCategoryIdN)
 
--- | Build a 'RegularAccountData' with a zero UAH balance (the resolver only
--- reads the currency off the balance).
-acct :: Word32 -> Text -> AccountSubtypeKind -> RegularAccountData
+-- | Build an @(id, 'RegularAccountData')@ pair with a zero UAH balance (the
+-- resolver only reads the currency off the balance). The id is carried
+-- outside the record, matching every other read-model @*Data@ convention.
+acct :: Word32 -> Text -> AccountSubtypeKind -> (AccountId, RegularAccountData)
 acct n nm k =
-  RegularAccountData {accountId = mockAccountIdN n, name = nm, balance = uah 0, subtype = k}
+  (mockAccountIdN n, RegularAccountData {name = nm, balance = uah 0, subtype = k})
 
 -- | Sample context: two accounts (both UAH), one expense category "Food", one
 -- income category "Salary", and an "Other" default (id 9) for both categories.

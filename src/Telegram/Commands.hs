@@ -878,7 +878,7 @@ getUserRegularAccounts telegramId = do
     Nothing -> return Nothing
     Just userId -> do
       accounts <- runDb (AccountRM.getUserRegularAccounts userId)
-      return $ Just [(a.accountId, a.name, a.balance) | a <- accounts]
+      return $ Just [(aid, a.name, a.balance) | (aid, a) <- accounts]
 
 -- | Find an account by short ID prefix (first 8 chars of UUID).
 findAccountByShortId :: Text -> [(AccountId, Text, Money)] -> Maybe (AccountId, Text, Money)

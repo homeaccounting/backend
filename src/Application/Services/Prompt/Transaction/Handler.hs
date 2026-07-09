@@ -80,7 +80,7 @@ gatherContext uid selected = do
 -- | Assemble the prompt and resolve contexts from the user's accounts and
 -- configuration. Pure given the fetched data.
 buildContexts ::
-  [RegularAccountData] ->
+  [(AccountId, RegularAccountData)] ->
   ConfigurationData ->
   Maybe AccountId ->
   (PromptContext, ResolveContext)
@@ -94,7 +94,7 @@ buildContexts accts cfg selected =
       labelEntries = entriesOf labelsDictId
       pctx =
         PromptContext
-          { accountNames = [a.name | a <- accts],
+          { accountNames = [a.name | (_, a) <- accts],
             incomeCategoryNames = [n | (_, n) <- incomeCats],
             expenseCategoryNames = [n | (_, n) <- expenseCats],
             labelNames = [n | (_, n) <- labelEntries]

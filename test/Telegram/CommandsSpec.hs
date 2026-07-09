@@ -161,7 +161,7 @@ spec = do
 
       accounts <- runDbIn env (getUserRegularAccounts uid)
       let balanceOf nm =
-            listToMaybe [unMoney bal | RegularAccountData {name = n, balance = bal} <- accounts, n == nm]
+            listToMaybe [unMoney bal | (_, RegularAccountData {name = n, balance = bal}) <- accounts, n == nm]
       -- The selected account (Card) is debited; the other (Cash) is untouched.
       balanceOf "Card" `shouldBe` Just 58
       balanceOf "Cash" `shouldBe` Just 100

@@ -148,8 +148,7 @@ instance FromJSON AccountData
 -- callers need for name/subtype resolution (the prompt resolver, Telegram).
 -- Carries the payload-free 'AccountSubtypeKind' rather than the full subtype.
 data RegularAccountData = RegularAccountData
-  { accountId :: AccountId,
-    name :: Text,
+  { name :: Text,
     balance :: Money,
     subtype :: AccountSubtypeKind
   }
@@ -366,16 +365,17 @@ getAccessibleAccountIds userId = do
   pure $ Set.fromList [r.accountAccessEntityAccountId | Entity _ r <- accessRows]
 
 -- | A user's own regular (non-External) accounts as (id, name, balance).
-getUserRegularAccounts :: (MonadIO m) => UserId -> SqlPersistT m [RegularAccountData]
+getUserRegularAccounts :: (MonadIO m) => UserId -> SqlPersistT m [(AccountId, RegularAccountData)]
 getUserRegularAccounts userId = do
   rows <- selectList [AccountEntityCreatedBy ==. userId] []
   pure
-    [ RegularAccountData
-        { accountId = e.accountEntityAccountId,
-          name = e.accountEntityName,
-          balance = e.accountEntityBalance,
-          subtype = kind
-        }
+    [ ( e.accountEntityAccountId,
+        RegularAccountData
+          { name = e.accountEntityName,
+            balance = e.accountEntityBalance,
+            subtype = kind
+          }
+      )
     | Entity _ e <- rows,
       Just kind <- [accountTypeSubtypeKind e.accountEntityAccountType]
     ]

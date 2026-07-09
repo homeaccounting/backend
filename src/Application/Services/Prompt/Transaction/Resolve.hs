@@ -66,8 +66,10 @@ import qualified RIO.Text as T
 -- category matched" fallback.
 data ResolveContext = ResolveContext
   { -- | The user's regular accounts (id, name, native currency via balance,
-    -- and subtype kind), reusing the account read model's projection.
-    accounts :: ![RegularAccountData],
+    -- and subtype kind), reusing the account read model's projection. The id
+    -- is carried outside 'RegularAccountData', matching every other
+    -- read-model @*Data@ convention.
+    accounts :: ![(AccountId, RegularAccountData)],
     incomeCategories :: ![(CategoryId, Text)],
     expenseCategories :: ![(CategoryId, Text)],
     labels :: ![(LabelId, Text)],
@@ -181,18 +183,23 @@ resolvePrimaryAccount ctx fld mname
   | Just acc <- ctx.selectedAccount >>= accountById ctx = Right acc
   | otherwise = resolveAccount ctx fld mname
   where
-    explicitMatch name = case matchByName (.name) name ctx.accounts of
+    explicitMatch name = case matchByName accountName name ctx.accounts of
       Matched a -> Just (projectAccount a)
       _ -> Nothing
 
+-- | The name projection used to match accounts by name, over the
+-- @(id, data)@ pairs 'ResolveContext.accounts' now carries.
+accountName :: (AccountId, RegularAccountData) -> Text
+accountName (_, a) = a.name
+
 -- | Project a resolved account to @(id, canonical name, native currency)@.
-projectAccount :: RegularAccountData -> (AccountId, Text, Currency)
-projectAccount a = (a.accountId, a.name, moneyCurrency a.balance)
+projectAccount :: (AccountId, RegularAccountData) -> (AccountId, Text, Currency)
+projectAccount (aid, a) = (aid, a.name, moneyCurrency a.balance)
 
 -- | Look up one of the user's accounts by id, projected. 'Nothing' when the id
 -- is not among the user's regular accounts (e.g. a stale selection).
 accountById :: ResolveContext -> AccountId -> Maybe (AccountId, Text, Currency)
-accountById ctx aid = case [a | a <- ctx.accounts, a.accountId == aid] of
+accountById ctx aid = case [a | a@(i, _) <- ctx.accounts, i == aid] of
   (a : _) -> Just (projectAccount a)
   [] -> Nothing
 
@@ -217,7 +224,7 @@ resolveAccount ctx fld = \case
   Nothing -> case globalDefault of
     Just acc -> Right acc
     Nothing -> Left (ResolveError fld "no account specified")
-  Just name -> case matchByName (.name) name ctx.accounts of
+  Just name -> case matchByName accountName name ctx.accounts of
     Matched acc -> Right (projectAccount acc) -- step 1
     Ambiguous _ ->
       Left (ResolveError fld ("Account name '" <> name <> "' is ambiguous. Your accounts: " <> accountNames))
@@ -232,11 +239,11 @@ resolveAccount ctx fld = \case
       -- A specific but unknown name: do not silently use the global default.
       Nothing -> Left (noMatch name)
   where
-    accountNames = T.intercalate ", " [a.name | a <- ctx.accounts]
+    accountNames = T.intercalate ", " [a.name | (_, a) <- ctx.accounts]
     noMatch name = ResolveError fld ("No account matches '" <> name <> "'. Your accounts: " <> accountNames)
     globalDefault = ctx.defaults.account >>= accountById ctx
     subtypeDefault kind = Map.lookup kind ctx.defaults.subtypeAccounts >>= accountById ctx
-    accountsOfKind kind = [a | a <- ctx.accounts, a.subtype == kind]
+    accountsOfKind kind = [a | a@(_, r) <- ctx.accounts, r.subtype == kind]
 
 -- | Recognise an account-subtype keyword in the free-text account field. The
 -- @card@ keyword aliases 'BankAccountKind' (cards are typically bank cards).
