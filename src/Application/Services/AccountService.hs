@@ -23,9 +23,14 @@
 -- Usage:
 --   Services are called by thin API handlers in @Web.API.AccountAPI@.
 module Application.Services.AccountService
-  ( -- * Service Functions
+  ( -- * Service Types
+    AccountAccessInfo (..),
+    AccessibleAccount (..),
+
+    -- * Service Functions
     createAccount,
     getAccount,
+    getAccountAccessList,
     listAccountsForUser,
     shareAccount,
     revokeAccountAccess,
@@ -41,7 +46,15 @@ where
 import Application.ReadModels.Account (AccountData (..), balanceAsOf)
 import qualified Application.ReadModels.Account as ReadModel
 import qualified Application.ReadModels.Transaction as TransactionRM
-import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
+import qualified Application.ReadModels.User as UserRM
+import Application.Services.AuthorizationService
+  ( AccountAccessResult (..),
+    AccountAuthData (..),
+    accountAuthDataFromData,
+    canAccessAccount,
+    canManageAccount,
+    canModifyAccount,
+  )
 import Application.Services.Internal
   ( getUserExternalAccountId,
     guardE,
@@ -69,11 +82,13 @@ import Domain.Account.Commands
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types
-  ( AccountId,
+  ( AccountAccess (..),
+    AccountId,
     AccountRole (..),
     AccountSubtype,
     AccountType (..),
     Money (..),
+    TelegramIdentity (..),
     TransactionId,
     TransactionType (..),
     UserId,
@@ -83,6 +98,7 @@ import Domain.Core.Types
     moneyIsZero,
     negateMoney,
     subtractMoney,
+    unAccountId,
   )
 import Domain.Transaction.Commands (InitiateTransaction (..))
 import Infrastructure.App
@@ -127,17 +143,31 @@ createAccount createCmd = runExceptT $ do
   lift $ logInfo "Account successfully created"
   pure (accountId, account)
 
+-- | An account the requesting user can access, paired with the account id and
+-- the user's role on it. Returned by the account read APIs so the Web layer
+-- stays thin (no authorization logic in handlers).
+data AccessibleAccount = AccessibleAccount
+  { accountId :: AccountId,
+    role :: AccountRole,
+    account :: AccountData
+  }
+  deriving (Show, Eq)
+
 -- | Get an account by UUID.
 --
 -- Orchestrates:
 --   1. Convert UUID to AccountId
 --   2. Query read model
+--   3. Derive the requesting user's role via 'AuthorizationService.canAccessAccount'
+--      (best-effort: this endpoint is not on the web's critical path, which
+--      derives single accounts from the list cache instead).
 --
--- Returns the AccountId and AccountData on success.
+-- Returns an 'AccessibleAccount' on success.
 getAccount ::
+  UserId ->
   UUID ->
-  AppM (Either DomainError (AccountId, AccountData))
-getAccount accountUuid = runExceptT $ do
+  AppM (Either DomainError AccessibleAccount)
+getAccount requestingUserId accountUuid = runExceptT $ do
   lift $ logInfo $ "Getting account: " <> displayShow accountUuid
   accountId <-
     liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
@@ -145,24 +175,63 @@ getAccount accountUuid = runExceptT $ do
     liftMaybeM
       (NotFound "Account" (tshow accountUuid))
       (runDb (ReadModel.getAccount accountId))
+  let role = case canAccessAccount requestingUserId (accountAuthDataFromData account) of
+        AccessGranted r -> r
+        AccessDenied -> Viewer -- best-effort; this endpoint isn't on the web's critical path
   lift $ logInfo "Account found"
-  pure (accountId, account)
+  pure AccessibleAccount {accountId = accountId, role = role, account = account}
+
+-- | One entry in an account's access list (service layer; tracker#29).
+data AccountAccessInfo = AccountAccessInfo
+  { userId :: UserId,
+    role :: AccountRole,
+    email :: Maybe Text,
+    telegramUsername :: Maybe Text
+  }
+  deriving (Show, Eq)
+
+-- | Owner-only: list who has access to an account, with display labels.
+-- Returns Left on missing account or non-owner requester (handler maps to 404).
+getAccountAccessList ::
+  UserId ->
+  AccountId ->
+  AppM (Either DomainError [AccountAccessInfo])
+getAccountAccessList requestingUserId accountId = runExceptT $ do
+  account <-
+    liftMaybeM
+      (NotFound "Account" (tshow (unAccountId accountId)))
+      (runDb (ReadModel.getAccount accountId))
+  guardE
+    (canManageAccount requestingUserId (accountAuthDataFromData account))
+    (NotFound "Account" (tshow (unAccountId accountId)))
+  forM account.accessList $ \(AccountAccess uid role) -> do
+    mUser <- lift $ runDb (UserRM.getUser uid)
+    let email = mUser >>= (.email)
+        tgUser = mUser >>= (.telegramIdentity) >>= (.username)
+    pure
+      AccountAccessInfo
+        { userId = uid,
+          role = role,
+          email = email,
+          telegramUsername = tgUser
+        }
 
 -- | List accounts accessible to a given user.
 --
 -- Queries the read model for accounts where the user has access (owner, editor, or viewer).
--- Returns a list of (AccountId, AccountData) pairs, excluding the user's External
+-- Returns a list of 'AccessibleAccount's, excluding the user's External
 -- account: External accounts are an internal bookkeeping device for income/expense
--- and are not surfaced through the public API.
-listAccountsForUser :: UserId -> AppM [(AccountId, AccountData)]
+-- and are not surfaced through the public API. The role comes straight from
+-- the read model (which already computes the per-user role).
+listAccountsForUser :: UserId -> AppM [AccessibleAccount]
 listAccountsForUser userId = do
   logInfo $ "Listing accounts for user " <> displayShow userId
 
   accountsList <- runDb (ReadModel.getAccessibleAccounts userId)
 
   let result =
-        [ (aid, account)
-        | (aid, account, _role) <- accountsList,
+        [ AccessibleAccount {accountId = aid, role = role, account = account}
+        | (aid, account, role) <- accountsList,
           account.accountType /= External
         ]
 

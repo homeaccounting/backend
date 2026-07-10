@@ -126,7 +126,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
@@ -273,6 +273,7 @@ data AccountResponse
     overdraftLimit :: Maybe Double,
     subtype :: Maybe Value,
     status :: Text,
+    role :: Text, -- current user's role: "owner"|"editor"|"viewer" (tracker#29)
     version :: Int
   }
   deriving (Show, Eq, Generic)
@@ -921,10 +922,10 @@ toCreateAccountCommand createdBy CreateAccountRequest {..} = do
 --
 -- Example:
 -- >>> let account = AccountData "Savings" (Money 1500.0) 5
--- >>> fromAccountData accountId account
+-- >>> fromAccountData accountId Owner account
 -- AccountResponse accountId "Savings" 1500.0 5
-fromAccountData :: AccountId -> AccountData -> AccountResponse
-fromAccountData accountId AccountData {..} =
+fromAccountData :: AccountId -> AccountRole -> AccountData -> AccountResponse
+fromAccountData accountId role AccountData {..} =
   AccountResponse
     { id = unAccountId accountId,
       name = name,
@@ -935,6 +936,7 @@ fromAccountData accountId AccountData {..} =
         Regular at -> Just (fromAccountSubtype at)
         External -> Nothing,
       status = fromAccountStatus status,
+      role = roleToText role,
       version = coerce version
     }
 

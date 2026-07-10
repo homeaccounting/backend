@@ -45,9 +45,11 @@ import Test.Hspec
 import Testkit.Fixtures (createDefaultAccount, registerUser)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Testkit.TransactionEditFixture (authHeaders, httpRequest)
+import Web.API.AccountAPI (AccountAccessEntry (..), AccountAccessListResponse (..))
 import Web.Server (buildApplication)
 import Web.Types
-  ( AccountResponse (..),
+  ( AccountListResponse (..),
+    AccountResponse (..),
     ErrorResponse (..),
     TransactionResponse (..),
     ValidationErrorResponse (..),
@@ -82,6 +84,16 @@ spec = do
 
   describe "POST /api/accounts/:id/close and /reopen" $ do
     it "closes then reopens, reporting status on GET" closeReopenEndpointSpec
+
+  describe "GET /api/accounts" $ do
+    it "includes role on listed accounts" listRoleSpec
+
+    it "includes role for a shared (non-owner) user" listRoleSharedSpec
+
+  describe "GET /api/accounts/:id/access" $ do
+    it "returns the access list with roles and email labels for the owner" accessListOwnerSpec
+
+    it "returns 404 for a non-owner requester" accessListNonOwnerSpec
 
 -- -----------------------------------------------------------------------------
 -- Fixture
@@ -285,3 +297,79 @@ closeReopenEndpointSpec = do
   simpleStatus reopened `shouldBe` status200
   arAfterReopen <- decodeAccount =<< getAcc
   arAfterReopen.status `shouldBe` "Opened"
+
+-- | GET /api/accounts includes the requesting user's role, "owner" for the
+-- creator of the account (tracker#29).
+listRoleSpec :: IO ()
+listRoleSpec = do
+  f <- mkFixture "list-role@test.com"
+  resp <- httpRequest f.fApp "GET" "/api/accounts" (authHeaders f.fToken) ""
+  simpleStatus resp `shouldBe` status200
+  case eitherDecode (simpleBody resp) :: Either String AccountListResponse of
+    Left err -> expectationFailure ("decode failed: " <> err)
+    Right (AccountListResponse accs _) ->
+      case accs of
+        (a : _) -> a.role `shouldBe` ("owner" :: Text)
+        [] -> expectationFailure "expected at least one account"
+
+-- | GET /api/accounts includes the requesting user's role, "editor" for a
+-- non-owner who was shared access, exercising Task 2's role-resolution path
+-- on the list endpoint (tracker#29).
+listRoleSharedSpec :: IO ()
+listRoleSharedSpec = do
+  f <- mkFixture "list-share-owner@test.com"
+  viewerId <- registerUser f.fEnv "list-share-viewer@test.com"
+  shareResult <-
+    runAppM f.fEnv
+      $ shareAccount f.fUserId f.fAccountUuid (unUserId viewerId) "editor"
+  case shareResult of
+    Left err -> fail $ "shareAccount failed: " <> show err
+    Right () -> pure ()
+  viewerTok <- mintToken viewerId "list-share-viewer@test.com"
+  resp <- httpRequest f.fApp "GET" "/api/accounts" (authHeaders viewerTok) ""
+  simpleStatus resp `shouldBe` status200
+  case eitherDecode (simpleBody resp) :: Either String AccountListResponse of
+    Left err -> expectationFailure ("decode failed: " <> err)
+    Right (AccountListResponse accs _) ->
+      case filter (\a -> a.id == f.fAccountUuid) accs of
+        (a : _) -> a.role `shouldBe` ("editor" :: Text)
+        [] -> expectationFailure "shared account not visible to editor"
+
+-- | GET /api/accounts/:id/access - owner sees the full access list
+-- (owner + shared users) with roles and email labels (tracker#29).
+accessListOwnerSpec :: IO ()
+accessListOwnerSpec = do
+  f <- mkFixture "acl-owner@test.com"
+  viewerId <- registerUser f.fEnv "acl-viewer@test.com"
+  shareResult <-
+    runAppM f.fEnv
+      $ shareAccount f.fUserId f.fAccountUuid (unUserId viewerId) "viewer"
+  case shareResult of
+    Left err -> fail $ "shareAccount failed: " <> show err
+    Right () -> pure ()
+  let path = encodeUtf8 $ "/api/accounts/" <> T.pack (UUID.toString f.fAccountUuid) <> "/access"
+  resp <- httpRequest f.fApp "GET" path (authHeaders f.fToken) ""
+  simpleStatus resp `shouldBe` status200
+  case eitherDecode (simpleBody resp) :: Either String AccountAccessListResponse of
+    Left err -> expectationFailure ("decode failed: " <> err)
+    Right (AccountAccessListResponse entries) -> do
+      length entries `shouldBe` 2
+      any (\e -> e.role == ("owner" :: Text)) entries `shouldBe` True
+      any (\e -> e.role == "viewer" && e.email == Just "acl-viewer@test.com") entries `shouldBe` True
+
+-- | GET /api/accounts/:id/access - a non-owner (even one with access)
+-- receives 404, not a distinct 403, to hide the account's existence.
+accessListNonOwnerSpec :: IO ()
+accessListNonOwnerSpec = do
+  f <- mkFixture "acl-owner2@test.com"
+  viewerId <- registerUser f.fEnv "acl-viewer2@test.com"
+  shareResult <-
+    runAppM f.fEnv
+      $ shareAccount f.fUserId f.fAccountUuid (unUserId viewerId) "viewer"
+  case shareResult of
+    Left err -> fail $ "shareAccount failed: " <> show err
+    Right () -> pure ()
+  viewerTok <- mintToken viewerId "acl-viewer2@test.com"
+  let path = encodeUtf8 $ "/api/accounts/" <> T.pack (UUID.toString f.fAccountUuid) <> "/access"
+  resp <- httpRequest f.fApp "GET" path (authHeaders viewerTok) ""
+  simpleStatus resp `shouldBe` status404

@@ -105,6 +105,7 @@ module Domain.Core.Types
     isExternal,
     accountTypeSubtypeKind,
     AccountRole (..),
+    roleToText,
     AccountAccess (..),
     AccountStatus (..),
 
@@ -998,6 +999,13 @@ data AccountRole
 instance ToJSON AccountRole
 
 instance FromJSON AccountRole
+
+-- | Render an 'AccountRole' as the lowercase wire token used by the HTTP API
+-- ("owner"/"editor"/"viewer"). Inverse of 'Application.Services.AccountService.parseRole'.
+roleToText :: AccountRole -> Text
+roleToText Owner = "owner"
+roleToText Editor = "editor"
+roleToText Viewer = "viewer"
 
 -- | Access record linking a user to an account with a specific role.
 data AccountAccess = AccountAccess

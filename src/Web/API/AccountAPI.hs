@@ -18,6 +18,7 @@
 --
 --   POST   /api/accounts              - Create a new account
 --   GET    /api/accounts/:id          - Get account by ID
+--   GET    /api/accounts/:id/access   - List account access (owner only)
 --   GET    /api/accounts              - List all accounts
 --   POST   /api/accounts/:id/share    - Share account with another user
 --   DELETE /api/accounts/:id/access/:userId - Revoke user's access
@@ -41,6 +42,8 @@ module Web.API.AccountAPI
     ShareAccountRequest (..),
     SetOverdraftLimitRequest (..),
     RenameAccountRequest (..),
+    AccountAccessEntry (..),
+    AccountAccessListResponse (..),
 
     -- * Server
     accountServer,
@@ -48,6 +51,7 @@ module Web.API.AccountAPI
     -- * Individual Handlers (exported for testing)
     createAccountHandler,
     getAccountHandler,
+    getAccountAccessHandler,
     listAccountsHandler,
     shareAccountHandler,
     revokeAccountAccessHandler,
@@ -60,11 +64,13 @@ module Web.API.AccountAPI
   )
 where
 
+import Application.Services.AccountService (AccountAccessInfo (..))
 import qualified Application.Services.AccountService as AccountService
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Text as T
 import Data.UUID (UUID)
-import Domain.Core.Types (mkAccountId, mkMoney, parseCurrency)
+import Domain.Core.Errors (DomainError (..))
+import Domain.Core.Types (AccountRole (..), mkAccountId, mkMoney, parseCurrency, roleToText, unUserId)
 import Infrastructure.App (AppM)
 import RIO
 import Servant
@@ -118,6 +124,13 @@ type AccountAPI =
       :> "accounts"
       :> Capture "id" UUID
       :> Get '[JSON] AccountResponse
+    -- GET /api/accounts/:id/access - List access (owner only) (tracker#29)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "accounts"
+      :> Capture "id" UUID
+      :> "access"
+      :> Get '[JSON] AccountAccessListResponse
     -- GET /api/accounts - List all accounts (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -201,6 +214,29 @@ instance ToJSON ShareAccountRequest
 
 instance FromJSON ShareAccountRequest
 
+-- | One entry in an account's access list (tracker#29).
+data AccountAccessEntry = AccountAccessEntry
+  { userId :: UUID,
+    role :: Text, -- "owner"|"editor"|"viewer"
+    email :: Maybe Text, -- display label; Nothing for users without an email (e.g. Telegram-only)
+    telegramUsername :: Maybe Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AccountAccessEntry
+
+instance FromJSON AccountAccessEntry
+
+-- | Response for GET /api/accounts/:id/access.
+data AccountAccessListResponse = AccountAccessListResponse
+  { access :: [AccountAccessEntry]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON AccountAccessListResponse
+
+instance FromJSON AccountAccessListResponse
+
 -- | Set overdraft limit request.
 data SetOverdraftLimitRequest = SetOverdraftLimitRequest
   { overdraftLimit :: Maybe Double,
@@ -235,6 +271,7 @@ accountServer :: ServerT AccountAPI AppM
 accountServer =
   createAccountHandler
     :<|> getAccountHandler
+    :<|> getAccountAccessHandler
     :<|> listAccountsHandler
     :<|> shareAccountHandler
     :<|> revokeAccountAccessHandler
@@ -274,23 +311,43 @@ createAccountHandler user request = do
   result <- AccountService.createAccount createCmd
   case result of
     -- 3. Convert domain result to response DTO
-    Right (accountId, account) -> return $ fromAccountData accountId account
+    Right (accountId, account) -> return $ fromAccountData accountId Owner account
     Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts/:id - Get account by ID.
+--
+-- Role derivation happens in 'AccountService.getAccount'; this handler is
+-- just a record -> DTO mapping.
 getAccountHandler :: AuthenticatedUser -> UUID -> AppM AccountResponse
-getAccountHandler _user accountUuid = do
-  result <- AccountService.getAccount accountUuid
+getAccountHandler user accountUuid = do
+  result <- AccountService.getAccount user.userId accountUuid
   case result of
-    Right (accountId, account) -> return $ fromAccountData accountId account
+    Right acc -> return $ fromAccountData acc.accountId acc.role acc.account
     Left err -> throwDomainError err
+
+-- | Handler for GET /api/accounts/:id/access - List who has access to an
+-- account (owner only; tracker#29). Non-owners get 404, matching
+-- 'AccountService.getAccountAccessList'.
+getAccountAccessHandler :: AuthenticatedUser -> UUID -> AppM AccountAccessListResponse
+getAccountAccessHandler user accountUuid =
+  case mkAccountId accountUuid of
+    Left _ -> throwDomainError (NotFound "Account" (tshow accountUuid))
+    Right accountId -> do
+      result <- AccountService.getAccountAccessList user.userId accountId
+      case result of
+        Right entries ->
+          return
+            $ AccountAccessListResponse
+              [ AccountAccessEntry (unUserId info.userId) (roleToText info.role) info.email info.telegramUsername
+              | info <- entries
+              ]
+        Left err -> throwDomainError err
 
 -- | Handler for GET /api/accounts - List accounts accessible to the authenticated user.
 listAccountsHandler :: AuthenticatedUser -> AppM AccountListResponse
 listAccountsHandler user = do
-  let userId = user.userId
-  accountsList <- AccountService.listAccountsForUser userId
-  let responses = map (uncurry fromAccountData) accountsList
+  accountsList <- AccountService.listAccountsForUser user.userId
+  let responses = map (\acc -> fromAccountData acc.accountId acc.role acc.account) accountsList
       totalCount = length responses
   return $ AccountListResponse responses totalCount
 

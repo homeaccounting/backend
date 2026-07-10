@@ -97,16 +97,16 @@ spec = describe "AccountService" $ do
   describe "getAccount" $ do
     it "retrieves a previously created account" $ do
       (env, accountId) <- createTestAccount validCreateAccount
-      result <- runAppM env $ getAccount (unAccountId accountId)
+      result <- runAppM env $ getAccount testUserId1 (unAccountId accountId)
       shouldBeRight result
-      let (retId, account) = fromRight' result
-      retId `shouldBe` accountId
-      account.name `shouldBe` "Savings"
+      let acc = fromRight' result
+      acc.accountId `shouldBe` accountId
+      acc.account.name `shouldBe` "Savings"
 
     it "returns NotFound for non-existent account" $ do
       env <- createTestAppEnv
       let nonExistentUuid = UUID.fromWords 99 99 99 99
-      result <- runAppM env $ getAccount nonExistentUuid
+      result <- runAppM env $ getAccount testUserId1 nonExistentUuid
       shouldBeLeft result
       case result of
         Left (NotFound _ _) -> pure ()
@@ -154,7 +154,7 @@ spec = describe "AccountService" $ do
         createAccount validCreateAccount {name = "External", accountType = External}
       result <- runAppM env $ listAccountsForUser testUserId1
       length result `shouldBe` 1
-      let names = [account.name | (_, account) <- result]
+      let names = [acc.account.name | acc <- result]
       names `shouldBe` ["Cash"]
 
   describe "shareAccount" $ do

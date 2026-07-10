@@ -34,6 +34,7 @@ spec = do
   transactionIdSpec
   externalTransactionIdSpec
   transactionTypeSpec
+  roleToTextSpec
 
 -- -----------------------------------------------------------------------------
 -- Money Tests
@@ -235,3 +236,13 @@ transactionTypeSpec = describe "TransactionType JSON" $ do
   it "encodes Adjustment with a tag-only object (no category)"
     $ Aeson.encode Adjustment
     `shouldBe` "{\"tag\":\"Adjustment\"}"
+
+-- -----------------------------------------------------------------------------
+-- roleToText Tests
+-- -----------------------------------------------------------------------------
+
+roleToTextSpec :: Spec
+roleToTextSpec = describe "roleToText" $ do
+  it "renders Owner as lowercase owner" $ roleToText Owner `shouldBe` ("owner" :: Text)
+  it "renders Editor as lowercase editor" $ roleToText Editor `shouldBe` ("editor" :: Text)
+  it "renders Viewer as lowercase viewer" $ roleToText Viewer `shouldBe` ("viewer" :: Text)

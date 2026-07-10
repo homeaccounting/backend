@@ -38,6 +38,7 @@ module Application.Services.AuthorizationService
 
     -- * Account Auth Data (for testing)
     AccountAuthData (..),
+    accountAuthDataFromData,
 
     -- * Authorization Functions
     canAccessAccount,
@@ -142,6 +143,15 @@ data AccountAuthData = AccountAuthData
     accessList :: [AccountAccess]
   }
   deriving (Show, Eq)
+
+-- | Build 'AccountAuthData' from a read-model 'AccountData' for authorization checks.
+accountAuthDataFromData :: AccountData -> AccountAuthData
+accountAuthDataFromData account =
+  AccountAuthData
+    { createdBy = account.createdBy,
+      accountType = account.accountType,
+      accessList = account.accessList
+    }
 
 -- -----------------------------------------------------------------------------
 -- Authorization Functions
