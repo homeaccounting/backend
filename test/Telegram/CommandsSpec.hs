@@ -19,11 +19,14 @@ import Application.Services.AuthService
     issueTelegramLinkCode,
   )
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
+import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( TelegramId (..),
+  ( AccountId,
+    TelegramId (..),
     TelegramIdentity (..),
     defaultCash,
     unMoney,
+    unsafeAccountId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Infrastructure.App (AppEnv (..), runAppM)
@@ -31,8 +34,8 @@ import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
 import qualified RIO.Map as Map
 import qualified RIO.Text as T
-import Telegram.Commands (handleMessage, handleSignup, handleStart)
-import Telegram.Types (BotState (..), emptyBotState)
+import Telegram.Commands (handleClearSelection, handleMessage, handleSignup, handleStart, parseCallbackData)
+import Telegram.Types (BotState (..), CallbackData (..), emptyBotState)
 import Test.Hspec
 import Testkit.Fixtures (createAccount, registerUser)
 import Testkit.InMemoryEventStore
@@ -65,6 +68,11 @@ freshTgIdent =
 -- | Dummy chat id used for all sendMsg calls (silently dropped in tests).
 testChatId :: Int64
 testChatId = 100
+
+-- | A fixed AccountId for seeding a selection in bot state.
+someAccountId :: AccountId
+someAccountId =
+  unsafeAccountId (fromMaybe (error "bad uuid") (UUID.fromString "00000000-0000-0000-0000-000000000001"))
 
 -- -----------------------------------------------------------------------------
 -- Spec
@@ -166,6 +174,31 @@ spec = do
       balanceOf "Card" `shouldBe` Just 58
       balanceOf "Cash" `shouldBe` Just 100
       cash `shouldNotBe` card
+
+  describe "parseCallbackData" $ do
+    it "parses \"unselect\" as ClearSelection"
+      $ parseCallbackData "unselect"
+      `shouldBe` Just ClearSelection
+
+  describe "handleClearSelection" $ do
+    it "removes the user's selected account from bot state" $ do
+      env <- createTestAppEnv
+      botState <-
+        newTVarIO
+          emptyBotState
+            { selectedAccounts =
+                Map.singleton freshTgIdent.id (someAccountId, "Cash")
+            }
+      runAppM env $ handleClearSelection botState freshTgIdent.id testChatId
+      s <- readTVarIO botState
+      Map.lookup freshTgIdent.id s.selectedAccounts `shouldBe` Nothing
+
+    it "is a no-op when nothing was selected" $ do
+      env <- createTestAppEnv
+      botState <- newTVarIO emptyBotState
+      runAppM env $ handleClearSelection botState freshTgIdent.id testChatId
+      s <- readTVarIO botState
+      s.selectedAccounts `shouldBe` Map.empty
 
   describe "handleSignup" $ do
     it "/signup from an unknown Telegram ID creates the user" $ do

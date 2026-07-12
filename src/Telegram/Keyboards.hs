@@ -22,6 +22,7 @@ module Telegram.Keyboards
   )
 where
 
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.UUID as UUID
@@ -56,22 +57,33 @@ data InlineButton = InlineButton
 accountSelectionKeyboard ::
   -- | List of (AccountId, Name, Balance)
   [(AccountId, Text, Money)] ->
-  -- | Context (e.g., "transfer_src", "income")
+  -- | Currently-selected account (marked with a check); Nothing = none
+  Maybe AccountId ->
+  -- | Context (e.g., "transfer_src", "transfer_tgt", "select")
   Text ->
   InlineKeyboard
-accountSelectionKeyboard accounts context =
+accountSelectionKeyboard accounts selected context =
   InlineKeyboard
     { rows =
         map makeAccountButton accounts
+          ++ clearRow
           ++ [[cancelButton]]
     }
   where
     makeAccountButton (accountId, name, balance) =
       [ InlineButton
-          { text = name <> " (" <> showMoney balance <> ")",
+          { text = marker accountId <> name <> " (" <> showMoney balance <> ")",
             callbackData = "acc:" <> shortId accountId <> ":" <> context
           }
       ]
+    -- The selected-account marker and Clear row belong only to the /accounts
+    -- selection view; transfer flows never surface the global selection.
+    inSelectContext = context == "select"
+    marker accountId
+      | inSelectContext, selected == Just accountId = "\x2713 "
+      | otherwise = ""
+    clearRow =
+      [[InlineButton "Clear selection" "unselect"] | inSelectContext, isJust selected]
     shortId accountId = T.take 8 $ T.pack $ UUID.toString $ unAccountId accountId
     showMoney m = formatMoney m <> " " <> showCurrency (moneyCurrency m)
 

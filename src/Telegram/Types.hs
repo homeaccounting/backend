@@ -138,6 +138,8 @@ data CallbackData
     Cancel
   | -- | Confirm current operation
     Confirm
+  | -- | Clear the user's selected account
+    ClearSelection
   deriving (Show, Eq, Generic)
 
 instance ToJSON CallbackData

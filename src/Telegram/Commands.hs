@@ -27,6 +27,7 @@ module Telegram.Commands
     handleSignup,
     handleLogin,
     handleAccounts,
+    handleClearSelection,
     handlePromptCommand,
     handleNewAccount,
     handleTransfer,
@@ -199,6 +200,7 @@ handleCallbackQuery botState telegramId chatId callbackQueryId rawData = do
   case parseCallbackData rawData of
     Nothing -> sendMsg chatId "Invalid button data."
     Just Cancel -> handleCancel botState telegramId chatId
+    Just ClearSelection -> handleClearSelection botState telegramId chatId
     Just cbData -> do
       state <- atomically $ Map.lookup telegramId . (.conversations) <$> readTVar botState
       dispatchCallback botState telegramId chatId state cbData
@@ -207,6 +209,7 @@ handleCallbackQuery botState telegramId chatId callbackQueryId rawData = do
 parseCallbackData :: Text -> Maybe CallbackData
 parseCallbackData "cancel" = Just Cancel
 parseCallbackData "confirm" = Just Confirm
+parseCallbackData "unselect" = Just ClearSelection
 parseCallbackData t
   | "acc:" `T.isPrefixOf` t = case T.split (== ':') t of
       ["acc", accId, ctx] -> Just $ AccountSelect (AccountSelectionCallback accId ctx)
@@ -329,17 +332,24 @@ handleLogin _botState _telegramId chatId _args = do
 
 -- | Handle /accounts command.
 --
--- Shows accounts with inline keyboard buttons for selection.
+-- Shows accounts with inline keyboard buttons for selection. A header line
+-- surfaces the currently-selected account (used by prompts and /transactions),
+-- the active account is marked with a check, and a Clear-selection button is
+-- offered when something is selected.
 handleAccounts :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleAccounts _botState telegramId chatId = do
+handleAccounts botState telegramId chatId = do
   maybeAccounts <- getUserRegularAccounts telegramId
-
+  selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
   case maybeAccounts of
     Nothing -> sendMsg chatId "You don't have an account yet. Use /start to create one."
     Just accounts
       | null accounts -> sendMsg chatId "You don't have any accounts yet. Use /newaccount to create one."
-      | otherwise ->
-          sendMsgWithKeyboard chatId "Your accounts (tap to select):" (accountSelectionKeyboard accounts "select")
+      | otherwise -> do
+          let header = case selected of
+                Just (_, name) -> "Currently selected: " <> name
+                Nothing -> "No account selected."
+              body = header <> "\n\nYour accounts (tap to select):"
+          sendMsgWithKeyboard chatId body (accountSelectionKeyboard accounts (fst <$> selected) "select")
 
 -- | Handle /newaccount command.
 handleNewAccount :: TVar BotState -> TelegramId -> Int64 -> AppM ()
@@ -370,7 +380,7 @@ handleTransfer botState telegramId chatId = do
       | otherwise -> do
           atomically $ modifyTVar' botState $ \s ->
             s {conversations = Map.insert telegramId TransferSelectSource s.conversations}
-          sendMsgWithKeyboard chatId "Select source account:" (accountSelectionKeyboard accounts "transfer_src")
+          sendMsgWithKeyboard chatId "Select source account:" (accountSelectionKeyboard accounts Nothing "transfer_src")
 
 -- | Handle /income command.
 handleIncome :: TVar BotState -> TelegramId -> Int64 -> AppM ()
@@ -517,6 +527,19 @@ handlePromptText botState telegramId chatId text = do
 -- -----------------------------------------------------------------------------
 -- Callback Handlers
 -- -----------------------------------------------------------------------------
+
+-- | Clear the user's selected account. Works regardless of any in-flight
+-- conversation, so it is dispatched early alongside /cancel.
+handleClearSelection :: TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleClearSelection botState telegramId chatId = do
+  had <- atomically $ do
+    s <- readTVar botState
+    let existed = Map.member telegramId s.selectedAccounts
+    writeTVar botState $ s {selectedAccounts = Map.delete telegramId s.selectedAccounts}
+    return existed
+  if had
+    then sendMsg chatId "Selection cleared."
+    else sendMsg chatId "No account was selected."
 
 -- | Handle account selection callback from /accounts.
 handleSelectCallback :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
@@ -727,7 +750,7 @@ handleTransferSourceSelected botState telegramId chatId shortId = do
           let otherAccounts = filter (\(accId, _, _) -> accId /= srcAccountId) accounts
           atomically $ modifyTVar' botState $ \s ->
             s {conversations = Map.insert telegramId (TransferSelectTarget srcAccountId) s.conversations}
-          sendMsgWithKeyboard chatId "Select target account:" (accountSelectionKeyboard otherAccounts "transfer_tgt")
+          sendMsgWithKeyboard chatId "Select target account:" (accountSelectionKeyboard otherAccounts Nothing "transfer_tgt")
 
 -- | Handle transfer target account selection.
 handleTransferTargetSelected :: TVar BotState -> TelegramId -> Int64 -> AccountId -> Text -> AppM ()

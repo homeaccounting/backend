@@ -398,6 +398,7 @@ test-suite backend-test
       Integration.WebAPISpec
       Telegram.CommandsSpec
       Telegram.FormattingSpec
+      Telegram.KeyboardsSpec
       Testkit.AppEnv
       Testkit.AppEnvSpec
       Testkit.Auth
