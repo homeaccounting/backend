@@ -24,13 +24,13 @@ isMalformed _ = False
 spec :: Spec
 spec = describe "Application.Services.Prompt.Types" $ do
   describe "decodePromptIntent" $ do
-    it "decodes a well-formed transaction envelope" $ do
-      let bs = "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}]}"
+    it "decodes a well-formed record_transactions envelope" $ do
+      let bs = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}]}]}"
       case decodePromptIntent bs of
-        Right (CreateTransactionIntent ti) -> do
+        Right (RecordTransactionsIntent [ti]) -> do
           ti.kind `shouldBe` ExpenseKind
           map (.amount) ti.allocations `shouldBe` ["123"]
-        other -> expectationFailure ("expected CreateTransactionIntent, got: " <> show other)
+        other -> expectationFailure ("expected RecordTransactionsIntent, got: " <> show other)
 
     it "rejects an unknown intent name" $ do
       let bs = "{\"intent\":\"build_report\"}"
@@ -44,7 +44,11 @@ spec = describe "Application.Services.Prompt.Types" $ do
       let bs = "oops"
       decodePromptIntent bs `shouldSatisfy` isMalformed
 
-    it "treats a transaction with a bad payload as malformed" $ do
-      -- 'kind' is required by the transaction parser; omitting it is malformed.
-      let bs = "{\"intent\":\"transaction\",\"sourceAccount\":\"Cash\"}"
+    it "treats a record_transactions payload with a bad element as malformed" $ do
+      -- 'kind' is required by the per-transaction parser; omitting it is malformed.
+      let bs = "{\"intent\":\"record_transactions\",\"transactions\":[{\"sourceAccount\":\"Cash\"}]}"
+      decodePromptIntent bs `shouldSatisfy` isMalformed
+
+    it "treats a record_transactions payload without the transactions array as malformed" $ do
+      let bs = "{\"intent\":\"record_transactions\"}"
       decodePromptIntent bs `shouldSatisfy` isMalformed

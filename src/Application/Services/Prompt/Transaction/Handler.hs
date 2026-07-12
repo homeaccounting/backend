@@ -1,22 +1,22 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
 -- Module      : Application.Services.Prompt.Transaction.Handler
--- Description : Effectful execution of the @create_transaction@ intent.
+-- Description : Effectful execution of the @record_transactions@ intent.
 --
 -- This is the AppM-layer glue between the pure resolver
 -- ('Application.Services.Prompt.Transaction.Resolve') and the write path
 -- ('Application.Services.TransactionService'). It gathers the user's real
 -- accounts, categories, and labels into the contexts the resolver and prompt
--- need ('gatherContext'), then resolves and commits a decoded intent
--- ('runCreateTransaction'). All failures surface as @Left DomainError@ for the
--- caller (the router) to lift; the Web boundary maps them to the right HTTP
--- status. This layer imports nothing from @Web.*@.
+-- need ('gatherContext'), then resolves and commits each decoded transaction
+-- independently ('runRecordTransactions'), collecting the recorded and failed
+-- rows. This layer imports nothing from @Web.*@.
 module Application.Services.Prompt.Transaction.Handler
   ( gatherContext,
-    runCreateTransaction,
+    runRecordTransactions,
   )
 where
 
@@ -39,7 +39,9 @@ import Application.Services.Prompt.Transaction.Resolve
     resolveIntent,
   )
 import Application.Services.Prompt.Types
-  ( PromptResult (..),
+  ( FailedTransaction (..),
+    PromptResult (..),
+    RecordedTransaction (..),
     ResolveError (..),
   )
 import qualified Application.Services.TransactionService as TransactionService
@@ -48,7 +50,7 @@ import Domain.Configuration.Defaults
   ( expenseCategoryDictId,
     incomeCategoryDictId,
   )
-import Domain.Core.Errors (DomainError (..), mkValidationError)
+import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
     DictionaryEntryId,
@@ -118,24 +120,34 @@ entriesOfDict ::
 entriesOfDict dictId cfg =
   maybe [] (Map.toList . (.entries)) (Map.lookup dictId cfg.dictionaries)
 
--- | Resolve a decoded 'TransactionIntent' against the user's data and commit it.
+-- | Resolve and commit each decoded transaction independently against the
+-- user's data, tagging each with its zero-based position in list order.
 --
--- A resolution failure becomes a @ValidationErr@ (naming the offending field); a
--- write-path 'DomainError' is returned as-is. On success the committed
--- transaction is returned wrapped in 'TransactionCreated' with the resolver's
--- human-readable interpretation. All failures surface as @Left DomainError@;
--- this layer never throws or maps to HTTP.
-runCreateTransaction :: UserId -> ResolveContext -> Text -> TransactionIntent -> AppM (Either DomainError PromptResult)
-runCreateTransaction uid rctx userText ti =
-  case resolveIntent rctx userText ti of
-    Left (ResolveError f m) ->
-      pure (Left (ValidationErr (mkValidationError f m userText)))
-    Right (resolved, interp) -> do
-      committed <- dispatch resolved
-      case committed of
-        Left e -> pure (Left e)
-        Right (tid, tdata) -> pure (Right (TransactionCreated interp tid tdata))
+-- Per element: a resolution failure (naming the offending field) or a
+-- write-path 'DomainError' becomes a 'FailedTransaction'; a success becomes a
+-- 'RecordedTransaction' carrying the resolver's human-readable interpretation.
+-- Both share the transaction's 'index'. Transactions are independent — one
+-- failure never blocks the others (no dedup, so no @skipped@). Returns
+-- @Right (TransactionsRecorded …)@ even when some transactions failed;
+-- @Left DomainError@ is reserved for a whole-request failure (none in the
+-- normal per-transaction path). This layer never throws or maps to HTTP.
+runRecordTransactions ::
+  UserId -> ResolveContext -> Text -> [TransactionIntent] -> AppM (Either DomainError PromptResult)
+runRecordTransactions uid rctx userText tis = do
+  outcomes <- traverse (uncurry runOne) (zip [0 ..] tis)
+  pure (Right (TransactionsRecorded {succeeded = rights outcomes, failed = lefts outcomes}))
   where
+    runOne :: Int -> TransactionIntent -> AppM (Either FailedTransaction RecordedTransaction)
+    runOne idx ti =
+      case resolveIntent rctx userText ti of
+        Left (ResolveError f m) ->
+          pure (Left (FailedTransaction {index = idx, reason = f <> ": " <> m}))
+        Right (resolved, interp) -> do
+          committed <- dispatch resolved
+          case committed of
+            Left e -> pure (Left (FailedTransaction {index = idx, reason = renderDomainError e}))
+            Right (tid, tdata) ->
+              pure (Right (RecordedTransaction {index = idx, interpretation = interp, txId = tid, tx = tdata}))
     dispatch = \case
       ResolvedIncome target total allocs labels desc date ->
         TransactionService.initiateIncome uid target total allocs labels desc date Nothing

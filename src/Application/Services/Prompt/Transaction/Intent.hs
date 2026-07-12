@@ -4,35 +4,38 @@
 
 -- |
 -- Module      : Application.Services.Prompt.Transaction.Intent
--- Description : The @transaction@ intent: payload type, decoder,
---               JSON-schema fragment, and multilingual prompt guide.
+-- Description : The @record_transactions@ intent: per-transaction payload type,
+--               list decoder, JSON-schema fragment, and multilingual prompt guide.
 --
--- This is the parsed shape of external LLM output for the @transaction@
+-- This is the parsed shape of external LLM output for the @record_transactions@
 -- intent plus the prompt text that instructs the model how to produce it. It is
 -- an __application__ concern (parsed external output + prompt text), not domain.
 --
 -- The module owns everything specific to this one intent:
 --
---   * 'TransactionIntent' — the flat payload the model returns
---     (@kind@ is the sub-classification /within/ @transaction@);
---   * 'parseTransactionFields' — the reusable Aeson parser the generic
+--   * 'TransactionIntent' — the flat per-transaction payload the model returns
+--     for one list element (@kind@ is the sub-classification within it);
+--   * 'parseTransactionFields' — the reusable per-element Aeson parser;
+--   * 'parseRecordTransactionsFields' — the list parser the generic
 --     envelope/router calls after it has read the envelope @intent@ field
---     (it reads only the transaction fields and __ignores__ @intent@);
---   * 'decodeTransactionIntent' — a standalone convenience wrapper for tests
---     and isolated reuse;
---   * 'transactionSchema' — the JSON-schema fragment sent as @response_format@;
---   * 'transactionGuide' — the transaction guide fragment (schema +
---     the user's real names + multilingual instruction + few-shot examples).
+--     (it reads only the @transactions@ array and __ignores__ @intent@);
+--   * 'decodeTransactionIntent' / 'decodeRecordTransactions' — standalone
+--     convenience wrappers for tests and isolated reuse;
+--   * 'recordTransactionsSchema' — the JSON-schema fragment sent as @response_format@;
+--   * 'recordTransactionsGuide' — the guide fragment (schema + the user's real
+--     names + multilingual instruction + few-shot examples).
 module Application.Services.Prompt.Transaction.Intent
   ( IntentKind (..),
     IntentAllocation (..),
     TransactionIntent (..),
     parseTransactionFields,
+    parseRecordTransactionsFields,
     decodeTransactionIntent,
-    transactionSchema,
-    transactionIntentName,
+    decodeRecordTransactions,
+    recordTransactionsSchema,
+    recordTransactionsIntentName,
     PromptContext (..),
-    transactionGuide,
+    recordTransactionsGuide,
   )
 where
 
@@ -44,10 +47,10 @@ import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text as T
 
 -- | The name of this intent, used as the envelope @intent@ discriminator.
-transactionIntentName :: Text
-transactionIntentName = "transaction"
+recordTransactionsIntentName :: Text
+recordTransactionsIntentName = "record_transactions"
 
--- | The sub-classification within @transaction@.
+-- | The kind of one transaction in the list (income, expense, or transfer).
 data IntentKind = IncomeKind | ExpenseKind | TransferKind
   deriving (Show, Eq)
 
@@ -61,8 +64,8 @@ data IntentAllocation = IntentAllocation
   }
   deriving (Show, Eq)
 
--- | The payload the model returns for @transaction@. Names and amounts are
--- text (in any language); deterministic code resolves them later.
+-- | One transaction element of the @record_transactions@ payload. Names and
+-- amounts are text (in any language); deterministic code resolves them later.
 data TransactionIntent = TransactionIntent
   { kind :: !IntentKind,
     -- | Transfer total. Income/expense derive their total from 'allocations';
@@ -134,54 +137,95 @@ decodeTransactionIntent bs = case Aeson.eitherDecode bs of
   Left e -> Left ("intent: invalid JSON: " <> T.pack e)
   Right v -> first T.pack (parseEither (withObject "TransactionIntent" parseTransactionFields) v)
 
--- | The JSON-schema fragment for the @transaction@ fields, sent as
--- @response_format.json_schema@ (best-effort; servers that ignore it still get
--- the shape from the prompt text). The @intent@ property is fixed to
--- @transaction@.
-transactionSchema :: Value
-transactionSchema =
+-- | Parse the @record_transactions@ payload: a required @transactions@ array,
+-- each element the existing per-transaction shape ('parseTransactionFields').
+--
+-- This is the reusable parser the generic envelope/router calls __after__ it
+-- has read the envelope's @intent@ field; it reads only @transactions@ and
+-- deliberately __ignores__ @intent@. An absent or non-array @transactions@ is a
+-- parse failure.
+parseRecordTransactionsFields :: Object -> Parser [TransactionIntent]
+parseRecordTransactionsFields o =
+  o
+    .: "transactions"
+    >>= traverse (withObject "TransactionIntent" parseTransactionFields)
+
+-- | Standalone convenience decoder for tests and isolated reuse: decode a JSON
+-- byte string straight into the @transactions@ list, skipping the generic
+-- envelope. The real request path runs through
+-- 'Application.Services.Prompt.Types.decodePromptIntent'.
+decodeRecordTransactions :: BL.ByteString -> Either Text [TransactionIntent]
+decodeRecordTransactions bs = case Aeson.eitherDecode bs of
+  Left e -> Left ("intent: invalid JSON: " <> T.pack e)
+  Right v -> first T.pack (parseEither (withObject "RecordTransactions" parseRecordTransactionsFields) v)
+
+-- | The JSON-schema fragment describing the @record_transactions@ envelope
+-- (@intent@ fixed to @record_transactions@, plus a @transactions@ array of the
+-- per-transaction shape).
+--
+-- Kept as documentation of the wire shape and for a future @json_schema@
+-- @response_format@; the live request path deliberately sends @json_object@
+-- instead (see 'Application.Services.PromptService'), because many
+-- OpenAI-compatible providers reject @json_schema@ outright and the shape is
+-- already fully described in 'recordTransactionsGuide'. Not currently sent.
+recordTransactionsSchema :: Value
+recordTransactionsSchema =
   object
-    [ "name" .= transactionIntentName,
+    [ "name" .= recordTransactionsIntentName,
       "schema"
         .= object
           [ "type" .= ("object" :: Text),
-            "required" .= (["intent", "kind"] :: [Text]),
+            "required" .= (["intent", "transactions"] :: [Text]),
             "properties"
               .= object
                 [ "intent"
                     .= object
                       [ "type" .= ("string" :: Text),
-                        "const" .= transactionIntentName,
-                        "enum" .= ([transactionIntentName] :: [Text])
+                        "const" .= recordTransactionsIntentName,
+                        "enum" .= ([recordTransactionsIntentName] :: [Text])
                       ],
-                  "kind" .= object ["type" .= ("string" :: Text), "enum" .= (["income", "expense", "transfer"] :: [Text])],
-                  "amount" .= nullableStr,
-                  "allocations"
+                  "transactions"
                     .= object
                       [ "type" .= ("array" :: Text),
-                        "items"
-                          .= object
-                            [ "type" .= ("object" :: Text),
-                              "required" .= (["amount"] :: [Text]),
-                              "properties"
-                                .= object
-                                  [ "amount" .= strType,
-                                    "category" .= nullableStr,
-                                    "comment" .= nullableStr
-                                  ]
-                            ]
-                      ],
-                  "currency" .= nullableStr,
-                  "sourceAccount" .= nullableStr,
-                  "targetAccount" .= nullableStr,
-                  "description" .= nullableStr,
-                  "date" .= nullableStr
+                        "items" .= transactionObject
+                      ]
                 ]
           ]
     ]
   where
     strType = object ["type" .= ("string" :: Text)]
     nullableStr = object ["type" .= (["string", "null"] :: [Text])]
+    -- The per-transaction element shape (no @intent@ — that is envelope-level).
+    transactionObject =
+      object
+        [ "type" .= ("object" :: Text),
+          "required" .= (["kind"] :: [Text]),
+          "properties"
+            .= object
+              [ "kind" .= object ["type" .= ("string" :: Text), "enum" .= (["income", "expense", "transfer"] :: [Text])],
+                "amount" .= nullableStr,
+                "allocations"
+                  .= object
+                    [ "type" .= ("array" :: Text),
+                      "items"
+                        .= object
+                          [ "type" .= ("object" :: Text),
+                            "required" .= (["amount"] :: [Text]),
+                            "properties"
+                              .= object
+                                [ "amount" .= strType,
+                                  "category" .= nullableStr,
+                                  "comment" .= nullableStr
+                                ]
+                          ]
+                    ],
+                "currency" .= nullableStr,
+                "sourceAccount" .= nullableStr,
+                "targetAccount" .= nullableStr,
+                "description" .= nullableStr,
+                "date" .= nullableStr
+              ]
+        ]
 
 -- | Context describing the user's real accounts, categories, and labels,
 -- embedded verbatim in the prompt so the model chooses from real values.
@@ -193,24 +237,37 @@ data PromptContext = PromptContext
   }
   deriving (Show, Eq)
 
--- | The @transaction@ guide fragment: describes the required JSON keys
--- (including the @intent@ discriminator), embeds the user's real account and
--- category names, states the multilingual "map to the exact names, echo
--- verbatim" instruction, and gives a few-shot examples set (including a
--- Ukrainian case). Pure function of 'PromptContext' — today's date and the
--- user's message are added by the generic Builder/router, not here.
-transactionGuide :: PromptContext -> Text
-transactionGuide ctx =
+-- | The @record_transactions@ guide fragment: frames the top-level
+-- @{intent, transactions:[...]}@ envelope, states the split-vs-distinct rule
+-- (separate list elements = distinct transactions; allocations = split one
+-- payment across categories), describes each per-transaction key, embeds the
+-- user's real account and category names, states the multilingual "map to the
+-- exact names, echo verbatim" instruction, and gives contrasting few-shot
+-- examples (single, split-payment, multi, and a Ukrainian case). Pure function
+-- of 'PromptContext' — today's date and the user's message are added by the
+-- generic Builder/router, not here.
+recordTransactionsGuide :: PromptContext -> Text
+recordTransactionsGuide ctx =
   T.unlines
-    [ "Intent \"" <> transactionIntentName <> "\": record a single personal-finance transaction.",
+    [ "Intent \"" <> recordTransactionsIntentName <> "\": record ONE OR MORE personal-finance transactions from the message.",
       "",
-      "Return a JSON object with these keys:",
-      "  intent: always \"" <> transactionIntentName <> "\"",
+      "Return a JSON object: {\"intent\":\"" <> recordTransactionsIntentName <> "\",\"transactions\":[ <transaction>, ... ]}",
+      "Emit ONE list element per DISTINCT transaction. A distinct transaction has",
+      "its own kind, account(s), currency, and date. Do NOT decide whether the",
+      "message is \"one\" or \"many\" — just list every transaction you find (a single",
+      "capture is a list of one).",
+      "",
+      "Use ALLOCATIONS (within a single transaction) ONLY to split ONE payment",
+      "across categories — same account, same kind, same date. Use SEPARATE list",
+      "elements for transactions that differ in account, kind, or date (allocations",
+      "cannot represent those).",
+      "",
+      "Each <transaction> has these keys:",
       "  kind: \"income\" | \"expense\" | \"transfer\"",
       "  amount: transfer ONLY — the decimal total as a string, using '.' as the",
       "    decimal separator. Leave null for income/expense (use allocations).",
-      "  allocations: income/expense ONLY — an array of line items, one per input",
-      "    line, each {\"amount\", \"category\", \"comment\"} where:",
+      "  allocations: income/expense ONLY — an array of line items, one per split",
+      "    part, each {\"amount\", \"category\", \"comment\"} where:",
       "      amount: that line's decimal as a string ('.' decimal separator)",
       "      category: the matching category name below, or null (system default)",
       "      comment: the specific item(s) or purpose from that line — the goods",
@@ -220,7 +277,7 @@ transactionGuide ctx =
       "  currency: one of UAH,USD,EUR,GBP or null",
       "  sourceAccount: the account money leaves; null when it comes from outside (income)",
       "  targetAccount: the account money enters; null when it goes outside (expense)",
-      "  description: a SHORT summary of the whole transaction — the items across all",
+      "  description: a SHORT summary of this transaction — the items across all its",
       "    allocations together (e.g. their names joined), in the user's language; or",
       "    null to let the system summarise the lines.",
       "  date: absolute ISO YYYY-MM-DD (resolve 'yesterday' etc. using today's date), or null",
@@ -230,29 +287,41 @@ transactionGuide ctx =
       "null; for income, targetAccount is the user's account and sourceAccount is",
       "null; for transfer, sourceAccount is the from-account and targetAccount the to.",
       "",
-      "For a multi-line expense/income, produce ONE allocation per line; set that",
-      "line's comment to the item/purpose it describes (goods bought, reason),",
-      "stripped of the amount, currency, and account words — NOT the raw line. The",
-      "total is the sum of the line amounts (do NOT output a top-level amount for",
-      "income/expense).",
+      "The user may write in ANY language.",
       "",
-      "The user may write in ANY language. Map their words to exactly one of the",
-      "names listed below and return that name VERBATIM as shown. If nothing fits a",
-      "category, use null (the system will pick a default).",
+      "Categories: map the user's words to exactly one of the category names listed",
+      "below and return that name VERBATIM. If nothing fits, use null (the system",
+      "picks the default category).",
+      "",
+      "sourceAccount / targetAccount: output ONE of —",
+      "  * the exact name of a listed account, when the user clearly names one;",
+      "  * else, when the user refers to a KIND of account in ANY language, the",
+      "    English type word \"cash\", \"card\", \"bank\", or \"wallet\" (e.g. Ukrainian",
+      "    готівка->\"cash\", карта->\"card\"; Spanish efectivo->\"cash\"). The system maps",
+      "    the type to the user's default account of that kind;",
+      "  * else null — the system uses the user's default account.",
+      "NEVER echo the user's own word for an account or invent a name: use a listed",
+      "name, one of those four type words, or null.",
       "",
       "Accounts: " <> commas ctx.accountNames,
       "Income categories: " <> commas ctx.incomeCategoryNames,
       "Expense categories: " <> commas ctx.expenseCategoryNames,
       labelsLine ctx.labelNames,
       "",
-      "Examples (note how comment carries only the item, not the amount/account):",
-      "  'cash milk 120 uah' -> {\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"120\",\"category\":\"Food\",\"comment\":\"milk\"}],\"currency\":\"UAH\",\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}",
-      "  'cash 123 food' -> {\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}",
-      "  'salary 5000 to bank' -> {\"intent\":\"transaction\",\"kind\":\"income\",\"amount\":null,\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":null}],\"currency\":null,\"sourceAccount\":null,\"targetAccount\":\"Bank\",\"description\":null,\"date\":null}",
-      "  'move 200 from cash to card' -> {\"intent\":\"transaction\",\"kind\":\"transfer\",\"amount\":\"200\",\"allocations\":[],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":\"Card\",\"description\":null,\"date\":null}",
-      "  'готівка 123 їжа' -> {\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}",
-      "  multi-line 'огірки розсада 200\\nквіти 700\\nяйця 200\\nовочі 500\\nогірки зелень 160' ->",
-      "    {\"intent\":\"transaction\",\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"200\",\"category\":\"Food\",\"comment\":\"огірки розсада\"},{\"amount\":\"700\",\"category\":null,\"comment\":\"квіти\"},{\"amount\":\"200\",\"category\":\"Food\",\"comment\":\"яйця\"},{\"amount\":\"500\",\"category\":\"Food\",\"comment\":\"овочі\"},{\"amount\":\"160\",\"category\":\"Food\",\"comment\":\"огірки зелень\"}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":\"огірки розсада, квіти, яйця, овочі, огірки зелень\",\"date\":null}",
+      "Examples (comment carries only the item, not the amount/account):",
+      "  'cash 123 food' (one transaction) ->",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "  'ATB: milk 20, bread 15' (ONE payment split across categories -> one transaction, two allocations) ->",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"20\",\"category\":\"Food\",\"comment\":\"milk\"},{\"amount\":\"15\",\"category\":\"Food\",\"comment\":\"bread\"}],\"currency\":null,\"sourceAccount\":\"ATB\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "  'salary 5000 to bank, coffee 45 cash, taxi 120 cash' (THREE distinct transactions) ->",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"income\",\"amount\":null,\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":null}],\"currency\":null,\"sourceAccount\":null,\"targetAccount\":\"Bank\",\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"45\",\"category\":null,\"comment\":\"coffee\"}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"120\",\"category\":null,\"comment\":\"taxi\"}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "  'move 200 from cash to card' (one transfer) ->",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"transfer\",\"amount\":\"200\",\"allocations\":[],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":\"Card\",\"description\":null,\"date\":null}]}",
+      "  Ukrainian 'готівка 123 їжа' (one transaction; готівка is the CASH type) ->",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "  Ukrainian 'готівка 400 молоко, 50 банани; карта 33 кава, 55 хліб'",
+      "  (TWO transactions — a cash-type line and a card-type line, each split across items) ->",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"400\",\"category\":\"Food\",\"comment\":\"молоко\"},{\"amount\":\"50\",\"category\":\"Food\",\"comment\":\"банани\"}],\"currency\":null,\"sourceAccount\":\"cash\",\"targetAccount\":null,\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"33\",\"category\":null,\"comment\":\"кава\"},{\"amount\":\"55\",\"category\":\"Food\",\"comment\":\"хліб\"}],\"currency\":null,\"sourceAccount\":\"card\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
       "",
       "Output only JSON."
     ]

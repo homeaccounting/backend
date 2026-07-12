@@ -407,9 +407,25 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
       $ resolvedAccount (expSrc Nothing)
       `shouldBe` Right (mockAccountIdN 9)
 
-    it "6. a specific unknown, non-keyword name is a NoMatch (400)"
-      $ errField (expSrc (Just "Groceries"))
-      `shouldBe` Just "sourceAccount"
+    it "6. a specific unknown, non-keyword name falls back to the global default"
+      $
+      -- Recording to the default beats failing: an unknown reference with a
+      -- global default configured resolves to it (id 9) rather than erroring.
+      resolvedAccount (expSrc (Just "Groceries"))
+      `shouldBe` Right (mockAccountIdN 9)
+
+    it "an ambiguous subtype keyword (accounts named '… card') uses the subtype default"
+      $
+      -- 'card' is a substring of two account names, so name-matching alone is
+      -- ambiguous; it must still route to the Bank subtype default (id 2)
+      -- instead of erroring.
+      resolvedAccount
+        ( resolveIntent
+            precedenceCtx {accounts = [acct 2 "Platinum card" BankAccountKind, acct 5 "Black card" BankAccountKind]}
+            "x"
+            baseExpense {sourceAccount = Just "card"}
+        )
+      `shouldBe` Right (mockAccountIdN 2)
 
     it "7. with no matches and no defaults, resolution fails"
       $

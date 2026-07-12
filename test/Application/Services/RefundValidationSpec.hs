@@ -31,11 +31,11 @@ import Application.Services.ConfigurationService
     seedDefaultConfiguration,
   )
 import Application.Services.TransactionService
-  ( cancelTransaction,
+  ( addTransactionRelation,
+    cancelTransaction,
     getOutboundRelations,
     initiateExpense,
     initiateIncome,
-    addTransactionRelation,
   )
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))

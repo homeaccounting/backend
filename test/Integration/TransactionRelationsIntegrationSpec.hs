@@ -38,11 +38,11 @@ import Application.Services.ConfigurationService
   )
 import Application.Services.ReportingService (spendingByCategory)
 import Application.Services.TransactionService
-  ( cancelTransaction,
+  ( addTransactionRelation,
+    cancelTransaction,
     getOutboundRelations,
     initiateExpense,
     initiateIncome,
-    addTransactionRelation,
     removeTransactionRelation,
   )
 import qualified Data.Set as Set

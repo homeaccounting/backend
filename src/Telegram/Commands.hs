@@ -63,7 +63,12 @@ import Application.ReadModels.User
 import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTelegramLinkCode)
 import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
-import Application.Services.Prompt.Types (PromptError (..), PromptResult (..))
+import Application.Services.Prompt.Types
+  ( FailedTransaction (..),
+    PromptError (..),
+    PromptResult (..),
+    RecordedTransaction (..),
+  )
 import qualified Application.Services.PromptService as PromptService
 import Application.Services.TransactionService (initiateExpense, initiateIncome, initiateTransfer)
 import qualified Application.Services.TransactionService as TransactionService
@@ -496,8 +501,12 @@ handlePromptText botState telegramId chatId text = do
       selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
       result <- PromptService.handlePrompt userId (fst <$> selected) text
       case result of
-        Right (TransactionCreated _interp _txId txData) ->
-          replyRecordedTransaction telegramId chatId txData
+        Right (TransactionsRecorded succeeded failed) -> do
+          forM_ succeeded $ \r -> replyRecordedTransaction telegramId chatId r.tx
+          unless (null failed)
+            $ sendMsg chatId
+            $ "\9888\65039 Couldn't record:\n"
+            <> T.unlines [" \8226 transaction " <> tshow (f.index + 1) <> ": " <> f.reason | f <- failed]
         Left (PromptDomainError de) ->
           sendMsg chatId ("\9888\65039 " <> renderDomainError de)
         Left PromptFeatureDisabled ->

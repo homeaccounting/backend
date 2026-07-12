@@ -155,7 +155,7 @@ spec = do
 
       -- The LLM returns an expense with no account named; the selection fills it.
       let json =
-            "{\"intent\":\"transaction\",\"kind\":\"expense\",\"allocations\":[{\"amount\":\"42\",\"category\":\"Food\",\"comment\":\"snack\"}]}"
+            "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"allocations\":[{\"amount\":\"42\",\"category\":\"Food\",\"comment\":\"snack\"}]}]}"
           env = withLlmClient (constLlmClient json) baseEnv
       runAppM env (handleMessage botState freshTgIdent.id testChatId "snack 42")
 

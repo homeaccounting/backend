@@ -12,15 +12,35 @@
 -- through for the resolver to prefer over name-based resolution.
 module Web.API.PromptAPISpec (spec) where
 
-import Data.Aeson (eitherDecode)
+import Data.Aeson (eitherDecode, encode)
 import Domain.Core.Types (unAccountId)
 import RIO
+import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text as T
 import Test.Hspec
-import Web.API.PromptAPI (PromptRequest (..))
+import Web.API.PromptAPI (PromptRequest (..), PromptResponse (..))
 
 spec :: Spec
-spec = describe "Web.API.PromptAPI.PromptRequest (FromJSON)" $ do
+spec = do
+  requestSpec
+  responseSpec
+
+responseSpec :: Spec
+responseSpec = describe "Web.API.PromptAPI.PromptResponse (ToJSON)"
+  $ it "emits kind \"transactions\" with succeeded and failed arrays"
+  $ do
+    let resp = TransactionsResult {succeeded = [], failed = [(1, "sourceAccount: no account matches 'foo'")]}
+        j = decodeUtf8Lenient (BL.toStrict (encode resp))
+        has s = s `T.isInfixOf` j
+    ( has "\"kind\":\"transactions\""
+        && has "\"succeeded\":[]"
+        && has "\"failed\":"
+        && has "\"index\":1"
+      )
+      `shouldBe` True
+
+requestSpec :: Spec
+requestSpec = describe "Web.API.PromptAPI.PromptRequest (FromJSON)" $ do
   it "decodes a body with only text (account defaults to Nothing)" $ do
     case eitherDecode "{\"text\":\"coffee 4.50\"}" :: Either String PromptRequest of
       Right (PromptRequest {text = t, account = a}) -> do

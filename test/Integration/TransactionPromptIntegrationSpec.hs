@@ -18,7 +18,12 @@ module Integration.TransactionPromptIntegrationSpec (spec) where
 
 import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
-import Application.Services.Prompt.Types (PromptError (..), PromptResult (..))
+import Application.Services.Prompt.Types
+  ( FailedTransaction (..),
+    PromptError (..),
+    PromptResult (..),
+    RecordedTransaction (..),
+  )
 import Application.Services.PromptService (handlePrompt)
 import Data.Ratio ((%))
 import Domain.Configuration.Defaults
@@ -99,6 +104,11 @@ incomeCategoryOf td = case allocationsOf td.transactionType of
     [] -> Nothing
   Nothing -> Nothing
 
+-- | The single committed transaction from a one-element, no-failure result.
+soleRecorded :: Either PromptError PromptResult -> Either String TransactionData
+soleRecorded (Right (TransactionsRecorded [r] [])) = Right r.tx
+soleRecorded other = Left ("expected exactly one recorded transaction, got: " <> show other)
+
 -- | 'True' iff the error is a 502-mapped upstream failure.
 isUpstream :: PromptError -> Bool
 isUpstream (PromptUpstreamError _) = True
@@ -118,28 +128,29 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "commits an expense from a resolved account and category (happy path)" $ do
     h <- setupHarness "prompt-expense@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
     case result of
-      Right (TransactionCreated interp _ td) -> do
+      Right (TransactionsRecorded [r] []) -> do
+        let td = r.tx
         td.sourceAccountId `shouldBe` h.cashAccount
         unMoney td.sourceAmount `shouldBe` 123
         expenseCategoryOf td `shouldBe` Just foodCategoryId
-        ("Cash" `T.isInfixOf` interp) `shouldBe` True
-      other -> expectationFailure ("expected TransactionCreated, got: " <> show other)
+        ("Cash" `T.isInfixOf` r.interpretation) `shouldBe` True
+      other -> expectationFailure ("expected one recorded transaction, got: " <> show other)
 
   it "falls back to the default category when the named category is unknown" $ do
     h <- setupHarness "prompt-default-cat@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"50\",\"category\":\"Xyz\",\"comment\":\"cash 50 xyz\"}]}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"50\",\"category\":\"Xyz\",\"comment\":\"cash 50 xyz\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user Nothing "cash 50 xyz")
-    case result of
-      Right (TransactionCreated _ _ td) -> do
+    case soleRecorded result of
+      Right td -> do
         unMoney td.sourceAmount `shouldBe` 50
         expenseCategoryOf td `shouldBe` Just defaultExpenseCategoryId
-      other -> expectationFailure ("expected TransactionCreated, got: " <> show other)
+      Left msg -> expectationFailure msg
 
   it "preserves five per-line allocations (comments + categories) without merging" $ do
     h <- setupHarness "prompt-multi-alloc@example.com"
@@ -148,16 +159,16 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     -- duplicate categories; each line keeps its own comment. Cyrillic comments
     -- must round-trip exactly (Text literal is Unicode, so no truncation).
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[\
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[\
           \{\"amount\":\"200\",\"category\":\"Food\",\"comment\":\"огірки розсада\"},\
           \{\"amount\":\"700\",\"category\":null,\"comment\":\"квіти\"},\
           \{\"amount\":\"200\",\"category\":\"Food\",\"comment\":\"яйця\"},\
           \{\"amount\":\"500\",\"category\":\"Food\",\"comment\":\"овочі\"},\
-          \{\"amount\":\"160\",\"category\":\"Food\",\"comment\":\"огірки зелень\"}]}"
+          \{\"amount\":\"160\",\"category\":\"Food\",\"comment\":\"огірки зелень\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user Nothing "огірки розсада 200 квіти 700 яйця 200 овочі 500 огірки зелень 160")
-    case result of
-      Right (TransactionCreated _ _ td) -> do
+    case soleRecorded result of
+      Right td -> do
         td.sourceAccountId `shouldBe` h.cashAccount
         case allocationsOf td.transactionType of
           Just allocs -> do
@@ -181,17 +192,17 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
                            foodCategoryId
                          ]
           Nothing -> expectationFailure "expected Expense allocations"
-      other -> expectationFailure ("expected TransactionCreated, got: " <> show other)
+      Left msg -> expectationFailure msg
 
-  it "rejects an unresolvable account (PromptDomainError)" $ do
+  it "reports an unresolvable account as a failed row, committing nothing" $ do
     h <- setupHarness "prompt-bad-acct@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Nope\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":\"nope 10 food\"}]}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Nope\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":\"nope 10 food\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user Nothing "nope 10 food")
     case result of
-      Left (PromptDomainError _) -> pure ()
-      other -> expectationFailure ("expected Left (PromptDomainError _), got: " <> show other)
+      Right (TransactionsRecorded [] [f]) -> f.index `shouldBe` 0
+      other -> expectationFailure ("expected one failed transaction, got: " <> show other)
 
   it "yields PromptFeatureDisabled when the LLM feature is disabled (no client injected)" $ do
     h <- setupHarness "prompt-disabled@example.com"
@@ -214,16 +225,16 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "retries once on a malformed response then commits on the valid retry" $ do
     h <- setupHarness "prompt-retry-recover@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":\"cash 123 food\"}]}]}"
     client <- queueLlmClient ["not json", json]
     let e = withLlmClient client h.env
     result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
-    case result of
-      Right (TransactionCreated _ _ td) -> do
+    case soleRecorded result of
+      Right td -> do
         td.sourceAccountId `shouldBe` h.cashAccount
         unMoney td.sourceAmount `shouldBe` 123
         expenseCategoryOf td `shouldBe` Just foodCategoryId
-      other -> expectationFailure ("expected TransactionCreated after retry, got: " <> show other)
+      Left msg -> expectationFailure msg
 
   it "surfaces a 502 (PromptUpstreamError) when the retry is also unparseable" $ do
     h <- setupHarness "prompt-retry-exhausted@example.com"
@@ -255,16 +266,16 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
   it "commits income into the target account with the resolved income category" $ do
     h <- setupHarness "prompt-income@example.com"
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"income\",\"targetAccount\":\"Cash\",\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":\"salary 5000 to cash\"}]}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"income\",\"targetAccount\":\"Cash\",\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":\"salary 5000 to cash\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user Nothing "salary 5000 to cash")
-    case result of
-      Right (TransactionCreated _ _ td) -> do
+    case soleRecorded result of
+      Right td -> do
         -- Income flows External -> Cash, so Cash is the *target* leg.
         td.targetAccountId `shouldBe` h.cashAccount
         unMoney td.targetAmount `shouldBe` 5000
         incomeCategoryOf td `shouldBe` Just salaryCategoryId
-      other -> expectationFailure ("expected TransactionCreated (income), got: " <> show other)
+      Left msg -> expectationFailure msg
 
   it "records against the selected account when the prompt names none" $ do
     h <- setupHarness "prompt-selected-acct@example.com"
@@ -272,14 +283,14 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     -- default. The LLM returns no sourceAccount; the selection must fill it.
     card <- createAccount h.env h.user "Card" defaultCash Core.UAH 0
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"allocations\":[{\"amount\":\"42\",\"category\":\"Food\",\"comment\":\"snack\"}]}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"allocations\":[{\"amount\":\"42\",\"category\":\"Food\",\"comment\":\"snack\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user (Just card) "snack 42")
-    case result of
-      Right (TransactionCreated _ _ td) -> do
+    case soleRecorded result of
+      Right td -> do
         td.sourceAccountId `shouldBe` card
         unMoney td.sourceAmount `shouldBe` 42
-      other -> expectationFailure ("expected TransactionCreated against the selected account, got: " <> show other)
+      Left msg -> expectationFailure msg
 
   it "lets an account named in the prompt override the selection" $ do
     h <- setupHarness "prompt-selected-override@example.com"
@@ -287,12 +298,12 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     -- The prompt explicitly names "Cash"; even with "Card" selected, the
     -- explicit name must win.
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":\"cash 10 food\"}]}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":\"cash 10 food\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user (Just card) "cash 10 food")
-    case result of
-      Right (TransactionCreated _ _ td) -> td.sourceAccountId `shouldBe` h.cashAccount
-      other -> expectationFailure ("expected the explicitly-named account, got: " <> show other)
+    case soleRecorded result of
+      Right td -> td.sourceAccountId `shouldBe` h.cashAccount
+      Left msg -> expectationFailure msg
 
   it "commits a transfer between two resolved regular accounts" $ do
     h <- setupHarness "prompt-transfer@example.com"
@@ -300,12 +311,86 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     -- without a cross-currency rate.
     card <- createAccount h.env h.user "Card" defaultCash Core.UAH 0
     let json =
-          "{\"intent\":\"transaction\",\"kind\":\"transfer\",\"amount\":\"200\",\"sourceAccount\":\"Cash\",\"targetAccount\":\"Card\"}"
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"transfer\",\"amount\":\"200\",\"sourceAccount\":\"Cash\",\"targetAccount\":\"Card\"}]}"
         e = withLlmClient (constLlmClient json) h.env
     result <- runAppM e (handlePrompt h.user Nothing "move 200 from cash to card")
-    case result of
-      Right (TransactionCreated _ _ td) -> do
+    case soleRecorded result of
+      Right td -> do
         td.sourceAccountId `shouldBe` h.cashAccount
         td.targetAccountId `shouldBe` card
         unMoney td.sourceAmount `shouldBe` 200
-      other -> expectationFailure ("expected TransactionCreated (transfer), got: " <> show other)
+      Left msg -> expectationFailure msg
+
+  it "records three distinct transactions from one capture (income + two expenses)" $ do
+    h <- setupHarness "prompt-multi@example.com"
+    let json =
+          "{\"intent\":\"record_transactions\",\"transactions\":[\
+          \{\"kind\":\"income\",\"targetAccount\":\"Cash\",\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":null}]},\
+          \{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"45\",\"category\":null,\"comment\":\"coffee\"}]},\
+          \{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"120\",\"category\":null,\"comment\":\"taxi\"}]}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user Nothing "salary 5000 to cash, coffee 45 cash, taxi 120 cash")
+    case result of
+      Right (TransactionsRecorded succeeded failed) -> do
+        length succeeded `shouldBe` 3
+        failed `shouldBe` []
+      other -> expectationFailure ("expected three recorded, got: " <> show other)
+
+  it "splits one payment across categories as a single transaction with two allocations" $ do
+    h <- setupHarness "prompt-split@example.com"
+    let json =
+          "{\"intent\":\"record_transactions\",\"transactions\":[\
+          \{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[\
+          \{\"amount\":\"20\",\"category\":\"Food\",\"comment\":\"milk\"},\
+          \{\"amount\":\"15\",\"category\":\"Food\",\"comment\":\"bread\"}]}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user Nothing "milk 20, bread 15 cash")
+    case soleRecorded result of
+      Right td -> case allocationsOf td.transactionType of
+        Just allocs -> length allocs.expenses `shouldBe` 2
+        Nothing -> expectationFailure "expected expense allocations"
+      Left msg -> expectationFailure msg
+
+  it "commits the good transactions and reports the bad one (partial failure)" $ do
+    h <- setupHarness "prompt-partial@example.com"
+    -- The second element names an account that does not resolve; it must fail
+    -- while the first still commits.
+    let json =
+          "{\"intent\":\"record_transactions\",\"transactions\":[\
+          \{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":null}]},\
+          \{\"kind\":\"expense\",\"sourceAccount\":\"Nope\",\"allocations\":[{\"amount\":\"20\",\"category\":\"Food\",\"comment\":null}]}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user Nothing "cash 10 food; nope 20 food")
+    case result of
+      Right (TransactionsRecorded succeeded failed) -> do
+        length succeeded `shouldBe` 1
+        map (.index) failed `shouldBe` [1]
+      other -> expectationFailure ("expected one recorded + one failed, got: " <> show other)
+
+  it "returns a domain error when the model identifies no transaction (empty list after retry)" $ do
+    h <- setupHarness "prompt-empty-list@example.com"
+    client <-
+      queueLlmClient
+        [ "{\"intent\":\"record_transactions\",\"transactions\":[]}",
+          "{\"intent\":\"record_transactions\",\"transactions\":[]}"
+        ]
+    let e = withLlmClient client h.env
+    result <- runAppM e (handlePrompt h.user Nothing "hello there")
+    case result of
+      Left err | isDomainErr err -> pure ()
+      other -> expectationFailure ("expected Left (PromptDomainError _), got: " <> show other)
+
+  it "retries once on an empty transactions list then commits on the non-empty retry" $ do
+    h <- setupHarness "prompt-empty-then-recover@example.com"
+    client <-
+      queueLlmClient
+        [ "{\"intent\":\"record_transactions\",\"transactions\":[]}",
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}]}]}"
+        ]
+    let e = withLlmClient client h.env
+    result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
+    case soleRecorded result of
+      Right td -> do
+        td.sourceAccountId `shouldBe` h.cashAccount
+        unMoney td.sourceAmount `shouldBe` 123
+      Left msg -> expectationFailure msg

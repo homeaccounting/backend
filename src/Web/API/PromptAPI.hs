@@ -35,12 +35,15 @@ module Web.API.PromptAPI
 
     -- * DTOs (exported for testing)
     PromptRequest (..),
+    PromptResponse (..),
   )
 where
 
 import Application.Services.Prompt.Types
-  ( PromptError (..),
+  ( FailedTransaction (..),
+    PromptError (..),
     PromptResult (..),
+    RecordedTransaction (..),
   )
 import qualified Application.Services.PromptService as PromptService
 import Data.Aeson (FromJSON, ToJSON (..), object, (.=))
@@ -89,10 +92,14 @@ instance FromJSON PromptRequest
 instance ToJSON PromptRequest
 
 -- | Response body. Kind-tagged for extensibility: future intents add new
--- constructors emitting a different @kind@ discriminator.
-data PromptResponse = TransactionResult
-  { interpretation :: Text,
-    transaction :: TransactionResponse
+-- constructors emitting a different @kind@ discriminator. A single free-text
+-- capture yields @succeeded@ of length one; @failed@ carries the transactions
+-- that could not be committed (commit-good/report-bad, no dedup), each tagged
+-- with its zero-based @index@ in the request. Exported (with its constructor)
+-- for testing, as 'PromptRequest' already is.
+data PromptResponse = TransactionsResult
+  { succeeded :: [TransactionResponse],
+    failed :: [(Int, Text)]
   }
   deriving (Show, Eq, Generic)
 
@@ -100,10 +107,12 @@ data PromptResponse = TransactionResult
 instance ToJSON PromptResponse where
   toJSON r =
     object
-      [ "kind" .= ("transaction" :: Text),
-        "interpretation" .= r.interpretation,
-        "transaction" .= r.transaction
+      [ "kind" .= ("transactions" :: Text),
+        "succeeded" .= r.succeeded,
+        "failed" .= map failedItem r.failed
       ]
+    where
+      failedItem (idx, rs) = object ["index" .= idx, "reason" .= rs]
 
 -- -----------------------------------------------------------------------------
 -- Server Implementation
@@ -121,8 +130,13 @@ promptHandler :: AuthenticatedUser -> PromptRequest -> AppM PromptResponse
 promptHandler user req = do
   result <- PromptService.handlePrompt user.userId req.account req.text
   case result of
-    Right (TransactionCreated interp tid tdata) ->
-      pure (TransactionResult interp (fromTransactionData tid tdata))
+    Right (TransactionsRecorded succeeded failed) ->
+      pure
+        ( TransactionsResult
+            { succeeded = [fromTransactionData r.txId r.tx | r <- succeeded],
+              failed = [(f.index, f.reason) | f <- failed]
+            }
+        )
     Left (PromptDomainError de) -> throwDomainError de
     Left PromptFeatureDisabled -> throwIO (err503 {errBody = "LLM feature disabled"})
     Left (PromptUpstreamError _) -> throwIO (err502 {errBody = "LLM upstream error"})

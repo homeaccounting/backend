@@ -7,7 +7,7 @@ module Application.Services.Prompt.BuilderSpec (spec) where
 import Application.Services.Prompt.Builder (buildMessages)
 import Application.Services.Prompt.Transaction.Intent
   ( PromptContext (..),
-    transactionGuide,
+    recordTransactionsGuide,
   )
 import Infrastructure.Llm.Provider (LlmMessage (..), LlmRole (..))
 import RIO
@@ -27,8 +27,8 @@ spec :: Spec
 spec = describe "Application.Services.Prompt.Builder.buildMessages" $ do
   let today = "2026-07-01"
       userText = "готівка 123 їжа"
-      guide = transactionGuide sampleContext
-      intentNames = ["transaction"]
+      guide = recordTransactionsGuide sampleContext
+      intentNames = ["record_transactions"]
       msgs = buildMessages today intentNames [guide] userText
 
   it "returns exactly a System then a User message" $ do

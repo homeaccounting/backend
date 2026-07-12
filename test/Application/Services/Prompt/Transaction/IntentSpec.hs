@@ -9,8 +9,9 @@ import Application.Services.Prompt.Transaction.Intent
     IntentKind (..),
     PromptContext (..),
     TransactionIntent (..),
+    decodeRecordTransactions,
     decodeTransactionIntent,
-    transactionGuide,
+    recordTransactionsGuide,
   )
 import RIO
 import qualified RIO.ByteString.Lazy as BL
@@ -53,7 +54,7 @@ spec = describe "Application.Services.Prompt.Transaction.Intent" $ do
           i.amount `shouldBe` Just "200"
         Left e -> expectationFailure (T.unpack e)
     it "ignores the envelope intent field when present" $ do
-      let j = "{\"intent\":\"transaction\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"5\",\"category\":null,\"comment\":null}]}"
+      let j = "{\"intent\":\"record_transactions\",\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"5\",\"category\":null,\"comment\":null}]}"
       case decodeTransactionIntent j of
         Right i -> do
           i.kind `shouldBe` ExpenseKind
@@ -61,7 +62,7 @@ spec = describe "Application.Services.Prompt.Transaction.Intent" $ do
         Left e -> expectationFailure (T.unpack e)
     it "decodes the 5-line issue example: each line is one allocation with its comment" $ do
       let js =
-            "{\"intent\":\"transaction\",\"kind\":\"expense\",\"currency\":null,\
+            "{\"intent\":\"record_transactions\",\"kind\":\"expense\",\"currency\":null,\
             \\"sourceAccount\":null,\"targetAccount\":null,\"description\":null,\"date\":null,\
             \\"allocations\":[\
             \{\"amount\":\"200\",\"category\":\"Food\",\"comment\":\"огірки розсада\"},\
@@ -79,7 +80,7 @@ spec = describe "Application.Services.Prompt.Transaction.Intent" $ do
         Left e -> expectationFailure (T.unpack e)
     it "decodes a transfer with a top-level amount and no allocations" $ do
       let js =
-            "{\"intent\":\"transaction\",\"kind\":\"transfer\",\"amount\":\"200\",\
+            "{\"intent\":\"record_transactions\",\"kind\":\"transfer\",\"amount\":\"200\",\
             \\"sourceAccount\":\"Cash\",\"targetAccount\":\"Card\",\"currency\":null,\
             \\"description\":null,\"date\":null}"
       case decodeTransactionIntent js of
@@ -93,9 +94,44 @@ spec = describe "Application.Services.Prompt.Transaction.Intent" $ do
     it "rejects non-JSON"
       $ decodeTransactionIntent "oops"
       `shouldSatisfy` isLeft
-  describe "transactionGuide" $ do
-    let guide = transactionGuide sampleContext
+  describe "decodeRecordTransactions" $ do
+    it "decodes a single-element transactions list" $ do
+      let j = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}]}]}"
+      case decodeRecordTransactions j of
+        Right [ti] -> do
+          ti.kind `shouldBe` ExpenseKind
+          map (.amount) ti.allocations `shouldBe` ["123"]
+        other -> expectationFailure ("expected one transaction, got: " <> show other)
+    it "decodes a split-payment (one transaction, two allocations)" $ do
+      let j = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"20\",\"category\":\"Food\",\"comment\":null},{\"amount\":\"15\",\"category\":\"Food\",\"comment\":null}]}]}"
+      case decodeRecordTransactions j of
+        Right [ti] -> map (.amount) ti.allocations `shouldBe` ["20", "15"]
+        other -> expectationFailure ("expected one transaction, got: " <> show other)
+    it "decodes a mixed multi-transaction list (distinct kinds/accounts)" $ do
+      let j = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"income\",\"targetAccount\":\"Bank\",\"amount\":null,\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":null}]},{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"45\",\"category\":null,\"comment\":\"coffee\"}]},{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"120\",\"category\":null,\"comment\":\"taxi\"}]}]}"
+      case decodeRecordTransactions j of
+        Right tis -> do
+          length tis `shouldBe` 3
+          map (.kind) tis `shouldBe` [IncomeKind, ExpenseKind, ExpenseKind]
+        other -> expectationFailure ("expected three transactions, got: " <> show other)
+    it "rejects a payload missing the transactions array"
+      $ decodeRecordTransactions "{\"intent\":\"record_transactions\"}"
+      `shouldSatisfy` isLeft
+    it "rejects a transactions element with a bad payload (no kind)"
+      $ decodeRecordTransactions "{\"transactions\":[{\"sourceAccount\":\"Cash\"}]}"
+      `shouldSatisfy` isLeft
+    it "rejects non-JSON"
+      $ decodeRecordTransactions "oops"
+      `shouldSatisfy` isLeft
+  describe "recordTransactionsGuide" $ do
+    let guide = recordTransactionsGuide sampleContext
     it "embeds account names" $ ("Cash" `T.isInfixOf` guide) `shouldBe` True
     it "embeds category names" $ ("Food" `T.isInfixOf` guide) `shouldBe` True
     it "mentions multilingual mapping" $ ("language" `T.isInfixOf` T.toLower guide) `shouldBe` True
-    it "names the transaction intent" $ ("transaction" `T.isInfixOf` guide) `shouldBe` True
+    it "names the record_transactions intent" $ ("record_transactions" `T.isInfixOf` guide) `shouldBe` True
+    it "states the split-vs-distinct rule" $ do
+      ("allocation" `T.isInfixOf` T.toLower guide) `shouldBe` True
+      ("transactions" `T.isInfixOf` guide) `shouldBe` True
+    it "instructs mapping account type-words (any language) to a subtype keyword" $ do
+      all (`T.isInfixOf` guide) ["\"cash\"", "\"card\"", "\"bank\"", "\"wallet\""] `shouldBe` True
+      ("готівка" `T.isInfixOf` guide) `shouldBe` True

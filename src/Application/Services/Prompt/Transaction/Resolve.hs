@@ -203,47 +203,51 @@ accountById ctx aid = case [a | a@(i, _) <- ctx.accounts, i == aid] of
   (a : _) -> Just (projectAccount a)
   [] -> Nothing
 
--- | Resolve an account reference against the context, following the #26
--- precedence ladder:
+-- | Resolve an account reference against the context. Precedence:
 --
---   1. a specific account __name__ match wins;
---   2. else a recognised __subtype keyword__ ("cash"/"bank"/"card"/"wallet")
---      → that subtype's default account;
---   3. else exactly __one__ account of that subtype → use it;
---   4. else the __global__ default account (also the "omitted account" case);
---   5. else 'NoMatch' / 'Ambiguous' → error.
+--   1. an exact/unique account __name__ match wins;
+--   2. else, if the text is a __subtype keyword__ ("cash"/"bank"/"card"/"wallet"),
+--      that subtype's default account, else the unique account of that subtype;
+--   3. else the __global__ default account — also the "omitted account" case, and
+--      the fallback for an __ambiguous__ or __unknown__ reference;
+--   4. else — only when no default account is configured at all — error.
 --
--- Returns @(id, canonical name, native currency)@, dropping the subtype kind.
+-- Recording to a default beats failing (product decision): an ambiguous match
+-- (e.g. "card" when several accounts are named "… card", which name-matching
+-- alone reports as ambiguous) or an otherwise-unknown name falls back to the
+-- per-type default and then the global default rather than erroring. Returns
+-- @(id, canonical name, native currency)@, dropping the subtype kind.
 resolveAccount ::
   ResolveContext ->
   Text ->
   Maybe Text ->
   Either ResolveError (AccountId, Text, Currency)
 resolveAccount ctx fld = \case
-  -- Omitted account: global default only (step 4), else a clean "not specified".
-  Nothing -> case globalDefault of
-    Just acc -> Right acc
-    Nothing -> Left (ResolveError fld "no account specified")
+  -- Omitted account: global default, else a clean "not specified".
+  Nothing -> maybe (Left (ResolveError fld "no account specified")) Right globalDefault
   Just name -> case matchByName accountName name ctx.accounts of
-    Matched acc -> Right (projectAccount acc) -- step 1
-    Ambiguous _ ->
-      Left (ResolveError fld ("Account name '" <> name <> "' is ambiguous. Your accounts: " <> accountNames))
-    NoMatch -> case keywordSubtype name of
-      -- A subtype keyword was recognised: subtype default (2), else the unique
-      -- account of that subtype (3), else the global default (4), else error.
-      Just kind -> case subtypeDefault kind of
-        Just acc -> Right acc
-        Nothing -> case accountsOfKind kind of
-          [only] -> Right (projectAccount only)
-          _ -> maybe (Left (noMatch name)) Right globalDefault
-      -- A specific but unknown name: do not silently use the global default.
-      Nothing -> Left (noMatch name)
+    Matched acc -> Right (projectAccount acc)
+    Ambiguous _ -> fallback name (ambiguousErr name)
+    NoMatch -> fallback name (noMatch name)
   where
     accountNames = T.intercalate ", " [a.name | (_, a) <- ctx.accounts]
+    ambiguousErr name = ResolveError fld ("Account name '" <> name <> "' is ambiguous. Your accounts: " <> accountNames)
     noMatch name = ResolveError fld ("No account matches '" <> name <> "'. Your accounts: " <> accountNames)
     globalDefault = ctx.defaults.account >>= accountById ctx
     subtypeDefault kind = Map.lookup kind ctx.defaults.subtypeAccounts >>= accountById ctx
     accountsOfKind kind = [a | a@(_, r) <- ctx.accounts, r.subtype == kind]
+    -- No exact/unique name matched. Prefer the account for a recognised subtype
+    -- keyword (its default, else the unique account of that kind); otherwise, and
+    -- as the final fallback, the global default. Only fail (@onFail@) when there
+    -- is no default account to record to.
+    fallback name onFail = case subtypeAccount =<< keywordSubtype name of
+      Just acc -> Right acc
+      Nothing -> maybe (Left onFail) Right globalDefault
+    subtypeAccount kind = case subtypeDefault kind of
+      Just acc -> Just acc
+      Nothing -> case accountsOfKind kind of
+        [only] -> Just (projectAccount only)
+        _ -> Nothing
 
 -- | Recognise an account-subtype keyword in the free-text account field. The
 -- @card@ keyword aliases 'BankAccountKind' (cards are typically bank cards).

@@ -9,9 +9,11 @@
 -- @POST \/api\/prompt@ returns an envelope @{ "intent": "<name>", ...fields }@.
 -- This module owns the __intent-agnostic__ pieces of that pipeline:
 --
---   * 'PromptIntent' — the sum of every supported intent. The router dispatches
---     with an exhaustive @case@, so adding an intent forces handling here, in
---     the router, and in the response mapping (no half-wired intent can ship).
+--   * 'PromptIntent' — the sum of every supported intent (currently just
+--     'RecordTransactionsIntent'). Adding an intent extends this sum, the
+--     decoder's name-dispatch, the router, and the response mapping; kept as a
+--     sum so a second intent (e.g. a report) slots in without reshaping the
+--     pipeline.
 --   * 'decodePromptIntent' — decodes the raw LLM body into a 'PromptIntent',
 --     reading the envelope @intent@ discriminator first and only then choosing
 --     the matching per-intent payload parser.
@@ -27,6 +29,8 @@ module Application.Services.Prompt.Types
     PromptDecodeError (..),
     decodePromptIntent,
     PromptResult (..),
+    RecordedTransaction (..),
+    FailedTransaction (..),
     ResolveError (..),
     PromptError (..),
   )
@@ -35,8 +39,8 @@ where
 import Application.ReadModels.Transaction (TransactionData)
 import Application.Services.Prompt.Transaction.Intent
   ( TransactionIntent,
-    parseTransactionFields,
-    transactionIntentName,
+    parseRecordTransactionsFields,
+    recordTransactionsIntentName,
   )
 import Data.Aeson (Object, Value (..), withObject, (.:))
 import qualified Data.Aeson as Aeson
@@ -48,9 +52,10 @@ import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text as T
 
 -- | The sum of every supported prompt intent. Decoding the envelope yields one
--- of these; the router dispatches with an exhaustive @case@. Future intents add
--- constructors here (and are then forced into the decoder, router, and mapping).
-data PromptIntent = CreateTransactionIntent TransactionIntent
+-- of these; the router matches it to act. Currently a single constructor
+-- (@record_transactions@, a list of 1..N transactions); future intents add
+-- constructors here and extend the decoder, router, and response mapping.
+data PromptIntent = RecordTransactionsIntent [TransactionIntent]
   deriving (Show, Eq)
 
 -- | Why decoding the LLM body into a 'PromptIntent' failed.
@@ -82,10 +87,10 @@ decodePromptIntent bs = case Aeson.eitherDecode bs of
 
     dispatchName :: Text -> Object -> Either PromptDecodeError PromptIntent
     dispatchName name o
-      | name == transactionIntentName =
-          case parsePayload parseTransactionFields o of
+      | name == recordTransactionsIntentName =
+          case parsePayload parseRecordTransactionsFields o of
             Left err -> Left (MalformedResponse err)
-            Right ti -> Right (CreateTransactionIntent ti)
+            Right tis -> Right (RecordTransactionsIntent tis)
       | otherwise = Left (UnknownIntent name)
 
 -- | Read a non-blank text @intent@ field from the envelope object.
@@ -103,12 +108,34 @@ readIntentName o = case parseEither reader o of
 parsePayload :: (Object -> Parser a) -> Object -> Either Text a
 parsePayload p o = first T.pack (parseEither (withObject "PromptIntent" p) (Object o))
 
--- | The outcome of a successfully executed intent. The Web layer maps each
--- variant to its kind-tagged @PromptResponse@ JSON. Future intents add variants.
-data PromptResult = TransactionCreated
-  { interpretation :: !Text,
+-- | The outcome of a successfully executed prompt: the transactions that
+-- committed and the ones that failed. Per-transaction commit-good/report-bad —
+-- one transaction's failure never blocks the others — and there is no dedup, so
+-- no @skipped@. The Web layer maps this to the kind-tagged @PromptResponse@ JSON.
+data PromptResult = TransactionsRecorded
+  { succeeded :: ![RecordedTransaction],
+    failed :: ![FailedTransaction]
+  }
+  deriving (Show, Eq)
+
+-- | One committed transaction: its zero-based position in the request list, the
+-- resolver's human-readable interpretation, and the committed id and read-model
+-- row. 'RecordedTransaction' and 'FailedTransaction' are the success/failure
+-- halves of a transaction's outcome and share the 'index' field.
+data RecordedTransaction = RecordedTransaction
+  { index :: !Int,
+    interpretation :: !Text,
     txId :: !TransactionId,
     tx :: !TransactionData
+  }
+  deriving (Show, Eq)
+
+-- | One transaction that could not be recorded: its zero-based position in the
+-- request list (the same 'index' 'RecordedTransaction' carries) and a
+-- human-readable reason.
+data FailedTransaction = FailedTransaction
+  { index :: !Int,
+    reason :: !Text
   }
   deriving (Show, Eq)
 
