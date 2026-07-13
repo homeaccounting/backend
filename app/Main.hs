@@ -97,7 +97,7 @@ import Infrastructure.App
     runAppM,
   )
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
-import Infrastructure.Banking.Monobank (mkBankProviderFactory)
+import qualified Infrastructure.Banking.Providers as BankProviders
 import Infrastructure.Bootstrap (configureProcess)
 import Infrastructure.Config
   ( AppConfig (..),
@@ -365,16 +365,16 @@ initializeEnvironment logFunc config versionInfo = do
   bankingKeyRing' <-
     liftIO $ bankingKeyRingFromConfig config.environment config.banking
 
-  let bankingEnv' =
+  -- Assemble the bank provider registry from every provider compiled into
+  -- this build, keeping only those enabled in @banking.providers@. See
+  -- 'Infrastructure.Banking.Providers.buildRegistry' for the full assembly.
+  let registry = BankProviders.buildRegistry config.banking httpManager
+      bankingEnv' =
         BankingEnv
           { bankImportLocks = bankImportLocksVar,
             httpManager = httpManager,
             bankingKeyRing = bankingKeyRing',
-            -- Pure factory: dispatches on the connection's provider enum and
-            -- captures the config + shared HTTP 'Manager'. This is the only
-            -- place provider/apiBaseUrl specifics live (see
-            -- 'mkBankProviderFactory').
-            bankProviderFactory = mkBankProviderFactory config httpManager
+            bankProviderRegistry = registry
           }
 
   -- 7. Build application environment

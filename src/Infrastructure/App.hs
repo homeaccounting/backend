@@ -93,11 +93,11 @@ module Infrastructure.App
     HasBankImportLocks (..),
     HasHttpManager (..),
     HasBankingKeyRing (..),
-    HasBankProviderFactory (..),
+    HasBankProviderRegistry (..),
     HasLinkCodeStore (..),
 
-    -- * Banking provider factory
-    BankProviderFactory,
+    -- * Banking feature gate
+    bankingFeatureEnabled,
 
     -- * Banking key ring construction
     bankingKeyRingFromConfig,
@@ -127,19 +127,18 @@ import qualified Data.Set as Set
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import Database.Persist.Postgresql (ConnectionPool, SqlBackend, runSqlPool)
-import Domain.Banking.Types (PlainToken)
-import qualified Domain.Banking.Types as Domain
 import Domain.Core.Types (UserId)
 import Infrastructure.Auth.JWT (JWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig)
 import Infrastructure.Auth.Telegram (TelegramConfig)
-import Infrastructure.Banking.Provider (BankProvider)
+import Infrastructure.Banking.Registry (BankProviderRegistry)
 import Infrastructure.Config
   ( AppConfig (..),
     BankingConfig (..),
     DatabaseConfig,
     Environment (..),
     LoggingConfig (..),
+    bankingMasterEnabled,
   )
 import qualified Infrastructure.Config as Config
 import Infrastructure.Crypto.SecretBox (KeyRing, mkKeyRing)
@@ -243,26 +242,15 @@ data BankingEnv = BankingEnv
     -- tokens (see 'Infrastructure.Crypto.SecretBox'). Built from
     -- @banking.token_enc_key@ at startup via 'bankingKeyRingFromConfig'.
     bankingKeyRing :: !KeyRing,
-    -- | Factory that builds a (per-request, ephemeral) 'BankProvider' from a
-    -- connection's 'Domain.BankProvider' and a user's decrypted access token.
-    -- Production wires this via 'mkBankProviderFactory', which dispatches on
-    -- the provider enum and captures the per-provider config (e.g. the
-    -- Monobank API base URL) and the shared 'Manager' at env-build time; tests
-    -- install an in-memory stub. Handlers obtain the provider through the
-    -- configuration service ('getConnectionProvider') rather than constructing
-    -- a concrete provider inline, which keeps the HTTP layer
-    -- provider-injectable. 'BankProvider' itself stays ephemeral (see
-    -- 'Infrastructure.Banking.Provider'); only the factory is held in the env.
-    bankProviderFactory :: !BankProviderFactory
+    -- | Registry of the compiled-in bank provider descriptors that are enabled
+    -- for this deployment, keyed by their stable 'Domain.Banking.Types.BankProviderId'.
+    -- Assembled in @app/Main.hs@ from the enabled entries of
+    -- @banking.providers@. Handlers resolve a connection's provider through the
+    -- configuration service ('getConnectionProvider'), which looks the
+    -- descriptor up here, so the HTTP layer stays provider-agnostic; tests
+    -- install a stub descriptor.
+    bankProviderRegistry :: !BankProviderRegistry
   }
-
--- | A pure factory producing an ephemeral 'BankProvider' from a connection's
--- 'Domain.BankProvider' and a user's decrypted access token. All
--- provider-specific configuration (e.g. the Monobank API base URL) and the
--- shared HTTP 'Manager' (or, for tests, the stub state) are captured in the
--- closure at env-build time, so the factory dispatches on the provider enum
--- without exposing any provider internals to its callers.
-type BankProviderFactory = Domain.BankProvider {- provider -} -> PlainToken {- token -} -> BankProvider
 
 -- | Initialize the application environment.
 --
@@ -315,6 +303,25 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConf
       bankingEnv = bankingEnv,
       linkCodeStore = linkCodeStore'
     }
+
+-- -----------------------------------------------------------------------------
+-- Banking feature gate
+-- -----------------------------------------------------------------------------
+
+-- | Whether the banking feature is globally enabled for this deployment: the
+-- master switch ('bankingMasterEnabled') is on AND at least one provider is
+-- registered (the registry only ever holds compiled-in, enabled providers).
+--
+-- The single source of truth for the combined gate, shared by
+-- 'Web.API.BankingAPI.requireBankingEnabled' (which wraps it in an
+-- @unless … throw@) and 'Web.API.ConfigurationAPI.computeBankingFeatureEnabled'
+-- (which surfaces it in the ungated DTO field), so the two cannot drift.
+bankingFeatureEnabled ::
+  (MonadReader env m, HasAppConfig env, HasBankProviderRegistry env) => m Bool
+bankingFeatureEnabled = do
+  cfg <- view appConfigL
+  reg <- view bankProviderRegistryL
+  pure (bankingMasterEnabled cfg.banking && not (null reg))
 
 -- -----------------------------------------------------------------------------
 -- Banking key ring construction
@@ -543,19 +550,18 @@ instance HasBankingKeyRing AppEnv where
 instance HasBankingKeyRing BankingEnv where
   bankingKeyRingL = lens (.bankingKeyRing) (\x y -> x {bankingKeyRing = y})
 
--- | Type class for environments that expose the banking provider factory.
--- The configuration service uses this to obtain an ephemeral 'BankProvider'
--- (from a connection's 'Domain.BankProvider' + decrypted token) without
--- depending on a concrete provider implementation, so tests can inject an
--- in-memory stub.
-class HasBankProviderFactory env where
-  bankProviderFactoryL :: Lens' env BankProviderFactory
+-- | Type class for environments that expose the bank provider registry.
+-- The configuration service uses this to resolve a connection's provider
+-- descriptor (by its 'Domain.Banking.Types.BankProviderId') without depending
+-- on a concrete provider implementation, so tests can inject a stub registry.
+class HasBankProviderRegistry env where
+  bankProviderRegistryL :: Lens' env BankProviderRegistry
 
-instance HasBankProviderFactory AppEnv where
-  bankProviderFactoryL = bankingEnvL . bankProviderFactoryL
+instance HasBankProviderRegistry AppEnv where
+  bankProviderRegistryL = bankingEnvL . bankProviderRegistryL
 
-instance HasBankProviderFactory BankingEnv where
-  bankProviderFactoryL = lens (.bankProviderFactory) (\x y -> x {bankProviderFactory = y})
+instance HasBankProviderRegistry BankingEnv where
+  bankProviderRegistryL = lens (.bankProviderRegistry) (\x y -> x {bankProviderRegistry = y})
 
 -- | Type class for environments that have the short-lived Telegram link-code
 -- store (used in the bot deep-link account-linking flow).

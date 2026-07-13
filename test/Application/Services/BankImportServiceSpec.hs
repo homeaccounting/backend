@@ -62,7 +62,6 @@ import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)
 import Infrastructure.App (AppEnv (..), runAppM, runDb)
 import Infrastructure.Banking.Provider
   ( BankAccountId,
-    BankProvider (..),
     BankTransaction (..),
     TransactionClassification (..),
   )
@@ -96,19 +95,14 @@ testUserId = mockUserId testUserUuid
 testTime :: UTCTime
 testTime = UTCTime (fromGregorian 2026 4 14) (secondsToDiffTime 43200)
 
--- | A mock bank provider that classifies based on amount sign.
-mockProvider :: BankProvider
-mockProvider =
-  BankProvider
-    { providerName = "mock",
-      fetchAccounts = return $ Right [],
-      fetchStatements = \_ _ _ -> return $ Right [],
-      registerWebhook = \_ -> return $ Right (),
-      classifyTransaction = \tx ->
-        if tx.amount >= 0
-          then ClassifiedIncome
-          else ClassifiedExpense
-    }
+-- | A mock transaction classifier that classifies based on amount sign.
+-- Passed directly to 'importTransaction', which now consumes a classify
+-- function rather than a provider record.
+mockClassify :: BankTransaction -> TransactionClassification
+mockClassify tx =
+  if tx.amount >= 0
+    then ClassifiedIncome
+    else ClassifiedExpense
 
 -- | Create a bank transaction for testing. Amount is in major units.
 mkTestTransaction :: Rational -> Text -> BankTransaction
@@ -222,7 +216,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
       let holdTx = mkHoldTransaction (-50) "tx-hold"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink holdTx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink holdTx
       shouldBeRight result
       case result of
         Right (Just _) -> pure ()
@@ -235,14 +229,14 @@ spec = describe "BankImportService" $ do
 
       -- First import should succeed
       let tx = mkTestTransaction (-50) "tx-dedup-1"
-      result1 <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result1 <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result1
       case result1 of
         Right (Just _) -> pure ()
         _ -> expectationFailure "expected successful import"
 
       -- Second import of the same transaction should be skipped
-      result2 <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result2 <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       result2 `shouldBe` Right Nothing
 
     it "skips transactions with unmatched account" $ do
@@ -251,7 +245,7 @@ spec = describe "BankImportService" $ do
           accountLink = [("mono-acc-1", bankAccId)]
       -- Transaction with a different account ID that has no mapping
       let unmatchedTx = mkTestTransactionWithAccount (-50) "tx-unmatched" "unknown-acc"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink unmatchedTx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink unmatchedTx
       result `shouldBe` Right Nothing
 
     it "imports an expense transaction with correct fields" $ do
@@ -260,7 +254,7 @@ spec = describe "BankImportService" $ do
           accountLink = [("mono-acc-1", bankAccId)]
       -- Negative amount = expense (50.00 UAH in major units), no MCC → defaultExpenseCategory
       let tx = mkTestTransaction (-50) "tx-expense-1"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i
@@ -286,7 +280,7 @@ spec = describe "BankImportService" $ do
           accountLink = [("mono-acc-1", bankAccId)]
       -- Positive amount = income (100.00 UAH in major units)
       let tx = mkTestTransaction 100 "tx-income-1"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i
@@ -316,7 +310,7 @@ spec = describe "BankImportService" $ do
           accountLink = [("mono-acc-1", bankAccId)]
       -- originalAmount = Nothing indicates same-currency tx
       let tx = (mkTestTransaction (-50) "tx-same-ccy") {originalAmount = Nothing}
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i
@@ -339,7 +333,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
       let tx = (mkTestTransaction 1000 "tx-cross-ccy") {originalAmount = Just 25}
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i
@@ -360,7 +354,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
       let tx = mkTestTransactionWithMcc (-50) "tx-mcc-food" "5411"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i
@@ -378,7 +372,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
       let tx = mkTestTransactionWithMcc (-50) "tx-mcc-unknown" "9999"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i
@@ -396,7 +390,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
       let tx = mkTestTransaction (-50) "tx-no-mcc"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i
@@ -471,7 +465,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
       let tx = mkTestTransaction (-50) "tx-no-config"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       -- Config not found → Left error
       case result of
         Left _ -> pure () -- expected: some domain error
@@ -483,7 +477,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(BankAccountId, AccountId)]
           accountLink = [("mono-acc-1", bankAccId)]
       let tx = mkTestTransaction 200 "tx-income-cat"
-      result <- runAppM env $ importTransaction mockProvider testUserId accountLink tx
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
       txId <- case result of
         Right (Just i) -> pure i

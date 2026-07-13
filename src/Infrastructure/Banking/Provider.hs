@@ -1,37 +1,36 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Infrastructure.Banking.Provider
   ( -- * Provider
-    BankProvider (..),
     TransactionClassification (..),
 
     -- * Types
     BankAccountId,
     BankAccount (..),
     BankTransaction (..),
+
+    -- * Descriptor + capabilities
+    BankProviderDescriptor (..),
+    PullCapability (..),
+    FileImportCapability (..),
+    StatementFormat (..),
+    ParseError (..),
+    defaultClassify,
   )
 where
 
+import Data.ByteString (ByteString)
 import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Data.Time (UTCTime)
+import Domain.Banking.Types (BankProviderId, PlainToken)
 import Domain.Core.Types (ExternalTransactionId, MCC)
-import RIO (Bool, Either, Eq, IO, Int, Maybe, Rational, Show)
+import RIO (Bool, Either, Eq, IO, Int, Maybe, Rational, Show, otherwise, (<))
 
 -- | Identifier for an external bank account (provider-specific).
 type BankAccountId = Text
-
--- | Record-of-functions abstraction for bank API providers.
---
--- Each bank (Monobank, PrivatBank, etc.) implements this interface.
--- Ephemeral — constructed per-request from user's token, NOT stored in AppEnv.
-data BankProvider = BankProvider
-  { providerName :: !Text,
-    fetchAccounts :: IO (Either Text [BankAccount]),
-    fetchStatements :: BankAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction]),
-    registerWebhook :: Text -> IO (Either Text ()),
-    classifyTransaction :: BankTransaction -> TransactionClassification
-  }
 
 -- | Provider-contributed classification hint — direction only.
 -- BankImportService owns the final category decision.
@@ -71,3 +70,50 @@ data BankTransaction = BankTransaction
     categoryHint :: !(Maybe Text)
   }
   deriving (Show, Eq)
+
+-- | Metadata + optional capabilities for a bank provider, keyed by its
+-- stable 'BankProviderId'. This is the single provider abstraction: the
+-- registry holds one per compiled-in, enabled provider.
+--
+-- 'pull' is present for providers that support live API access (token in,
+-- capability out); 'fileImport' is present for providers that support
+-- statement-file import. Both, one, or neither may be populated.
+data BankProviderDescriptor = BankProviderDescriptor
+  { providerId :: !BankProviderId,
+    displayName :: !Text,
+    classify :: BankTransaction -> TransactionClassification,
+    pull :: !(Maybe (PlainToken -> PullCapability)),
+    fileImport :: !(Maybe FileImportCapability)
+  }
+
+-- | Live bank-API capability, constructed from a decrypted user token.
+-- Carries the per-request request closures; the provider name and classifier
+-- live on the owning 'BankProviderDescriptor'.
+data PullCapability = PullCapability
+  { fetchAccounts :: IO (Either Text [BankAccount]),
+    fetchStatements :: BankAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction]),
+    registerWebhook :: Text -> IO (Either Text ())
+  }
+
+-- | Statement-file import capability. Defined now, UNUSED until a later
+-- spec wires an import endpoint against it — it documents the seam.
+data FileImportCapability = FileImportCapability
+  { supportedFormats :: !(NonEmpty StatementFormat),
+    parseStatement :: StatementFormat -> ByteString -> Either ParseError [BankTransaction]
+  }
+
+-- | File formats a provider's 'FileImportCapability' can parse.
+data StatementFormat = StatementCsv | StatementXlsx
+  deriving (Show, Eq)
+
+-- | Failure parsing a statement file.
+newtype ParseError = ParseError Text
+  deriving (Show, Eq)
+
+-- | Shared direction rule: money out (negative) is an expense, otherwise
+-- income. The default 'classify' implementation for providers that don't
+-- need bespoke logic (e.g. MCC-based overrides).
+defaultClassify :: BankTransaction -> TransactionClassification
+defaultClassify tx
+  | tx.amount < 0 = ClassifiedExpense
+  | otherwise = ClassifiedIncome

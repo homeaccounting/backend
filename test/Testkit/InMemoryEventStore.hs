@@ -35,6 +35,9 @@ module Testkit.InMemoryEventStore
 
     -- * Event Store Components
     InMemoryEventStores (..),
+
+    -- * Config fixture
+    testAppConfig,
   )
 where
 
@@ -62,11 +65,11 @@ import Infrastructure.App (AppEnv (..), BankingEnv (..), bankingKeyRingFromConfi
 import Infrastructure.Auth.JWT (defaultJWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
-import Infrastructure.Banking.Monobank (mkBankProviderFactory)
+import qualified Infrastructure.Banking.Monobank as Monobank
+import Infrastructure.Banking.Registry (registryFromList)
 import Infrastructure.Config
   ( AppConfig (..),
     BankingConfig (..),
-    BankingProvidersConfig (..),
     CorsConfig (..),
     DatabaseConfig (..),
     Environment (..),
@@ -75,7 +78,6 @@ import Infrastructure.Config
     LogFormat (..),
     LogLevel (..),
     LoggingConfig (..),
-    MonobankProviderConfig (..),
     ProcessManagerConfig (..),
     ServerConfig (..),
     defaultLlmConfig,
@@ -98,6 +100,7 @@ import Infrastructure.Version (VersionInfo (..))
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import RIO hiding (atomically, newTVarIO)
 import qualified RIO
+import qualified RIO.Map as Map
 import qualified RIO.Text as T
 import Telegram.Types (emptyBotState)
 
@@ -277,11 +280,12 @@ mkAppEnv withProcessManager = do
             { bankImportLocks = bankImportLocksVar,
               httpManager = testHttpManager,
               bankingKeyRing = testBankingKeyRing,
-              -- Default factory mirrors production (dispatches on the
-              -- provider enum, real Monobank provider over the test HTTP
-              -- manager). Banking-enabled HTTP specs override this with a stub
-              -- via 'Testkit.AppEnv'.
-              bankProviderFactory = mkBankProviderFactory config testHttpManager
+              -- Default registry holds the Monobank descriptor pointed at an
+              -- unreachable URL, so a banking-enabled HTTP spec that crosses the
+              -- feature gate and attempts a real fetch fails fast rather than
+              -- hitting the network. Banking-enabled HTTP specs that need
+              -- served fixtures override this with a stub via 'Testkit.AppEnv'.
+              bankProviderRegistry = registryFromList [Monobank.descriptor "http://127.0.0.1:1" testHttpManager]
             },
         linkCodeStore = linkCodeStore
       }
@@ -356,7 +360,10 @@ testAppConfig =
       banking =
         BankingConfig
           { enabled = False,
-            providers = BankingProvidersConfig (MonobankProviderConfig False "https://api.monobank.ua"),
+            -- The provider registry (not this map) drives the runtime feature
+            -- gate in tests; only @app/Main.hs@ reads @providers@, so the
+            -- in-memory config leaves it empty.
+            providers = Map.empty,
             -- Deterministic base64 of 32 bytes (0x07 repeated) so the test
             -- key ring is reproducible across runs and processes.
             tokenEncKey = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="

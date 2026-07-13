@@ -32,10 +32,10 @@ module Infrastructure.Config
     LlmConfig (..),
     defaultLlmConfig,
     BankingConfig (..),
-    BankingProvidersConfig (..),
-    MonobankProviderConfig (..),
-    anyProviderEnabled,
-    bankingFeatureAvailable,
+    ProviderSettings (..),
+    providerEnabled,
+    providerTextSetting,
+    bankingMasterEnabled,
 
     -- * Auth Configuration (re-exports)
     JWTConfig (..),
@@ -57,6 +57,7 @@ where
 import Control.Exception (IOException, try)
 import Data.Aeson
   ( FromJSON (..),
+    Object,
     ToJSON (..),
     Value (..),
     withObject,
@@ -66,10 +67,15 @@ import Data.Aeson
     (.:?),
   )
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Yaml (decodeEither', prettyPrintParseException)
+import Domain.Banking.Types (BankProviderId, unsafeBankProviderId)
 import Domain.ExchangeRate.Events (Provider (..), unProvider)
 import GHC.Generics (Generic)
 import Infrastructure.Auth.JWT (JWTConfig (..))
@@ -358,7 +364,11 @@ defaultLlmConfig = LlmConfig False "http://localhost:11434/v1" "qwen2.5:7b-instr
 -- | Banking integration configuration.
 data BankingConfig = BankingConfig
   { enabled :: !Bool,
-    providers :: !BankingProvidersConfig,
+    -- | Provider configuration keyed by the provider's stable slug. Each entry
+    -- carries an @enabled@ flag plus the raw provider-specific settings object
+    -- (e.g. @api_base_url@); the registry is assembled from the enabled
+    -- entries at startup (see @app/Main.hs@).
+    providers :: !(Map BankProviderId ProviderSettings),
     -- | Base64-encoded 32-byte key used to encrypt persisted bank-connection
     -- access tokens (see 'Infrastructure.Crypto.SecretBox'). Sourced from the
     -- @BANKING_TOKEN_ENC_KEY@ environment variable via the @token_enc_key@
@@ -369,62 +379,61 @@ data BankingConfig = BankingConfig
   deriving (Show, Eq, Generic)
 
 instance FromJSON BankingConfig where
-  parseJSON = withObject "BankingConfig" $ \v ->
-    BankingConfig
-      <$> v .:? "enabled" .!= False
-      <*> v .:? "providers" .!= defaultBankingProviders
-      <*> v .:? "token_enc_key" .!= ""
+  parseJSON = withObject "BankingConfig" $ \v -> do
+    enabled <- v .:? "enabled" .!= False
+    (rawProviders :: Map Text ProviderSettings) <- v .:? "providers" .!= Map.empty
+    tokenEncKey <- v .:? "token_enc_key" .!= ""
+    pure
+      BankingConfig
+        { enabled = enabled,
+          providers = Map.mapKeys unsafeBankProviderId rawProviders,
+          tokenEncKey = tokenEncKey
+        }
 
 instance ToJSON BankingConfig
 
 defaultBankingConfig :: BankingConfig
-defaultBankingConfig = BankingConfig False defaultBankingProviders ""
+defaultBankingConfig = BankingConfig False Map.empty ""
 
-data BankingProvidersConfig = BankingProvidersConfig
-  { monobank :: !MonobankProviderConfig
-  }
-  deriving (Show, Eq, Generic)
-
-instance FromJSON BankingProvidersConfig where
-  parseJSON = withObject "BankingProvidersConfig" $ \v ->
-    BankingProvidersConfig
-      <$> v .:? "monobank" .!= MonobankProviderConfig False defaultMonoApiBaseUrl
-
-instance ToJSON BankingProvidersConfig
-
-defaultBankingProviders :: BankingProvidersConfig
-defaultBankingProviders = BankingProvidersConfig (MonobankProviderConfig False defaultMonoApiBaseUrl)
-
--- | Upstream Monobank API base URL, used as the fallback when no override is
--- supplied in the YAML config. Tests and production deployments override via
--- the @api_base_url@ key under @banking.providers.monobank@.
-defaultMonoApiBaseUrl :: Text
-defaultMonoApiBaseUrl = "https://api.monobank.ua"
-
-data MonobankProviderConfig = MonobankProviderConfig
+-- | Per-provider configuration entry: an @enabled@ flag plus the entire raw
+-- settings object so provider-specific keys (e.g. @api_base_url@) stay
+-- available to the descriptor assembly in @Main@ without this module knowing
+-- any provider's shape.
+data ProviderSettings = ProviderSettings
   { enabled :: !Bool,
-    apiBaseUrl :: !Text
+    -- | The whole raw object as parsed (includes @enabled@ and any
+    -- provider-specific keys such as @api_base_url@).
+    settings :: !Object
   }
   deriving (Show, Eq, Generic)
 
-instance FromJSON MonobankProviderConfig where
-  parseJSON = withObject "MonobankProviderConfig" $ \v ->
-    MonobankProviderConfig
-      <$> v .:? "enabled" .!= False
-      <*> v .:? "api_base_url" .!= defaultMonoApiBaseUrl
+instance FromJSON ProviderSettings where
+  parseJSON = withObject "ProviderSettings" $ \v ->
+    ProviderSettings <$> v .:? "enabled" .!= False <*> pure v
 
-instance ToJSON MonobankProviderConfig
+instance ToJSON ProviderSettings where
+  toJSON ps = Object ps.settings
 
--- | True when at least one bank provider is enabled. Aggregates across all
--- providers (currently just monobank) so adding a provider automatically
--- participates in the banking feature gate.
-anyProviderEnabled :: BankingProvidersConfig -> Bool
-anyProviderEnabled providers = or [providers.monobank.enabled]
+-- | Accessor for a provider entry's @enabled@ flag (no bare selector exists
+-- under @NoFieldSelectors@).
+providerEnabled :: ProviderSettings -> Bool
+providerEnabled ps = ps.enabled
 
--- | True when the banking feature is globally available: the master switch is
--- on AND at least one provider is enabled.
-bankingFeatureAvailable :: BankingConfig -> Bool
-bankingFeatureAvailable cfg = cfg.enabled && anyProviderEnabled cfg.providers
+-- | Read a string-valued key out of a provider's raw settings object, falling
+-- back to the given default when the key is absent or its value is not a
+-- string. Used to pull provider-specific settings (e.g. @api_base_url@) during
+-- registry assembly without this module knowing any provider's shape.
+providerTextSetting :: Text -> Text -> ProviderSettings -> Text
+providerTextSetting key deflt s =
+  case KM.lookup (Key.fromText key) s.settings of
+    Just (String v) -> v
+    _ -> deflt
+
+-- | The banking master switch. The combined feature gate (master AND a
+-- non-empty provider registry) is assembled at the Web call sites; this
+-- exposes just the master flag.
+bankingMasterEnabled :: BankingConfig -> Bool
+bankingMasterEnabled cfg = cfg.enabled
 
 -- -----------------------------------------------------------------------------
 -- Configuration Loading

@@ -44,7 +44,7 @@ import Data.Time (UTCTime)
 import Domain.Banking.Types
   ( BankConnectionId,
     BankConnectionName,
-    BankProvider,
+    BankProviderId,
     ExternalAccountId,
   )
 import Domain.Configuration.Events
@@ -106,7 +106,7 @@ data BankConnection = BankConnection
   { -- | Unique identifier for the connection
     connectionId :: BankConnectionId,
     -- | The external bank provider
-    provider :: BankProvider,
+    provider :: BankProviderId,
     -- | User-facing display name
     name :: BankConnectionName,
     -- | The encrypted provider token

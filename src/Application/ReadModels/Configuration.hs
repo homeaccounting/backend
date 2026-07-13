@@ -75,7 +75,7 @@ import Database.Persist
   )
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
-import Domain.Banking.Types (BankConnectionId, BankProvider)
+import Domain.Banking.Types (BankConnectionId, BankProviderId)
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
@@ -196,7 +196,7 @@ ConfigMccCategoryEntity sql=configuration_mcc_categories
 ConfigBankConnectionEntity sql=configuration_bank_connections
     configId ConfigurationId
     connectionId BankConnectionId
-    provider BankProvider
+    provider BankProviderId
     name Text
     encryptedToken EncryptedSecret
     tokenHint Text

@@ -19,7 +19,7 @@
 module Domain.Configuration.ProjectionSpec (spec) where
 
 import qualified Data.Map.Strict as Map
-import Domain.Banking.Types (BankConnectionId, BankProvider (..), unsafeBankConnectionId)
+import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId)
 import Domain.Configuration
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
@@ -457,7 +457,7 @@ addConnEvent =
   BankConnectionAddedConfigurationEvent
     BankConnectionAdded
       { connectionId = testConnId,
-        provider = Monobank,
+        provider = unsafeBankProviderId "monobank",
         name = "My Monobank",
         encryptedToken = testEncryptedToken,
         tokenHint = "abc…xyz",
@@ -472,7 +472,7 @@ bankConnectionProjectionSpec = describe "bank connection projection" $ do
       Nothing -> expectationFailure "Connection should exist"
       Just conn -> do
         conn.connectionId `shouldBe` testConnId
-        conn.provider `shouldBe` Monobank
+        conn.provider `shouldBe` unsafeBankProviderId "monobank"
         conn.name `shouldBe` "My Monobank"
         conn.encryptedToken `shouldBe` testEncryptedToken
         conn.tokenHint `shouldBe` "abc…xyz"

@@ -27,18 +27,19 @@ module Testkit.AppEnv
 where
 
 import qualified Application.Services.ConfigurationService as ConfigurationService
+import Domain.Banking.Types (unsafeBankProviderId)
 import Infrastructure.App (AppEnv (..), BankingEnv (..), runAppM)
 import Infrastructure.Banking.Provider
   ( BankAccount,
-    BankProvider (..),
+    BankProviderDescriptor (..),
     BankTransaction (..),
+    PullCapability (..),
     TransactionClassification (..),
   )
+import Infrastructure.Banking.Registry (BankProviderRegistry, registryFromList)
 import Infrastructure.Config
   ( AppConfig (..),
     BankingConfig (..),
-    BankingProvidersConfig (..),
-    MonobankProviderConfig (..),
   )
 import Network.Wai (Application)
 import RIO
@@ -78,12 +79,9 @@ mkAppBankingEnabled = do
       bankingCfg =
         BankingConfig
           { enabled = True,
-            providers =
-              BankingProvidersConfig
-                ( MonobankProviderConfig
-                    True
-                    "http://127.0.0.1:1"
-                ),
+            -- The runtime feature gate keys off the provider registry (already
+            -- non-empty in the base env), not this map; only 'Main' reads it.
+            providers = Map.empty,
             -- Preserve the deterministic test key ring already built into the
             -- base env; flipping the feature flag only touches the config,
             -- not the key ring on 'bankingEnv'.
@@ -107,13 +105,14 @@ mkAppSeeded = do
 -- Stub bank provider
 -- -----------------------------------------------------------------------------
 
--- | Mutable fixtures backing the in-memory stub 'BankProvider'.
+-- | Mutable fixtures backing the in-memory stub 'BankProviderDescriptor'.
 --
 -- A test obtains a 'StubControls' from 'mkAppBankingEnabledSeededWith',
 -- pre-sets the external accounts that 'fetchAccounts' should return and/or
 -- the per-external-id statements that 'fetchStatements' should return, and
 -- then drives the HTTP layer. The same 'StubControls' is closed over by the
--- provider factory installed on the env, so updates are visible to handlers.
+-- stub descriptor's 'PullCapability' in the registry installed on the env, so
+-- updates are visible to handlers.
 data StubControls = StubControls
   { -- | What 'fetchAccounts' returns. Defaults to @Right []@.
     stubAccounts :: !(IORef (Either Text [BankAccount])),
@@ -137,21 +136,29 @@ newStubControls env =
     <*> newIORef Map.empty
     <*> pure env
 
--- | An in-memory 'BankProvider' that serves whatever fixtures the given
--- 'StubControls' currently hold. The @provider@ enum and @token@ passed by the
--- factory are ignored — the stub does no real I/O.
-stubProvider :: StubControls -> BankProvider
-stubProvider controls =
-  BankProvider
-    { providerName = "stub",
-      fetchAccounts = readIORef controls.stubAccounts,
-      fetchStatements = \accId _from _to -> do
-        m <- readIORef controls.stubStatements
-        pure $ Right (Map.findWithDefault [] accId m),
-      registerWebhook = \_ -> pure (Right ()),
-      classifyTransaction = \tx ->
-        if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense
-    }
+-- | A single-provider 'BankProviderRegistry' (keyed @"monobank"@) whose
+-- descriptor serves whatever fixtures the given 'StubControls' currently hold.
+-- The @token@ passed to the pull constructor is ignored — the stub does no
+-- real I/O.
+stubRegistry :: StubControls -> BankProviderRegistry
+stubRegistry controls =
+  registryFromList
+    [ BankProviderDescriptor
+        { providerId = unsafeBankProviderId "monobank",
+          displayName = "Stub",
+          classify = \tx ->
+            if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense,
+          pull = Just $ \_token ->
+            PullCapability
+              { fetchAccounts = readIORef controls.stubAccounts,
+                fetchStatements = \accId _from _to -> do
+                  m <- readIORef controls.stubStatements
+                  pure $ Right (Map.findWithDefault [] accId m),
+                registerWebhook = \_ -> pure (Right ())
+              },
+          fileImport = Nothing
+        }
+    ]
 
 -- -----------------------------------------------------------------------------
 -- Banking-enabled + seeded harness
@@ -187,19 +194,16 @@ mkAppBankingEnabledSeededWith = do
       bankingCfg =
         BankingConfig
           { enabled = True,
-            providers =
-              BankingProvidersConfig
-                ( MonobankProviderConfig
-                    True
-                    "http://127.0.0.1:1"
-                ),
+            -- The runtime feature gate keys off the provider registry, not this
+            -- map; only 'Main' reads it.
+            providers = Map.empty,
             -- Preserve the deterministic test key ring already built into the
             -- base env; flipping the feature flag only touches the config.
             tokenEncKey = cfg.banking.tokenEncKey
           }
       cfg' = cfg {banking = bankingCfg}
       bankingEnv' =
-        env.bankingEnv {bankProviderFactory = \_provider _tok -> stubProvider controls}
+        env.bankingEnv {bankProviderRegistry = stubRegistry controls}
       env' = env {config = cfg', bankingEnv = bankingEnv'}
   runAppM env' ConfigurationService.seedDefaultConfiguration
   pure (controls, buildApplication env')

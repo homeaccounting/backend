@@ -9,8 +9,9 @@
 -- Description : Orchestration service for bank transaction imports
 --
 -- This module implements the core orchestration logic for importing bank
--- transactions into the accounting system. It processes transactions from a
--- 'BankProvider' and creates 'InitiateTransaction' commands.
+-- transactions into the accounting system. It is transport-neutral: it consumes
+-- a list of 'BankTransaction's (pulled by the caller via a 'PullCapability')
+-- plus a @classify@ function, and creates 'InitiateTransaction' commands.
 --
 -- Key Functions:
 --   - resync: Fetch statements for a date range and import each transaction
@@ -73,8 +74,8 @@ import Infrastructure.App
   )
 import Infrastructure.Banking.Provider
   ( BankAccountId,
-    BankProvider (..),
     BankTransaction (..),
+    PullCapability (..),
     TransactionClassification (..),
   )
 import RIO
@@ -125,20 +126,21 @@ instance ToJSON ResyncResult
 -- collected into 'failures' rather than aborting the fetch's remaining
 -- transactions.
 resync ::
-  BankProvider ->
+  (BankTransaction -> TransactionClassification) ->
+  PullCapability ->
   UserId ->
   [(BankAccountId, AccountId)] ->
   UTCTime ->
   UTCTime ->
   AppM ResyncResult
-resync provider userId accountLink fromTime toTime =
+resync classify pull userId accountLink fromTime toTime =
   withUserLock userId $ do
     logInfo $ "Resyncing bank transactions for user " <> displayShow userId
     accountResults <- forM accountLink processAccount
     pure (ResyncResult {accounts = accountResults})
   where
     processAccount (extAccId, localAccId) = do
-      fetchResult <- liftIO $ provider.fetchStatements extAccId fromTime toTime
+      fetchResult <- liftIO $ pull.fetchStatements extAccId fromTime toTime
       case fetchResult of
         Left err -> fetchFailed extAccId localAccId err
         Right txns -> fetchSucceeded extAccId localAccId txns
@@ -164,7 +166,7 @@ resync provider userId accountLink fromTime toTime =
         <> displayShow (length txns)
         <> " transactions for account "
         <> display extAccId
-      perTx <- forM txns (importTransaction provider userId accountLink)
+      perTx <- forM txns (importTransaction classify userId accountLink)
       let (errs, oks) = partitionEithers perTx
           importedIds = catMaybes oks
           skippedCount = length oks - length importedIds
@@ -292,12 +294,12 @@ logCategoryResolution tx direction cfg categoryId resolution =
 --   7. Resolve category from user's banking configuration
 --   8. Create and execute InitiateTransaction command
 importTransaction ::
-  BankProvider ->
+  (BankTransaction -> TransactionClassification) ->
   UserId ->
   [(BankAccountId, AccountId)] ->
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
-importTransaction provider userId accountLink tx = do
+importTransaction classify userId accountLink tx = do
   alreadyImported <- runDb $ isImported tx.externalId
   if alreadyImported
     then do
@@ -307,19 +309,19 @@ importTransaction provider userId accountLink tx = do
       Nothing -> do
         logWarn $ "No account mapping for external account: " <> display tx.accountId
         pure (Right Nothing)
-      Just localAccId -> importMatchedTransaction provider userId localAccId tx
+      Just localAccId -> importMatchedTransaction classify userId localAccId tx
 
 -- | Continue an import after the cheap dispatcher checks have matched the
 -- external account. Handles the two remaining @Right Nothing@ skip-paths
 -- (unsupported currency code, money construction failure) before delegating
 -- the genuinely-fallible work to 'commitImport'.
 importMatchedTransaction ::
-  BankProvider ->
+  (BankTransaction -> TransactionClassification) ->
   UserId ->
   AccountId ->
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
-importMatchedTransaction provider userId localAccId tx = do
+importMatchedTransaction classify userId localAccId tx = do
   maybeUser <- runDb (UserRM.getUser userId)
   case maybeUser of
     Nothing -> do
@@ -335,22 +337,22 @@ importMatchedTransaction provider userId localAccId tx = do
             Left err -> do
               logWarn $ "Failed to create money: " <> display err
               pure (Right Nothing)
-            Right money -> runExceptT (commitImport provider userId userData localAccId tx money)
+            Right money -> runExceptT (commitImport classify userId userData localAccId tx money)
 
 -- | Commit the genuinely-fallible suffix of the import: configuration lookup,
 -- category resolution, and transfer initiation. All errors short-circuit via
 -- 'ExceptT', so this layer reads as a flat sequence of binds.
 commitImport ::
-  BankProvider ->
+  (BankTransaction -> TransactionClassification) ->
   UserId ->
   UserRM.UserData ->
   AccountId ->
   BankTransaction ->
   Money ->
   ExceptT DomainError AppM (Maybe TransactionId)
-commitImport provider userId userData localAccId tx money = do
+commitImport classify userId userData localAccId tx money = do
   let externalAccId = userData.externalAccountId
-      direction = provider.classifyTransaction tx
+      direction = classify tx
       txCurrency = moneyCurrency money
   -- Guard: a card's transactions can only be imported into a local account of
   -- the SAME currency (a UAH card → a UAH account). Mapping a card to a

@@ -43,7 +43,7 @@ import Data.Time (UTCTime)
 import Domain.Banking.Types
   ( BankConnectionId,
     BankConnectionName,
-    BankProvider,
+    BankProviderId,
     ExternalAccountId,
   )
 import Domain.Core.Types
@@ -229,7 +229,7 @@ data AddBankConnection = AddBankConnection
   { -- | Freshly generated identifier for the new connection
     connectionId :: BankConnectionId,
     -- | The external bank provider
-    provider :: BankProvider,
+    provider :: BankProviderId,
     -- | User-facing display name
     name :: BankConnectionName,
     -- | The already-encrypted provider token

@@ -1,4 +1,3 @@
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -6,46 +5,24 @@
 -- Module      : Testkit.BankingHelpers
 -- Description : Test helpers for the banking integration
 --
--- Provides a mock 'BankProvider' and constructors for 'BankAccount' and
--- 'BankTransaction' values, for use in unit and integration tests.
+-- Provides constructors for 'BankAccount' and 'BankTransaction' values, for
+-- use in unit and integration tests.
 module Testkit.BankingHelpers
-  ( mkMockProvider,
-    mkTestBankAccount,
+  ( mkTestBankAccount,
     mkSameCurrencyBankTx,
     mkForeignCurrencyBankTx,
+    sampleBankTransaction,
   )
 where
 
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Domain.Core.Types (ExternalTransactionId)
+import Domain.Core.Types (ExternalTransactionId, unsafeExternalTransactionId)
 import Infrastructure.Banking.Provider
   ( BankAccount (..),
     BankAccountId,
-    BankProvider (..),
     BankTransaction (..),
-    TransactionClassification (..),
   )
 import RIO
-
--- | A mock 'BankProvider' for tests.
---
---  * 'fetchAccounts' returns the caller-supplied list.
---  * 'fetchStatements' returns the caller-supplied list (independent of args).
---  * 'registerWebhook' is a no-op that always succeeds.
---  * 'classifyTransaction' applies the Monobank sign rule:
---    non-negative amount → income, negative amount → expense.
-mkMockProvider :: [BankAccount] -> [BankTransaction] -> BankProvider
-mkMockProvider accs txs =
-  BankProvider
-    { providerName = "mock",
-      fetchAccounts = pure (Right accs),
-      fetchStatements = \_ _ _ -> pure (Right txs),
-      registerWebhook = \_ -> pure (Right ()),
-      classifyTransaction = \tx ->
-        if tx.amount >= 0
-          then ClassifiedIncome
-          else ClassifiedExpense
-    }
 
 -- | Construct a test 'BankAccount'.
 mkTestBankAccount :: BankAccountId -> Text -> Int -> BankAccount
@@ -91,3 +68,10 @@ mkForeignCurrencyBankTx ::
   BankTransaction
 mkForeignCurrencyBankTx eid accId accountAmt foreignAmt =
   (mkSameCurrencyBankTx eid accId accountAmt) {originalAmount = Just foreignAmt}
+
+-- | Construct a minimal valid 'BankTransaction' with the given signed
+-- @amount@, for tests that only care about amount-driven behaviour (e.g.
+-- 'Infrastructure.Banking.Provider.defaultClassify').
+sampleBankTransaction :: Rational -> BankTransaction
+sampleBankTransaction =
+  mkSameCurrencyBankTx (unsafeExternalTransactionId "sample-tx") "sample-account"

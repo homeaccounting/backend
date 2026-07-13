@@ -25,6 +25,7 @@
 --   POST   /api/users/me/configuration/dictionaries/:dictId/entries          - Add entry
 --   PUT    /api/users/me/configuration/dictionaries/:dictId/entries/:entryId - Rename entry
 --   DELETE /api/users/me/configuration/dictionaries/:dictId/entries/:entryId - Remove entry
+--   GET    /api/users/me/configuration/banking/providers                    - List available bank providers
 module Web.API.ConfigurationAPI
   ( -- * API Type
     ConfigurationAPI,
@@ -48,6 +49,7 @@ module Web.API.ConfigurationAPI
     UpdateConnectionRequest (..),
     ChangeTokenRequest (..),
     SetAccountMapRequest (..),
+    ProviderInfoDTO (..),
 
     -- * Server
     configurationServer,
@@ -65,10 +67,12 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Banking.Types
   ( BankConnectionId,
-    BankProvider (..),
+    BankProviderId,
     ExternalAccountId,
     mkBankConnectionId,
+    mkBankProviderId,
     unBankConnectionId,
+    unBankProviderId,
   )
 import Domain.Configuration.Projection
   ( BankConnection (..),
@@ -88,11 +92,9 @@ import Domain.Core.Types
     unDictionaryId,
     unEntryName,
   )
-import Infrastructure.App (AppM, HasAppConfig (..), runDb)
-import Infrastructure.Config
-  ( AppConfig (..),
-    bankingFeatureAvailable,
-  )
+import Infrastructure.App (AppM, HasBankProviderRegistry (..), bankingFeatureEnabled, runDb)
+import Infrastructure.Banking.Provider (BankProviderDescriptor (..))
+import Infrastructure.Banking.Registry (registryBankProviderIds)
 import RIO
 import Servant
 import Web.API.BankingAPI (requireBankingEnabled)
@@ -256,6 +258,19 @@ type ConfigurationAPI =
       :> "accounts"
       :> ReqBody '[JSON] SetAccountMapRequest
       :> PutNoContent
+    -- GET …/configuration/banking/providers - List available bank providers
+    --
+    -- Authenticated but NOT behind 'requireBankingEnabled': this is just
+    -- names/capabilities, and the account-creation UI needs it regardless of
+    -- whether banking sync is globally enabled.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "banking"
+      :> "providers"
+      :> Get '[JSON] [ProviderInfoDTO]
 
 -- -----------------------------------------------------------------------------
 -- Request/Response Types
@@ -294,22 +309,45 @@ instance ToJSON BankConnectionDTO
 
 instance FromJSON BankConnectionDTO
 
+-- | Wire projection of a single registered 'BankProviderDescriptor', naming
+-- the provider and exposing which transport capabilities it supports. This
+-- lists every provider in the registry — compiled-in AND enabled — for the
+-- account-creation UI to offer, independent of the operational
+-- @requireBankingEnabled@ gate.
+data ProviderInfoDTO = ProviderInfoDTO
+  { id :: Text,
+    displayName :: Text,
+    supportsPull :: Bool,
+    supportsFile :: Bool
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ProviderInfoDTO
+
+instance FromJSON ProviderInfoDTO
+
+-- | Convert a registered 'BankProviderDescriptor' to its wire DTO.
+toProviderInfoDTO :: BankProviderDescriptor -> ProviderInfoDTO
+toProviderInfoDTO d =
+  ProviderInfoDTO
+    { id = unBankProviderId d.providerId,
+      displayName = d.displayName,
+      supportsPull = isJust d.pull,
+      supportsFile = isJust d.fileImport
+    }
+
 -- | Convert a domain 'BankConnection' to its wire DTO. The token is omitted.
 toBankConnectionDTO :: BankConnection -> BankConnectionDTO
 toBankConnectionDTO c =
   BankConnectionDTO
     { id = unBankConnectionId c.connectionId,
-      provider = bankProviderText c.provider,
+      provider = unBankProviderId c.provider,
       name = c.name,
       enabled = c.enabled,
       tokenSet = True,
       tokenHint = c.tokenHint,
       accountMap = Map.map unAccountId c.accountMap
     }
-
--- | Render a 'BankProvider' as its wire string.
-bankProviderText :: BankProvider -> Text
-bankProviderText Monobank = "monobank"
 
 -- | Convert domain BankingConfiguration to its wire DTO.
 toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
@@ -536,6 +574,7 @@ configurationServer =
     :<|> changeConnectionTokenHandler
     :<|> removeConnectionHandler
     :<|> setConnectionAccountsHandler
+    :<|> listProvidersHandler
 
 -- -----------------------------------------------------------------------------
 -- Handlers
@@ -716,10 +755,14 @@ removeEntryHandler user dictIdText entryUuid = do
 -- Bank-connection handlers
 -- -----------------------------------------------------------------------------
 
--- | Parse the wire provider string into a domain 'BankProvider'.
-parseBankProvider :: Text -> Either Text BankProvider
-parseBankProvider "monobank" = Right Monobank
-parseBankProvider other = Left ("unsupported provider: " <> other)
+-- | Validate the wire provider string against the known (registered) providers.
+-- Delegates to 'mkBankProviderId', which rejects unknown/unavailable slugs via
+-- the standard 'ValidationErr' path.
+parseBankProvider :: Set BankProviderId -> Text -> AppM BankProviderId
+parseBankProvider known raw =
+  case mkBankProviderId known raw of
+    Left err -> throwDomainError err
+    Right p -> pure p
 
 -- | Handler for POST …/configuration/banking/connections.
 --
@@ -728,7 +771,8 @@ parseBankProvider other = Left ("unsupported provider: " <> other)
 addConnectionHandler :: AuthenticatedUser -> AddConnectionRequest -> AppM BankConnectionDTO
 addConnectionHandler user req = do
   requireBankingEnabled
-  provider <- validateFieldCtx "provider" req.provider (parseBankProvider req.provider)
+  reg <- view bankProviderRegistryL
+  provider <- parseBankProvider (registryBankProviderIds reg) req.provider
   result <- ConfigService.addBankConnection user.userId provider req.name req.token req.enabled
   case result of
     Left err -> throwDomainError err
@@ -793,6 +837,17 @@ setConnectionAccountsHandler user connUuid req = do
     Left err -> throwDomainError err
     Right () -> pure NoContent
 
+-- | Handler for GET …/configuration/banking/providers.
+--
+-- Lists every provider currently in the registry (compiled-in AND enabled)
+-- with its capability flags. Deliberately NOT behind 'requireBankingEnabled':
+-- it's just names/capabilities, and the account-creation UI needs this
+-- regardless of whether banking sync is globally on.
+listProvidersHandler :: AuthenticatedUser -> AppM [ProviderInfoDTO]
+listProvidersHandler _user = do
+  reg <- view bankProviderRegistryL
+  pure $ map toProviderInfoDTO (Map.elems reg)
+
 -- | Re-key a @Map Text UUID@ wire map as @Map ExternalAccountId UUID@.
 -- 'ExternalAccountId' is a 'Text' alias, so this is identity at runtime but
 -- documents the conversion at the type level.
@@ -851,13 +906,13 @@ toConfigurationResponse editable featureEnabled configData =
           bankingFeatureEnabled = featureEnabled
         }
 
--- | Whether the banking feature is globally enabled (banking + Monobank both
--- on). Read directly from the app config; this is the same predicate the
--- banking feature gate uses.
+-- | Whether the banking feature is globally enabled, feeding the ungated
+-- @bankingFeatureEnabled@ DTO field. Delegates to the shared
+-- 'Infrastructure.App.bankingFeatureEnabled' predicate — the same one the
+-- banking feature gate ('requireBankingEnabled') wraps — so the two cannot
+-- drift.
 computeBankingFeatureEnabled :: AppM Bool
-computeBankingFeatureEnabled = do
-  cfg <- view appConfigL
-  pure (bankingFeatureAvailable cfg.banking)
+computeBankingFeatureEnabled = bankingFeatureEnabled
 
 -- | Compute whether the user's base currency can still be changed.
 --

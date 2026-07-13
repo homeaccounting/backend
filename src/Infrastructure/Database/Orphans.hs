@@ -21,7 +21,7 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.UUID (UUID)
 import Database.Persist (PersistField (..), PersistValue (..))
 import Database.Persist.Sql (PersistFieldSql (..), SqlType (SqlString))
-import Domain.Banking.Types (BankConnectionId, BankProvider)
+import Domain.Banking.Types (BankConnectionId, BankProviderId)
 import Domain.Core.Types
   ( AccountId,
     AccountRole,
@@ -364,12 +364,13 @@ instance PersistField BankConnectionId where
 instance PersistFieldSql BankConnectionId where
   sqlType _ = SqlString
 
--- | 'BankProvider' is a small closed enum; stored as its JSON token.
-instance PersistField BankProvider where
+-- | 'BankProviderId' wraps 'Text' (a provider slug); stored via its bare-string
+-- JSON so the column round-trips cleanly.
+instance PersistField BankProviderId where
   toPersistValue = jsonToPersist
   fromPersistValue = jsonFromPersist
 
-instance PersistFieldSql BankProvider where
+instance PersistFieldSql BankProviderId where
   sqlType _ = SqlString
 
 -- | 'EncryptedSecret' round-trips through its own (base64) JSON encoding.

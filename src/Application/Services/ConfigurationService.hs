@@ -79,6 +79,7 @@ import Domain.Banking.Types
     BankConnectionName,
     ExternalAccountId,
     PlainToken,
+    unBankProviderId,
     unsafeBankConnectionId,
   )
 import qualified Domain.Banking.Types as Domain
@@ -150,12 +151,18 @@ import Domain.User.Commands (AssignConfiguration (..))
 import Eventium (CommandHandlerError (..))
 import Infrastructure.App
   ( AppM,
-    HasBankProviderFactory (..),
+    HasBankProviderRegistry (..),
     HasBankingKeyRing (..),
     HasEventStore (..),
     runDb,
   )
-import Infrastructure.Banking.Provider (BankProvider)
+import Infrastructure.Banking.Provider
+  ( BankProviderDescriptor (..),
+    BankTransaction,
+    PullCapability,
+    TransactionClassification,
+  )
+import Infrastructure.Banking.Registry (lookupProvider)
 import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
 import Infrastructure.Eventium (applyConfigurationCommand)
 import RIO
@@ -385,7 +392,7 @@ tokenHintOf = T.takeEnd 4
 -- map.
 addBankConnection ::
   UserId ->
-  Domain.BankProvider ->
+  Domain.BankProviderId ->
   -- | Display name
   BankConnectionName ->
   -- | Plaintext provider token (encrypted before it leaves this function)
@@ -531,17 +538,21 @@ getDecryptedConnectionToken userId connId = runExceptT $ do
     Left err -> throwE (BankingError ("Failed to decrypt connection token: " <> tshow err))
     Right plaintext -> pure plaintext
 
--- | Build a ready-to-use 'BankProvider' (record-of-functions) for a user's
--- stored bank connection.
+-- | Resolve a user's stored bank connection into a ready-to-use pull pair:
+-- the provider's transaction classifier and a 'PullCapability' built from the
+-- decrypted token.
 --
 -- Loads the connection by id ('BankConnectionNotFound' when absent), decrypts
--- its stored token, then asks the injected 'bankProviderFactoryL' to construct
--- the provider for the connection's 'Domain.BankProvider'. The factory captures
--- all provider-specific configuration (e.g. the Monobank API base URL and the
--- shared HTTP manager) at construction time, so callers — in particular the
+-- its stored token, looks the connection's provider descriptor up in the
+-- injected 'bankProviderRegistryL' (a 'BankingError' when the provider is not
+-- available in this deployment or has no live pull transport), and applies the
+-- descriptor's pull constructor to the token. Callers — in particular the
 -- banking HTTP handlers — never touch app config or a concrete provider
 -- implementation.
-getConnectionProvider :: UserId -> BankConnectionId -> AppM (Either DomainError BankProvider)
+getConnectionProvider ::
+  UserId ->
+  BankConnectionId ->
+  AppM (Either DomainError (BankTransaction -> TransactionClassification, PullCapability))
 getConnectionProvider userId connId = runExceptT $ do
   configData <- ExceptT (getConfigurationForUser userId)
   conn <-
@@ -550,8 +561,18 @@ getConnectionProvider userId connId = runExceptT $ do
       pure
       (Map.lookup connId configData.banking.connections)
   token <- ExceptT (getDecryptedConnectionToken userId connId)
-  factory <- lift (view bankProviderFactoryL)
-  pure (factory conn.provider token)
+  reg <- lift (view bankProviderRegistryL)
+  desc <-
+    maybe
+      (throwE (BankingError ("Bank provider not available: " <> unBankProviderId conn.provider)))
+      pure
+      (lookupProvider conn.provider reg)
+  mkPull <-
+    maybe
+      (throwE (BankingError ("Bank provider has no pull transport: " <> unBankProviderId conn.provider)))
+      pure
+      desc.pull
+  pure (desc.classify, mkPull token)
 
 -- | Advance the user's books-close cutoff. Both layers (service edge + aggregate)
 -- enforce the strict-advance rule:

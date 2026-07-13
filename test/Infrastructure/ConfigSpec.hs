@@ -7,15 +7,17 @@ module Infrastructure.ConfigSpec (spec) where
 import Data.Aeson (Result (..), Value (..), fromJSON, object, (.=))
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Vector as V
+import Domain.Banking.Types (unsafeBankProviderId)
 import Infrastructure.Config
   ( BankingConfig (..),
-    BankingProvidersConfig (..),
-    MonobankProviderConfig (..),
-    anyProviderEnabled,
-    bankingFeatureAvailable,
+    ProviderSettings (..),
+    bankingMasterEnabled,
+    providerEnabled,
+    providerTextSetting,
     substituteEnvVars,
   )
 import RIO
+import qualified RIO.Map as Map
 import qualified RIO.Text as T
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
@@ -193,18 +195,48 @@ spec = do
         Success cfg -> cfg.tokenEncKey `shouldBe` ""
         Error e -> expectationFailure ("failed to parse BankingConfig: " <> e)
 
-  describe "bankingFeatureAvailable / anyProviderEnabled" $ do
-    let mkCfg masterOn providerOn =
-          BankingConfig masterOn (BankingProvidersConfig (MonobankProviderConfig providerOn "https://api.monobank.ua")) ""
-    it "is False when the master switch is off"
-      $ bankingFeatureAvailable (mkCfg False True)
-      `shouldBe` False
-    it "is False when the master switch is on but no provider is enabled"
-      $ bankingFeatureAvailable (mkCfg True False)
-      `shouldBe` False
-    it "is True when the master switch is on and a provider is enabled"
-      $ bankingFeatureAvailable (mkCfg True True)
+    it "parses providers into a keyed map of ProviderSettings" $ do
+      let payload =
+            object
+              [ "enabled" .= True,
+                "providers"
+                  .= object
+                    [ "monobank"
+                        .= object
+                          [ "enabled" .= True,
+                            "api_base_url" .= ("https://api.monobank.ua" :: T.Text)
+                          ]
+                    ]
+              ]
+      case fromJSON payload :: Result BankingConfig of
+        Success cfg -> do
+          Map.keys cfg.providers `shouldBe` [unsafeBankProviderId "monobank"]
+          fmap providerEnabled (Map.lookup (unsafeBankProviderId "monobank") cfg.providers)
+            `shouldBe` Just True
+        Error e -> expectationFailure ("failed to parse BankingConfig: " <> e)
+
+    it "defaults providers to empty when the key is absent" $ do
+      let payload = object ["enabled" .= False]
+      case fromJSON payload :: Result BankingConfig of
+        Success cfg -> Map.null cfg.providers `shouldBe` True
+        Error e -> expectationFailure ("failed to parse BankingConfig: " <> e)
+
+  describe "bankingMasterEnabled" $ do
+    it "reflects the master switch"
+      $ bankingMasterEnabled (BankingConfig True Map.empty "")
       `shouldBe` True
-    it "anyProviderEnabled reflects the monobank provider flag" $ do
-      anyProviderEnabled (BankingProvidersConfig (MonobankProviderConfig False "x")) `shouldBe` False
-      anyProviderEnabled (BankingProvidersConfig (MonobankProviderConfig True "x")) `shouldBe` True
+    it "is False when the master switch is off"
+      $ bankingMasterEnabled (BankingConfig False Map.empty "")
+      `shouldBe` False
+
+  describe "providerTextSetting" $ do
+    let mkSettings kvs = ProviderSettings {enabled = True, settings = KM.fromList kvs}
+    it "returns the value when the key is present"
+      $ providerTextSetting "api_base_url" "https://default" (mkSettings [("api_base_url", String "https://override")])
+      `shouldBe` "https://override"
+    it "returns the default when the key is absent"
+      $ providerTextSetting "api_base_url" "https://default" (mkSettings [("other", String "x")])
+      `shouldBe` "https://default"
+    it "returns the default when the value is not a string"
+      $ providerTextSetting "api_base_url" "https://default" (mkSettings [("api_base_url", Number 42)])
+      `shouldBe` "https://default"

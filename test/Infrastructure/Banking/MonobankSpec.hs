@@ -6,8 +6,9 @@ module Infrastructure.Banking.MonobankSpec (spec) where
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Domain.Banking.Types (unBankProviderId)
 import Domain.Core.Types (unsafeExternalTransactionId)
-import Infrastructure.Banking.Monobank (mkMonobankProvider)
+import Infrastructure.Banking.Monobank (descriptor)
 import Infrastructure.Banking.Monobank.Internal
   ( MonoAccount (..),
     MonoClientInfo (..),
@@ -20,6 +21,11 @@ import Test.Hspec
 
 spec :: Spec
 spec = describe "Monobank Provider" $ do
+  -- A single descriptor drives both the classify and descriptor-shape tests.
+  -- The base URL and manager are unused by 'classify' and by the shape
+  -- assertions, so a bottom manager is safe (never forced).
+  let d = descriptor "http://unused" (error "Manager not used in these tests")
+
   describe "JSON parsing" $ do
     it "parses /personal/client-info" $ do
       let body :: BSL.ByteString
@@ -71,9 +77,8 @@ spec = describe "Monobank Provider" $ do
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.notes `shouldBe` Nothing
 
-  describe "classifyTransaction" $ do
-    let provider = mkMonobankProvider "" "" (error "Manager not used in classify tests")
-        classify = provider.classifyTransaction
+  describe "classify" $ do
+    let classify = d.classify
 
     it "classifies MCC 4829 with negative amount as Expense"
       $ classify (mkTx (Just "4829") (-10))
@@ -98,6 +103,15 @@ spec = describe "Monobank Provider" $ do
     it "classifies no MCC positive as Income"
       $ classify (mkTx Nothing 1)
       `shouldBe` ClassifiedIncome
+
+  describe "descriptor" $ do
+    it "has the monobank id and display name" $ do
+      unBankProviderId d.providerId `shouldBe` "monobank"
+      d.displayName `shouldBe` "Monobank"
+
+    it "supports the pull transport and not file import" $ do
+      isJust d.pull `shouldBe` True
+      isNothing d.fileImport `shouldBe` True
 
 -- | Helper to build a minimal BankTransaction for classification testing.
 mkTx :: Maybe Text -> Rational -> BankTransaction

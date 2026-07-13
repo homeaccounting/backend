@@ -26,7 +26,7 @@ import Application.Services.ConfigurationService
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
-import Domain.Banking.Types (BankProvider (..), unsafeBankConnectionId)
+import Domain.Banking.Types (unsafeBankConnectionId, unsafeBankProviderId)
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
 import Domain.Configuration.Commands (AddBankConnection (..))
 import Domain.Configuration.Defaults
@@ -147,7 +147,7 @@ cloneBankingDefaultsSpec =
             AddBankConnectionConfigurationCommand
               AddBankConnection
                 { connectionId = connId,
-                  provider = Monobank,
+                  provider = unsafeBankProviderId "monobank",
                   name = "Seeded",
                   encryptedToken = enc,
                   tokenHint = "oken",
@@ -202,7 +202,7 @@ addBankConnectionSpec =
         Right authResult -> do
           let userId = authResult.userId
           let plaintext = "u_supersecrettoken1234"
-          addResult <- runRIO env $ addBankConnection userId Monobank "My monobank" plaintext True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "My monobank" plaintext True
           connId <- case addResult of
             Left err -> do
               expectationFailure $ "addBankConnection failed: " <> show err
@@ -221,7 +221,7 @@ addBankConnectionSpec =
                     Nothing -> expectationFailure "Added connection not present in config"
                     Just conn -> do
                       conn.name `shouldBe` "My monobank"
-                      conn.provider `shouldBe` Monobank
+                      conn.provider `shouldBe` unsafeBankProviderId "monobank"
                       conn.enabled `shouldBe` True
                       conn.tokenHint `shouldBe` "1234"
                       conn.accountMap `shouldBe` Map.empty
@@ -237,7 +237,7 @@ addBankConnectionSpec =
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
           let userId = authResult.userId
-          addResult <- runRIO env $ addBankConnection userId Monobank "C" "u_roundtrip" True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" "u_roundtrip" True
           case addResult of
             Left err -> expectationFailure $ "addBankConnection failed: " <> show err
             Right connId -> do
@@ -259,7 +259,7 @@ setBankConnectionAccountMapSpec =
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
           let userId = authResult.userId
-          addResult <- runRIO env $ addBankConnection userId Monobank "C" "u_tok" True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" "u_tok" True
           case addResult of
             Left err -> expectationFailure $ "addBankConnection failed: " <> show err
             Right connId -> do
@@ -278,7 +278,7 @@ setBankConnectionAccountMapSpec =
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
           let userId = authResult.userId
-          addResult <- runRIO env $ addBankConnection userId Monobank "C" "u_tok" True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" "u_tok" True
           case addResult of
             Left err -> expectationFailure $ "addBankConnection failed: " <> show err
             Right connId -> do

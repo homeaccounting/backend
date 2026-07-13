@@ -5,8 +5,8 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Infrastructure.Banking.Monobank
-  ( mkMonobankProvider,
-    mkBankProviderFactory,
+  ( descriptor,
+    descriptorFromConfig,
   )
 where
 
@@ -17,7 +17,6 @@ import qualified Data.Text.IO as TIO
 import Data.Time (UTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import qualified Domain.Banking.Types as Domain
-import Infrastructure.App (BankProviderFactory)
 import Infrastructure.Banking.Monobank.Internal
   ( MonoAccount (..),
     MonoClientInfo (..),
@@ -25,7 +24,7 @@ import Infrastructure.Banking.Monobank.Internal
     toProviderTransaction,
   )
 import Infrastructure.Banking.Provider
-import Infrastructure.Config (AppConfig (..), BankingConfig (..), BankingProvidersConfig (..), MonobankProviderConfig (..))
+import Infrastructure.Config (BankingConfig (..), providerTextSetting)
 import Network.HTTP.Client
   ( Manager,
     RequestBody (RequestBodyLBS),
@@ -39,44 +38,57 @@ import Network.HTTP.Client
   )
 import Network.HTTP.Types.Status (statusCode)
 import RIO
+import qualified RIO.Map as Map
 
--- | Construct a BankProvider for Monobank from a personal API token.
+-- | Upstream Monobank API base URL, used as the fallback when no override is
+-- supplied under the @api_base_url@ key of @banking.providers.monobank@. This
+-- provider-specific default lives with the provider, not in the generic config
+-- module.
+defaultMonoApiBaseUrl :: Text
+defaultMonoApiBaseUrl = "https://api.monobank.ua"
+
+-- | Expose Monobank as a 'BankProviderDescriptor' with a pull-only transport.
 --
--- The @apiBaseUrl@ is injected from configuration so tests and alternate
--- deployments can point the adapter at a mock endpoint.
-mkMonobankProvider :: Text -> Text -> Manager -> BankProvider
-mkMonobankProvider apiBaseUrl token manager =
-  BankProvider
-    { providerName = "monobank",
-      fetchAccounts = monoFetchAccounts apiBaseUrl token manager,
-      fetchStatements = monoFetchStatements apiBaseUrl token manager,
-      registerWebhook = monoRegisterWebhook apiBaseUrl token manager,
-      classifyTransaction = monoClassifyTransaction
+-- The @apiBaseUrl@ is injected explicitly (rather than read from 'AppConfig')
+-- so this adapter is decoupled from the config shape: @Main@ parses the base
+-- URL from the provider's raw settings and passes it here, and tests point the
+-- adapter at a mock endpoint. The three 'PullCapability' fields wrap the
+-- @mono*@ request helpers, closing over the token supplied per request.
+descriptor :: Text {- api base URL -} -> Manager -> BankProviderDescriptor
+descriptor apiBaseUrl manager =
+  BankProviderDescriptor
+    { providerId = Domain.unsafeBankProviderId "monobank",
+      displayName = "Monobank",
+      -- 'defaultClassify' treats non-negative amounts as income and negative
+      -- amounts as expense, which is exactly Monobank's sign convention:
+      -- outgoing transactions have negative amounts, incoming positive. Category
+      -- resolution via MCC happens in BankImportService using UserConfiguration.
+      classify = defaultClassify,
+      pull = Just $ \token ->
+        PullCapability
+          { fetchAccounts = monoFetchAccounts apiBaseUrl token manager,
+            fetchStatements = monoFetchStatements apiBaseUrl token manager,
+            registerWebhook = monoRegisterWebhook apiBaseUrl token manager
+          },
+      fileImport = Nothing
     }
 
--- | Build the application's 'BankProviderFactory' from the loaded config and
--- shared HTTP 'Manager'.
---
--- This is the single place where provider-specific configuration (the
--- Monobank API base URL) and the constructor are wired together. The returned
--- factory dispatches on the connection's 'Domain.BankProvider' enum and
--- captures @config@/@manager@ in its closure, so callers never see the
--- per-provider config. New providers are added by extending the @case@ here.
-mkBankProviderFactory :: AppConfig -> Manager -> BankProviderFactory
-mkBankProviderFactory config manager provider token =
-  case provider of
-    Domain.Monobank ->
-      mkMonobankProvider config.banking.providers.monobank.apiBaseUrl token manager
-
--- | Monobank classify: amount-sign based (direction only).
---
--- Mono outgoing transactions have negative amounts and incoming have positive,
--- so the sign fully determines Expense vs Income. Category resolution via
--- MCC happens in BankImportService using UserConfiguration.
-monoClassifyTransaction :: BankTransaction -> TransactionClassification
-monoClassifyTransaction tx
-  | tx.amount >= 0 = ClassifiedIncome
-  | otherwise = ClassifiedExpense
+-- | Build the Monobank descriptor straight from the app's 'BankingConfig',
+-- looking up this provider's own settings entry (keyed by its stable slug)
+-- and pulling the @api_base_url@ override out of the raw settings, falling
+-- back to 'defaultMonoApiBaseUrl' when the entry or key is absent. This is
+-- the only place that needs to know both Monobank's slug and its raw config
+-- shape, keeping callers (e.g. the root providers module) config-agnostic.
+descriptorFromConfig :: BankingConfig -> Manager -> BankProviderDescriptor
+descriptorFromConfig cfg =
+  descriptor apiBaseUrl
+  where
+    monobankId = Domain.unsafeBankProviderId "monobank"
+    apiBaseUrl =
+      maybe
+        defaultMonoApiBaseUrl
+        (providerTextSetting "api_base_url" defaultMonoApiBaseUrl)
+        (Map.lookup monobankId cfg.providers)
 
 -- API call functions
 

@@ -23,6 +23,11 @@ flag ci
   manual: True
   default: False
 
+flag monobank
+  description: Compile the Monobank (UA) bank provider
+  manual: True
+  default: True
+
 library
   exposed-modules:
       Application.LinkCodeStore
@@ -100,9 +105,9 @@ library
       Infrastructure.Auth.OAuth
       Infrastructure.Auth.Password
       Infrastructure.Auth.Telegram
-      Infrastructure.Banking.Monobank
-      Infrastructure.Banking.Monobank.Internal
       Infrastructure.Banking.Provider
+      Infrastructure.Banking.Providers
+      Infrastructure.Banking.Registry
       Infrastructure.Bootstrap
       Infrastructure.Config
       Infrastructure.Crypto.SecretBox
@@ -207,6 +212,11 @@ library
   default-language: Haskell2010
   if flag(ci)
     ghc-options: -Werror
+  if flag(monobank)
+    exposed-modules:
+        Infrastructure.Banking.Monobank
+        Infrastructure.Banking.Monobank.Internal
+    cpp-options: -DPROVIDER_MONOBANK
 
 executable backend
   main-is: Main.hs
@@ -337,6 +347,7 @@ test-suite backend-test
       Domain.Account.CommandHandlerSpec
       Domain.Account.ReversalCommandHandlerSpec
       Domain.Account.ReversalProjectionPropertySpec
+      Domain.Banking.TypesPropertySpec
       Domain.Banking.TypesSpec
       Domain.Configuration.BooksCloseSpec
       Domain.Configuration.CommandHandlerSpec
@@ -372,6 +383,8 @@ test-suite backend-test
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.ProviderSpec
+      Infrastructure.Banking.ProvidersSpec
+      Infrastructure.Banking.RegistrySpec
       Infrastructure.ConfigLlmSpec
       Infrastructure.ConfigSpec
       Infrastructure.Crypto.SecretBoxSpec

@@ -50,8 +50,13 @@ import RIO
 import Test.Hspec
 import Test.Hspec.Wai
 import Testkit.AppEnv (mkAppSeeded)
-import Testkit.HspecWai (bearerHeader, jsonAuthHeaders, registerAndGetToken)
-import Web.API.ConfigurationAPI (BankingConfigurationDTO (..), ConfigurationDefaultsDTO (..), ConfigurationResponse (..))
+import Testkit.HspecWai (bearerHeader, getJSONAuth, jsonAuthHeaders, registerAndGetToken)
+import Web.API.ConfigurationAPI
+  ( BankingConfigurationDTO (..),
+    ConfigurationDefaultsDTO (..),
+    ConfigurationResponse (..),
+    ProviderInfoDTO (..),
+  )
 import Web.Types (ErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
@@ -83,6 +88,7 @@ spec = do
   updateDefaultsSpec
   updateBankingMccMapSpec
   getBankingInResponseSpec
+  listProvidersSpec
 
 -- -----------------------------------------------------------------------------
 -- PUT /api/users/me/configuration/defaults
@@ -326,3 +332,33 @@ getBankingInResponseSpec =
             Right cfg -> do
               let ConfigurationResponse {defaults = ConfigurationDefaultsDTO {incomeCategory = mInc}} = cfg
               mInc `shouldBe` Just incomeOtherUUID
+
+-- -----------------------------------------------------------------------------
+-- GET /api/users/me/configuration/banking/providers
+-- -----------------------------------------------------------------------------
+
+listProvidersSpec :: Spec
+listProvidersSpec =
+  describe "GET /api/users/me/configuration/banking/providers"
+    $ with mkAppSeeded
+    $ do
+      it "lists available providers with capability flags" $ do
+        tok <- registerAndGetToken
+        resp <- getJSONAuth "/api/users/me/configuration/banking/providers" tok
+        liftIO $ do
+          simpleStatus resp `shouldBe` status200
+          case eitherDecode (simpleBody resp) :: Either String [ProviderInfoDTO] of
+            Left err -> expectationFailure $ "body is not a [ProviderInfoDTO]: " <> err
+            Right providers ->
+              providers
+                `shouldBe` [ ProviderInfoDTO
+                               { id = "monobank",
+                                 displayName = "Monobank",
+                                 supportsPull = True,
+                                 supportsFile = False
+                               }
+                           ]
+
+      it "returns 401 when no JWT is provided" $ do
+        resp <- request "GET" "/api/users/me/configuration/banking/providers" [(hContentType, "application/json")] ""
+        liftIO $ simpleStatus resp `shouldBe` status401

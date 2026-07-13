@@ -18,7 +18,7 @@
 module Domain.Configuration.CommandHandlerSpec (spec) where
 
 import qualified Data.Map.Strict as Map
-import Domain.Banking.Types (BankConnectionId, BankProvider (..), unsafeBankConnectionId)
+import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId)
 import Domain.Configuration
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Events
@@ -1028,7 +1028,7 @@ configWithConnection =
       BankConnectionAddedConfigurationEvent
         BankConnectionAdded
           { connectionId = testConnectionId1,
-            provider = Monobank,
+            provider = unsafeBankProviderId "monobank",
             name = "Mono",
             encryptedToken = testEncryptedSecret,
             tokenHint = "1234",
@@ -1050,7 +1050,7 @@ configWithTwoConnections =
       BankConnectionAddedConfigurationEvent
         BankConnectionAdded
           { connectionId = testConnectionId1,
-            provider = Monobank,
+            provider = unsafeBankProviderId "monobank",
             name = "Mono A",
             encryptedToken = testEncryptedSecret,
             tokenHint = "1111",
@@ -1059,7 +1059,7 @@ configWithTwoConnections =
       BankConnectionAddedConfigurationEvent
         BankConnectionAdded
           { connectionId = testConnectionId2,
-            provider = Monobank,
+            provider = unsafeBankProviderId "monobank",
             name = "Mono B",
             encryptedToken = testEncryptedSecret,
             tokenHint = "2222",
@@ -1086,7 +1086,7 @@ addBankConnectionSpec = describe "AddBankConnection Command" $ do
               AddBankConnectionConfigurationCommand
                 AddBankConnection
                   { connectionId = testConnectionId1,
-                    provider = Monobank,
+                    provider = unsafeBankProviderId "monobank",
                     name = "Mono",
                     encryptedToken = testEncryptedSecret,
                     tokenHint = "1234",

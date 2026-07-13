@@ -68,15 +68,10 @@ import Domain.Core.Types
   )
 import Infrastructure.App
   ( AppM,
-    HasAppConfig (..),
+    bankingFeatureEnabled,
     runDb,
   )
-import Infrastructure.Banking.Provider (BankProvider (..))
 import qualified Infrastructure.Banking.Provider as Banking
-import Infrastructure.Config
-  ( AppConfig (..),
-    bankingFeatureAvailable,
-  )
 import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
@@ -220,18 +215,19 @@ bankingServer = externalAccountsHandler :<|> resyncHandler
 -- Feature gate
 -- -----------------------------------------------------------------------------
 
--- | Reject the request with HTTP 404 @FEATURE_DISABLED@ unless both the
--- global banking feature and the Monobank provider are enabled in config.
+-- | Reject the request with HTTP 404 @FEATURE_DISABLED@ unless the banking
+-- feature is enabled ('bankingFeatureEnabled': master switch on AND at least
+-- one provider registered).
 --
 -- 404 (rather than 403) hides the endpoint's existence entirely when the
 -- feature is off. The error flows through the unified
 -- @DomainError -> JSON@ envelope so clients see the same shape as every
--- other banking response. Shared by the banking and configuration-banking
--- endpoints so the gate stays in one place.
+-- other banking response. Wraps the shared 'bankingFeatureEnabled' predicate
+-- so this gate and the configuration-banking DTO field cannot drift.
 requireBankingEnabled :: AppM ()
 requireBankingEnabled = do
-  cfg <- view appConfigL
-  unless (bankingFeatureAvailable cfg.banking)
+  enabled <- bankingFeatureEnabled
+  unless enabled
     $ throwDomainError
     $ FeatureDisabled "banking"
 
@@ -252,10 +248,10 @@ requireBankingEnabled = do
 --   2. Load the caller's connection (404 'BankConnectionNotFound' if absent);
 --      reject a disabled connection with 422 'BankConnectionDisabled'.
 --   3. Validate the date range (max 31 days, strictly positive).
---   4-5. Build a ready-to-use provider for the connection via the
+--   4-5. Resolve the connection's classifier + pull capability via the
 --      configuration service ('getConnectionProvider'), which decrypts the
---      stored token and dispatches on the connection's provider. The handler
---      stays provider-agnostic.
+--      stored token and looks the connection's provider up in the registry.
+--      The handler stays provider-agnostic.
 --   6. Build the import link directly from @connection.accountMap@, keeping
 --      only targets the caller may write to (Owner/Editor). External accounts
 --      not in the map are simply absent and reported as skipped by the import.
@@ -293,12 +289,12 @@ resyncHandler user connUuid request = do
     $ throwDomainError
     $ BankingError "Date range 'to' must be after 'from'"
 
-  -- 4-5. Build a ready-to-use provider for this connection. The service layer
-  -- loads the connection, decrypts its stored token, and dispatches on the
-  -- connection's provider via the injected factory, so the handler stays
+  -- 4-5. Resolve the connection's classifier + pull capability. The service
+  -- layer loads the connection, decrypts its stored token, and looks the
+  -- connection's provider up in the registry, so the handler stays
   -- provider-agnostic and never touches app config.
   providerResult <- ConfigService.getConnectionProvider userId connId
-  provider <- case providerResult of
+  (classify, pull) <- case providerResult of
     Left err -> throwDomainError err
     Right p -> pure p
 
@@ -321,7 +317,7 @@ resyncHandler user connUuid request = do
         ]
 
   -- 7. Call BankImportService.resync and project to the HTTP response.
-  result <- BankImportService.resync provider userId accountLink request.from request.to
+  result <- BankImportService.resync classify pull userId accountLink request.from request.to
   return $ toResyncResponse result
 
 -- | Handler for GET /api/banking/connections/:id/external-accounts
@@ -332,10 +328,10 @@ resyncHandler user connUuid request = do
 -- Flow:
 --   0. Feature-flag gate: 404 when banking or monobank are disabled.
 --   1. Validate the captured connection id.
---   2-3. Build a ready-to-use provider for the connection via the
+--   2-3. Resolve the connection's classifier + pull capability via the
 --      configuration service ('getConnectionProvider'), which loads the
---      connection, decrypts its stored token, and dispatches on the
---      connection's provider. Absent connection surfaces as
+--      connection, decrypts its stored token, and looks the connection's
+--      provider up in the registry. Absent connection surfaces as
 --      'BankConnectionNotFound' (404); decryption failure as a 'BankingError'.
 --      The handler stays provider-agnostic.
 --   4. Fetch accounts; an upstream failure surfaces as a 'BankingError'.
@@ -348,18 +344,18 @@ externalAccountsHandler user connUuid = do
   -- 1. Validate the captured connection id.
   connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
 
-  -- 2-3. Build a ready-to-use provider for this connection via the service
-  -- layer, which loads the connection, decrypts its stored token, and
-  -- dispatches on the connection's provider. An absent connection surfaces as
+  -- 2-3. Resolve the connection's classifier + pull capability via the service
+  -- layer, which loads the connection, decrypts its stored token, and looks the
+  -- connection's provider up in the registry. An absent connection surfaces as
   -- 'BankConnectionNotFound' (404) and a decryption failure as a
   -- 'BankingError'; the handler stays provider-agnostic.
   providerResult <- ConfigService.getConnectionProvider user.userId connId
-  provider <- case providerResult of
+  (_classify, pull) <- case providerResult of
     Left err -> throwDomainError err
     Right p -> pure p
 
   -- 4. Fetch accounts; surface an upstream failure as a BankingError.
-  fetchResult <- liftIO provider.fetchAccounts
+  fetchResult <- liftIO pull.fetchAccounts
   case fetchResult of
     Left err -> do
       logError $ "Failed to list external accounts: " <> display err

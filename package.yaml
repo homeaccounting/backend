@@ -96,6 +96,10 @@ flags:
     description: Enable -Werror for CI builds
     manual: true
     default: false
+  monobank:
+    description: Compile the Monobank (UA) bank provider
+    manual: true
+    default: true
 
 default-extensions:
   - NoFieldSelectors
@@ -122,6 +126,11 @@ library:
   when:
     - condition: flag(ci)
       ghc-options: -Werror
+    - condition: flag(monobank)
+      cpp-options: -DPROVIDER_MONOBANK
+      exposed-modules:
+        - Infrastructure.Banking.Monobank
+        - Infrastructure.Banking.Monobank.Internal
 
 executables:
   backend:

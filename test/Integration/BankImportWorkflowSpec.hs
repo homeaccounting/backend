@@ -58,8 +58,8 @@ import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Banking.Provider
   ( BankAccountId,
-    BankProvider (..),
     BankTransaction (..),
+    PullCapability (..),
     TransactionClassification (..),
   )
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
@@ -114,20 +114,22 @@ testToTime = UTCTime (fromGregorian 2026 4 14) 0
 -- Mock Provider
 -- -----------------------------------------------------------------------------
 
--- | A mock bank provider that returns the given statements and classifies
--- based on the sign of the amount.
-mockProvider :: [BankTransaction] -> BankProvider
+-- | A mock pull capability that returns the given statements.
+mockProvider :: [BankTransaction] -> PullCapability
 mockProvider statements =
-  BankProvider
-    { providerName = "mock",
-      fetchAccounts = return $ Right [],
+  PullCapability
+    { fetchAccounts = return $ Right [],
       fetchStatements = \_ _ _ -> return $ Right statements,
-      registerWebhook = \_ -> return $ Right (),
-      classifyTransaction = \tx ->
-        if tx.amount >= 0
-          then ClassifiedIncome
-          else ClassifiedExpense
+      registerWebhook = \_ -> return $ Right ()
     }
+
+-- | The classifier the mock provider pairs with: income for non-negative
+-- amounts, expense otherwise (the Monobank sign rule).
+mockClassify :: BankTransaction -> TransactionClassification
+mockClassify tx =
+  if tx.amount >= 0
+    then ClassifiedIncome
+    else ClassifiedExpense
 
 -- | Create a bank transaction for testing. Amount is in major units.
 mkTestTransaction :: Rational -> Text -> BankTransaction
@@ -301,7 +303,7 @@ spec = describe "Bank Import Workflow" $ do
         provider = mockProvider statements
 
     -- First resync: should import all 3 transactions (hold no longer filtered)
-    result1 <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+    result1 <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
     let importedIds = concatMap (.imported) result1.accounts
     length importedIds `shouldBe` 3
 
@@ -336,7 +338,7 @@ spec = describe "Bank Import Workflow" $ do
         holdData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 30))
 
         -- Second resync (dedup): same statements should produce no new imports
-        result2 <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+        result2 <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
         concatMap (.imported) result2.accounts `shouldBe` []
         concatMap (.failures) result2.accounts `shouldBe` []
       _ -> expectationFailure $ "Expected exactly 3 imported IDs, got " <> show (length importedIds)
@@ -354,7 +356,7 @@ spec = describe "Bank Import Workflow" $ do
           ]
         provider = mockProvider statements
 
-    result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+    result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
     length (concatMap (.imported) result.accounts) `shouldBe` 3
     concatMap (.failures) result.accounts `shouldBe` []
 
@@ -374,7 +376,7 @@ spec = describe "Bank Import Workflow" $ do
           provider = mockProvider txs
           runOnce =
             runAppM env
-              $ resync provider testUserId accountLink testFromTime testToTime
+              $ resync mockClassify provider testUserId accountLink testFromTime testToTime
           extIdOf :: BankTransaction -> ExternalTransactionId
           extIdOf t = t.externalId
           expected = length (nubBy ((==) `on` extIdOf) txs)
@@ -397,7 +399,7 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkTestTransaction 100 "xc-income" -- +100 UAH income
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
       concatMap (.failures) result.accounts `shouldBe` []
       txId <- case concatMap (.imported) result.accounts of
         [i] -> pure i
@@ -427,7 +429,7 @@ spec = describe "Bank Import Workflow" $ do
       let incomeTx = mkTestTransaction 500 "xc-fund"
           expenseTx = mkTestTransaction (-200) "xc-expense"
           provider = mockProvider [incomeTx, expenseTx]
-      result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
       concatMap (.failures) result.accounts `shouldBe` []
       expenseId <- case concatMap (.imported) result.accounts of
         [_fundId, eId] -> pure eId
@@ -455,7 +457,7 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkTestTransaction 100 "xc-nearest"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
       concatMap (.failures) result.accounts `shouldBe` []
       txId <- case concatMap (.imported) result.accounts of
         [i] -> pure i
@@ -474,7 +476,7 @@ spec = describe "Bank Import Workflow" $ do
       -- intentionally seed nothing
       let incomeTx = mkTestTransaction 100 "xc-no-rate"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
       concatMap (.imported) result.accounts `shouldBe` []
       length (concatMap (.failures) result.accounts) `shouldBe` 1
 
@@ -514,7 +516,7 @@ spec = describe "Bank Import Workflow" $ do
       -- A UAH transaction (currencyCode 980) mapped to a USD account.
       let incomeTx = mkTestTransaction 100 "xc-mismatch"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
       -- Skipped, not imported, not failed.
       concatMap (.imported) result.accounts `shouldBe` []
       concatMap (.failures) result.accounts `shouldBe` []
@@ -531,7 +533,7 @@ spec = describe "Bank Import Workflow" $ do
       (env, _externalAccId, bankAccId, accountLink) <- setupTestEnv
       let incomeTx = mkTestTransaction 100 "xc-same"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
       concatMap (.failures) result.accounts `shouldBe` []
       txId <- case concatMap (.imported) result.accounts of
         [i] -> pure i
