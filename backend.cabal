@@ -28,6 +28,11 @@ flag monobank
   manual: True
   default: True
 
+flag privatbank
+  description: Compile the PrivatBank (UA) bank provider
+  manual: True
+  default: True
+
 library
   exposed-modules:
       Application.LinkCodeStore
@@ -217,6 +222,14 @@ library
         Infrastructure.Banking.Monobank
         Infrastructure.Banking.Monobank.Internal
     cpp-options: -DPROVIDER_MONOBANK
+  if flag(privatbank)
+    exposed-modules:
+        Infrastructure.Banking.PrivatBank
+        Infrastructure.Banking.PrivatBank.Internal
+    cpp-options: -DPROVIDER_PRIVATBANK
+    build-depends:
+        cassava ==0.5.*
+      , vector >=0.12 && <0.14
 
 executable backend
   main-is: Main.hs
@@ -382,6 +395,7 @@ test-suite backend-test
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Banking.MonobankSpec
+      Infrastructure.Banking.PrivatBankSpec
       Infrastructure.Banking.ProviderSpec
       Infrastructure.Banking.ProvidersSpec
       Infrastructure.Banking.RegistrySpec
@@ -428,6 +442,7 @@ test-suite backend-test
       Web.API.AccountAPISpec
       Web.API.AuthAPIIntegrationSpec
       Web.API.BankConnectionAPISpec
+      Web.API.BankImportFileAPISpec
       Web.API.BankingAPISpec
       Web.API.ConfigurationBankingAPISpec
       Web.API.PromptAPISpec

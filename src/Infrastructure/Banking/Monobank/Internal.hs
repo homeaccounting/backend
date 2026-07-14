@@ -19,6 +19,7 @@ import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
 import Data.Ratio ((%))
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Domain.Banking.Types (ExternalAccountId)
 import Domain.Core.Types (mkExternalTransactionId)
 import Infrastructure.Banking.Provider
 import RIO
@@ -94,7 +95,7 @@ instance FromJSON MonoStatement where
 -- application layer works in a single representation. 'originalAmount' is
 -- populated only when the transaction's operation amount differs from the
 -- account amount (i.e. a cross-currency transaction).
-toProviderTransaction :: BankAccountId -> MonoStatement -> Either Text BankTransaction
+toProviderTransaction :: ExternalAccountId -> MonoStatement -> Either Text BankTransaction
 toProviderTransaction accId ms =
   case mkExternalTransactionId ms.stmtId of
     Left err ->
@@ -109,7 +110,7 @@ toProviderTransaction accId ms =
        in Right
             BankTransaction
               { externalId = extId,
-                accountId = accId,
+                externalAccountId = accId,
                 time = posixSecondsToUTCTime (fromIntegral ms.stmtTime),
                 amount = accountAmount,
                 currencyCode = ms.stmtCurrencyCode,

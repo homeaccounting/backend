@@ -35,12 +35,13 @@ module Application.Services.ConfigurationService
     setBankingMccExpenseCategoryMap,
     addBankConnection,
     renameBankConnection,
-    changeBankConnectionToken,
+    changeBankConnectionCredential,
     setBankConnectionEnabled,
     setBankConnectionAccountMap,
     removeBankConnection,
-    getDecryptedConnectionToken,
+    getDecryptedConnectionCredential,
     getConnectionProvider,
+    getConnectionFileImport,
     closeBooksThrough,
     seedDefaultConfiguration,
 
@@ -67,8 +68,13 @@ import Application.Services.Internal
     runUserCmd,
   )
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
+import Data.Aeson (eitherDecode)
+import Data.Aeson.Text (encodeToLazyText)
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text.Lazy as TL
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
@@ -78,7 +84,7 @@ import Domain.Banking.Types
   ( BankConnectionId,
     BankConnectionName,
     ExternalAccountId,
-    PlainToken,
+    ProviderCredential (..),
     unBankProviderId,
     unsafeBankConnectionId,
   )
@@ -88,7 +94,7 @@ import qualified Domain.Configuration.CommandHandler as ConfigCh
 import Domain.Configuration.Commands
   ( AddBankConnection (..),
     AddDictionaryEntry (..),
-    ChangeBankConnectionToken (..),
+    ChangeBankConnectionCredential (..),
     ChangeBaseCurrency (..),
     ChangeDefaultCurrency (..),
     CloseBooksThrough (..),
@@ -159,8 +165,10 @@ import Infrastructure.App
 import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),
     BankTransaction,
+    FileImportCapability,
     PullCapability,
     TransactionClassification,
+    providerSupportsPull,
   )
 import Infrastructure.Banking.Registry (lookupProvider)
 import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
@@ -379,42 +387,71 @@ setBankingMccExpenseCategoryMap userId mapping = runExceptT $ do
 -- Bank Connections
 -- -----------------------------------------------------------------------------
 
--- | Compute the non-secret token hint: the last (up to) four characters of the
--- plaintext token, used so the user can recognise a stored token.
-tokenHintOf :: Text -> Text
-tokenHintOf = T.takeEnd 4
+-- | Compute the non-secret hint from a decrypted credential: for a
+-- 'StaticSecret', the last (up to) four characters of the plaintext secret,
+-- used so the user can recognise a stored credential.
+secretHintOf :: ProviderCredential -> Text
+secretHintOf (StaticSecret t) = T.takeEnd 4 t
+
+-- | Encode a 'ProviderCredential' to the JSON 'Text' that gets encrypted at
+-- rest (via 'encryptSecret'). The persisted 'EncryptedSecret' therefore
+-- carries the credential's tagged JSON, not the credential's shape directly —
+-- see "Domain.Banking.Types" for why this keeps the event schema unchanged.
+encodeCredential :: ProviderCredential -> Text
+-- 'encodeToLazyText' yields JSON as 'Text' directly — total, no partial UTF-8
+-- decode (unlike 'Data.Text.Encoding.decodeUtf8').
+encodeCredential = TL.toStrict . encodeToLazyText
+
+-- | Decode a decrypted credential JSON 'Text' back into a 'ProviderCredential'.
+-- Total: a decode failure is reported as 'Left', never a partial function.
+decodeCredential :: Text -> Either Text ProviderCredential
+decodeCredential plaintext =
+  case eitherDecode (BSL.fromStrict (TE.encodeUtf8 plaintext)) of
+    Left err -> Left (T.pack err)
+    Right cred -> Right cred
 
 -- | Add a new bank connection to the user's configuration.
 --
--- Encrypts the plaintext token in the service layer (only ciphertext enters
--- the event log), generates a fresh 'BankConnectionId', computes a token hint,
--- and emits 'AddBankConnection'. The connection starts with an empty account
--- map.
+-- Encrypts the credential's JSON encoding in the service layer (only
+-- ciphertext enters the event log), generates a fresh 'BankConnectionId',
+-- computes a token hint, and emits 'AddBankConnection'. The connection starts
+-- with an empty account map.
+--
+-- The credential is OPTIONAL: 'Nothing' is stored verbatim (no encryption
+-- attempted) for a connection to a provider with no pull/API transport (e.g. a
+-- file-only provider). Whether a token is actually required for the chosen
+-- provider is decided by the caller (the web handler, which has access to the
+-- provider registry) — this function stores whatever it is given.
 addBankConnection ::
   UserId ->
   Domain.BankProviderId ->
   -- | Display name
   BankConnectionName ->
-  -- | Plaintext provider token (encrypted before it leaves this function)
-  PlainToken ->
+  -- | Provider credential, if any (its JSON encoding is encrypted before it
+  -- leaves this function; 'Nothing' for a connection with no credential)
+  Maybe ProviderCredential ->
   -- | Whether the connection is enabled for syncing
   Bool ->
   AppM (Either DomainError BankConnectionId)
-addBankConnection userId provider name token enabled = runExceptT $ do
+addBankConnection userId provider name mCred enabled = runExceptT $ do
   lift $ logInfo $ "Adding bank connection for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   connUuid <- liftIO UUID.nextRandom
   let connId = unsafeBankConnectionId connUuid
-  ring <- lift (view bankingKeyRingL)
-  enc <- liftIO (encryptSecret ring token)
+  (mEnc, mHint) <- case mCred of
+    Nothing -> pure (Nothing, Nothing)
+    Just cred -> do
+      ring <- lift (view bankingKeyRingL)
+      enc <- liftIO (encryptSecret ring (encodeCredential cred))
+      pure (Just enc, Just (secretHintOf cred))
   let cmd =
         AddBankConnectionConfigurationCommand
           AddBankConnection
             { connectionId = connId,
               provider = provider,
               name = name,
-              encryptedToken = enc,
-              tokenHint = tokenHintOf token,
+              encryptedSecret = mEnc,
+              secretHint = mHint,
               enabled = enabled
             }
   runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
@@ -435,23 +472,37 @@ renameBankConnection userId connId newName = runExceptT $ do
   runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
   lift $ logInfo "Bank connection renamed successfully"
 
--- | Replace an existing bank connection's token. The new plaintext token is
--- re-encrypted in the service layer and a fresh hint is computed.
-changeBankConnectionToken :: UserId -> BankConnectionId -> PlainToken -> AppM (Either DomainError ())
-changeBankConnectionToken userId connId token = runExceptT $ do
-  lift $ logInfo $ "Changing bank connection token for user " <> displayShow userId
+-- | Replace an existing bank connection's credential. The new credential's
+-- JSON encoding is re-encrypted in the service layer and a fresh hint is
+-- computed.
+--
+-- Rejected with 'BankingError' when the connection's provider has no pull/API
+-- transport: a file-only connection has no credential to change.
+changeBankConnectionCredential :: UserId -> BankConnectionId -> ProviderCredential -> AppM (Either DomainError ())
+changeBankConnectionCredential userId connId cred = runExceptT $ do
+  lift $ logInfo $ "Changing bank connection credential for user " <> displayShow userId
+  configData <- ExceptT (getConfigurationForUser userId)
+  conn <-
+    maybe
+      (throwE BankConnectionNotFound)
+      pure
+      (Map.lookup connId configData.banking.connections)
+  reg <- lift (view bankProviderRegistryL)
+  case lookupProvider conn.provider reg of
+    Just desc | providerSupportsPull desc -> pure ()
+    _ -> throwE (BankingError ("Bank connection's provider has no pull transport, so it has no credential to change: " <> unBankProviderId conn.provider))
   configId <- ExceptT (ensureClonedConfiguration userId)
   ring <- lift (view bankingKeyRingL)
-  enc <- liftIO (encryptSecret ring token)
+  enc <- liftIO (encryptSecret ring (encodeCredential cred))
   let cmd =
-        ChangeBankConnectionTokenConfigurationCommand
-          ChangeBankConnectionToken
+        ChangeBankConnectionCredentialConfigurationCommand
+          ChangeBankConnectionCredential
             { connectionId = connId,
-              encryptedToken = enc,
-              tokenHint = tokenHintOf token
+              encryptedSecret = enc,
+              secretHint = secretHintOf cred
             }
   runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
-  lift $ logInfo "Bank connection token changed successfully"
+  lift $ logInfo "Bank connection credential changed successfully"
 
 -- | Enable or disable an existing bank connection.
 setBankConnectionEnabled :: UserId -> BankConnectionId -> Bool -> AppM (Either DomainError ())
@@ -521,22 +572,35 @@ setBankConnectionAccountMap userId connId accountMap = runExceptT $ do
   lift $ logInfo "Bank connection account map set successfully"
 
 -- | Load a user's configuration, find the named connection, and decrypt its
--- stored token. Used by the external-accounts and resync endpoints (Tasks 8/9).
+-- stored credential. Used by the external-accounts and resync endpoints
+-- (Tasks 8/9).
 --
--- Returns 'BankConnectionNotFound' when the connection is absent, and a
--- 'BankingError' when decryption fails (a misconfigured/rotated key ring).
-getDecryptedConnectionToken :: UserId -> BankConnectionId -> AppM (Either DomainError PlainToken)
-getDecryptedConnectionToken userId connId = runExceptT $ do
+-- Returns 'BankConnectionNotFound' when the connection is absent, a
+-- 'BankingError' when the connection has no stored credential (a file-only
+-- connection), a 'BankingError' when decryption fails (a
+-- misconfigured/rotated key ring), and a 'BankingError' when the decrypted
+-- plaintext fails to decode as a 'ProviderCredential' (should not happen
+-- under no-backcompat, but handled totally — no partial functions).
+getDecryptedConnectionCredential :: UserId -> BankConnectionId -> AppM (Either DomainError ProviderCredential)
+getDecryptedConnectionCredential userId connId = runExceptT $ do
   configData <- ExceptT (getConfigurationForUser userId)
   conn <-
     maybe
       (throwE BankConnectionNotFound)
       pure
       (Map.lookup connId configData.banking.connections)
+  enc <-
+    maybe
+      (throwE (BankingError "Bank connection has no stored credential"))
+      pure
+      conn.encryptedSecret
   ring <- lift (view bankingKeyRingL)
-  case decryptSecret ring conn.encryptedToken of
-    Left err -> throwE (BankingError ("Failed to decrypt connection token: " <> tshow err))
-    Right plaintext -> pure plaintext
+  plaintext <- case decryptSecret ring enc of
+    Left err -> throwE (BankingError ("Failed to decrypt connection credential: " <> tshow err))
+    Right pt -> pure pt
+  case decodeCredential plaintext of
+    Left err -> throwE (BankingError ("Failed to decode connection credential: " <> err))
+    Right cred -> pure cred
 
 -- | Resolve a user's stored bank connection into a ready-to-use pull pair:
 -- the provider's transaction classifier and a 'PullCapability' built from the
@@ -560,19 +624,57 @@ getConnectionProvider userId connId = runExceptT $ do
       (throwE BankConnectionNotFound)
       pure
       (Map.lookup connId configData.banking.connections)
-  token <- ExceptT (getDecryptedConnectionToken userId connId)
   reg <- lift (view bankProviderRegistryL)
   desc <-
     maybe
       (throwE (BankingError ("Bank provider not available: " <> unBankProviderId conn.provider)))
       pure
       (lookupProvider conn.provider reg)
+  -- Check the pull transport before decrypting the token so a file-only
+  -- (token-less) connection reports the actionable "no pull transport" cause
+  -- rather than "no stored token".
   mkPull <-
     maybe
       (throwE (BankingError ("Bank provider has no pull transport: " <> unBankProviderId conn.provider)))
       pure
       desc.pull
-  pure (desc.classify, mkPull token)
+  cred <- ExceptT (getDecryptedConnectionCredential userId connId)
+  pure (desc.classify, mkPull cred)
+
+-- | Resolve a user's stored bank connection into a ready-to-use file-import
+-- pair: the provider's transaction classifier and its 'FileImportCapability'
+-- (the format-keyed statement parsers).
+--
+-- Loads the connection by id ('BankConnectionNotFound' when absent), looks
+-- the connection's provider descriptor up in the injected
+-- 'bankProviderRegistryL' (a 'BankingError' when the provider is not
+-- available in this deployment or has no file-import transport). Unlike
+-- 'getConnectionProvider', no token is required or decrypted here: a
+-- file-import provider needs no credential, so a token-less (file-only)
+-- connection resolves fine.
+getConnectionFileImport ::
+  UserId ->
+  BankConnectionId ->
+  AppM (Either DomainError (BankTransaction -> TransactionClassification, FileImportCapability))
+getConnectionFileImport userId connId = runExceptT $ do
+  configData <- ExceptT (getConfigurationForUser userId)
+  conn <-
+    maybe
+      (throwE BankConnectionNotFound)
+      pure
+      (Map.lookup connId configData.banking.connections)
+  reg <- lift (view bankProviderRegistryL)
+  desc <-
+    maybe
+      (throwE (BankingError ("Bank provider not available: " <> unBankProviderId conn.provider)))
+      pure
+      (lookupProvider conn.provider reg)
+  cap <-
+    maybe
+      (throwE (BankingError ("Bank provider has no file-import transport: " <> unBankProviderId conn.provider)))
+      pure
+      desc.fileImport
+  pure (desc.classify, cap)
 
 -- | Advance the user's books-close cutoff. Both layers (service edge + aggregate)
 -- enforce the strict-advance rule:
@@ -890,7 +992,7 @@ copyBanking newConfigUuidVal srcBanking = do
       Right _ -> return ()
 
   -- Clone bank connections. Each connection is re-emitted with its already
-  -- encrypted token, hint, provider, name, and enabled flag preserved; its
+  -- encrypted secret, hint, provider, name, and enabled flag preserved; its
   -- account map (if any) is set afterwards. Per-connection failures are logged
   -- and skipped — clone-on-write must not abort on a single connection.
   forM_ (Map.toList srcBanking.connections) $ \(connId, conn) -> do
@@ -900,8 +1002,8 @@ copyBanking newConfigUuidVal srcBanking = do
               { connectionId = connId,
                 provider = conn.provider,
                 name = conn.name,
-                encryptedToken = conn.encryptedToken,
-                tokenHint = conn.tokenHint,
+                encryptedSecret = conn.encryptedSecret,
+                secretHint = conn.secretHint,
                 enabled = conn.enabled
               }
     addResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal addCmd

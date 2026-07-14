@@ -5,10 +5,10 @@
 
 -- |
 -- Module      : Web.API.BankingAPISpec
--- Description : HTTP tests for the connection-scoped resync endpoint
+-- Description : HTTP tests for the connection-scoped pull-import endpoint
 --
--- Covers @POST /api/banking/connections/:id/resync@, which replaced the
--- header-based @POST /api/banking/resync@. The endpoint:
+-- Covers @POST /api/banking/connections/:id/import@ (renamed from @/resync@),
+-- which replaced the header-based @POST /api/banking/resync@. The endpoint:
 --
 --   * is feature-gated: 404 @FEATURE_DISABLED@ when banking is off;
 --   * 404s an unknown connection id;
@@ -34,6 +34,7 @@ import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime (..), fromGregorian, getCurrentTime, secondsToDiffTime, utctDay)
 import qualified Data.UUID as UUID0
 import qualified Data.UUID.V4 as UUID
+import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (Currency (..), unsafeExternalTransactionId)
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
@@ -96,8 +97,8 @@ decodeError resp =
 -- Fixtures
 -- -----------------------------------------------------------------------------
 
-resyncPath :: Text -> ByteString
-resyncPath connId = encodeUtf8 ("/api/banking/connections/" <> connId <> "/resync")
+importPath :: Text -> ByteString
+importPath connId = encodeUtf8 ("/api/banking/connections/" <> connId <> "/import")
 
 sampleBody :: LByteString
 sampleBody =
@@ -119,7 +120,7 @@ sampleTxn :: Text -> BankTransaction
 sampleTxn extAccId =
   mkSameCurrencyBankTx
     (unsafeExternalTransactionId ("tx-" <> extAccId))
-    extAccId
+    (unsafeExternalAccountId extAccId)
     1000
 
 -- | Publish today's USD<->UAH rate into the env's exchange-rate read model
@@ -162,13 +163,13 @@ spec = do
 -- FEATURE_DISABLED, hiding the endpoint's existence entirely.
 featureGateSpec :: Spec
 featureGateSpec =
-  describe "POST /api/banking/connections/:id/resync (feature disabled)"
+  describe "POST /api/banking/connections/:id/import (feature disabled)"
     $ with mkApp
     $ it "returns 404 FEATURE_DISABLED when banking is off"
     $ do
       tok <- registerAndGetToken
       connId <- liftIO UUID.nextRandom
-      resp <- request "POST" (resyncPath (T.pack (show connId))) (jsonAuthHeaders tok) sampleBody
+      resp <- request "POST" (importPath (T.pack (show connId))) (jsonAuthHeaders tok) sampleBody
       liftIO $ do
         simpleStatus resp `shouldBe` status404
         e <- decodeError resp
@@ -178,13 +179,13 @@ featureGateSpec =
 -- | Unknown connection id → 404 BANK_CONNECTION_NOT_FOUND.
 notFoundSpec :: Spec
 notFoundSpec =
-  describe "POST /api/banking/connections/:id/resync (unknown id)"
+  describe "POST /api/banking/connections/:id/import (unknown id)"
     $ with mkAppBankingEnabledSeeded
     $ it "returns 404 when the connection does not exist"
     $ do
       tok <- registerAndGetToken
       connId <- liftIO UUID.nextRandom
-      resp <- request "POST" (resyncPath (T.pack (show connId))) (jsonAuthHeaders tok) sampleBody
+      resp <- request "POST" (importPath (T.pack (show connId))) (jsonAuthHeaders tok) sampleBody
       liftIO $ do
         simpleStatus resp `shouldBe` status404
         e <- decodeError resp
@@ -193,13 +194,13 @@ notFoundSpec =
 -- | A disabled connection → 422 CONNECTION_DISABLED.
 disabledSpec :: Spec
 disabledSpec =
-  describe "POST /api/banking/connections/:id/resync (disabled connection)"
+  describe "POST /api/banking/connections/:id/import (disabled connection)"
     $ with mkAppBankingEnabledSeeded
     $ it "returns 422 CONNECTION_DISABLED when enabled == false"
     $ do
       tok <- registerAndGetToken
       connId <- addConnection tok "Disabled" False
-      resp <- request "POST" (resyncPath connId) (jsonAuthHeaders tok) sampleBody
+      resp <- request "POST" (importPath connId) (jsonAuthHeaders tok) sampleBody
       liftIO $ do
         simpleStatus resp `shouldBe` status422
         e <- decodeError resp
@@ -211,7 +212,7 @@ disabledSpec =
 -- the unmapped external id is never fetched.
 routesByAccountMapSpec :: Spec
 routesByAccountMapSpec =
-  describe "POST /api/banking/connections/:id/resync (enabled + mapped)"
+  describe "POST /api/banking/connections/:id/import (enabled + mapped)"
     $ withState mkAppBankingEnabledSeededWith
     $ it "routes the import by accountMap (mapped imported, unmapped skipped)"
     $ do
@@ -232,7 +233,7 @@ routesByAccountMapSpec =
       connId <- addConnection tok "Live" True
       -- ... but only "ext-mapped" is in the connection's accountMap.
       setAccountMap tok connId "ext-mapped" accId
-      resp <- request "POST" (resyncPath connId) (jsonAuthHeaders tok) sampleBody
+      resp <- request "POST" (importPath connId) (jsonAuthHeaders tok) sampleBody
       liftIO $ do
         simpleStatus resp `shouldBe` status200
         o <- asObject resp
@@ -249,6 +250,10 @@ routesByAccountMapSpec =
                 KeyMap.lookup "importedCount" row `shouldBe` Just (Number 1)
               _ -> expectationFailure $ "expected exactly one account row, got: " <> show objs
           other -> expectationFailure $ "expected accounts array, got: " <> show other
+        -- Lock the 'unresolved' field's wire shape: the pull path always
+        -- builds its link from the connection's own mapped accounts, so it
+        -- serializes as an empty JSON array (never omitted, never null).
+        KeyMap.lookup "unresolved" o `shouldBe` Just (Array mempty)
 
 -- | Decode a JSON object body to an aeson 'KeyMap.KeyMap'.
 asObject :: SResponse -> IO (KeyMap.KeyMap Value)

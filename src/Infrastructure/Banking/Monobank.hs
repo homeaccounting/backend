@@ -64,7 +64,7 @@ descriptor apiBaseUrl manager =
       -- outgoing transactions have negative amounts, incoming positive. Category
       -- resolution via MCC happens in BankImportService using UserConfiguration.
       classify = defaultClassify,
-      pull = Just $ \token ->
+      pull = Just $ \(Domain.StaticSecret token) ->
         PullCapability
           { fetchAccounts = monoFetchAccounts apiBaseUrl token manager,
             fetchStatements = monoFetchStatements apiBaseUrl token manager,
@@ -102,11 +102,11 @@ monoFetchAccounts apiBaseUrl token manager = do
       Right (info :: MonoClientInfo) ->
         return $ Right $ map toProviderAccount info.accounts
 
-monoFetchStatements :: Text -> Text -> Manager -> BankAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction])
+monoFetchStatements :: Text -> Text -> Manager -> Domain.ExternalAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction])
 monoFetchStatements apiBaseUrl token manager accountId fromTime toTime = do
   let fromUnix = show @Int (round (utcTimeToPOSIXSeconds fromTime))
       toUnix = show @Int (round (utcTimeToPOSIXSeconds toTime))
-      url = T.unpack apiBaseUrl <> "/personal/statement/" <> T.unpack accountId <> "/" <> fromUnix <> "/" <> toUnix
+      url = T.unpack apiBaseUrl <> "/personal/statement/" <> T.unpack (Domain.unExternalAccountId accountId) <> "/" <> fromUnix <> "/" <> toUnix
   result <- monoGet token manager url
   case result of
     Left err -> return (Left err)
@@ -165,7 +165,7 @@ monoPost token manager url reqBody = do
 toProviderAccount :: MonoAccount -> BankAccount
 toProviderAccount ma =
   BankAccount
-    { externalId = ma.monoAccId,
+    { externalAccountId = Domain.unsafeExternalAccountId ma.monoAccId,
       accountNumber = ma.monoAccIban,
       currencyCode = ma.monoAccCurrencyCode,
       cardMasks = [],

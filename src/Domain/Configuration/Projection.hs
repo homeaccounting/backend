@@ -50,10 +50,10 @@ import Domain.Banking.Types
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
+    BankConnectionCredentialChanged (..),
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankConnectionTokenChanged (..),
     BankingMccExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
@@ -102,6 +102,9 @@ data BankingConfiguration = BankingConfiguration
   deriving (Show, Eq)
 
 -- | A configured bank connection (spec §2.1).
+--
+-- The credential is OPTIONAL: a connection to a provider with no pull/API
+-- transport (e.g. a file-only provider) has no secret to store.
 data BankConnection = BankConnection
   { -- | Unique identifier for the connection
     connectionId :: BankConnectionId,
@@ -109,10 +112,10 @@ data BankConnection = BankConnection
     provider :: BankProviderId,
     -- | User-facing display name
     name :: BankConnectionName,
-    -- | The encrypted provider token
-    encryptedToken :: EncryptedSecret,
-    -- | Non-secret hint to help the user recognise the token
-    tokenHint :: Text,
+    -- | The encrypted provider secret, if any.
+    encryptedSecret :: Maybe EncryptedSecret,
+    -- | Non-secret hint to help the user recognise the secret, if any.
+    secretHint :: Maybe Text,
     -- | Whether the connection is enabled for syncing
     enabled :: Bool,
     -- | Mapping from external account IDs to local account IDs
@@ -333,8 +336,8 @@ handleConfigurationEvent c (BankConnectionAddedConfigurationEvent e) =
           { connectionId = e.connectionId,
             provider = e.provider,
             name = e.name,
-            encryptedToken = e.encryptedToken,
-            tokenHint = e.tokenHint,
+            encryptedSecret = e.encryptedSecret,
+            secretHint = e.secretHint,
             enabled = e.enabled,
             accountMap = Map.empty
           }
@@ -342,22 +345,22 @@ handleConfigurationEvent c (BankConnectionAddedConfigurationEvent e) =
 handleConfigurationEvent c (BankConnectionRenamedConfigurationEvent e) =
   adjustConnection
     e.connectionId
-    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = e.name, encryptedToken = x.encryptedToken, tokenHint = x.tokenHint, enabled = x.enabled, accountMap = x.accountMap})
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = e.name, encryptedSecret = x.encryptedSecret, secretHint = x.secretHint, enabled = x.enabled, accountMap = x.accountMap})
     c
-handleConfigurationEvent c (BankConnectionTokenChangedConfigurationEvent e) =
+handleConfigurationEvent c (BankConnectionCredentialChangedConfigurationEvent e) =
   adjustConnection
     e.connectionId
-    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedToken = e.encryptedToken, tokenHint = e.tokenHint, enabled = x.enabled, accountMap = x.accountMap})
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedSecret = Just e.encryptedSecret, secretHint = Just e.secretHint, enabled = x.enabled, accountMap = x.accountMap})
     c
 handleConfigurationEvent c (BankConnectionEnabledSetConfigurationEvent e) =
   adjustConnection
     e.connectionId
-    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedToken = x.encryptedToken, tokenHint = x.tokenHint, enabled = e.enabled, accountMap = x.accountMap})
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedSecret = x.encryptedSecret, secretHint = x.secretHint, enabled = e.enabled, accountMap = x.accountMap})
     c
 handleConfigurationEvent c (BankConnectionAccountMapSetConfigurationEvent e) =
   adjustConnection
     e.connectionId
-    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedToken = x.encryptedToken, tokenHint = x.tokenHint, enabled = x.enabled, accountMap = e.accountMap})
+    (\x -> x {connectionId = x.connectionId, provider = x.provider, name = x.name, encryptedSecret = x.encryptedSecret, secretHint = x.secretHint, enabled = x.enabled, accountMap = e.accountMap})
     c
 handleConfigurationEvent c (BankConnectionRemovedConfigurationEvent e) =
   c {banking = c.banking {connections = Map.delete e.connectionId c.banking.connections}}

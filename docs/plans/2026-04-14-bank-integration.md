@@ -397,7 +397,7 @@ banking:
   webhook_secret: "${BANKING_WEBHOOK_SECRET}"
   providers:
     monobank:
-      enabled: ${MONOBANK_ENABLED:-false}
+      enabled: ${BANKING_MONOBANK_ENABLED:-false}
 ```
 
 - [ ] **Step 3: Update test AppConfig in InMemoryEventStore.hs**

@@ -23,22 +23,29 @@ module Domain.Banking.Types
     unsafeBankProviderId,
     unBankProviderId,
 
-    -- * Banking Value Types
+    -- * External Account Identifier
     ExternalAccountId,
-    PlainToken,
+    mkExternalAccountId,
+    unsafeExternalAccountId,
+    unExternalAccountId,
+
+    -- * Banking Value Types
+    ProviderCredential (..),
     BankConnectionName,
   )
 where
 
-import Data.Aeson (FromJSON (..), ToJSON (..), ToJSONKey (..))
-import Data.Aeson.Types (toJSONKeyText)
+import Data.Aeson (FromJSON (..), FromJSONKey (..), ToJSON (..), ToJSONKey (..), object, withObject, withText, (.:), (.=))
+import Data.Aeson.Types (FromJSONKeyFunction (..), toJSONKeyText)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import GHC.Generics (Generic)
+import RIO (Display (..))
 
 -- -----------------------------------------------------------------------------
 -- Bank Connection Identifier
@@ -105,12 +112,79 @@ instance FromJSON BankProviderId where
 instance ToJSONKey BankProviderId where
   toJSONKey = toJSONKeyText unBankProviderId
 
--- | Identifier for an account at the external bank provider, rendered as text.
-type ExternalAccountId = Text
+-- -----------------------------------------------------------------------------
+-- External Account Identifier
+-- -----------------------------------------------------------------------------
 
--- | A decrypted provider API token (plaintext). Distinguished from the stored
--- ciphertext so call sites that handle the raw secret read clearly.
-type PlainToken = Text
+-- | Identifier for a bank account in an external provider (e.g. a Monobank
+--   account id, or a PrivatBank card mask). Must be non-empty.
+newtype ExternalAccountId = ExternalAccountId Text
+  deriving (Show, Eq, Ord, Generic)
+
+unExternalAccountId :: ExternalAccountId -> Text
+unExternalAccountId (ExternalAccountId t) = t
+
+mkExternalAccountId :: Text -> Either Text ExternalAccountId
+mkExternalAccountId t
+  | T.null t = Left "ExternalAccountId must not be empty"
+  | otherwise = Right (ExternalAccountId t)
+
+unsafeExternalAccountId :: Text -> ExternalAccountId
+unsafeExternalAccountId = ExternalAccountId
+
+instance Display ExternalAccountId where
+  display (ExternalAccountId t) = display t
+
+instance ToJSON ExternalAccountId where
+  toJSON = toJSON . unExternalAccountId
+
+instance FromJSON ExternalAccountId where
+  parseJSON = withText "ExternalAccountId" $ \t ->
+    case mkExternalAccountId t of
+      Right eid -> pure eid
+      Left err -> fail (T.unpack err)
+
+-- | JSON object-key encoding for 'ExternalAccountId', so a
+-- @Map ExternalAccountId a@ serializes with string keys (used by the generic
+-- 'ToJSON'/'FromJSON' derived for the Configuration events/commands/projection).
+instance ToJSONKey ExternalAccountId where
+  toJSONKey = toJSONKeyText unExternalAccountId
+
+instance FromJSONKey ExternalAccountId where
+  fromJSONKey = FromJSONKeyTextParser (either (fail . T.unpack) pure . mkExternalAccountId)
+
+-- | A decrypted, provider-agnostic credential for a bank connection.
+--
+-- Encrypted as JSON and stored inside the existing opaque
+-- 'Infrastructure.Crypto.SecretBox.EncryptedSecret' at rest, so this type's
+-- shape lives entirely inside the encrypted blob: the persisted
+-- command\/event\/projection schema (which only ever carries the ciphertext)
+-- is unaffected by future changes here.
+--
+-- JSON is explicitly tagged (@{"kind":"static","secret":"…"}@) rather than
+-- derived, so adding a future variant is purely additive to the plaintext
+-- format and never disturbs 'StaticSecret'\'s own encoding.
+data ProviderCredential
+  = -- | A single opaque static secret (e.g. a Monobank personal API token),
+    -- used verbatim as the provider's bearer credential.
+    StaticSecret Text
+  -- Future, additive (no event-schema change): an @OAuth2@ variant carrying
+  -- access/refresh tokens, expiry, and scopes would slot in here as another
+  -- constructor of this same sum, e.g.:
+  --   OAuth2 { accessToken :: Text, refreshToken :: Text, expiresAt ::
+  --   UTCTime, scopes :: [Text] }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ProviderCredential where
+  toJSON (StaticSecret secret) =
+    object ["kind" .= ("static" :: Text), "secret" .= secret]
+
+instance FromJSON ProviderCredential where
+  parseJSON = withObject "ProviderCredential" $ \o -> do
+    kind <- o .: "kind"
+    case (kind :: Text) of
+      "static" -> StaticSecret <$> o .: "secret"
+      other -> fail ("Unknown ProviderCredential kind: " <> T.unpack other)
 
 -- | A bank connection's user-facing display name.
 type BankConnectionName = Text

@@ -22,9 +22,9 @@ import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.Services.AccountService (createAccount)
 import Application.Services.BankImportService
-  ( AccountResyncResult (..),
-    ResyncResult (..),
-    resync,
+  ( AccountImportResult (..),
+    ImportResult (..),
+    importConnection,
   )
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Data.List (nubBy)
@@ -32,6 +32,7 @@ import Data.Time (Day, UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
 import Domain.Configuration.Defaults
   ( DefaultEntry (..),
     ExpenseDefaults (..),
@@ -57,8 +58,7 @@ import Domain.Transaction.Projection (TransactionStatus (Completed))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Banking.Provider
-  ( BankAccountId,
-    BankTransaction (..),
+  ( BankTransaction (..),
     PullCapability (..),
     TransactionClassification (..),
   )
@@ -136,7 +136,7 @@ mkTestTransaction :: Rational -> Text -> BankTransaction
 mkTestTransaction amount extId =
   BankTransaction
     { externalId = unsafeExternalTransactionId extId,
-      accountId = "mono-acc-1",
+      externalAccountId = unsafeExternalAccountId "mono-acc-1",
       time = testTime,
       amount = amount,
       currencyCode = 980, -- UAH
@@ -153,7 +153,7 @@ mkHoldTransaction :: Rational -> Text -> BankTransaction
 mkHoldTransaction amount extId =
   BankTransaction
     { externalId = unsafeExternalTransactionId extId,
-      accountId = "mono-acc-1",
+      externalAccountId = unsafeExternalAccountId "mono-acc-1",
       time = testTime,
       amount = amount,
       currencyCode = 980,
@@ -171,7 +171,7 @@ mkHoldTransaction amount extId =
 
 -- | Set up a full test environment with user, accounts, and link mapping.
 -- Returns (env, externalAccountId, bankAccountId, link).
-setupTestEnv :: IO (AppEnv, AccountId, AccountId, [(BankAccountId, AccountId)])
+setupTestEnv :: IO (AppEnv, AccountId, AccountId, [(ExternalAccountId, AccountId)])
 setupTestEnv = do
   env <- createTestAppEnvWithProcessManager
 
@@ -211,8 +211,8 @@ setupTestEnv = do
   -- Seed the persistent User read model with the test user.
   Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
 
-  let accountLink :: [(BankAccountId, AccountId)]
-      accountLink = [("mono-acc-1", bankAccId)]
+  let accountLink :: [(ExternalAccountId, AccountId)]
+      accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
 
   return (env, externalAccId, bankAccId, accountLink)
 
@@ -224,7 +224,7 @@ setupTestEnv = do
 -- import resolves per-leg amounts + an exchange rate.
 --
 -- Returns (env, usdExternalAccId, uahBankAccId, link).
-setupCrossCurrencyEnv :: IO (AppEnv, AccountId, AccountId, [(BankAccountId, AccountId)])
+setupCrossCurrencyEnv :: IO (AppEnv, AccountId, AccountId, [(ExternalAccountId, AccountId)])
 setupCrossCurrencyEnv = do
   env <- createTestAppEnvWithProcessManager
   runAppM env ConfigurationService.seedDefaultConfiguration
@@ -251,8 +251,8 @@ setupCrossCurrencyEnv = do
     let (bankId, _) = fromRight' bankResult
     return (extId, bankId)
   Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
-  let accountLink :: [(BankAccountId, AccountId)]
-      accountLink = [("mono-acc-1", bankAccId)]
+  let accountLink :: [(ExternalAccountId, AccountId)]
+      accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
   return (env, externalAccId, bankAccId, accountLink)
 
 -- | Feed a synthetic 'ExchangeRatesPublishedEvent' (dated @day@) through the
@@ -303,8 +303,8 @@ spec = describe "Bank Import Workflow" $ do
         provider = mockProvider statements
 
     -- First resync: should import all 3 transactions (hold no longer filtered)
-    result1 <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-    let importedIds = concatMap (.imported) result1.accounts
+    result1 <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+    let importedIds = concatMap (.succeeded) result1.accounts
     length importedIds `shouldBe` 3
 
     -- Extract the three imported IDs (expense, income, hold-as-expense)
@@ -338,9 +338,9 @@ spec = describe "Bank Import Workflow" $ do
         holdData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 30))
 
         -- Second resync (dedup): same statements should produce no new imports
-        result2 <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-        concatMap (.imported) result2.accounts `shouldBe` []
-        concatMap (.failures) result2.accounts `shouldBe` []
+        result2 <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+        concatMap (.succeeded) result2.accounts `shouldBe` []
+        concatMap (.failed) result2.accounts `shouldBe` []
       _ -> expectationFailure $ "Expected exactly 3 imported IDs, got " <> show (length importedIds)
 
   it "imports hold transactions as if they were settled" $ do
@@ -356,9 +356,9 @@ spec = describe "Bank Import Workflow" $ do
           ]
         provider = mockProvider statements
 
-    result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-    length (concatMap (.imported) result.accounts) `shouldBe` 3
-    concatMap (.failures) result.accounts `shouldBe` []
+    result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+    length (concatMap (.succeeded) result.accounts) `shouldBe` 3
+    concatMap (.failed) result.accounts `shouldBe` []
 
   prop "concurrent resyncs of the same statement produce one transfer per external id"
     $ \(txSeeds :: NonEmptyList (Positive Int)) -> ioProperty $ do
@@ -368,7 +368,7 @@ spec = describe "Bank Import Workflow" $ do
               ( \i (Positive n) ->
                   mkSameCurrencyBankTx
                     (unsafeExternalTransactionId (T.pack ("tx-" <> show (i :: Int))))
-                    "mono-acc-1"
+                    (unsafeExternalAccountId "mono-acc-1")
                     (fromIntegral n)
               )
               [0 ..]
@@ -376,7 +376,7 @@ spec = describe "Bank Import Workflow" $ do
           provider = mockProvider txs
           runOnce =
             runAppM env
-              $ resync mockClassify provider testUserId accountLink testFromTime testToTime
+              $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
           extIdOf :: BankTransaction -> ExternalTransactionId
           extIdOf t = t.externalId
           expected = length (nubBy ((==) `on` extIdOf) txs)
@@ -384,7 +384,7 @@ spec = describe "Bank Import Workflow" $ do
       -- Sum of imported IDs across both calls must equal the number of
       -- unique external IDs. A TOCTOU race lets two resyncs both emit for
       -- the same external id, producing a total greater than `expected`.
-      let importedIn r = length (concatMap (.imported) r.accounts)
+      let importedIn r = length (concatMap (.succeeded) r.accounts)
           totalImported = importedIn r1 + importedIn r2
       allTxCount <- runDbIn env TransactionRM.countTransactions
       pure
@@ -399,9 +399,9 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkTestTransaction 100 "xc-income" -- +100 UAH income
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-      concatMap (.failures) result.accounts `shouldBe` []
-      txId <- case concatMap (.imported) result.accounts of
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      concatMap (.failed) result.accounts `shouldBe` []
+      txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i
         other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
 
@@ -429,9 +429,9 @@ spec = describe "Bank Import Workflow" $ do
       let incomeTx = mkTestTransaction 500 "xc-fund"
           expenseTx = mkTestTransaction (-200) "xc-expense"
           provider = mockProvider [incomeTx, expenseTx]
-      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-      concatMap (.failures) result.accounts `shouldBe` []
-      expenseId <- case concatMap (.imported) result.accounts of
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      concatMap (.failed) result.accounts `shouldBe` []
+      expenseId <- case concatMap (.succeeded) result.accounts of
         [_fundId, eId] -> pure eId
         other -> expectationFailure ("expected two imported ids, got " <> show (length other)) >> error "unreachable"
 
@@ -457,9 +457,9 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkTestTransaction 100 "xc-nearest"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-      concatMap (.failures) result.accounts `shouldBe` []
-      txId <- case concatMap (.imported) result.accounts of
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      concatMap (.failed) result.accounts `shouldBe` []
+      txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i
         other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
 
@@ -476,9 +476,9 @@ spec = describe "Bank Import Workflow" $ do
       -- intentionally seed nothing
       let incomeTx = mkTestTransaction 100 "xc-no-rate"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-      concatMap (.imported) result.accounts `shouldBe` []
-      length (concatMap (.failures) result.accounts) `shouldBe` 1
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      concatMap (.succeeded) result.accounts `shouldBe` []
+      length (concatMap (.failed) result.accounts) `shouldBe` 1
 
     it "skips a tx whose currency does not match the mapped account's currency" $ do
       -- USD bank account ("Black card") but a UAH transaction. Importing a
@@ -510,16 +510,16 @@ spec = describe "Bank Import Workflow" $ do
         let (bankId, _) = fromRight' bankResult
         return (extId, bankId)
       Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
 
       -- A UAH transaction (currencyCode 980) mapped to a USD account.
       let incomeTx = mkTestTransaction 100 "xc-mismatch"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
       -- Skipped, not imported, not failed.
-      concatMap (.imported) result.accounts `shouldBe` []
-      concatMap (.failures) result.accounts `shouldBe` []
+      concatMap (.succeeded) result.accounts `shouldBe` []
+      concatMap (.failed) result.accounts `shouldBe` []
       sum (map (.skipped) result.accounts) `shouldBe` 1
       -- No transaction was ever initiated.
       allTxCount <- runDbIn env TransactionRM.countTransactions
@@ -533,9 +533,9 @@ spec = describe "Bank Import Workflow" $ do
       (env, _externalAccId, bankAccId, accountLink) <- setupTestEnv
       let incomeTx = mkTestTransaction 100 "xc-same"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ resync mockClassify provider testUserId accountLink testFromTime testToTime
-      concatMap (.failures) result.accounts `shouldBe` []
-      txId <- case concatMap (.imported) result.accounts of
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      concatMap (.failed) result.accounts `shouldBe` []
+      txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i
         other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
       txData <- fromJustIO "income tx" =<< runDbIn env (TransactionRM.getTransaction txId)

@@ -23,7 +23,8 @@
 -- API Endpoints:
 --
 --   GET    /api/banking/connections/:id/external-accounts - Live account list
---   POST   /api/banking/connections/:id/resync            - Manual resync
+--   POST   /api/banking/connections/:id/import            - Manual import (pull)
+--   POST   /api/banking/connections/:id/import/file        - Statement-file import
 module Web.API.BankingAPI
   ( -- * API Type
     BankingAPI,
@@ -33,13 +34,14 @@ module Web.API.BankingAPI
     bankingServer,
 
     -- * Request/Response Types
-    ResyncRequest (..),
-    ResyncResponse (..),
-    AccountResyncSummary (..),
+    ConnectionImportRequest (..),
+    ImportResponse (..),
+    AccountImportSummary (..),
     ExternalAccountDTO (..),
 
     -- * Individual Handlers (exported for testing)
-    resyncHandler,
+    importConnectionHandler,
+    importStatementFileHandler,
     externalAccountsHandler,
 
     -- * Feature gate
@@ -49,20 +51,21 @@ where
 
 import Application.ReadModels.Account (getAccessibleAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..))
-import Application.Services.BankImportService (ResyncResult (..))
+import Application.Services.BankImportService (ImportResult (..))
 import qualified Application.Services.BankImportService as BankImportService
 import qualified Application.Services.ConfigurationService as ConfigService
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON, ToJSON, encode)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime, diffUTCTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import Domain.Banking.Types (mkBankConnectionId)
+import Domain.Banking.Types (BankConnectionId, mkBankConnectionId, unExternalAccountId)
 import Domain.Configuration.Projection (BankConnection (..), BankingConfiguration (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountRole (..),
+    UserId,
     currencyFromNumericCode,
     unAccountId,
   )
@@ -76,6 +79,7 @@ import RIO
 import Servant
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
+import Web.Types (ErrorResponse (..))
 import Web.Validation (validateFieldCtx)
 
 -- -----------------------------------------------------------------------------
@@ -86,12 +90,16 @@ import Web.Validation (validateFieldCtx)
 --
 -- Endpoints:
 --   - GET external-accounts: live list of a connection's external accounts.
---   - POST resync: authenticated user triggers a manual import for a stored
---     connection, routed by its persisted externalId -> local account map.
+--   - POST import: authenticated user triggers a manual pull import for a
+--     stored connection, routed by its persisted externalId -> local account
+--     map.
+--   - POST import/file: authenticated user uploads a statement file for a
+--     stored connection; parsed by the connection's provider (via its
+--     'FileImportCapability') and routed the same way.
 --
--- Both endpoints are connection-scoped: the Monobank token is read from the
--- connection's encrypted store rather than carried on the wire, so no secret
--- header is required.
+-- All endpoints are connection-scoped: the provider token (when the
+-- transport needs one) is read from the connection's encrypted store rather
+-- than carried on the wire, so no secret header is required.
 --
 -- Webhook endpoints are deferred to Phase 2 (see module header).
 type BankingAPI =
@@ -105,17 +113,31 @@ type BankingAPI =
       :> "external-accounts"
       :> Get '[JSON] [ExternalAccountDTO]
   )
-    -- POST /api/banking/connections/:id/resync
-    -- Trigger a manual import for a stored connection, routed by its
+    -- POST /api/banking/connections/:id/import
+    -- Trigger a manual pull import for a stored connection, routed by its
     -- persisted externalId -> local account map.
     :<|> ( AuthProtect "jwt"
              :> "api"
              :> "banking"
              :> "connections"
              :> Capture "connId" UUID
-             :> "resync"
-             :> ReqBody '[JSON] ResyncRequest
-             :> Post '[JSON] ResyncResponse
+             :> "import"
+             :> ReqBody '[JSON] ConnectionImportRequest
+             :> Post '[JSON] ImportResponse
+         )
+    -- POST /api/banking/connections/:id/import/file
+    -- Upload a statement file for a stored connection; parsed by the
+    -- connection's provider and routed by its accountMap.
+    :<|> ( AuthProtect "jwt"
+             :> "api"
+             :> "banking"
+             :> "connections"
+             :> Capture "connId" UUID
+             :> "import"
+             :> "file"
+             :> QueryParam' '[Required, Strict] "format" Banking.StatementFormat
+             :> ReqBody '[OctetStream] ByteString
+             :> Post '[JSON] ImportResponse
          )
 
 -- | Proxy for the BankingAPI.
@@ -132,7 +154,7 @@ bankingAPI = Proxy
 -- request, so it never appears in request-body logs or traces. Category
 -- resolution is performed server-side from the user's banking configuration
 -- (mccExpenseCategoryMap + default income/expense categories).
-data ResyncRequest = ResyncRequest
+data ConnectionImportRequest = ConnectionImportRequest
   { -- | Start of the date range to import
     from :: UTCTime,
     -- | End of the date range to import
@@ -140,16 +162,16 @@ data ResyncRequest = ResyncRequest
   }
   deriving (Show, Eq, Generic)
 
-instance FromJSON ResyncRequest
+instance FromJSON ConnectionImportRequest
 
-instance ToJSON ResyncRequest
+instance ToJSON ConnectionImportRequest
 
--- | Per-account summary returned in the resync response.
+-- | Per-account summary returned in the import response.
 --
 -- Counts only — the raw transaction IDs are not exposed at the HTTP boundary.
 -- 'localAccountId' is rendered as its UUID text so callers do not depend on
 -- internal representations.
-data AccountResyncSummary = AccountResyncSummary
+data AccountImportSummary = AccountImportSummary
   { externalAccountId :: !Text,
     localAccountId :: !Text,
     importedCount :: !Int,
@@ -158,23 +180,27 @@ data AccountResyncSummary = AccountResyncSummary
   }
   deriving (Show, Eq, Generic)
 
-instance FromJSON AccountResyncSummary
+instance FromJSON AccountImportSummary
 
-instance ToJSON AccountResyncSummary
+instance ToJSON AccountImportSummary
 
--- | Response body for manual bank statement resync.
+-- | Response body for manual bank statement import.
 --
 -- Always returned with HTTP 200. Per-account failures are reported in the
 -- body rather than raising at the top level; callers should inspect
--- 'failureCount' per account.
-data ResyncResponse = ResyncResponse
-  { accounts :: ![AccountResyncSummary]
+-- 'failureCount' per account. 'unresolved' lists external account ids seen
+-- in the imported data but absent from the connection's mapped accounts;
+-- for the connection (pull) path this is always empty, since the link is
+-- built strictly from the connection's own @accountMap@.
+data ImportResponse = ImportResponse
+  { accounts :: ![AccountImportSummary],
+    unresolved :: ![Text]
   }
   deriving (Show, Eq, Generic)
 
-instance FromJSON ResyncResponse
+instance FromJSON ImportResponse
 
-instance ToJSON ResyncResponse
+instance ToJSON ImportResponse
 
 -- | A single external bank account as listed by the provider.
 --
@@ -209,7 +235,21 @@ instance ToJSON ExternalAccountDTO
 
 -- | Banking API server implementation.
 bankingServer :: ServerT BankingAPI AppM
-bankingServer = externalAccountsHandler :<|> resyncHandler
+bankingServer = externalAccountsHandler :<|> importConnectionHandler :<|> importStatementFileHandler
+
+-- -----------------------------------------------------------------------------
+-- Wire parsing
+-- -----------------------------------------------------------------------------
+
+-- | Parse the @format@ query param of @POST .../import/file@. Orphan instance
+-- (silenced project-wide via @-fno-warn-orphans@, same as 'Web.Query'\'s
+-- @StatusKind@ instance): 'Banking.StatementFormat' lives in
+-- 'Infrastructure.Banking.Provider' and stays wire-agnostic, so its wire
+-- parsing lives here instead.
+instance FromHttpApiData Banking.StatementFormat where
+  parseUrlPiece "csv" = Right Banking.StatementCsv
+  parseUrlPiece "xlsx" = Right Banking.StatementXlsx
+  parseUrlPiece other = Left ("unknown statement format: " <> other)
 
 -- -----------------------------------------------------------------------------
 -- Feature gate
@@ -235,34 +275,11 @@ requireBankingEnabled = do
 -- Handlers
 -- -----------------------------------------------------------------------------
 
--- | Handler for POST /api/banking/connections/:id/resync
---
--- Triggers a manual bank statement import for a stored connection, routed by
--- its persisted @externalId -> local account@ map. The provider token comes
--- from the connection's encrypted store rather than a request header, so no
--- secret is carried on the wire.
---
--- Flow:
---   0. Feature-flag gate: 404 when banking or monobank are disabled.
---   1. Validate the captured connection id.
---   2. Load the caller's connection (404 'BankConnectionNotFound' if absent);
---      reject a disabled connection with 422 'BankConnectionDisabled'.
---   3. Validate the date range (max 31 days, strictly positive).
---   4-5. Resolve the connection's classifier + pull capability via the
---      configuration service ('getConnectionProvider'), which decrypts the
---      stored token and looks the connection's provider up in the registry.
---      The handler stays provider-agnostic.
---   6. Build the import link directly from @connection.accountMap@, keeping
---      only targets the caller may write to (Owner/Editor). External accounts
---      not in the map are simply absent and reported as skipped by the import.
---   7. Call BankImportService.resync and return import counts.
-resyncHandler :: AuthenticatedUser -> UUID -> ResyncRequest -> AppM ResyncResponse
-resyncHandler user connUuid request = do
-  -- 0. Feature-flag gate.
-  requireBankingEnabled
-
-  let userId = user.userId
-
+-- | Shared preamble for connection-scoped import transports: validate the
+-- captured id, load the caller's connection (404 if absent/not theirs), and
+-- reject a disabled connection (both transports are inert when disabled).
+resolveOwnedEnabledConnection :: UserId -> UUID -> AppM (BankConnectionId, BankConnection)
+resolveOwnedEnabledConnection userId connUuid = do
   -- 1. Validate the captured connection id.
   connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
 
@@ -278,6 +295,41 @@ resyncHandler user connUuid request = do
   -- 2a. Reject a disabled connection with 422 CONNECTION_DISABLED.
   unless connection.enabled
     $ throwDomainError BankConnectionDisabled
+
+  pure (connId, connection)
+
+-- | Handler for POST /api/banking/connections/:id/import
+--
+-- Triggers a manual bank statement (pull) import for a stored connection, routed by
+-- its persisted @externalId -> local account@ map. The provider token comes
+-- from the connection's encrypted store rather than a request header, so no
+-- secret is carried on the wire.
+--
+-- Flow:
+--   0. Feature-flag gate: 404 when banking or monobank are disabled.
+--   1-2a. 'resolveOwnedEnabledConnection': validate the captured connection
+--      id, load the caller's connection (404 'BankConnectionNotFound' if
+--      absent), and reject a disabled connection with 422
+--      'BankConnectionDisabled'.
+--   3. Validate the date range (max 31 days, strictly positive).
+--   4-5. Resolve the connection's classifier + pull capability via the
+--      configuration service ('getConnectionProvider'), which decrypts the
+--      stored token and looks the connection's provider up in the registry.
+--      The handler stays provider-agnostic.
+--   6. Build the import link directly from @connection.accountMap@, keeping
+--      only targets the caller may write to (Owner/Editor). External accounts
+--      not in the map are simply absent and reported as skipped by the import.
+--   7. Call BankImportService.importConnection and return import counts.
+importConnectionHandler :: AuthenticatedUser -> UUID -> ConnectionImportRequest -> AppM ImportResponse
+importConnectionHandler user connUuid request = do
+  -- 0. Feature-flag gate.
+  requireBankingEnabled
+
+  let userId = user.userId
+
+  -- 1-2a. Validate the connection id, load the caller's connection (404 if
+  -- absent), and reject it if disabled (422 CONNECTION_DISABLED).
+  (connId, connection) <- resolveOwnedEnabledConnection userId connUuid
 
   -- 3. Validate date range (max 31 days).
   let maxSeconds = 31 * 86400 :: Double
@@ -300,9 +352,8 @@ resyncHandler user connUuid request = do
 
   -- 6. Build the import link from the connection's accountMap, keeping only
   -- Owner/Editor (writable) targets so an import never writes to a read-only
-  -- share. accountMap :: Map ExternalAccountId AccountId, and
-  -- BankAccountId = ExternalAccountId = Text, so each entry is already a
-  -- (BankAccountId, AccountId) pair.
+  -- share. accountMap :: Map ExternalAccountId AccountId, so each entry is
+  -- already an (ExternalAccountId, AccountId) pair.
   localAccounts <- runDb (getAccessibleAccounts userId)
   let writable =
         Set.fromList
@@ -316,9 +367,105 @@ resyncHandler user connUuid request = do
           Set.member accId writable
         ]
 
-  -- 7. Call BankImportService.resync and project to the HTTP response.
-  result <- BankImportService.resync classify pull userId accountLink request.from request.to
-  return $ toResyncResponse result
+  -- 7. Call BankImportService.importConnection and project to the HTTP response.
+  result <- BankImportService.importConnection classify pull userId accountLink request.from request.to
+  return $ toImportResponse result
+
+-- | Handler for POST /api/banking/connections/:id/import/file
+--
+-- Uploads a statement file for a stored connection; the file is parsed by
+-- the connection's provider (via its 'Banking.FileImportCapability') and the
+-- resulting transactions are routed the same way a pull import routes them —
+-- by the connection's persisted @externalId -> local account@ map.
+--
+-- Flow:
+--   0. Feature-flag gate: 404 when banking is disabled.
+--   1-2a. 'resolveOwnedEnabledConnection': validate the captured connection
+--      id, load the caller's connection (404 'BankConnectionNotFound' if
+--      absent), and reject a disabled connection with 422
+--      'BankConnectionDisabled' — identical check to
+--      'importConnectionHandler'.
+--   3. Resolve the connection's classifier + file-import capability via the
+--      configuration service ('ConfigService.getConnectionFileImport'); no
+--      token is required for this transport.
+--   4. Look up the parser for the requested 'Banking.StatementFormat'; 422
+--      @UNSUPPORTED_STATEMENT_FORMAT@ when the provider has no parser for it.
+--   5. Parse the uploaded bytes; a whole-file 'Banking.ParseError' surfaces as
+--      422 @STATEMENT_PARSE_ERROR@. Otherwise split the per-row results into
+--      successfully-parsed transactions and per-row 'Banking.RowError's.
+--   6. Build the import link from @connection.accountMap@, filtered to
+--      Owner/Editor (writable) targets exactly like 'importConnectionHandler'.
+--      When exactly one writable target remains, every distinct card seen in
+--      the file is routed to it (the common single-account statement case);
+--      otherwise the filtered map is used as-is.
+--   7. Delegate to 'BankImportService.importMany'.
+--   8. Merge the per-row parse failures into the response's 'unresolved'
+--      list alongside any account-routing misses.
+importStatementFileHandler :: AuthenticatedUser -> UUID -> Banking.StatementFormat -> ByteString -> AppM ImportResponse
+importStatementFileHandler user connUuid format bytes = do
+  -- 0. Feature-flag gate.
+  requireBankingEnabled
+
+  let userId = user.userId
+
+  -- 1-2a. Validate the connection id, load the caller's connection (404 if
+  -- absent), and reject it if disabled (422 CONNECTION_DISABLED) — identical
+  -- check to 'importConnectionHandler'.
+  (connId, connection) <- resolveOwnedEnabledConnection userId connUuid
+
+  -- 3. Resolve the connection's classifier + file-import capability.
+  fileImportResult <- ConfigService.getConnectionFileImport userId connId
+  (classify, cap) <- case fileImportResult of
+    Left err -> throwDomainError err
+    Right p -> pure p
+
+  -- 4. Resolve the parser for the requested format.
+  parser <- case Map.lookup format cap.parsers of
+    Nothing -> throwUnsupportedFormat format
+    Just p -> pure p
+
+  -- 5. Parse the uploaded bytes; split per-row results into successes and
+  -- row-level failures.
+  rows <- case parser bytes of
+    Left (Banking.ParseError msg) -> throwStatementParseError msg
+    Right rs -> pure rs
+  let (rowErrors, goods) = partitionEithers rows
+
+  -- 6. Build the import link from the connection's accountMap, keeping only
+  -- Owner/Editor (writable) targets — identical filter to
+  -- 'importConnectionHandler'\'s step 6.
+  localAccounts <- runDb (getAccessibleAccounts userId)
+  let writable =
+        Set.fromList
+          [ accId
+          | (accId, _accData, role) <- localAccounts,
+            role == Owner || role == Editor
+          ]
+      writableMap =
+        [ (extId, accId)
+        | (extId, accId) <- Map.toList connection.accountMap,
+          Set.member accId writable
+        ]
+      -- Single-account statements route every distinct card seen in the file
+      -- to the one writable target; a multi-account map is used as-is.
+      accountLink = case writableMap of
+        [(_, target)] -> [(cardId, target) | cardId <- nubOrd (map (.externalAccountId) goods)]
+        _ -> writableMap
+
+  -- 7. Import the parsed transactions.
+  result <- BankImportService.importMany classify userId accountLink goods
+
+  -- 8. Merge per-row parse failures into 'unresolved' alongside any
+  -- account-routing misses 'importMany' already collected. Built via a fresh
+  -- 'ImportResult' (rather than a record update) since 'unresolved' is also a
+  -- field of 'ImportResponse', which a same-module record update cannot
+  -- disambiguate.
+  let mergedResult =
+        ImportResult
+          { accounts = result.accounts,
+            unresolved = result.unresolved <> map renderRowError rowErrors
+          }
+  return $ toImportResponse mergedResult
 
 -- | Handler for GET /api/banking/connections/:id/external-accounts
 --
@@ -371,7 +518,7 @@ externalAccountsHandler user connUuid = do
 toExternalAccountDTO :: Banking.BankAccount -> ExternalAccountDTO
 toExternalAccountDTO acc =
   ExternalAccountDTO
-    { externalId = acc.externalId,
+    { externalId = unExternalAccountId acc.externalAccountId,
       iban = acc.accountNumber,
       maskedPan = listToMaybe acc.cardMasks,
       currency = case currencyFromNumericCode acc.currencyCode of
@@ -384,19 +531,61 @@ toExternalAccountDTO acc =
 -- Helpers
 -- -----------------------------------------------------------------------------
 
--- | Render a service-layer 'ResyncResult' as the HTTP response, projecting
+-- | Render a service-layer 'ImportResult' as the HTTP response, projecting
 -- the per-account breakdown to counts and text IDs.
-toResyncResponse :: ResyncResult -> ResyncResponse
-toResyncResponse r =
-  ResyncResponse
-    { accounts = map summarize r.accounts
+toImportResponse :: ImportResult -> ImportResponse
+toImportResponse r =
+  ImportResponse
+    { accounts = map summarize r.accounts,
+      unresolved = r.unresolved
     }
   where
     summarize acc =
-      AccountResyncSummary
-        { externalAccountId = acc.externalAccountId,
+      AccountImportSummary
+        { externalAccountId = unExternalAccountId acc.externalAccountId,
           localAccountId = UUID.toText (unAccountId acc.localAccountId),
-          importedCount = length acc.imported,
+          importedCount = length acc.succeeded,
           skippedCount = acc.skipped,
-          failureCount = length acc.failures
+          failureCount = length acc.failed
         }
+
+-- | Render one statement-file 'Banking.RowError' as an 'ImportResponse'
+-- \'unresolved\' entry, e.g. @"row 3: invalid date: 40.13.2026"@.
+renderRowError :: Banking.RowError -> Text
+renderRowError err = "row " <> tshow err.rowNumber <> ": " <> err.message
+
+-- | 422 @UNSUPPORTED_STATEMENT_FORMAT@ — the connection's provider has no
+-- parser registered for the requested 'Banking.StatementFormat'. Constructed
+-- directly via Servant's 'err422' (mirroring
+-- 'Web.API.TransactionAPI.requireLinkableKind') rather than through
+-- 'Web.ErrorMapping', since no existing 'DomainError' constructor models
+-- \"unsupported wire format\" without overloading an unrelated case.
+throwUnsupportedFormat :: (MonadIO m) => Banking.StatementFormat -> m a
+throwUnsupportedFormat format =
+  throwIO
+    $ err422
+      { errBody =
+          encode
+            ErrorResponse
+              { message = "Unsupported statement format for this connection's provider: " <> tshow format,
+                code = "UNSUPPORTED_STATEMENT_FORMAT",
+                details = Nothing
+              }
+      }
+
+-- | 422 @STATEMENT_PARSE_ERROR@ — the uploaded file failed a whole-file
+-- 'Banking.ParseError' (as opposed to a per-row 'Banking.RowError', which is
+-- instead folded into the response's \'unresolved\' list). Same rationale as
+-- 'throwUnsupportedFormat' for bypassing 'Web.ErrorMapping'.
+throwStatementParseError :: (MonadIO m) => Text -> m a
+throwStatementParseError msg =
+  throwIO
+    $ err422
+      { errBody =
+          encode
+            ErrorResponse
+              { message = msg,
+                code = "STATEMENT_PARSE_ERROR",
+                details = Nothing
+              }
+      }

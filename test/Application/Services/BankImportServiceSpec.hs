@@ -23,7 +23,7 @@ import Application.ReadModels.BankImportReadModel
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.Services.AccountService (createAccount)
-import Application.Services.BankImportService (importTransaction)
+import Application.Services.BankImportService (AccountImportResult (..), ImportResult (..), importMany, importTransaction)
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
@@ -31,6 +31,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Database.Persist (insert_)
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
 import Domain.Configuration.Defaults
   ( DefaultEntry (..),
     ExpenseDefaults (..),
@@ -61,8 +62,7 @@ import Eventium.Store.Postgresql (jsonStringCodec)
 import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)
 import Infrastructure.App (AppEnv (..), runAppM, runDb)
 import Infrastructure.Banking.Provider
-  ( BankAccountId,
-    BankTransaction (..),
+  ( BankTransaction (..),
     TransactionClassification (..),
   )
 import Infrastructure.Database (runDbDirect)
@@ -121,7 +121,7 @@ mkTestTransactionWithAccount' :: Text -> Rational -> Text -> BankTransaction
 mkTestTransactionWithAccount' acctId amount extId =
   BankTransaction
     { externalId = unsafeExternalTransactionId extId,
-      accountId = acctId,
+      externalAccountId = unsafeExternalAccountId acctId,
       time = testTime,
       amount = amount,
       currencyCode = 980, -- UAH
@@ -138,7 +138,7 @@ mkHoldTransaction :: Rational -> Text -> BankTransaction
 mkHoldTransaction amount extId =
   BankTransaction
     { externalId = unsafeExternalTransactionId extId,
-      accountId = "mono-acc-1",
+      externalAccountId = unsafeExternalAccountId "mono-acc-1",
       time = testTime,
       amount = amount,
       currencyCode = 980,
@@ -213,8 +213,8 @@ spec = describe "BankImportService" $ do
   describe "importTransaction" $ do
     it "imports hold transactions like settled ones (Mono leaves some accounts stuck on hold)" $ do
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let holdTx = mkHoldTransaction (-50) "tx-hold"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink holdTx
       shouldBeRight result
@@ -224,8 +224,8 @@ spec = describe "BankImportService" $ do
 
     it "skips already-imported transactions (dedup)" $ do
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
 
       -- First import should succeed
       let tx = mkTestTransaction (-50) "tx-dedup-1"
@@ -241,8 +241,8 @@ spec = describe "BankImportService" $ do
 
     it "skips transactions with unmatched account" $ do
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       -- Transaction with a different account ID that has no mapping
       let unmatchedTx = mkTestTransactionWithAccount (-50) "tx-unmatched" "unknown-acc"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink unmatchedTx
@@ -250,8 +250,8 @@ spec = describe "BankImportService" $ do
 
     it "imports an expense transaction with correct fields" $ do
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       -- Negative amount = expense (50.00 UAH in major units), no MCC → defaultExpenseCategory
       let tx = mkTestTransaction (-50) "tx-expense-1"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
@@ -276,8 +276,8 @@ spec = describe "BankImportService" $ do
 
     it "imports an income transaction with correct fields" $ do
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       -- Positive amount = income (100.00 UAH in major units)
       let tx = mkTestTransaction 100 "tx-income-1"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
@@ -300,14 +300,49 @@ spec = describe "BankImportService" $ do
       txData.transactionType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 100))
       txData.date `shouldBe` testTime
 
+  describe "importMany" $ do
+    it "imports every transaction whose externalAccountId is in the link" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx1 = mkTestTransaction (-50) "tx-many-1"
+          tx2 = mkTestTransaction 100 "tx-many-2"
+      result <- runAppM env $ importMany mockClassify testUserId accountLink [tx1, tx2]
+      result.unresolved `shouldBe` []
+      length (concatMap (.succeeded) result.accounts) `shouldBe` 2
+
+    it "collects an external account id absent from the link into unresolved, without committing it" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithAccount (-50) "tx-unresolved-1" "unknown-acc"
+      result <- runAppM env $ importMany mockClassify testUserId accountLink [tx]
+      result.unresolved `shouldBe` ["unknown-acc"]
+      concatMap (.succeeded) result.accounts `shouldBe` []
+      allTxCount <- runDbIn env TransactionRM.countTransactions
+      allTxCount `shouldBe` 0
+
+    it "imports transactions from several card ids mapped to the same local account" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink =
+            [ (unsafeExternalAccountId "card-1", bankAccId),
+              (unsafeExternalAccountId "card-2", bankAccId)
+            ]
+          tx1 = mkTestTransactionWithAccount (-50) "tx-card-1" "card-1"
+          tx2 = mkTestTransactionWithAccount 100 "tx-card-2" "card-2"
+      result <- runAppM env $ importMany mockClassify testUserId accountLink [tx1, tx2]
+      result.unresolved `shouldBe` []
+      length (concatMap (.succeeded) result.accounts) `shouldBe` 2
+
   describe "importTransaction cross-currency" $ do
     it "same currency: exchangeRate is Nothing" $ do
       -- Local UAH account; Mono tx where adapter set originalAmount = Nothing
       -- (amount == operationAmount). Expect emitted TransactionPostingInitiated to have
       -- exchangeRate = Nothing and sourceAmount == targetAmount.
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       -- originalAmount = Nothing indicates same-currency tx
       let tx = (mkTestTransaction (-50) "tx-same-ccy") {originalAmount = Nothing}
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
@@ -330,8 +365,8 @@ spec = describe "BankImportService" $ do
       -- sourceAmount == targetAmount (both in account currency). Verify the
       -- import succeeds (rate is logged, not persisted).
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = (mkTestTransaction 1000 "tx-cross-ccy") {originalAmount = Just 25}
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
@@ -351,8 +386,8 @@ spec = describe "BankImportService" $ do
     it "maps a known MCC to the configured category id" $ do
       -- MCC 5411 → expense.food in the default MCC map
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransactionWithMcc (-50) "tx-mcc-food" "5411"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
@@ -369,8 +404,8 @@ spec = describe "BankImportService" $ do
     it "falls back to defaultExpenseCategory when MCC is not in the map" $ do
       -- MCC "9999" is not in the default MCC map → falls back to expense.other
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransactionWithMcc (-50) "tx-mcc-unknown" "9999"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
@@ -387,8 +422,8 @@ spec = describe "BankImportService" $ do
     it "falls back to defaultExpenseCategory when mcc is Nothing" $ do
       -- No MCC on the transaction → uses expense.other
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransaction (-50) "tx-no-mcc"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result
@@ -402,13 +437,13 @@ spec = describe "BankImportService" $ do
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
       txData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
 
-    it "records BankingError in AccountResyncResult.failures when no expense default is configured" $ do
-      -- Seed a configuration without defaultExpenseCategory set, then resync
+    it "records BankingError in AccountImportResult.failed when no expense default is configured" $ do
+      -- Seed a configuration without defaultExpenseCategory set, then import
       -- with one expense transaction. Expect: no transfer, failure in result.
       env <- createTestAppEnvWithProcessManager
       (externalAccId, bankAccId) <- runAppM env $ do
         -- Seed config normally then clear the expense default by checking the
-        -- resync result with a stripped config. To keep things simple, we use
+        -- import result with a stripped config. To keep things simple, we use
         -- ConfigurationService.setBankingDefaultExpenseCategory but that sets it.
         -- Instead: seed a fresh config WITHOUT calling seedDefaultConfiguration
         -- so defaultExpenseCategory is Nothing. We still need the income dict
@@ -437,7 +472,7 @@ spec = describe "BankImportService" $ do
         -- Practical solution: only create External + bank accounts, don't seed.
         -- The user will have defaultConfigurationId but no config in the RM →
         -- getConfigurationForUser returns Left(NotFound) → importTransaction
-        -- returns Left → resync collects it as failure.
+        -- returns Left → importMany collects it as a failure.
         extResult <-
           createAccount
             CreateAccount
@@ -462,8 +497,8 @@ spec = describe "BankImportService" $ do
 
       Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
 
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransaction (-50) "tx-no-config"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       -- Config not found → Left error
@@ -474,8 +509,8 @@ spec = describe "BankImportService" $ do
     it "income direction uses defaultIncomeCategory" $ do
       -- Positive amount, banking.defaultIncomeCategory = income.other (from seed)
       (env, bankAccId) <- setupTestEnv
-      let accountLink :: [(BankAccountId, AccountId)]
-          accountLink = [("mono-acc-1", bankAccId)]
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransaction 200 "tx-income-cat"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       shouldBeRight result

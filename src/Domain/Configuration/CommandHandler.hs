@@ -322,8 +322,8 @@ handleConfigurationCommand _ (AddBankConnectionConfigurationCommand AddBankConne
           { connectionId = connectionId,
             provider = provider,
             name = name,
-            encryptedToken = encryptedToken,
-            tokenHint = tokenHint,
+            encryptedSecret = encryptedSecret,
+            secretHint = secretHint,
             enabled = enabled
           }
     ]
@@ -337,15 +337,15 @@ handleConfigurationCommand config (RenameBankConnectionConfigurationCommand Rena
             name = name
           }
     ]
--- Handle ChangeBankConnectionToken command
-handleConfigurationCommand config (ChangeBankConnectionTokenConfigurationCommand ChangeBankConnectionToken {..}) = do
+-- Handle ChangeBankConnectionCredential command
+handleConfigurationCommand config (ChangeBankConnectionCredentialConfigurationCommand ChangeBankConnectionCredential {..}) = do
   requireConnection connectionId config
   Right
-    [ BankConnectionTokenChangedConfigurationEvent
-        BankConnectionTokenChanged
+    [ BankConnectionCredentialChangedConfigurationEvent
+        BankConnectionCredentialChanged
           { connectionId = connectionId,
-            encryptedToken = encryptedToken,
-            tokenHint = tokenHint
+            encryptedSecret = encryptedSecret,
+            secretHint = secretHint
           }
     ]
 -- Handle SetBankConnectionEnabled command

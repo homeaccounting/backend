@@ -14,12 +14,15 @@
 -- plus a @classify@ function, and creates 'InitiateTransaction' commands.
 --
 -- Key Functions:
---   - resync: Fetch statements for a date range and import each transaction
+--   - importConnection: Fetch statements for a date range and import each transaction
+--   - importMany: Shared import sink — route a flat list of transactions by
+--     externalAccountId and delegate to importTransaction; transport-neutral,
+--     used by both the pull path (importConnection) and file import
 --   - importTransaction: Core import logic for a single bank transaction
 --
 -- The service handles:
 --   - Deduplication via BankImportReadModel
---   - Account mapping via a caller-supplied [(BankAccountId, AccountId)] list
+--   - Account mapping via a caller-supplied [(ExternalAccountId, AccountId)] list
 --   - Currency conversion from numeric codes
 --   - Transaction classification (income/expense)
 --   - MCC→CategoryId resolution from per-user banking configuration
@@ -28,10 +31,11 @@
 -- The 'hold' flag on incoming transactions is intentionally ignored — see
 -- 'importTransaction' for details.
 module Application.Services.BankImportService
-  ( resync,
+  ( importConnection,
+    importMany,
     importTransaction,
-    ResyncResult (..),
-    AccountResyncResult (..),
+    ImportResult (..),
+    AccountImportResult (..),
   )
 where
 
@@ -47,6 +51,7 @@ import Data.Aeson (ToJSON)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime, utctDay)
+import Domain.Banking.Types (ExternalAccountId, unExternalAccountId)
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Projection (BankingConfiguration (..), ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..), renderDomainError)
@@ -73,8 +78,7 @@ import Infrastructure.App
     withUserLock,
   )
 import Infrastructure.Banking.Provider
-  ( BankAccountId,
-    BankTransaction (..),
+  ( BankTransaction (..),
     PullCapability (..),
     TransactionClassification (..),
   )
@@ -84,34 +88,46 @@ import RIO
 -- Result Types
 -- -----------------------------------------------------------------------------
 
--- | Per-account outcome of a resync call.
+-- | Per-account outcome of an import call.
 --
 -- Captures both the IDs of successfully imported transactions and the per-tx
--- failures. @failures@ holds human-readable messages (rendered from
+-- failures. @failed@ holds human-readable messages (rendered from
 -- 'DomainError' via 'renderDomainError', plus any top-level fetch failure).
 -- Using 'Text' keeps the type JSON-serializable without dragging 'DomainError'
 -- into the response contract.
-data AccountResyncResult = AccountResyncResult
-  { externalAccountId :: !BankAccountId,
+data AccountImportResult = AccountImportResult
+  { externalAccountId :: !ExternalAccountId,
     localAccountId :: !AccountId,
-    imported :: ![TransactionId],
+    succeeded :: ![TransactionId],
     skipped :: !Int,
-    failures :: ![Text]
+    failed :: ![Text]
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON AccountResyncResult
+instance ToJSON AccountImportResult
 
--- | Aggregated result of a resync call.
+-- | Aggregated result of an import call.
 --
--- One 'AccountResyncResult' per account in the caller-supplied link, in the
--- same order. Failures in one account do not short-circuit the others.
-data ResyncResult = ResyncResult
-  { accounts :: ![AccountResyncResult]
+-- One 'AccountImportResult' per account in the caller-supplied link that had
+-- at least one associated transaction, in the same order as 'importConnection'
+-- (or, for 'importMany' called directly, the order accounts first appear
+-- among the touched accounts). Failures in one account do not short-circuit
+-- the others.
+--
+-- 'unresolved' is the file-level bucket for external account ids seen on an
+-- input transaction but absent from the caller-supplied link — i.e. rows that
+-- cannot be attributed to any mapped local account. It is transport-neutral:
+-- the pull path ('importConnection') always builds its link from a
+-- connection's own mapped accounts, so it stays @[]@; the file-import path
+-- surfaces unmapped cards (and, at the Web layer, per-row parse errors) here
+-- instead of silently dropping them.
+data ImportResult = ImportResult
+  { accounts :: ![AccountImportResult],
+    unresolved :: ![Text]
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON ResyncResult
+instance ToJSON ImportResult
 
 -- -----------------------------------------------------------------------------
 -- Service Functions
@@ -120,24 +136,34 @@ instance ToJSON ResyncResult
 -- | Fetch statements for a date range and import each transaction.
 --
 -- For each account mapping supplied by the caller, fetches statements from
--- the provider and imports each transaction individually. Returns a
--- structured per-account breakdown. A fetch failure for one account does not
+-- the provider and delegates the fetched transactions to 'importMany'. Returns
+-- a structured per-account breakdown. A fetch failure for one account does not
 -- abort processing of the other accounts; per-tx import failures are
 -- collected into 'failures' rather than aborting the fetch's remaining
 -- transactions.
-resync ::
+--
+-- Each account's link is scoped to just that @(externalAccountId,
+-- localAccountId)@ pair when calling 'importMany', mirroring how a real
+-- provider's @fetchStatements@ is itself scoped to one external account: every
+-- returned transaction is expected to belong to it. This keeps
+-- 'importConnection'\'s per-account breakdown (one row per link entry, even
+-- when a fetch returns zero transactions) and guarantees 'unresolved' stays
+-- @[]@ for a well-behaved provider.
+importConnection ::
   (BankTransaction -> TransactionClassification) ->
   PullCapability ->
   UserId ->
-  [(BankAccountId, AccountId)] ->
+  [(ExternalAccountId, AccountId)] ->
   UTCTime ->
   UTCTime ->
-  AppM ResyncResult
-resync classify pull userId accountLink fromTime toTime =
+  AppM ImportResult
+importConnection classify pull userId accountLink fromTime toTime =
   withUserLock userId $ do
-    logInfo $ "Resyncing bank transactions for user " <> displayShow userId
-    accountResults <- forM accountLink processAccount
-    pure (ResyncResult {accounts = accountResults})
+    logInfo $ "Importing bank transactions for user " <> displayShow userId
+    perAccount <- forM accountLink processAccount
+    let accountResults = map fst perAccount
+        allUnresolved = Set.toList (Set.fromList (concatMap snd perAccount))
+    pure (ImportResult {accounts = accountResults, unresolved = allUnresolved})
   where
     processAccount (extAccId, localAccId) = do
       fetchResult <- liftIO $ pull.fetchStatements extAccId fromTime toTime
@@ -152,13 +178,15 @@ resync classify pull userId accountLink fromTime toTime =
         <> ": "
         <> display err
       pure
-        AccountResyncResult
-          { externalAccountId = extAccId,
-            localAccountId = localAccId,
-            imported = [],
-            skipped = 0,
-            failures = [err]
-          }
+        ( AccountImportResult
+            { externalAccountId = extAccId,
+              localAccountId = localAccId,
+              succeeded = [],
+              skipped = 0,
+              failed = [err]
+            },
+          []
+        )
 
     fetchSucceeded extAccId localAccId txns = do
       logInfo
@@ -166,18 +194,105 @@ resync classify pull userId accountLink fromTime toTime =
         <> displayShow (length txns)
         <> " transactions for account "
         <> display extAccId
-      perTx <- forM txns (importTransaction classify userId accountLink)
-      let (errs, oks) = partitionEithers perTx
-          importedIds = catMaybes oks
-          skippedCount = length oks - length importedIds
-      pure
-        AccountResyncResult
-          { externalAccountId = extAccId,
-            localAccountId = localAccId,
-            imported = importedIds,
-            skipped = skippedCount,
-            failures = map renderDomainError errs
-          }
+      result <- importMany classify userId [(extAccId, localAccId)] txns
+      -- The scoped link above has exactly one entry, so 'accounts' holds at
+      -- most one row; default to a zero-value row when the fetch returned no
+      -- (or no matching) transactions, to preserve one row per link entry.
+      let accountResult = case result.accounts of
+            (a : _) -> a
+            [] ->
+              AccountImportResult
+                { externalAccountId = extAccId,
+                  localAccountId = localAccId,
+                  succeeded = [],
+                  skipped = 0,
+                  failed = []
+                }
+      pure (accountResult, result.unresolved)
+
+-- | Shared import sink: route each transaction to its mapped local account
+-- via the caller-supplied link and delegate to 'importTransaction'.
+-- Transport-neutral — both the pull path ('importConnection') and a future
+-- file-import path route their fetched\/parsed transactions through this
+-- function.
+--
+-- A transaction whose 'externalAccountId' has no entry in @accountLink@ is
+-- NOT committed; its raw external account id is collected into 'unresolved'
+-- (deduplicated) instead. A matched transaction is delegated unchanged to
+-- 'importTransaction' (dedup via 'isImported', classification, category
+-- resolution — all unchanged), and results are grouped into one
+-- 'AccountImportResult' per external account id that had at least one
+-- matched transaction, carrying the local account it was routed to.
+importMany ::
+  (BankTransaction -> TransactionClassification) ->
+  UserId ->
+  [(ExternalAccountId, AccountId)] ->
+  [BankTransaction] ->
+  AppM ImportResult
+importMany classify userId accountLink txns = do
+  routed <- forM txns $ \tx ->
+    case lookup tx.externalAccountId accountLink of
+      Nothing -> pure (Left tx.externalAccountId)
+      Just localAccId -> do
+        outcome <- importTransaction classify userId accountLink tx
+        pure (Right (tx.externalAccountId, localAccId, outcome))
+  let (unmatched, matched) = partitionEithers routed
+  pure
+    ImportResult
+      { accounts = groupAccountResults matched,
+        unresolved = nubOrd (map unExternalAccountId unmatched)
+      }
+
+-- | Fold per-transaction outcomes into one 'AccountImportResult' per external
+-- account id that had at least one matched transaction, in first-appearance
+-- order (matching the 'ImportResult' Haddock contract) rather than the
+-- lexicographic-by-id order a plain 'Map.elems' would yield.
+groupAccountResults ::
+  [(ExternalAccountId, AccountId, Either DomainError (Maybe TransactionId))] ->
+  [AccountImportResult]
+groupAccountResults entries =
+  map (grouped Map.!) orderedKeys
+  where
+    orderedKeys = nubOrd [extAccId | (extAccId, _, _) <- entries]
+    grouped =
+      Map.fromListWith
+        merge
+        [(extAccId, toAccountResult extAccId localAccId outcome) | (extAccId, localAccId, outcome) <- entries]
+    toAccountResult extAccId localAccId outcome =
+      case outcome of
+        Left err ->
+          AccountImportResult
+            { externalAccountId = extAccId,
+              localAccountId = localAccId,
+              succeeded = [],
+              skipped = 0,
+              failed = [renderDomainError err]
+            }
+        Right Nothing ->
+          AccountImportResult
+            { externalAccountId = extAccId,
+              localAccountId = localAccId,
+              succeeded = [],
+              skipped = 1,
+              failed = []
+            }
+        Right (Just txId) ->
+          AccountImportResult
+            { externalAccountId = extAccId,
+              localAccountId = localAccId,
+              succeeded = [txId],
+              skipped = 0,
+              failed = []
+            }
+    -- 'Map.fromListWith merge' calls @merge new old@ for a colliding key, so
+    -- the already-accumulated 'old' value stays first and 'new' is appended,
+    -- preserving the transactions' original relative order.
+    merge new old =
+      old
+        { succeeded = old.succeeded ++ new.succeeded,
+          skipped = old.skipped + new.skipped,
+          failed = old.failed ++ new.failed
+        }
 
 -- | How the resolver arrived at its 'CategoryId'.
 --
@@ -296,7 +411,7 @@ logCategoryResolution tx direction cfg categoryId resolution =
 importTransaction ::
   (BankTransaction -> TransactionClassification) ->
   UserId ->
-  [(BankAccountId, AccountId)] ->
+  [(ExternalAccountId, AccountId)] ->
   BankTransaction ->
   AppM (Either DomainError (Maybe TransactionId))
 importTransaction classify userId accountLink tx = do
@@ -305,9 +420,9 @@ importTransaction classify userId accountLink tx = do
     then do
       logDebug $ "Skipping already-imported transaction: " <> display tx.externalId
       pure (Right Nothing)
-    else case lookup tx.accountId accountLink of
+    else case lookup tx.externalAccountId accountLink of
       Nothing -> do
-        logWarn $ "No account mapping for external account: " <> display tx.accountId
+        logWarn $ "No account mapping for external account: " <> display tx.externalAccountId
         pure (Right Nothing)
       Just localAccId -> importMatchedTransaction classify userId localAccId tx
 

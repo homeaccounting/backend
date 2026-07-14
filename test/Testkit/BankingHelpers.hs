@@ -16,19 +16,19 @@ module Testkit.BankingHelpers
 where
 
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
 import Domain.Core.Types (ExternalTransactionId, unsafeExternalTransactionId)
 import Infrastructure.Banking.Provider
   ( BankAccount (..),
-    BankAccountId,
     BankTransaction (..),
   )
 import RIO
 
 -- | Construct a test 'BankAccount'.
-mkTestBankAccount :: BankAccountId -> Text -> Int -> BankAccount
+mkTestBankAccount :: ExternalAccountId -> Text -> Int -> BankAccount
 mkTestBankAccount extId accNumber currency =
   BankAccount
-    { externalId = extId,
+    { externalAccountId = extId,
       accountNumber = accNumber,
       currencyCode = currency,
       cardMasks = [],
@@ -39,13 +39,13 @@ mkTestBankAccount extId accNumber currency =
 -- posix timestamp. Amount is in major units.
 mkSameCurrencyBankTx ::
   ExternalTransactionId ->
-  BankAccountId ->
+  ExternalAccountId ->
   Rational ->
   BankTransaction
 mkSameCurrencyBankTx eid accId amt =
   BankTransaction
     { externalId = eid,
-      accountId = accId,
+      externalAccountId = accId,
       time = posixSecondsToUTCTime 1700000000,
       amount = amt,
       currencyCode = 980,
@@ -62,7 +62,7 @@ mkSameCurrencyBankTx eid accId amt =
 -- transaction's original currency.
 mkForeignCurrencyBankTx ::
   ExternalTransactionId ->
-  BankAccountId ->
+  ExternalAccountId ->
   Rational ->
   Rational ->
   BankTransaction
@@ -74,4 +74,4 @@ mkForeignCurrencyBankTx eid accId accountAmt foreignAmt =
 -- 'Infrastructure.Banking.Provider.defaultClassify').
 sampleBankTransaction :: Rational -> BankTransaction
 sampleBankTransaction =
-  mkSameCurrencyBankTx (unsafeExternalTransactionId "sample-tx") "sample-account"
+  mkSameCurrencyBankTx (unsafeExternalTransactionId "sample-tx") (unsafeExternalAccountId "sample-account")

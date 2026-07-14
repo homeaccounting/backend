@@ -84,8 +84,10 @@ banking:
   token_enc_key: "${BANKING_TOKEN_ENC_KEY:-}"
   providers:
     monobank:
-      enabled: ${MONOBANK_ENABLED:-true}
-      api_base_url: "${MONOBANK_API_BASE_URL:-https://api.monobank.ua}"
+      enabled: ${BANKING_MONOBANK_ENABLED:-true}
+      api_base_url: "${BANKING_MONOBANK_API_BASE_URL:-https://api.monobank.ua}"
+    privatbank:
+      enabled: ${BANKING_PRIVATBANK_ENABLED:-true}
 
 # LLM provider (OpenAI-compatible) for natural-language transaction prompting
 llm:

@@ -36,8 +36,9 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
+import Domain.Banking.Types (unsafeExternalAccountId)
 import Infrastructure.Banking.Provider (BankAccount (..))
-import Network.HTTP.Types (status200, status204, status400, status409)
+import Network.HTTP.Types (status200, status201, status204, status400, status409)
 import Network.Wai.Test (SResponse (..))
 import RIO
 import qualified RIO.Text as T
@@ -80,6 +81,7 @@ asObject resp =
 spec :: Spec
 spec = do
   connectionCrudSpec
+  tokenOptionalSpec
   externalAccountsSpec
 
 connectionCrudSpec :: Spec
@@ -214,6 +216,69 @@ connectionCrudSpec =
         liftIO $ simpleStatus r2 `shouldBe` status409
 
 -- -----------------------------------------------------------------------------
+-- Token-optional connections (file-only providers have no credential)
+-- -----------------------------------------------------------------------------
+
+-- | The registry backing 'mkAppBankingEnabledSeeded' carries both a
+-- pull-capable stub ("monobank") and a file-only stub ("privatbank" — see
+-- 'Testkit.AppEnv.stubFileOnlyDescriptor'). The token is required only for
+-- the former.
+tokenOptionalSpec :: Spec
+tokenOptionalSpec =
+  describe "token-optional connections"
+    $ with mkAppBankingEnabledSeeded
+    $ do
+      it "POST for a pull-capable provider with no token is rejected with a token field error" $ do
+        tok <- registerAndGetToken
+        let body =
+              encode
+                $ object
+                  [ "provider" .= ("monobank" :: Text),
+                    "name" .= ("No Token Mono" :: Text),
+                    "enabled" .= True
+                  ]
+        resp <- request "POST" "/api/users/me/configuration/banking/connections" (jsonAuthHeaders tok) body
+        liftIO $ do
+          simpleStatus resp `shouldBe` status400
+          o <- asObject resp
+          case KeyMap.lookup "fieldErrors" o of
+            Just (Object fe) -> KeyMap.member "token" fe `shouldBe` True
+            other -> expectationFailure $ "expected fieldErrors object, got: " <> show other
+
+      it "POST for a file-only provider with no token is accepted: 201, tokenSet=false" $ do
+        tok <- registerAndGetToken
+        let body =
+              encode
+                $ object
+                  [ "provider" .= ("privatbank" :: Text),
+                    "name" .= ("Privat File Import" :: Text),
+                    "enabled" .= True
+                  ]
+        resp <- request "POST" "/api/users/me/configuration/banking/connections" (jsonAuthHeaders tok) body
+        liftIO $ do
+          simpleStatus resp `shouldBe` status201
+          o <- asObject resp
+          KeyMap.lookup "tokenSet" o `shouldBe` Just (Bool False)
+          KeyMap.lookup "provider" o `shouldBe` Just (String "privatbank")
+
+      it "PUT token on a file-only connection is rejected" $ do
+        tok <- registerAndGetToken
+        let addBody =
+              encode
+                $ object
+                  [ "provider" .= ("privatbank" :: Text),
+                    "name" .= ("Privat" :: Text),
+                    "enabled" .= True
+                  ]
+        addResp <- request "POST" "/api/users/me/configuration/banking/connections" (jsonAuthHeaders tok) addBody
+        connId <- case eitherDecode (simpleBody addResp) :: Either String IdResponse of
+          Left err -> liftIO $ throwString $ "add file-only connection: " <> err
+          Right r -> pure r.id
+        let path = encodeUtf8 ("/api/users/me/configuration/banking/connections/" <> connId <> "/token")
+        r <- request "PUT" path (jsonAuthHeaders tok) (encode $ object ["token" .= ("new-token" :: Text)])
+        liftIO $ simpleStatus r `shouldBe` status400
+
+-- -----------------------------------------------------------------------------
 -- External-accounts endpoint (live provider list via the stub factory)
 -- -----------------------------------------------------------------------------
 
@@ -223,14 +288,14 @@ connectionCrudSpec =
 fixtureAccounts :: [BankAccount]
 fixtureAccounts =
   [ BankAccount
-      { externalId = "ext-acc-1",
+      { externalAccountId = unsafeExternalAccountId "ext-acc-1",
         accountNumber = "UA111111111111111111111111111",
         currencyCode = 980,
         cardMasks = [],
         balance = 12345
       },
     BankAccount
-      { externalId = "ext-acc-2",
+      { externalAccountId = unsafeExternalAccountId "ext-acc-2",
         accountNumber = "UA222222222222222222222222222",
         currencyCode = 840,
         cardMasks = [],

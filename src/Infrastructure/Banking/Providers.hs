@@ -17,22 +17,40 @@ import Infrastructure.Config (BankingConfig)
 #ifdef PROVIDER_MONOBANK
 import qualified Infrastructure.Banking.Monobank as Monobank
 #endif
+#ifdef PROVIDER_PRIVATBANK
+import qualified Infrastructure.Banking.PrivatBank as PrivatBank
+#endif
 import Network.HTTP.Client (Manager)
+import RIO ((<>))
 
 -- | Build the bank provider registry from every provider compiled into this
 -- build, keeping only those enabled in config (see 'assembleRegistry').
 buildRegistry :: BankingConfig -> Manager -> BankProviderRegistry
 buildRegistry cfg manager = assembleRegistry cfg (candidates cfg manager)
 
--- | Candidate descriptors contributed by providers compiled into this build.
--- Each compiled-in provider (gated by its own Cabal flag, e.g. @monobank@)
--- builds one descriptor from the raw banking config here; 'assembleRegistry'
--- then keeps only those whose @banking.providers@ entry is present AND
--- enabled. This is the only place that needs a CPP guard per provider.
+-- | Candidate descriptors contributed by providers compiled into this build:
+-- the concatenation of each compiled-in provider's own candidate list.
+-- 'assembleRegistry' then keeps only those whose @banking.providers@ entry
+-- is present AND enabled. Adding a provider is a one-line addition to this
+-- list plus its own @*Candidates@ definition below — existing providers'
+-- CPP guards are untouched.
+candidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
+candidates cfg manager = monobankCandidates cfg manager <> privatbankCandidates
+
+-- | Each compiled-in provider gets its own CPP-guarded candidate list, so
+-- this is the only place that needs a CPP guard per provider.
 #ifdef PROVIDER_MONOBANK
-candidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
-candidates cfg manager = [Monobank.descriptorFromConfig cfg manager]
+monobankCandidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
+monobankCandidates cfg manager = [Monobank.descriptorFromConfig cfg manager]
 #else
-candidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
-candidates _cfg _manager = []
+monobankCandidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
+monobankCandidates _cfg _manager = []
+#endif
+
+#ifdef PROVIDER_PRIVATBANK
+privatbankCandidates :: [BankProviderDescriptor]
+privatbankCandidates = [PrivatBank.descriptor]
+#else
+privatbankCandidates :: [BankProviderDescriptor]
+privatbankCandidates = []
 #endif

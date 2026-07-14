@@ -100,6 +100,10 @@ flags:
     description: Compile the Monobank (UA) bank provider
     manual: true
     default: true
+  privatbank:
+    description: Compile the PrivatBank (UA) bank provider
+    manual: true
+    default: true
 
 default-extensions:
   - NoFieldSelectors
@@ -131,6 +135,14 @@ library:
       exposed-modules:
         - Infrastructure.Banking.Monobank
         - Infrastructure.Banking.Monobank.Internal
+    - condition: flag(privatbank)
+      cpp-options: -DPROVIDER_PRIVATBANK
+      exposed-modules:
+        - Infrastructure.Banking.PrivatBank
+        - Infrastructure.Banking.PrivatBank.Internal
+      dependencies:
+        - cassava >= 0.5 && < 0.6
+        - vector >= 0.12 && < 0.14
 
 executables:
   backend:

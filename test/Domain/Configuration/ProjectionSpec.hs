@@ -19,15 +19,15 @@
 module Domain.Configuration.ProjectionSpec (spec) where
 
 import qualified Data.Map.Strict as Map
-import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId)
+import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
+    BankConnectionCredentialChanged (..),
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankConnectionTokenChanged (..),
     BankingMccExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
@@ -434,8 +434,8 @@ testConnId = unsafeBankConnectionId (read "55555555-5555-5555-5555-555555555555"
 testAccountId :: AccountId
 testAccountId = unsafeAccountId (read "66666666-6666-6666-6666-666666666666")
 
-testEncryptedToken :: EncryptedSecret
-testEncryptedToken =
+testEncryptedSecret :: EncryptedSecret
+testEncryptedSecret =
   EncryptedSecret
     { keyVersion = 1,
       nonce = "bm9uY2U=",
@@ -443,8 +443,8 @@ testEncryptedToken =
       authTag = "dGFn"
     }
 
-testEncryptedToken2 :: EncryptedSecret
-testEncryptedToken2 =
+testEncryptedSecret2 :: EncryptedSecret
+testEncryptedSecret2 =
   EncryptedSecret
     { keyVersion = 2,
       nonce = "bm9uY2Uy",
@@ -459,8 +459,22 @@ addConnEvent =
       { connectionId = testConnId,
         provider = unsafeBankProviderId "monobank",
         name = "My Monobank",
-        encryptedToken = testEncryptedToken,
-        tokenHint = "abc…xyz",
+        encryptedSecret = Just testEncryptedSecret,
+        secretHint = Just "abc…xyz",
+        enabled = True
+      }
+
+-- | A connection-added event for a file-only provider (no pull transport),
+-- carrying no credential.
+addFileOnlyConnEvent :: ConfigurationEvent
+addFileOnlyConnEvent =
+  BankConnectionAddedConfigurationEvent
+    BankConnectionAdded
+      { connectionId = testConnId,
+        provider = unsafeBankProviderId "privatbank",
+        name = "Privat File Import",
+        encryptedSecret = Nothing,
+        secretHint = Nothing,
         enabled = True
       }
 
@@ -474,10 +488,19 @@ bankConnectionProjectionSpec = describe "bank connection projection" $ do
         conn.connectionId `shouldBe` testConnId
         conn.provider `shouldBe` unsafeBankProviderId "monobank"
         conn.name `shouldBe` "My Monobank"
-        conn.encryptedToken `shouldBe` testEncryptedToken
-        conn.tokenHint `shouldBe` "abc…xyz"
+        conn.encryptedSecret `shouldBe` Just testEncryptedSecret
+        conn.secretHint `shouldBe` Just "abc…xyz"
         conn.enabled `shouldBe` True
         conn.accountMap `shouldBe` Map.empty
+
+  it "BankConnectionAdded for a file-only provider inserts a connection with no credential" $ do
+    let config = applyEvents [createdEvent, addFileOnlyConnEvent]
+    case Map.lookup testConnId config.banking.connections of
+      Nothing -> expectationFailure "Connection should exist"
+      Just conn -> do
+        conn.provider `shouldBe` unsafeBankProviderId "privatbank"
+        conn.encryptedSecret `shouldBe` Nothing
+        conn.secretHint `shouldBe` Nothing
 
   it "BankConnectionRenamed updates the name only" $ do
     let config =
@@ -494,25 +517,25 @@ bankConnectionProjectionSpec = describe "bank connection projection" $ do
       Nothing -> expectationFailure "Connection should exist"
       Just conn -> do
         conn.name `shouldBe` "Renamed"
-        conn.encryptedToken `shouldBe` testEncryptedToken
+        conn.encryptedSecret `shouldBe` Just testEncryptedSecret
 
-  it "BankConnectionTokenChanged updates encryptedToken and tokenHint" $ do
+  it "BankConnectionCredentialChanged updates encryptedSecret and secretHint" $ do
     let config =
           applyEvents
             [ createdEvent,
               addConnEvent,
-              BankConnectionTokenChangedConfigurationEvent
-                BankConnectionTokenChanged
+              BankConnectionCredentialChangedConfigurationEvent
+                BankConnectionCredentialChanged
                   { connectionId = testConnId,
-                    encryptedToken = testEncryptedToken2,
-                    tokenHint = "new…hint"
+                    encryptedSecret = testEncryptedSecret2,
+                    secretHint = "new…hint"
                   }
             ]
     case Map.lookup testConnId config.banking.connections of
       Nothing -> expectationFailure "Connection should exist"
       Just conn -> do
-        conn.encryptedToken `shouldBe` testEncryptedToken2
-        conn.tokenHint `shouldBe` "new…hint"
+        conn.encryptedSecret `shouldBe` Just testEncryptedSecret2
+        conn.secretHint `shouldBe` Just "new…hint"
 
   it "BankConnectionEnabledSet updates the enabled flag" $ do
     let config =
@@ -530,7 +553,7 @@ bankConnectionProjectionSpec = describe "bank connection projection" $ do
       Just conn -> conn.enabled `shouldBe` False
 
   it "BankConnectionAccountMapSet populates the account map" $ do
-    let m = Map.singleton "ext-acc-1" testAccountId
+    let m = Map.singleton (unsafeExternalAccountId "ext-acc-1") testAccountId
         config =
           applyEvents
             [ createdEvent,

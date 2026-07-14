@@ -18,16 +18,16 @@
 module Domain.Configuration.CommandHandlerSpec (spec) where
 
 import qualified Data.Map.Strict as Map
-import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId)
+import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration
 import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
+    BankConnectionCredentialChanged (..),
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankConnectionTokenChanged (..),
     BankingMccExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
@@ -1030,8 +1030,8 @@ configWithConnection =
           { connectionId = testConnectionId1,
             provider = unsafeBankProviderId "monobank",
             name = "Mono",
-            encryptedToken = testEncryptedSecret,
-            tokenHint = "1234",
+            encryptedSecret = Just testEncryptedSecret,
+            secretHint = Just "1234",
             enabled = True
           }
     ]
@@ -1052,8 +1052,8 @@ configWithTwoConnections =
           { connectionId = testConnectionId1,
             provider = unsafeBankProviderId "monobank",
             name = "Mono A",
-            encryptedToken = testEncryptedSecret,
-            tokenHint = "1111",
+            encryptedSecret = Just testEncryptedSecret,
+            secretHint = Just "1111",
             enabled = True
           },
       BankConnectionAddedConfigurationEvent
@@ -1061,14 +1061,14 @@ configWithTwoConnections =
           { connectionId = testConnectionId2,
             provider = unsafeBankProviderId "monobank",
             name = "Mono B",
-            encryptedToken = testEncryptedSecret,
-            tokenHint = "2222",
+            encryptedSecret = Just testEncryptedSecret,
+            secretHint = Just "2222",
             enabled = True
           },
       BankConnectionAccountMapSetConfigurationEvent
         BankConnectionAccountMapSet
           { connectionId = testConnectionId2,
-            accountMap = Map.fromList [("ext-b", testAccountId1)]
+            accountMap = Map.fromList [(unsafeExternalAccountId "ext-b", testAccountId1)]
           }
     ]
 
@@ -1079,7 +1079,7 @@ configWithTwoConnections =
 addBankConnectionSpec :: Spec
 addBankConnectionSpec = describe "AddBankConnection Command" $ do
   context "Given a created configuration" $ do
-    describe "When adding a bank connection" $ do
+    describe "When adding a bank connection with a credential" $ do
       it "Then emits BankConnectionAdded event" $ do
         let config = createdConfig
         let command =
@@ -1088,8 +1088,8 @@ addBankConnectionSpec = describe "AddBankConnection Command" $ do
                   { connectionId = testConnectionId1,
                     provider = unsafeBankProviderId "monobank",
                     name = "Mono",
-                    encryptedToken = testEncryptedSecret,
-                    tokenHint = "1234",
+                    encryptedSecret = Just testEncryptedSecret,
+                    secretHint = Just "1234",
                     enabled = True
                   }
         let result = handleConfigurationCommand config command
@@ -1100,13 +1100,50 @@ addBankConnectionSpec = describe "AddBankConnection Command" $ do
             case head events of
               BankConnectionAddedConfigurationEvent evt -> do
                 evt.connectionId `shouldBe` testConnectionId1
-                evt.tokenHint `shouldBe` "1234"
+                evt.secretHint `shouldBe` Just "1234"
                 evt.enabled `shouldBe` True
               _ -> expectationFailure "Expected BankConnectionAdded event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
+    describe "When adding a bank connection for a file-only provider with no credential" $ do
+      it "Then succeeds and projects a connection with no stored credential" $ do
+        let baseEvents =
+              [ ConfigurationCreatedConfigurationEvent
+                  ConfigurationCreated
+                    { baseCurrency = UAH,
+                      defaultCurrency = UAH,
+                      createdBy = System
+                    }
+              ]
+        let config = applyEvents baseEvents
+        let command =
+              AddBankConnectionConfigurationCommand
+                AddBankConnection
+                  { connectionId = testConnectionId1,
+                    provider = unsafeBankProviderId "privatbank",
+                    name = "Privat File Import",
+                    encryptedSecret = Nothing,
+                    secretHint = Nothing,
+                    enabled = True
+                  }
+        case handleConfigurationCommand config command of
+          Right events -> do
+            case head events of
+              BankConnectionAddedConfigurationEvent evt -> do
+                evt.encryptedSecret `shouldBe` Nothing
+                evt.secretHint `shouldBe` Nothing
+              _ -> expectationFailure "Expected BankConnectionAdded event"
+            let newConfig = applyEvents (baseEvents <> events)
+            case Map.lookup testConnectionId1 newConfig.banking.connections of
+              Nothing -> expectationFailure "Connection should exist"
+              Just conn -> do
+                conn.encryptedSecret `shouldBe` Nothing
+                conn.secretHint `shouldBe` Nothing
+                conn.provider `shouldBe` unsafeBankProviderId "privatbank"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
 -- -----------------------------------------------------------------------------
--- Missing-connection rejection tests (rename/token/enabled/map/remove)
+-- Missing-connection rejection tests (rename/credential/enabled/map/remove)
 -- -----------------------------------------------------------------------------
 
 bankConnectionMissingSpec :: Spec
@@ -1123,14 +1160,14 @@ bankConnectionMissingSpec = describe "Bank connection commands on a missing conn
         handleConfigurationCommand configWithConnection command
           `shouldBe` Left BankConnectionNotFound
 
-    describe "When changing the token" $ do
+    describe "When changing the credential" $ do
       it "Then returns Left BankConnectionNotFound" $ do
         let command =
-              ChangeBankConnectionTokenConfigurationCommand
-                ChangeBankConnectionToken
+              ChangeBankConnectionCredentialConfigurationCommand
+                ChangeBankConnectionCredential
                   { connectionId = testMissingConnectionId,
-                    encryptedToken = testEncryptedSecret,
-                    tokenHint = "9999"
+                    encryptedSecret = testEncryptedSecret,
+                    secretHint = "9999"
                   }
         handleConfigurationCommand configWithConnection command
           `shouldBe` Left BankConnectionNotFound
@@ -1152,7 +1189,7 @@ bankConnectionMissingSpec = describe "Bank connection commands on a missing conn
               SetBankConnectionAccountMapConfigurationCommand
                 SetBankConnectionAccountMap
                   { connectionId = testMissingConnectionId,
-                    accountMap = Map.fromList [("ext-1", testAccountId1)]
+                    accountMap = Map.fromList [(unsafeExternalAccountId "ext-1", testAccountId1)]
                   }
         handleConfigurationCommand configWithConnection command
           `shouldBe` Left BankConnectionNotFound
@@ -1184,21 +1221,21 @@ bankConnectionMissingSpec = describe "Bank connection commands on a missing conn
             _ -> expectationFailure "Expected BankConnectionRenamed event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
-    describe "When changing the token" $ do
-      it "Then emits BankConnectionTokenChanged event" $ do
+    describe "When changing the credential" $ do
+      it "Then emits BankConnectionCredentialChanged event" $ do
         let command =
-              ChangeBankConnectionTokenConfigurationCommand
-                ChangeBankConnectionToken
+              ChangeBankConnectionCredentialConfigurationCommand
+                ChangeBankConnectionCredential
                   { connectionId = testConnectionId1,
-                    encryptedToken = testEncryptedSecret,
-                    tokenHint = "9999"
+                    encryptedSecret = testEncryptedSecret,
+                    secretHint = "9999"
                   }
         case handleConfigurationCommand configWithConnection command of
           Right events -> case head events of
-            BankConnectionTokenChangedConfigurationEvent evt -> do
+            BankConnectionCredentialChangedConfigurationEvent evt -> do
               evt.connectionId `shouldBe` testConnectionId1
-              evt.tokenHint `shouldBe` "9999"
-            _ -> expectationFailure "Expected BankConnectionTokenChanged event"
+              evt.secretHint `shouldBe` "9999"
+            _ -> expectationFailure "Expected BankConnectionCredentialChanged event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
     describe "When setting enabled" $ do
@@ -1245,7 +1282,7 @@ setBankConnectionAccountMapSpec = describe "SetBankConnectionAccountMap Command"
               SetBankConnectionAccountMapConfigurationCommand
                 SetBankConnectionAccountMap
                   { connectionId = testConnectionId1,
-                    accountMap = Map.fromList [("ext-a", testAccountId1)]
+                    accountMap = Map.fromList [(unsafeExternalAccountId "ext-a", testAccountId1)]
                   }
         handleConfigurationCommand configWithTwoConnections command
           `shouldBe` Left BankConnectionAccountConflict
@@ -1253,7 +1290,7 @@ setBankConnectionAccountMapSpec = describe "SetBankConnectionAccountMap Command"
   context "Given a map whose accounts are not used by another connection" $ do
     describe "When setting the account map" $ do
       it "Then emits BankConnectionAccountMapSet event" $ do
-        let testMap = Map.fromList [("ext-a", testAccountId2)]
+        let testMap = Map.fromList [(unsafeExternalAccountId "ext-a", testAccountId2)]
         let command =
               SetBankConnectionAccountMapConfigurationCommand
                 SetBankConnectionAccountMap
@@ -1271,7 +1308,7 @@ setBankConnectionAccountMapSpec = describe "SetBankConnectionAccountMap Command"
   context "Given the same connection re-maps the account it already owns" $ do
     describe "When setting the account map on connection 2 with its own account" $ do
       it "Then does NOT conflict and emits the event" $ do
-        let testMap = Map.fromList [("ext-b", testAccountId1)]
+        let testMap = Map.fromList [(unsafeExternalAccountId "ext-b", testAccountId1)]
         let command =
               SetBankConnectionAccountMapConfigurationCommand
                 SetBankConnectionAccountMap

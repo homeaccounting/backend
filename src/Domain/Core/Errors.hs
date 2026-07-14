@@ -245,9 +245,9 @@ mkValidationError field msg value =
 -- | Render a 'DomainError' as user-facing prose.
 --
 -- Suitable for HTTP response bodies and per-transaction failure strings
--- returned by 'Application.Services.BankImportService.resync'. Unlike the
--- derived 'Show' instance (which produces Haskell constructor syntax like
--- @"BankingError \"...\""@), this formatter emits plain prose.
+-- returned by 'Application.Services.BankImportService.importConnection'.
+-- Unlike the derived 'Show' instance (which produces Haskell constructor
+-- syntax like @"BankingError \"...\""@), this formatter emits plain prose.
 renderDomainError :: DomainError -> Text
 renderDomainError err = case err of
   ValidationErr ve ->

@@ -12,6 +12,7 @@
 --   - BankConnectionId: Smart constructor validation, round-trip
 module Domain.Banking.TypesSpec (spec) where
 
+import qualified Data.Aeson as Aeson
 import Data.Text (isInfixOf)
 import Data.UUID (nil)
 import qualified Data.UUID as UUID
@@ -24,6 +25,7 @@ import Testkit.Helpers
 spec :: Spec
 spec = do
   bankConnectionIdSpec
+  providerCredentialSpec
 
 -- -----------------------------------------------------------------------------
 -- BankConnectionId Tests
@@ -53,3 +55,23 @@ bankConnectionIdSpec = describe "BankConnectionId" $ do
         case result of
           Left err -> err `shouldSatisfy` (\msg -> "cannot be nil" `isInfixOf` msg)
           Right _ -> expectationFailure "Expected Left"
+
+-- -----------------------------------------------------------------------------
+-- ProviderCredential Tests
+-- -----------------------------------------------------------------------------
+
+providerCredentialSpec :: Spec
+providerCredentialSpec = describe "ProviderCredential" $ do
+  describe "JSON round-trip" $ do
+    it "round-trips a StaticSecret through toJSON/fromJSON" $ do
+      let cred = StaticSecret "u_supersecrettoken1234"
+      Aeson.decode (Aeson.encode cred) `shouldBe` Just cred
+
+  describe "StaticSecret JSON shape" $ do
+    it "encodes as a stable explicitly-tagged object, not a bare/untagged string" $ do
+      Aeson.toJSON (StaticSecret "abc123")
+        `shouldBe` Aeson.object ["kind" Aeson..= ("static" :: Text), "secret" Aeson..= ("abc123" :: Text)]
+
+    it "decodes the same tagged shape back into StaticSecret" $ do
+      let wire = Aeson.object ["kind" Aeson..= ("static" :: Text), "secret" Aeson..= ("xyz" :: Text)]
+      (Aeson.fromJSON wire :: Aeson.Result ProviderCredential) `shouldBe` Aeson.Success (StaticSecret "xyz")

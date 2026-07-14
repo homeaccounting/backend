@@ -6,7 +6,6 @@ module Infrastructure.Banking.Provider
     TransactionClassification (..),
 
     -- * Types
-    BankAccountId,
     BankAccount (..),
     BankTransaction (..),
 
@@ -16,21 +15,22 @@ module Infrastructure.Banking.Provider
     FileImportCapability (..),
     StatementFormat (..),
     ParseError (..),
+    RowError (..),
+    StatementParser,
+    providerSupportsPull,
+    providerSupportsFile,
     defaultClassify,
   )
 where
 
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
-import Data.List.NonEmpty (NonEmpty)
+import Data.Map.Strict (Map)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Banking.Types (BankProviderId, PlainToken)
+import Domain.Banking.Types (BankProviderId, ExternalAccountId, ProviderCredential)
 import Domain.Core.Types (ExternalTransactionId, MCC)
-import RIO (Bool, Either, Eq, IO, Int, Maybe, Rational, Show, otherwise, (<))
-
--- | Identifier for an external bank account (provider-specific).
-type BankAccountId = Text
+import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, isJust, otherwise, (<))
 
 -- | Provider-contributed classification hint — direction only.
 -- BankImportService owns the final category decision.
@@ -41,7 +41,7 @@ data TransactionClassification
 
 -- | A bank account as reported by the provider.
 data BankAccount = BankAccount
-  { externalId :: !BankAccountId,
+  { externalAccountId :: !ExternalAccountId,
     accountNumber :: !Text,
     currencyCode :: !Int,
     cardMasks :: ![Text],
@@ -52,7 +52,7 @@ data BankAccount = BankAccount
 -- | A bank transaction as reported by the provider.
 data BankTransaction = BankTransaction
   { externalId :: !ExternalTransactionId,
-    accountId :: !BankAccountId,
+    externalAccountId :: !ExternalAccountId,
     time :: !UTCTime,
     -- | Account-currency amount in major units (e.g. 12.34 not 1234). Signed.
     amount :: !Rational,
@@ -75,40 +75,60 @@ data BankTransaction = BankTransaction
 -- stable 'BankProviderId'. This is the single provider abstraction: the
 -- registry holds one per compiled-in, enabled provider.
 --
--- 'pull' is present for providers that support live API access (token in,
--- capability out); 'fileImport' is present for providers that support
+-- 'pull' is present for providers that support live API access (credential
+-- in, capability out); 'fileImport' is present for providers that support
 -- statement-file import. Both, one, or neither may be populated.
 data BankProviderDescriptor = BankProviderDescriptor
   { providerId :: !BankProviderId,
     displayName :: !Text,
     classify :: BankTransaction -> TransactionClassification,
-    pull :: !(Maybe (PlainToken -> PullCapability)),
+    pull :: !(Maybe (ProviderCredential -> PullCapability)),
     fileImport :: !(Maybe FileImportCapability)
   }
 
--- | Live bank-API capability, constructed from a decrypted user token.
+-- | Whether a provider descriptor supports the live pull/API transport.
+providerSupportsPull :: BankProviderDescriptor -> Bool
+providerSupportsPull d = isJust d.pull
+
+-- | Whether a provider descriptor supports the statement-file-import
+-- transport.
+providerSupportsFile :: BankProviderDescriptor -> Bool
+providerSupportsFile d = isJust d.fileImport
+
+-- | Live bank-API capability, constructed from a decrypted user credential.
 -- Carries the per-request request closures; the provider name and classifier
 -- live on the owning 'BankProviderDescriptor'.
 data PullCapability = PullCapability
   { fetchAccounts :: IO (Either Text [BankAccount]),
-    fetchStatements :: BankAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction]),
+    fetchStatements :: ExternalAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction]),
     registerWebhook :: Text -> IO (Either Text ())
   }
 
--- | Statement-file import capability. Defined now, UNUSED until a later
--- spec wires an import endpoint against it — it documents the seam.
-data FileImportCapability = FileImportCapability
-  { supportedFormats :: !(NonEmpty StatementFormat),
-    parseStatement :: StatementFormat -> ByteString -> Either ParseError [BankTransaction]
-  }
+-- | Statement-file import capability: parse an uploaded statement into
+-- '[BankTransaction]'. Consumed by @POST .../connections/:id/import/file@ via
+-- 'Application.Services.ConfigurationService.getConnectionFileImport'. Keyed by
+-- the formats a provider supports; a consumer computes 'Map.keys' when it
+-- needs the supported-format list.
+newtype FileImportCapability = FileImportCapability
+  {parsers :: Map StatementFormat StatementParser}
 
 -- | File formats a provider's 'FileImportCapability' can parse.
 data StatementFormat = StatementCsv | StatementXlsx
-  deriving (Show, Eq)
+  deriving (Show, Eq, Ord)
 
 -- | Failure parsing a statement file.
 newtype ParseError = ParseError Text
   deriving (Show, Eq)
+
+-- | A single statement row that failed to parse. Structural/whole-file
+--   failures use 'ParseError' instead.
+data RowError = RowError {rowNumber :: !Int, message :: !Text}
+  deriving (Show, Eq)
+
+-- | Parse a statement of one already-selected format into per-row results:
+--   'Left ParseError' for a whole-file/structural failure; otherwise one entry
+--   per row, each 'Left RowError' (that row failed) or 'Right BankTransaction'.
+type StatementParser = ByteString -> Either ParseError [Either RowError BankTransaction]
 
 -- | Shared direction rule: money out (negative) is an expense, otherwise
 -- income. The default 'classify' implementation for providers that don't

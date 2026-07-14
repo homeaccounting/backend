@@ -257,7 +257,7 @@ banking:
   providers:
     monobank:
       enabled: false
-      api_base_url: "${MONOBANK_API_BASE_URL:-https://api.monobank.ua}"
+      api_base_url: "${BANKING_MONOBANK_API_BASE_URL:-https://api.monobank.ua}"
 ```
 
 For `test.yaml`, set `api_base_url: "http://localhost:0"` so tests that don't mock the provider fail fast with a clear connection error rather than silently hitting real Mono.

@@ -75,14 +75,14 @@ import Database.Persist
   )
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
-import Domain.Banking.Types (BankConnectionId, BankProviderId)
+import Domain.Banking.Types (BankConnectionId, BankProviderId, unExternalAccountId, unsafeExternalAccountId)
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
+    BankConnectionCredentialChanged (..),
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankConnectionTokenChanged (..),
     BankingMccExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
@@ -198,8 +198,8 @@ ConfigBankConnectionEntity sql=configuration_bank_connections
     connectionId BankConnectionId
     provider BankProviderId
     name Text
-    encryptedToken EncryptedSecret
-    tokenHint Text
+    encryptedSecret EncryptedSecret Maybe
+    secretHint Text Maybe
     enabled Bool
     UniqueConfigConn configId connectionId
     deriving Show Eq
@@ -317,11 +317,11 @@ applyConfigurationEvent globalEvent =
               void $
                 upsertBy
                   (UniqueConfigConn configId evt.connectionId)
-                  (ConfigBankConnectionEntity configId evt.connectionId evt.provider evt.name evt.encryptedToken evt.tokenHint evt.enabled)
+                  (ConfigBankConnectionEntity configId evt.connectionId evt.provider evt.name evt.encryptedSecret evt.secretHint evt.enabled)
                   [ ConfigBankConnectionEntityProvider =. evt.provider,
                     ConfigBankConnectionEntityName =. evt.name,
-                    ConfigBankConnectionEntityEncryptedToken =. evt.encryptedToken,
-                    ConfigBankConnectionEntityTokenHint =. evt.tokenHint,
+                    ConfigBankConnectionEntityEncryptedSecret =. evt.encryptedSecret,
+                    ConfigBankConnectionEntitySecretHint =. evt.secretHint,
                     ConfigBankConnectionEntityEnabled =. evt.enabled
                   ]
           BankConnectionRenamedEvent evt ->
@@ -329,12 +329,12 @@ applyConfigurationEvent globalEvent =
               updateWhere
                 [ConfigBankConnectionEntityConfigId ==. configId, ConfigBankConnectionEntityConnectionId ==. evt.connectionId]
                 [ConfigBankConnectionEntityName =. evt.name]
-          BankConnectionTokenChangedEvent evt ->
+          BankConnectionCredentialChangedEvent evt ->
             whenConfig configId ver $
               updateWhere
                 [ConfigBankConnectionEntityConfigId ==. configId, ConfigBankConnectionEntityConnectionId ==. evt.connectionId]
-                [ ConfigBankConnectionEntityEncryptedToken =. evt.encryptedToken,
-                  ConfigBankConnectionEntityTokenHint =. evt.tokenHint
+                [ ConfigBankConnectionEntityEncryptedSecret =. Just evt.encryptedSecret,
+                  ConfigBankConnectionEntitySecretHint =. Just evt.secretHint
                 ]
           BankConnectionEnabledSetEvent evt ->
             whenConfig configId ver $
@@ -348,7 +348,7 @@ applyConfigurationEvent globalEvent =
                   ConfigBankAccountMapEntityConnectionId ==. evt.connectionId
                 ]
               forM_ (Map.toList evt.accountMap) $ \(ext, acc) ->
-                insert_ (ConfigBankAccountMapEntity configId evt.connectionId ext acc)
+                insert_ (ConfigBankAccountMapEntity configId evt.connectionId (unExternalAccountId ext) acc)
           BankConnectionRemovedEvent evt ->
             whenConfig configId ver $ do
               deleteWhere
@@ -440,7 +440,7 @@ loadBanking configId = do
         []
     let accountMap' =
           Map.fromList
-            [ (a.configBankAccountMapEntityExternalAccountId, a.configBankAccountMapEntityAccountId)
+            [ (unsafeExternalAccountId a.configBankAccountMapEntityExternalAccountId, a.configBankAccountMapEntityAccountId)
             | Entity _ a <- acctRows
             ]
     pure
@@ -449,8 +449,8 @@ loadBanking configId = do
           { connectionId = c.configBankConnectionEntityConnectionId,
             provider = c.configBankConnectionEntityProvider,
             name = c.configBankConnectionEntityName,
-            encryptedToken = c.configBankConnectionEntityEncryptedToken,
-            tokenHint = c.configBankConnectionEntityTokenHint,
+            encryptedSecret = c.configBankConnectionEntityEncryptedSecret,
+            secretHint = c.configBankConnectionEntitySecretHint,
             enabled = c.configBankConnectionEntityEnabled,
             accountMap = accountMap'
           }

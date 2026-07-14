@@ -91,6 +91,8 @@ banking:
     monobank:
       enabled: false
       api_base_url: "http://localhost:0"
+    privatbank:
+      enabled: false
 
 # LLM provider (OpenAI-compatible) for natural-language transaction prompting
 llm:

@@ -52,10 +52,10 @@ import Test.Hspec.Wai
 import Testkit.AppEnv (mkAppSeeded)
 import Testkit.HspecWai (bearerHeader, getJSONAuth, jsonAuthHeaders, registerAndGetToken)
 import Web.API.ConfigurationAPI
-  ( BankingConfigurationDTO (..),
+  ( BankProviderDTO (..),
+    BankingConfigurationDTO (..),
     ConfigurationDefaultsDTO (..),
     ConfigurationResponse (..),
-    ProviderInfoDTO (..),
   )
 import Web.Types (ErrorResponse (..))
 
@@ -347,11 +347,11 @@ listProvidersSpec =
         resp <- getJSONAuth "/api/users/me/configuration/banking/providers" tok
         liftIO $ do
           simpleStatus resp `shouldBe` status200
-          case eitherDecode (simpleBody resp) :: Either String [ProviderInfoDTO] of
-            Left err -> expectationFailure $ "body is not a [ProviderInfoDTO]: " <> err
+          case eitherDecode (simpleBody resp) :: Either String [BankProviderDTO] of
+            Left err -> expectationFailure $ "body is not a [BankProviderDTO]: " <> err
             Right providers ->
               providers
-                `shouldBe` [ ProviderInfoDTO
+                `shouldBe` [ BankProviderDTO
                                { id = "monobank",
                                  displayName = "Monobank",
                                  supportsPull = True,

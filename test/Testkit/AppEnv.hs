@@ -18,22 +18,27 @@ module Testkit.AppEnv
     mkAppBankingEnabled,
     mkAppBankingEnabledSeeded,
     mkAppBankingEnabledSeededWith,
+    mkAppBankingEnabledSeededWithFileProvider,
     mkAppSeeded,
 
     -- * Stub bank provider (for HTTP-level banking specs)
     StubControls (..),
     newStubControls,
+    stubPullDescriptor,
+    stubFileOnlyDescriptor,
   )
 where
 
 import qualified Application.Services.ConfigurationService as ConfigurationService
-import Domain.Banking.Types (unsafeBankProviderId)
+import Domain.Banking.Types (unExternalAccountId, unsafeBankProviderId)
 import Infrastructure.App (AppEnv (..), BankingEnv (..), runAppM)
 import Infrastructure.Banking.Provider
   ( BankAccount,
     BankProviderDescriptor (..),
     BankTransaction (..),
+    FileImportCapability (..),
     PullCapability (..),
+    StatementFormat (..),
     TransactionClassification (..),
   )
 import Infrastructure.Banking.Registry (BankProviderRegistry, registryFromList)
@@ -136,28 +141,66 @@ newStubControls env =
     <*> newIORef Map.empty
     <*> pure env
 
--- | A single-provider 'BankProviderRegistry' (keyed @"monobank"@) whose
--- descriptor serves whatever fixtures the given 'StubControls' currently hold.
--- The @token@ passed to the pull constructor is ignored — the stub does no
--- real I/O.
-stubRegistry :: StubControls -> BankProviderRegistry
-stubRegistry controls =
+-- | A pull-capable stub provider (keyed @"monobank"@) whose descriptor serves
+-- whatever fixtures the given 'StubControls' currently hold. The @token@
+-- passed to the pull constructor is ignored — the stub does no real I/O.
+stubPullDescriptor :: StubControls -> BankProviderDescriptor
+stubPullDescriptor controls =
+  BankProviderDescriptor
+    { providerId = unsafeBankProviderId "monobank",
+      displayName = "Stub",
+      classify = \tx ->
+        if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense,
+      pull = Just $ \_token ->
+        PullCapability
+          { fetchAccounts = readIORef controls.stubAccounts,
+            fetchStatements = \accId _from _to -> do
+              m <- readIORef controls.stubStatements
+              pure $ Right (Map.findWithDefault [] (unExternalAccountId accId) m),
+            registerWebhook = \_ -> pure (Right ())
+          },
+      fileImport = Nothing
+    }
+
+-- | A file-only stub provider (keyed @"privatbank"@, pre-reserved in
+-- @config/test.yaml@ for the real provider): no pull/API transport, so
+-- connections to it have no credential. Used to exercise the
+-- token-optional-connection behaviour without waiting on the real PrivatBank
+-- provider to land, and to exercise 'ConfigurationService.getConnectionFileImport'
+-- against a real (if trivial) 'FileImportCapability' without pulling in the
+-- real CSV parser.
+stubFileOnlyDescriptor :: BankProviderDescriptor
+stubFileOnlyDescriptor =
+  BankProviderDescriptor
+    { providerId = unsafeBankProviderId "privatbank",
+      displayName = "Stub File-Only",
+      classify = \tx ->
+        if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense,
+      pull = Nothing,
+      fileImport =
+        Just
+          FileImportCapability
+            { parsers = Map.singleton StatementCsv (\_bytes -> Right [])
+            }
+    }
+
+-- | The registry backing the banking-enabled test harnesses: one pull-capable
+-- provider ('stubPullDescriptor') and one file-import-capable provider (keyed
+-- @"privatbank"@). The file provider defaults to 'stubFileOnlyDescriptor' but
+-- can be substituted — e.g. for the REAL
+-- 'Infrastructure.Banking.PrivatBank.descriptor' — by specs that need to
+-- exercise actual statement parsing end-to-end over HTTP, rather than
+-- 'stubFileOnlyDescriptor'\'s trivial always-empty parser. The substitute
+-- must still register under the @"privatbank"@ id (as the real descriptor
+-- does) for 'Testkit.HspecWai'/'BankConnectionAPISpec'-style flows that add a
+-- connection with @provider: "privatbank"@ to resolve it. Both transport
+-- shapes are thus available to any test built on
+-- 'mkAppBankingEnabledSeeded' / 'mkAppBankingEnabledSeededWith'.
+stubRegistryWith :: StubControls -> BankProviderDescriptor -> BankProviderRegistry
+stubRegistryWith controls fileDescriptor =
   registryFromList
-    [ BankProviderDescriptor
-        { providerId = unsafeBankProviderId "monobank",
-          displayName = "Stub",
-          classify = \tx ->
-            if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense,
-          pull = Just $ \_token ->
-            PullCapability
-              { fetchAccounts = readIORef controls.stubAccounts,
-                fetchStatements = \accId _from _to -> do
-                  m <- readIORef controls.stubStatements
-                  pure $ Right (Map.findWithDefault [] accId m),
-                registerWebhook = \_ -> pure (Right ())
-              },
-          fileImport = Nothing
-        }
+    [ stubPullDescriptor controls,
+      fileDescriptor
     ]
 
 -- -----------------------------------------------------------------------------
@@ -187,7 +230,17 @@ mkAppBankingEnabledSeeded = snd <$> mkAppBankingEnabledSeededWith
 -- backing the installed provider so a test can pre-set the external accounts
 -- and per-account statements the stub should serve.
 mkAppBankingEnabledSeededWith :: IO (StubControls, Application)
-mkAppBankingEnabledSeededWith = do
+mkAppBankingEnabledSeededWith = mkAppBankingEnabledSeededWithFileProvider stubFileOnlyDescriptor
+
+-- | Like 'mkAppBankingEnabledSeededWith' but lets the caller substitute the
+-- file-import-capable provider descriptor registered under @"privatbank"@ —
+-- e.g. the REAL 'Infrastructure.Banking.PrivatBank.descriptor', so a spec can
+-- exercise actual statement parsing (real CSV fixture bytes) end-to-end over
+-- HTTP instead of 'stubFileOnlyDescriptor'\'s trivial always-empty parser.
+-- The pull-capable stub ("monobank", backed by the returned 'StubControls')
+-- is still installed alongside it.
+mkAppBankingEnabledSeededWithFileProvider :: BankProviderDescriptor -> IO (StubControls, Application)
+mkAppBankingEnabledSeededWithFileProvider fileDescriptor = do
   env <- createTestAppEnv
   controls <- newStubControls env
   let cfg = env.config
@@ -203,7 +256,7 @@ mkAppBankingEnabledSeededWith = do
           }
       cfg' = cfg {banking = bankingCfg}
       bankingEnv' =
-        env.bankingEnv {bankProviderRegistry = stubRegistry controls}
+        env.bankingEnv {bankProviderRegistry = stubRegistryWith controls fileDescriptor}
       env' = env {config = cfg', bankingEnv = bankingEnv'}
   runAppM env' ConfigurationService.seedDefaultConfiguration
   pure (controls, buildApplication env')

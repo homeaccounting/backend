@@ -19,14 +19,15 @@ import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addBankConnection,
     changeDefaultCurrency,
-    getDecryptedConnectionToken,
+    getConnectionFileImport,
+    getDecryptedConnectionCredential,
     seedDefaultConfiguration,
     setBankConnectionAccountMap,
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
-import Domain.Banking.Types (unsafeBankConnectionId, unsafeBankProviderId)
+import Domain.Banking.Types (ProviderCredential (..), unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
 import Domain.Configuration.Commands (AddBankConnection (..))
 import Domain.Configuration.Defaults
@@ -42,6 +43,7 @@ import Domain.Configuration.Projection
     BankingConfiguration (..),
     ConfigurationDefaults (..),
   )
+import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( CreatedBy (..),
     Currency (..),
@@ -50,13 +52,18 @@ import Domain.Core.Types
     unsafeAccountId,
   )
 import Infrastructure.App
-  ( HasEventStore (..),
+  ( AppEnv (..),
+    BankingEnv (..),
+    HasEventStore (..),
     bankingKeyRingL,
   )
+import Infrastructure.Banking.Provider (FileImportCapability (..), StatementFormat (..))
+import Infrastructure.Banking.Registry (registryFromList)
 import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
 import Infrastructure.Eventium (applyConfigurationCommand)
 import RIO
 import Test.Hspec
+import Testkit.AppEnv (newStubControls, stubFileOnlyDescriptor, stubPullDescriptor)
 import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 spec :: Spec
@@ -65,6 +72,7 @@ spec = describe "ConfigurationService banking" $ do
   cloneBankingDefaultsSpec
   addBankConnectionSpec
   setBankConnectionAccountMapSpec
+  getConnectionFileImportSpec
 
 -- -----------------------------------------------------------------------------
 -- seedDefaultConfiguration populates banking defaults
@@ -149,8 +157,8 @@ cloneBankingDefaultsSpec =
                 { connectionId = connId,
                   provider = unsafeBankProviderId "monobank",
                   name = "Seeded",
-                  encryptedToken = enc,
-                  tokenHint = "oken",
+                  encryptedSecret = Just enc,
+                  secretHint = Just "oken",
                   enabled = True
                 }
       _ <-
@@ -182,17 +190,17 @@ cloneBankingDefaultsSpec =
                     Just conn -> do
                       conn.name `shouldBe` "Seeded"
                       conn.enabled `shouldBe` True
-                      conn.tokenHint `shouldBe` "oken"
-                      decryptSecret ring conn.encryptedToken `shouldBe` Right "u_defaulttoken"
+                      conn.secretHint `shouldBe` Just "oken"
+                      (decryptSecret ring <$> conn.encryptedSecret) `shouldBe` Just (Right "u_defaulttoken")
 
 -- -----------------------------------------------------------------------------
--- addBankConnection encrypts the token and stores connection metadata
+-- addBankConnection encrypts the credential and stores connection metadata
 -- -----------------------------------------------------------------------------
 
 addBankConnectionSpec :: Spec
 addBankConnectionSpec =
   describe "addBankConnection" $ do
-    it "stores an enabled connection with a token hint and encrypted token" $ do
+    it "stores an enabled connection with a secret hint and encrypted secret" $ do
       env <- createTestAppEnv
       runRIO env seedDefaultConfiguration
 
@@ -202,7 +210,7 @@ addBankConnectionSpec =
         Right authResult -> do
           let userId = authResult.userId
           let plaintext = "u_supersecrettoken1234"
-          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "My monobank" plaintext True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "My monobank" (Just (StaticSecret plaintext)) True
           connId <- case addResult of
             Left err -> do
               expectationFailure $ "addBankConnection failed: " <> show err
@@ -223,13 +231,14 @@ addBankConnectionSpec =
                       conn.name `shouldBe` "My monobank"
                       conn.provider `shouldBe` unsafeBankProviderId "monobank"
                       conn.enabled `shouldBe` True
-                      conn.tokenHint `shouldBe` "1234"
+                      conn.secretHint `shouldBe` Just "1234"
                       conn.accountMap `shouldBe` Map.empty
-                      -- The stored token is ciphertext that round-trips.
-                      ring <- runRIO env (view bankingKeyRingL)
-                      decryptSecret ring conn.encryptedToken `shouldBe` Right plaintext
+                      -- The stored credential is ciphertext (JSON-encoded) that
+                      -- round-trips through decrypt+decode.
+                      credResult <- runRIO env $ getDecryptedConnectionCredential userId connId
+                      credResult `shouldBe` Right (StaticSecret plaintext)
 
-    it "exposes the plaintext token via getDecryptedConnectionToken" $ do
+    it "exposes the stored credential via getDecryptedConnectionCredential" $ do
       env <- createTestAppEnv
       runRIO env seedDefaultConfiguration
       regResult <- runRIO env $ register "getconn@test.com" "password123"
@@ -237,12 +246,45 @@ addBankConnectionSpec =
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
           let userId = authResult.userId
-          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" "u_roundtrip" True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" (Just (StaticSecret "u_roundtrip")) True
           case addResult of
             Left err -> expectationFailure $ "addBankConnection failed: " <> show err
             Right connId -> do
-              tokResult <- runRIO env $ getDecryptedConnectionToken userId connId
-              tokResult `shouldBe` Right "u_roundtrip"
+              credResult <- runRIO env $ getDecryptedConnectionCredential userId connId
+              credResult `shouldBe` Right (StaticSecret "u_roundtrip")
+
+    it "returns a BankingError when the decrypted plaintext fails to decode as a credential" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "corrupt-cred@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          ring <- runRIO env (view bankingKeyRingL)
+          enc <- encryptSecret ring "not-valid-credential-json"
+          let connUuid = UUID.fromWords 9 9 9 9
+              connId = unsafeBankConnectionId connUuid
+              addCmd =
+                AddBankConnectionConfigurationCommand
+                  AddBankConnection
+                    { connectionId = connId,
+                      provider = unsafeBankProviderId "monobank",
+                      name = "Corrupt",
+                      encryptedSecret = Just enc,
+                      secretHint = Just "hint",
+                      enabled = True
+                    }
+          _ <-
+            runRIO env $ do
+              writer <- view eventStoreWriterL
+              reader <- view eventStoreReaderL
+              liftIO $ applyConfigurationCommand writer reader id (unConfigurationId defaultConfigurationId) addCmd
+          result <- runRIO env $ getDecryptedConnectionCredential userId connId
+          case result of
+            Left (BankingError _) -> pure ()
+            Left otherErr -> expectationFailure $ "expected BankingError, got: " <> show otherErr
+            Right _ -> expectationFailure "expected Left BankingError, got Right"
 
 -- -----------------------------------------------------------------------------
 -- setBankConnectionAccountMap validates account ownership
@@ -259,7 +301,7 @@ setBankConnectionAccountMapSpec =
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
           let userId = authResult.userId
-          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" "u_tok" True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" (Just (StaticSecret "u_tok")) True
           case addResult of
             Left err -> expectationFailure $ "addBankConnection failed: " <> show err
             Right connId -> do
@@ -267,7 +309,7 @@ setBankConnectionAccountMapSpec =
               let foreignAcc = unsafeAccountId foreignUuid
               result <-
                 runRIO env
-                  $ setBankConnectionAccountMap userId connId (Map.singleton "ext-1" foreignAcc)
+                  $ setBankConnectionAccountMap userId connId (Map.singleton (unsafeExternalAccountId "ext-1") foreignAcc)
               result `shouldSatisfy` isLeft
 
     it "accepts and persists a map targeting an owned account" $ do
@@ -278,7 +320,7 @@ setBankConnectionAccountMapSpec =
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
           let userId = authResult.userId
-          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" "u_tok" True
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "C" (Just (StaticSecret "u_tok")) True
           case addResult of
             Left err -> expectationFailure $ "addBankConnection failed: " <> show err
             Right connId -> do
@@ -290,7 +332,7 @@ setBankConnectionAccountMapSpec =
                 Just ud -> pure ud.externalAccountId
               result <-
                 runRIO env
-                  $ setBankConnectionAccountMap userId connId (Map.singleton "ext-1" ownedAcc)
+                  $ setBankConnectionAccountMap userId connId (Map.singleton (unsafeExternalAccountId "ext-1") ownedAcc)
               result `shouldSatisfy` isRight
 
               maybeUser2 <- runDbIn env (getUser userId)
@@ -303,4 +345,73 @@ setBankConnectionAccountMapSpec =
                     Just cfg ->
                       case Map.lookup connId cfg.banking.connections of
                         Nothing -> expectationFailure "Connection not found"
-                        Just conn -> conn.accountMap `shouldBe` Map.singleton "ext-1" ownedAcc
+                        Just conn -> conn.accountMap `shouldBe` Map.singleton (unsafeExternalAccountId "ext-1") ownedAcc
+
+-- -----------------------------------------------------------------------------
+-- getConnectionFileImport resolves a connection's file-import transport
+-- -----------------------------------------------------------------------------
+
+-- | Build a test env whose bank provider registry carries both stub
+-- descriptors ('Testkit.AppEnv.stubPullDescriptor' keyed @"monobank"@ and
+-- 'Testkit.AppEnv.stubFileOnlyDescriptor' keyed @"privatbank"@), so a single
+-- env exercises both transport shapes.
+mkFileImportTestEnv :: IO AppEnv
+mkFileImportTestEnv = do
+  env <- createTestAppEnv
+  controls <- newStubControls env
+  let reg = registryFromList [stubPullDescriptor controls, stubFileOnlyDescriptor]
+  pure env {bankingEnv = env.bankingEnv {bankProviderRegistry = reg}}
+
+getConnectionFileImportSpec :: Spec
+getConnectionFileImportSpec =
+  describe "getConnectionFileImport" $ do
+    it "resolves a file-only provider's connection to its classify+FileImportCapability" $ do
+      env <- mkFileImportTestEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "fileimport-ok@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "privatbank") "Privat" Nothing True
+          case addResult of
+            Left err -> expectationFailure $ "addBankConnection failed: " <> show err
+            Right connId -> do
+              result <- runRIO env $ getConnectionFileImport userId connId
+              case result of
+                Left err -> expectationFailure $ "getConnectionFileImport failed: " <> show err
+                Right (_classify, cap) ->
+                  Map.member StatementCsv cap.parsers `shouldBe` True
+
+    it "rejects a pull-only provider's connection with a no-file-transport BankingError" $ do
+      env <- mkFileImportTestEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "fileimport-nopull@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          addResult <- runRIO env $ addBankConnection userId (unsafeBankProviderId "monobank") "Mono" Nothing True
+          case addResult of
+            Left err -> expectationFailure $ "addBankConnection failed: " <> show err
+            Right connId -> do
+              result <- runRIO env $ getConnectionFileImport userId connId
+              case result of
+                Left (BankingError _) -> pure ()
+                Left otherErr -> expectationFailure $ "expected BankingError, got: " <> show otherErr
+                Right _ -> expectationFailure "expected Left BankingError, got Right"
+
+    it "returns BankConnectionNotFound for an unknown connection id" $ do
+      env <- mkFileImportTestEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "fileimport-unknown@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          unknownUuid <- UUIDv4.nextRandom
+          result <- runRIO env $ getConnectionFileImport userId (unsafeBankConnectionId unknownUuid)
+          case result of
+            Left BankConnectionNotFound -> pure ()
+            Left otherErr -> expectationFailure $ "expected BankConnectionNotFound, got: " <> show otherErr
+            Right _ -> expectationFailure "expected Left BankConnectionNotFound, got Right"

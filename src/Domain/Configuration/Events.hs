@@ -36,7 +36,7 @@ module Domain.Configuration.Events
     BooksClosedThroughSet (..),
     BankConnectionAdded (..),
     BankConnectionRenamed (..),
-    BankConnectionTokenChanged (..),
+    BankConnectionCredentialChanged (..),
     BankConnectionEnabledSet (..),
     BankConnectionAccountMapSet (..),
     BankConnectionRemoved (..),
@@ -91,7 +91,7 @@ configurationEvents =
     ''BooksClosedThroughSet,
     ''BankConnectionAdded,
     ''BankConnectionRenamed,
-    ''BankConnectionTokenChanged,
+    ''BankConnectionCredentialChanged,
     ''BankConnectionEnabledSet,
     ''BankConnectionAccountMapSet,
     ''BankConnectionRemoved
@@ -205,7 +205,9 @@ newtype BooksClosedThroughSet = BooksClosedThroughSet
 -- | Event emitted when a new bank connection is added.
 --
 -- The account map starts empty; it is populated later via
--- 'BankConnectionAccountMapSet'.
+-- 'BankConnectionAccountMapSet'. The credential is OPTIONAL: connections to a
+-- provider with no pull/API transport (e.g. a file-only provider) carry no
+-- secret.
 data BankConnectionAdded = BankConnectionAdded
   { -- | Unique identifier for the new connection
     connectionId :: BankConnectionId,
@@ -213,10 +215,10 @@ data BankConnectionAdded = BankConnectionAdded
     provider :: BankProviderId,
     -- | User-facing display name
     name :: BankConnectionName,
-    -- | The encrypted provider token
-    encryptedToken :: EncryptedSecret,
-    -- | Non-secret hint to help the user recognise the token
-    tokenHint :: Text,
+    -- | The encrypted provider secret, if any.
+    encryptedSecret :: Maybe EncryptedSecret,
+    -- | Non-secret hint to help the user recognise the secret, if any.
+    secretHint :: Maybe Text,
     -- | Whether the connection is enabled for syncing
     enabled :: Bool
   }
@@ -229,11 +231,11 @@ data BankConnectionRenamed = BankConnectionRenamed
   }
   deriving (Show, Eq)
 
--- | Event emitted when a bank connection's token is changed.
-data BankConnectionTokenChanged = BankConnectionTokenChanged
+-- | Event emitted when a bank connection's credential is changed.
+data BankConnectionCredentialChanged = BankConnectionCredentialChanged
   { connectionId :: BankConnectionId,
-    encryptedToken :: EncryptedSecret,
-    tokenHint :: Text
+    encryptedSecret :: EncryptedSecret,
+    secretHint :: Text
   }
   deriving (Show, Eq)
 
@@ -276,7 +278,7 @@ deriveJSON defaultOptions ''BankingMccExpenseCategoryMapSet
 deriveJSON defaultOptions ''BooksClosedThroughSet
 deriveJSON defaultOptions ''BankConnectionAdded
 deriveJSON defaultOptions ''BankConnectionRenamed
-deriveJSON defaultOptions ''BankConnectionTokenChanged
+deriveJSON defaultOptions ''BankConnectionCredentialChanged
 deriveJSON defaultOptions ''BankConnectionEnabledSet
 deriveJSON defaultOptions ''BankConnectionAccountMapSet
 deriveJSON defaultOptions ''BankConnectionRemoved

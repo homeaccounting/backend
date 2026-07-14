@@ -6,7 +6,7 @@ module Infrastructure.Banking.MonobankSpec (spec) where
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Domain.Banking.Types (unBankProviderId)
+import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
 import Domain.Core.Types (unsafeExternalTransactionId)
 import Infrastructure.Banking.Monobank (descriptor)
 import Infrastructure.Banking.Monobank.Internal
@@ -62,7 +62,7 @@ spec = describe "Monobank Provider" $ do
       case eitherDecode body :: Either String MonoStatement of
         Left err -> expectationFailure ("decode failed: " <> err)
         Right stmt ->
-          case toProviderTransaction "acc-1" stmt of
+          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.mcc `shouldBe` Nothing
 
@@ -73,7 +73,7 @@ spec = describe "Monobank Provider" $ do
       case eitherDecode body :: Either String MonoStatement of
         Left err -> expectationFailure ("decode failed: " <> err)
         Right stmt ->
-          case toProviderTransaction "acc-1" stmt of
+          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.notes `shouldBe` Nothing
 
@@ -118,7 +118,7 @@ mkTx :: Maybe Text -> Rational -> BankTransaction
 mkTx mccVal amt =
   BankTransaction
     { externalId = unsafeExternalTransactionId "test-tx",
-      accountId = "test-acc",
+      externalAccountId = unsafeExternalAccountId "test-acc",
       time = posixSecondsToUTCTime 0,
       amount = amt,
       currencyCode = 980,

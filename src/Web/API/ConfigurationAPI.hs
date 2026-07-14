@@ -49,7 +49,7 @@ module Web.API.ConfigurationAPI
     UpdateConnectionRequest (..),
     ChangeTokenRequest (..),
     SetAccountMapRequest (..),
-    ProviderInfoDTO (..),
+    BankProviderDTO (..),
 
     -- * Server
     configurationServer,
@@ -68,11 +68,13 @@ import Data.UUID (UUID)
 import Domain.Banking.Types
   ( BankConnectionId,
     BankProviderId,
-    ExternalAccountId,
+    ProviderCredential (..),
     mkBankConnectionId,
     mkBankProviderId,
+    mkExternalAccountId,
     unBankConnectionId,
     unBankProviderId,
+    unExternalAccountId,
   )
 import Domain.Configuration.Projection
   ( BankConnection (..),
@@ -93,8 +95,12 @@ import Domain.Core.Types
     unEntryName,
   )
 import Infrastructure.App (AppM, HasBankProviderRegistry (..), bankingFeatureEnabled, runDb)
-import Infrastructure.Banking.Provider (BankProviderDescriptor (..))
-import Infrastructure.Banking.Registry (registryBankProviderIds)
+import Infrastructure.Banking.Provider
+  ( BankProviderDescriptor (..),
+    providerSupportsFile,
+    providerSupportsPull,
+  )
+import Infrastructure.Banking.Registry (lookupProvider, registryBankProviderIds)
 import RIO
 import Servant
 import Web.API.BankingAPI (requireBankingEnabled)
@@ -270,7 +276,7 @@ type ConfigurationAPI =
       :> "configuration"
       :> "banking"
       :> "providers"
-      :> Get '[JSON] [ProviderInfoDTO]
+      :> Get '[JSON] [BankProviderDTO]
 
 -- -----------------------------------------------------------------------------
 -- Request/Response Types
@@ -314,7 +320,7 @@ instance FromJSON BankConnectionDTO
 -- lists every provider in the registry — compiled-in AND enabled — for the
 -- account-creation UI to offer, independent of the operational
 -- @requireBankingEnabled@ gate.
-data ProviderInfoDTO = ProviderInfoDTO
+data BankProviderDTO = BankProviderDTO
   { id :: Text,
     displayName :: Text,
     supportsPull :: Bool,
@@ -322,21 +328,23 @@ data ProviderInfoDTO = ProviderInfoDTO
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON ProviderInfoDTO
+instance ToJSON BankProviderDTO
 
-instance FromJSON ProviderInfoDTO
+instance FromJSON BankProviderDTO
 
 -- | Convert a registered 'BankProviderDescriptor' to its wire DTO.
-toProviderInfoDTO :: BankProviderDescriptor -> ProviderInfoDTO
-toProviderInfoDTO d =
-  ProviderInfoDTO
+toBankProviderDTO :: BankProviderDescriptor -> BankProviderDTO
+toBankProviderDTO d =
+  BankProviderDTO
     { id = unBankProviderId d.providerId,
       displayName = d.displayName,
-      supportsPull = isJust d.pull,
-      supportsFile = isJust d.fileImport
+      supportsPull = providerSupportsPull d,
+      supportsFile = providerSupportsFile d
     }
 
--- | Convert a domain 'BankConnection' to its wire DTO. The token is omitted.
+-- | Convert a domain 'BankConnection' to its wire DTO. The token is omitted;
+-- 'tokenSet' reports whether one is stored. A file-only connection (no
+-- credential) reports @tokenSet = False@ and an empty 'tokenHint'.
 toBankConnectionDTO :: BankConnection -> BankConnectionDTO
 toBankConnectionDTO c =
   BankConnectionDTO
@@ -344,9 +352,9 @@ toBankConnectionDTO c =
       provider = unBankProviderId c.provider,
       name = c.name,
       enabled = c.enabled,
-      tokenSet = True,
-      tokenHint = c.tokenHint,
-      accountMap = Map.map unAccountId c.accountMap
+      tokenSet = isJust c.encryptedSecret,
+      tokenHint = fromMaybe "" c.secretHint,
+      accountMap = Map.mapKeys unExternalAccountId (Map.map unAccountId c.accountMap)
     }
 
 -- | Convert domain BankingConfiguration to its wire DTO.
@@ -503,10 +511,14 @@ instance ToJSON CloseBooksThroughRequest
 instance FromJSON CloseBooksThroughRequest
 
 -- | Body for @POST …/configuration/banking/connections@.
+--
+-- @token@ is OPTIONAL: it is required only when the chosen provider supports
+-- the pull/API transport ('BankProviderDescriptor.pull' is present); a
+-- file-only provider has no credential, so the field may be absent or null.
 data AddConnectionRequest = AddConnectionRequest
   { provider :: Text,
     name :: Text,
-    token :: Text,
+    token :: Maybe Text,
     enabled :: Bool
   }
   deriving (Show, Eq, Generic)
@@ -768,12 +780,22 @@ parseBankProvider known raw =
 --
 -- Adds a bank connection and returns its freshly-built DTO (201). The token is
 -- accepted in the request body, encrypted by the service, and never echoed.
+--
+-- The token is required only when the resolved provider supports the
+-- pull/API transport; a file-only provider is accepted with no token
+-- ('req.token == Nothing'). A missing token for a pull-capable provider is
+-- rejected as a field validation error.
 addConnectionHandler :: AuthenticatedUser -> AddConnectionRequest -> AppM BankConnectionDTO
 addConnectionHandler user req = do
   requireBankingEnabled
   reg <- view bankProviderRegistryL
   provider <- parseBankProvider (registryBankProviderIds reg) req.provider
-  result <- ConfigService.addBankConnection user.userId provider req.name req.token req.enabled
+  case lookupProvider provider reg of
+    Just desc
+      | providerSupportsPull desc && isNothing req.token ->
+          throwValidation "token" "token is required for a provider that supports live sync"
+    _ -> pure ()
+  result <- ConfigService.addBankConnection user.userId provider req.name (StaticSecret <$> req.token) req.enabled
   case result of
     Left err -> throwDomainError err
     Right connId -> do
@@ -804,7 +826,7 @@ changeConnectionTokenHandler :: AuthenticatedUser -> UUID -> ChangeTokenRequest 
 changeConnectionTokenHandler user connUuid req = do
   requireBankingEnabled
   connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
-  result <- ConfigService.changeBankConnectionToken user.userId connId req.token
+  result <- ConfigService.changeBankConnectionCredential user.userId connId (StaticSecret req.token)
   case result of
     Left err -> throwDomainError err
     Right () -> pure NoContent
@@ -829,9 +851,14 @@ setConnectionAccountsHandler user connUuid req = do
   requireBankingEnabled
   connId <- validateFieldCtx "connId" (tshow connUuid) (mkBankConnectionId connUuid)
   accountMap <-
-    Map.traverseWithKey
-      (\_extId uuid -> validateFieldCtx "accountMap" (tshow uuid) (mkAccountId uuid))
-      (toExternalKeyedMap req.accountMap)
+    Map.fromList
+      <$> traverse
+        ( \(extIdText, uuid) -> do
+            extId <- validateFieldCtx "accountMap" extIdText (mkExternalAccountId extIdText)
+            accId <- validateFieldCtx "accountMap" (tshow uuid) (mkAccountId uuid)
+            pure (extId, accId)
+        )
+        (Map.toList req.accountMap)
   result <- ConfigService.setBankConnectionAccountMap user.userId connId accountMap
   case result of
     Left err -> throwDomainError err
@@ -843,16 +870,10 @@ setConnectionAccountsHandler user connUuid req = do
 -- with its capability flags. Deliberately NOT behind 'requireBankingEnabled':
 -- it's just names/capabilities, and the account-creation UI needs this
 -- regardless of whether banking sync is globally on.
-listProvidersHandler :: AuthenticatedUser -> AppM [ProviderInfoDTO]
+listProvidersHandler :: AuthenticatedUser -> AppM [BankProviderDTO]
 listProvidersHandler _user = do
   reg <- view bankProviderRegistryL
-  pure $ map toProviderInfoDTO (Map.elems reg)
-
--- | Re-key a @Map Text UUID@ wire map as @Map ExternalAccountId UUID@.
--- 'ExternalAccountId' is a 'Text' alias, so this is identity at runtime but
--- documents the conversion at the type level.
-toExternalKeyedMap :: Map Text UUID -> Map ExternalAccountId UUID
-toExternalKeyedMap = id
+  pure $ map toBankProviderDTO (Map.elems reg)
 
 -- | Load a single bank connection for the user, or 'BankConnectionNotFound'.
 loadConnection :: UserId -> BankConnectionId -> AppM BankConnection
