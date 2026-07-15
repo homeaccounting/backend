@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
@@ -36,6 +37,9 @@ module Application.Services.BankImportService
     importTransaction,
     ImportResult (..),
     AccountImportResult (..),
+    ImportOutcome (..),
+    SkipReason (..),
+    renderSkipReason,
   )
 where
 
@@ -88,18 +92,54 @@ import RIO
 -- Result Types
 -- -----------------------------------------------------------------------------
 
+-- | Why a bank transaction was intentionally not committed (distinct from a
+-- write failure). Each constructor carries the human context that was
+-- previously discarded to a log line.
+data SkipReason
+  = -- | Deduplication hit — the transaction is already imported.
+    AlreadyImported
+  | -- | The transaction's external account has no entry in the caller's link.
+    Unmapped
+  | -- | The numeric currency code could not be mapped to a known currency.
+    UnsupportedCurrency !Text
+  | -- | 'mkMoney' rejected the amount (rare).
+    InvalidAmount !Text
+  | -- | The local account's currency differs from the transaction's currency.
+    CurrencyMismatch !Text
+  deriving (Show, Eq)
+
+-- | The outcome of attempting to import a single bank transaction.
+data ImportOutcome
+  = Imported !TransactionId
+  | Skipped !SkipReason
+  | Failed !DomainError
+  deriving (Show, Eq)
+
+-- | Render a skip reason as the user-facing text stored in
+-- 'AccountImportResult.skipped' — mirrors how 'failed' renders a 'DomainError'
+-- via 'renderDomainError'.
+renderSkipReason :: SkipReason -> Text
+renderSkipReason = \case
+  AlreadyImported -> "already imported"
+  Unmapped -> "no local account mapping for this transaction"
+  UnsupportedCurrency msg -> "unsupported currency: " <> msg
+  InvalidAmount msg -> "invalid amount: " <> msg
+  CurrencyMismatch msg -> "currency mismatch: " <> msg
+
 -- | Per-account outcome of an import call.
 --
--- Captures both the IDs of successfully imported transactions and the per-tx
--- failures. @failed@ holds human-readable messages (rendered from
--- 'DomainError' via 'renderDomainError', plus any top-level fetch failure).
--- Using 'Text' keeps the type JSON-serializable without dragging 'DomainError'
--- into the response contract.
+-- Captures the IDs of successfully imported transactions, the per-tx skips
+-- (with their reasons), and the per-tx failures. @skipped@ and @failed@ hold
+-- human-readable messages (rendered from 'SkipReason' via 'renderSkipReason'
+-- and from 'DomainError' via 'renderDomainError' respectively, plus any
+-- top-level fetch failure in @failed@). Using 'Text' keeps the type
+-- JSON-serializable without dragging 'DomainError' or 'SkipReason' into the
+-- response contract.
 data AccountImportResult = AccountImportResult
   { externalAccountId :: !ExternalAccountId,
     localAccountId :: !AccountId,
     succeeded :: ![TransactionId],
-    skipped :: !Int,
+    skipped :: ![Text],
     failed :: ![Text]
   }
   deriving (Show, Eq, Generic)
@@ -182,7 +222,7 @@ importConnection classify pull userId accountLink fromTime toTime =
             { externalAccountId = extAccId,
               localAccountId = localAccId,
               succeeded = [],
-              skipped = 0,
+              skipped = [],
               failed = [err]
             },
           []
@@ -205,7 +245,7 @@ importConnection classify pull userId accountLink fromTime toTime =
                 { externalAccountId = extAccId,
                   localAccountId = localAccId,
                   succeeded = [],
-                  skipped = 0,
+                  skipped = [],
                   failed = []
                 }
       pure (accountResult, result.unresolved)
@@ -248,7 +288,7 @@ importMany classify userId accountLink txns = do
 -- order (matching the 'ImportResult' Haddock contract) rather than the
 -- lexicographic-by-id order a plain 'Map.elems' would yield.
 groupAccountResults ::
-  [(ExternalAccountId, AccountId, Either DomainError (Maybe TransactionId))] ->
+  [(ExternalAccountId, AccountId, ImportOutcome)] ->
   [AccountImportResult]
 groupAccountResults entries =
   map (grouped Map.!) orderedKeys
@@ -260,28 +300,28 @@ groupAccountResults entries =
         [(extAccId, toAccountResult extAccId localAccId outcome) | (extAccId, localAccId, outcome) <- entries]
     toAccountResult extAccId localAccId outcome =
       case outcome of
-        Left err ->
+        Failed err ->
           AccountImportResult
             { externalAccountId = extAccId,
               localAccountId = localAccId,
               succeeded = [],
-              skipped = 0,
+              skipped = [],
               failed = [renderDomainError err]
             }
-        Right Nothing ->
+        Skipped reason ->
           AccountImportResult
             { externalAccountId = extAccId,
               localAccountId = localAccId,
               succeeded = [],
-              skipped = 1,
+              skipped = [renderSkipReason reason],
               failed = []
             }
-        Right (Just txId) ->
+        Imported txId ->
           AccountImportResult
             { externalAccountId = extAccId,
               localAccountId = localAccId,
               succeeded = [txId],
-              skipped = 0,
+              skipped = [],
               failed = []
             }
     -- 'Map.fromListWith merge' calls @merge new old@ for a colliding key, so
@@ -290,7 +330,7 @@ groupAccountResults entries =
     merge new old =
       old
         { succeeded = old.succeeded ++ new.succeeded,
-          skipped = old.skipped + new.skipped,
+          skipped = old.skipped ++ new.skipped,
           failed = old.failed ++ new.failed
         }
 
@@ -413,46 +453,48 @@ importTransaction ::
   UserId ->
   [(ExternalAccountId, AccountId)] ->
   BankTransaction ->
-  AppM (Either DomainError (Maybe TransactionId))
+  AppM ImportOutcome
 importTransaction classify userId accountLink tx = do
   alreadyImported <- runDb $ isImported tx.externalId
   if alreadyImported
     then do
       logDebug $ "Skipping already-imported transaction: " <> display tx.externalId
-      pure (Right Nothing)
+      pure (Skipped AlreadyImported)
     else case lookup tx.externalAccountId accountLink of
       Nothing -> do
         logWarn $ "No account mapping for external account: " <> display tx.externalAccountId
-        pure (Right Nothing)
+        pure (Skipped Unmapped)
       Just localAccId -> importMatchedTransaction classify userId localAccId tx
 
 -- | Continue an import after the cheap dispatcher checks have matched the
--- external account. Handles the two remaining @Right Nothing@ skip-paths
--- (unsupported currency code, money construction failure) before delegating
--- the genuinely-fallible work to 'commitImport'.
+-- external account. Handles the two remaining skip-paths (unsupported currency
+-- code → 'UnsupportedCurrency', money construction failure → 'InvalidAmount')
+-- and the missing-user failure before delegating the genuinely-fallible work to
+-- 'commitImport'. A 'Left' from 'commitImport' becomes a 'Failed' outcome.
 importMatchedTransaction ::
   (BankTransaction -> TransactionClassification) ->
   UserId ->
   AccountId ->
   BankTransaction ->
-  AppM (Either DomainError (Maybe TransactionId))
+  AppM ImportOutcome
 importMatchedTransaction classify userId localAccId tx = do
   maybeUser <- runDb (UserRM.getUser userId)
   case maybeUser of
     Nothing -> do
       logWarn $ "User not found: " <> displayShow userId
-      pure (Left (NotFound "User" (tshow userId)))
+      pure (Failed (NotFound "User" (tshow userId)))
     Just userData ->
       case currencyFromNumericCode tx.currencyCode of
         Left err -> do
           logWarn $ "Unsupported currency code " <> displayShow tx.currencyCode <> ": " <> display err
-          pure (Right Nothing)
+          pure (Skipped (UnsupportedCurrency err))
         Right currency ->
           case mkMoney currency (abs tx.amount) of
             Left err -> do
               logWarn $ "Failed to create money: " <> display err
-              pure (Right Nothing)
-            Right money -> runExceptT (commitImport classify userId userData localAccId tx money)
+              pure (Skipped (InvalidAmount err))
+            Right money ->
+              either Failed id <$> runExceptT (commitImport classify userId userData localAccId tx money)
 
 -- | Commit the genuinely-fallible suffix of the import: configuration lookup,
 -- category resolution, and transfer initiation. All errors short-circuit via
@@ -464,7 +506,7 @@ commitImport ::
   AccountId ->
   BankTransaction ->
   Money ->
-  ExceptT DomainError AppM (Maybe TransactionId)
+  ExceptT DomainError AppM ImportOutcome
 commitImport classify userId userData localAccId tx money = do
   let externalAccId = userData.externalAccountId
       direction = classify tx
@@ -494,7 +536,18 @@ commitImport classify userId userData localAccId tx money = do
         <> ". Map this card to a "
         <> displayShow txCurrency
         <> " account."
-      pure Nothing
+      pure
+        ( Skipped
+            ( CurrencyMismatch
+                ( "account '"
+                    <> localData.name
+                    <> "' is "
+                    <> tshow localCurrency
+                    <> " but the transaction is "
+                    <> tshow txCurrency
+                )
+            )
+        )
     else commitMatchingCurrencyImport userId externalAccId localAccId tx money direction
 
 -- | Continue an import once the LOCAL account's currency has been confirmed to
@@ -508,7 +561,7 @@ commitMatchingCurrencyImport ::
   BankTransaction ->
   Money ->
   TransactionClassification ->
-  ExceptT DomainError AppM (Maybe TransactionId)
+  ExceptT DomainError AppM ImportOutcome
 commitMatchingCurrencyImport userId externalAccId localAccId tx money direction = do
   cfg <- ExceptT $ do
     result <- ConfigurationService.getConfigurationForUser userId
@@ -563,7 +616,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
   let cmd = buildTransferCmd userId tx sourceAccId targetAccId srcAmt tgtAmt rate transactionType
   (txId, _) <- ExceptT (TransactionService.initiateTransaction cmd)
   lift $ logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
-  pure (Just txId)
+  pure (Imported txId)
   where
     classifyEndpoints localAcc externalAcc dir allocs =
       case dir of

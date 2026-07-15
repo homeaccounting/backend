@@ -31,6 +31,7 @@ import Application.Services.ConfigurationService
   )
 import Application.Services.Prompt.Transaction.Intent
   ( PromptContext (..),
+    TransactionDecodeError (..),
     TransactionIntent,
   )
 import Application.Services.Prompt.Transaction.Resolve
@@ -132,13 +133,17 @@ entriesOfDict dictId cfg =
 -- @Left DomainError@ is reserved for a whole-request failure (none in the
 -- normal per-transaction path). This layer never throws or maps to HTTP.
 runRecordTransactions ::
-  UserId -> ResolveContext -> Text -> [TransactionIntent] -> AppM (Either DomainError PromptResult)
-runRecordTransactions uid rctx userText tis = do
-  outcomes <- traverse (uncurry runOne) (zip [0 ..] tis)
+  UserId -> ResolveContext -> Text -> [Either TransactionDecodeError TransactionIntent] -> AppM (Either DomainError PromptResult)
+runRecordTransactions uid rctx userText rows = do
+  outcomes <- traverse (uncurry runOne) (zip [0 ..] rows)
   pure (Right (TransactionsRecorded {succeeded = rights outcomes, failed = lefts outcomes}))
   where
-    runOne :: Int -> TransactionIntent -> AppM (Either FailedTransaction RecordedTransaction)
-    runOne idx ti =
+    runOne :: Int -> Either TransactionDecodeError TransactionIntent -> AppM (Either FailedTransaction RecordedTransaction)
+    -- A transaction that failed to decode: report it at its list position
+    -- ('index', assigned here by the enumeration), don't block the others.
+    runOne idx (Left (TransactionDecodeError msg)) =
+      pure (Left (FailedTransaction {index = idx, reason = msg}))
+    runOne idx (Right ti) =
       case resolveIntent rctx userText ti of
         Left (ResolveError f m) ->
           pure (Left (FailedTransaction {index = idx, reason = f <> ": " <> m}))

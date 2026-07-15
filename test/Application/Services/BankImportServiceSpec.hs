@@ -23,7 +23,14 @@ import Application.ReadModels.BankImportReadModel
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.Services.AccountService (createAccount)
-import Application.Services.BankImportService (AccountImportResult (..), ImportResult (..), importMany, importTransaction)
+import Application.Services.BankImportService
+  ( AccountImportResult (..),
+    ImportOutcome (..),
+    ImportResult (..),
+    SkipReason (..),
+    importMany,
+    importTransaction,
+  )
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
@@ -76,7 +83,6 @@ import Testkit.Helpers
     mockMoneyWith,
     mockTransactionId,
     mockUserId,
-    shouldBeRight,
     singletonExpense,
     singletonIncome,
   )
@@ -103,6 +109,11 @@ mockClassify tx =
   if tx.amount >= 0
     then ClassifiedIncome
     else ClassifiedExpense
+
+-- | Assert an outcome imported a transaction and return its id; fail otherwise.
+expectImported :: ImportOutcome -> IO TransactionId
+expectImported (Imported i) = pure i
+expectImported other = expectationFailure ("expected Imported, got " <> show other) >> error "unreachable"
 
 -- | Create a bank transaction for testing. Amount is in major units.
 mkTestTransaction :: Rational -> Text -> BankTransaction
@@ -217,9 +228,8 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let holdTx = mkHoldTransaction (-50) "tx-hold"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink holdTx
-      shouldBeRight result
       case result of
-        Right (Just _) -> pure ()
+        Imported _ -> pure ()
         _ -> expectationFailure "expected hold transaction to be imported"
 
     it "skips already-imported transactions (dedup)" $ do
@@ -230,14 +240,13 @@ spec = describe "BankImportService" $ do
       -- First import should succeed
       let tx = mkTestTransaction (-50) "tx-dedup-1"
       result1 <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result1
       case result1 of
-        Right (Just _) -> pure ()
+        Imported _ -> pure ()
         _ -> expectationFailure "expected successful import"
 
       -- Second import of the same transaction should be skipped
       result2 <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      result2 `shouldBe` Right Nothing
+      result2 `shouldBe` Skipped AlreadyImported
 
     it "skips transactions with unmatched account" $ do
       (env, bankAccId) <- setupTestEnv
@@ -246,7 +255,7 @@ spec = describe "BankImportService" $ do
       -- Transaction with a different account ID that has no mapping
       let unmatchedTx = mkTestTransactionWithAccount (-50) "tx-unmatched" "unknown-acc"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink unmatchedTx
-      result `shouldBe` Right Nothing
+      result `shouldBe` Skipped Unmapped
 
     it "imports an expense transaction with correct fields" $ do
       (env, bankAccId) <- setupTestEnv
@@ -255,10 +264,7 @@ spec = describe "BankImportService" $ do
       -- Negative amount = expense (50.00 UAH in major units), no MCC → defaultExpenseCategory
       let tx = mkTestTransaction (-50) "tx-expense-1"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       -- Verify the transaction was created with correct fields
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
@@ -281,10 +287,7 @@ spec = describe "BankImportService" $ do
       -- Positive amount = income (100.00 UAH in major units)
       let tx = mkTestTransaction 100 "tx-income-1"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       -- Verify the transaction was created with correct fields
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
@@ -346,10 +349,7 @@ spec = describe "BankImportService" $ do
       -- originalAmount = Nothing indicates same-currency tx
       let tx = (mkTestTransaction (-50) "tx-same-ccy") {originalAmount = Nothing}
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
@@ -369,10 +369,7 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = (mkTestTransaction 1000 "tx-cross-ccy") {originalAmount = Just 25}
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
@@ -382,6 +379,17 @@ spec = describe "BankImportService" $ do
       txData.sourceAmount `shouldBe` txData.targetAmount
       txData.sourceAmount `shouldBe` fromRight' (mkMoney UAH 1000)
 
+    it "skips a transaction whose currency differs from the mapped local account" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          -- The mapped local account is UAH, but the transaction is USD (840).
+          tx = (mkTestTransaction (-50) "tx-ccy-mismatch") {currencyCode = 840}
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      case result of
+        Skipped (CurrencyMismatch _) -> pure ()
+        _ -> expectationFailure ("expected a currency-mismatch skip, got " <> show result)
+
   describe "category resolution (Phase 2)" $ do
     it "maps a known MCC to the configured category id" $ do
       -- MCC 5411 → expense.food in the default MCC map
@@ -390,10 +398,7 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransactionWithMcc (-50) "tx-mcc-food" "5411"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
@@ -408,10 +413,7 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransactionWithMcc (-50) "tx-mcc-unknown" "9999"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
@@ -426,10 +428,7 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransaction (-50) "tx-no-mcc"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of
@@ -501,10 +500,10 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransaction (-50) "tx-no-config"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      -- Config not found → Left error
+      -- Config not found → Failed outcome
       case result of
-        Left _ -> pure () -- expected: some domain error
-        Right _ -> expectationFailure "expected Left when configuration is missing"
+        Failed _ -> pure () -- expected: some domain error
+        _ -> expectationFailure "expected Failed when configuration is missing"
 
     it "income direction uses defaultIncomeCategory" $ do
       -- Positive amount, banking.defaultIncomeCategory = income.other (from seed)
@@ -513,10 +512,7 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
       let tx = mkTestTransaction 200 "tx-income-cat"
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
-      shouldBeRight result
-      txId <- case result of
-        Right (Just i) -> pure i
-        _ -> expectationFailure "expected successful import" >> error "unreachable"
+      txId <- expectImported result
 
       maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
       txData <- case maybeTxData of

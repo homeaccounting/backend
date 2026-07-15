@@ -260,7 +260,7 @@ singleAccountImportSpec =
           Just row -> do
             KeyMap.lookup "localAccountId" row `shouldBe` Just (String accId)
             KeyMap.lookup "importedCount" row `shouldBe` Just (Number 103)
-            KeyMap.lookup "skippedCount" row `shouldBe` Just (Number 0)
+            KeyMap.lookup "skipped" row `shouldBe` Just (Array mempty)
             KeyMap.lookup "failureCount" row `shouldBe` Just (Number 0)
         -- The transactions actually landed in the event store: the read
         -- model shows 103 rows, and filtering by the mapped bank account
@@ -305,7 +305,9 @@ idempotentReuploadSpec =
           Nothing -> expectationFailure $ "expected an account row for " <> T.unpack fixtureCard
           Just row -> do
             KeyMap.lookup "importedCount" row `shouldBe` Just (Number 0)
-            KeyMap.lookup "skippedCount" row `shouldBe` Just (Number 103)
+            case KeyMap.lookup "skipped" row of
+              Just (Array skips) -> length skips `shouldBe` 103
+              other -> expectationFailure ("expected a 'skipped' array, got " <> show other)
         txCount <- runDbIn controls.stubEnv TransactionRM.countTransactions
         txCount `shouldBe` 103
 

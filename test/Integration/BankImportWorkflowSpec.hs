@@ -520,7 +520,7 @@ spec = describe "Bank Import Workflow" $ do
       -- Skipped, not imported, not failed.
       concatMap (.succeeded) result.accounts `shouldBe` []
       concatMap (.failed) result.accounts `shouldBe` []
-      sum (map (.skipped) result.accounts) `shouldBe` 1
+      sum (map (length . (.skipped)) result.accounts) `shouldBe` 1
       -- No transaction was ever initiated.
       allTxCount <- runDbIn env TransactionRM.countTransactions
       allTxCount `shouldBe` 0

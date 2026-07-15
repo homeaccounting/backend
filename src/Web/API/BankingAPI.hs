@@ -168,14 +168,17 @@ instance ToJSON ConnectionImportRequest
 
 -- | Per-account summary returned in the import response.
 --
--- Counts only — the raw transaction IDs are not exposed at the HTTP boundary.
+-- 'importedCount' and 'failureCount' are counts — the raw transaction IDs are
+-- not exposed at the HTTP boundary. 'skipped' lists the human-readable reason
+-- for each skipped transaction (dedup, currency mismatch, …) rather than a bare
+-- count, so callers can explain why rows were not imported.
 -- 'localAccountId' is rendered as its UUID text so callers do not depend on
 -- internal representations.
 data AccountImportSummary = AccountImportSummary
   { externalAccountId :: !Text,
     localAccountId :: !Text,
     importedCount :: !Int,
-    skippedCount :: !Int,
+    skipped :: ![Text],
     failureCount :: !Int
   }
   deriving (Show, Eq, Generic)
@@ -545,7 +548,7 @@ toImportResponse r =
         { externalAccountId = unExternalAccountId acc.externalAccountId,
           localAccountId = UUID.toText (unAccountId acc.localAccountId),
           importedCount = length acc.succeeded,
-          skippedCount = acc.skipped,
+          skipped = acc.skipped,
           failureCount = length acc.failed
         }
 

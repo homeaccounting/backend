@@ -26,6 +26,7 @@
 -- this module contains no intent-specific logic beyond the dispatch table.
 module Application.Services.Prompt.Types
   ( PromptIntent (..),
+    TransactionDecodeError (..),
     PromptDecodeError (..),
     decodePromptIntent,
     PromptResult (..),
@@ -38,7 +39,8 @@ where
 
 import Application.ReadModels.Transaction (TransactionData)
 import Application.Services.Prompt.Transaction.Intent
-  ( TransactionIntent,
+  ( TransactionDecodeError (..),
+    TransactionIntent,
     parseRecordTransactionsFields,
     recordTransactionsIntentName,
   )
@@ -55,14 +57,19 @@ import qualified RIO.Text as T
 -- of these; the router matches it to act. Currently a single constructor
 -- (@record_transactions@, a list of 1..N transactions); future intents add
 -- constructors here and extend the decoder, router, and response mapping.
-data PromptIntent = RecordTransactionsIntent [TransactionIntent]
+data PromptIntent = RecordTransactionsIntent [Either TransactionDecodeError TransactionIntent]
   deriving (Show, Eq)
 
 -- | Why decoding the LLM body into a 'PromptIntent' failed.
 --
---   * 'MalformedResponse' — the model misbehaved: not valid JSON, no usable
---     @intent@ field, or a recognized intent whose payload fields do not parse.
---     The router maps this to __502__ (upstream problem, not the user's).
+--   * 'MalformedResponse' — the model misbehaved at the __envelope__ level: not
+--     valid JSON, no usable @intent@ field, or a structural fault in the
+--     recognized intent's payload (e.g. @transactions@ absent or not an array).
+--     A single @transactions@ element that fails to parse is __not__ a
+--     'MalformedResponse' — it is recovered into a 'Left' 'TransactionDecodeError'
+--     inside the decoded list (see 'PromptIntent'), so the router can still
+--     commit the well-formed elements. The router maps 'MalformedResponse' to
+--     __502__ (upstream problem, not the user's).
 --   * 'UnknownIntent' — a valid envelope naming an intent we do not support.
 --     The router maps this to __400__ (unsupported request).
 data PromptDecodeError = MalformedResponse Text | UnknownIntent Text

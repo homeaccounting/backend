@@ -367,6 +367,36 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
         map (.index) failed `shouldBe` [1]
       other -> expectationFailure ("expected one recorded + one failed, got: " <> show other)
 
+  it "commits the well-formed transactions and reports a malformed element (decode tolerance)" $ do
+    h <- setupHarness "prompt-decode-partial@example.com"
+    -- The second element omits the required 'kind' field, so it fails to decode;
+    -- the batch is no longer rejected wholesale — the first element still commits
+    -- and the malformed one is reported at its position.
+    let json =
+          "{\"intent\":\"record_transactions\",\"transactions\":[\
+          \{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"10\",\"category\":\"Food\",\"comment\":null}]},\
+          \{\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"20\"}]}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user Nothing "cash 10 food; junk")
+    case result of
+      Right (TransactionsRecorded succeeded failed) -> do
+        length succeeded `shouldBe` 1
+        map (.index) failed `shouldBe` [1]
+      other -> expectationFailure ("expected one recorded + one failed decode, got: " <> show other)
+
+  it "returns a domain error when every transaction element is malformed (after retry)" $ do
+    h <- setupHarness "prompt-all-malformed@example.com"
+    -- Valid envelope, but every element lacks the required 'kind' — zero usable
+    -- rows. Treated like the empty-list case: retry once, then a 400 (not a 502,
+    -- since the envelope itself parsed cleanly).
+    let bad = "{\"intent\":\"record_transactions\",\"transactions\":[{\"sourceAccount\":\"Cash\"},{\"sourceAccount\":\"Card\"}]}"
+    client <- queueLlmClient [bad, bad]
+    let e = withLlmClient client h.env
+    result <- runAppM e (handlePrompt h.user Nothing "gibberish")
+    case result of
+      Left err | isDomainErr err -> pure ()
+      other -> expectationFailure ("expected Left (PromptDomainError _), got: " <> show other)
+
   it "returns a domain error when the model identifies no transaction (empty list after retry)" $ do
     h <- setupHarness "prompt-empty-list@example.com"
     client <-

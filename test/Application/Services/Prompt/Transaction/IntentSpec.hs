@@ -8,6 +8,7 @@ import Application.Services.Prompt.Transaction.Intent
   ( IntentAllocation (..),
     IntentKind (..),
     PromptContext (..),
+    TransactionDecodeError (..),
     TransactionIntent (..),
     decodeRecordTransactions,
     decodeTransactionIntent,
@@ -98,28 +99,35 @@ spec = describe "Application.Services.Prompt.Transaction.Intent" $ do
     it "decodes a single-element transactions list" $ do
       let j = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"123\",\"category\":\"Food\",\"comment\":null}]}]}"
       case decodeRecordTransactions j of
-        Right [ti] -> do
+        Right [Right ti] -> do
           ti.kind `shouldBe` ExpenseKind
           map (.amount) ti.allocations `shouldBe` ["123"]
         other -> expectationFailure ("expected one transaction, got: " <> show other)
     it "decodes a split-payment (one transaction, two allocations)" $ do
       let j = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"20\",\"category\":\"Food\",\"comment\":null},{\"amount\":\"15\",\"category\":\"Food\",\"comment\":null}]}]}"
       case decodeRecordTransactions j of
-        Right [ti] -> map (.amount) ti.allocations `shouldBe` ["20", "15"]
+        Right [Right ti] -> map (.amount) ti.allocations `shouldBe` ["20", "15"]
         other -> expectationFailure ("expected one transaction, got: " <> show other)
     it "decodes a mixed multi-transaction list (distinct kinds/accounts)" $ do
       let j = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"income\",\"targetAccount\":\"Bank\",\"amount\":null,\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":null}]},{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"45\",\"category\":null,\"comment\":\"coffee\"}]},{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"120\",\"category\":null,\"comment\":\"taxi\"}]}]}"
       case decodeRecordTransactions j of
-        Right tis -> do
-          length tis `shouldBe` 3
-          map (.kind) tis `shouldBe` [IncomeKind, ExpenseKind, ExpenseKind]
+        Right rows -> do
+          length rows `shouldBe` 3
+          map (.kind) (rights rows) `shouldBe` [IncomeKind, ExpenseKind, ExpenseKind]
         other -> expectationFailure ("expected three transactions, got: " <> show other)
+    it "recovers a malformed element as a Left, keeping the good ones" $ do
+      -- One good expense followed by an element missing the required 'kind'.
+      let j = "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Cash\",\"allocations\":[{\"amount\":\"10\"}]},{\"sourceAccount\":\"Cash\"}]}"
+      case decodeRecordTransactions j of
+        Right [Right ti, Left (TransactionDecodeError _)] -> ti.kind `shouldBe` ExpenseKind
+        other -> expectationFailure ("expected one good then one bad element, got: " <> show other)
     it "rejects a payload missing the transactions array"
       $ decodeRecordTransactions "{\"intent\":\"record_transactions\"}"
       `shouldSatisfy` isLeft
-    it "rejects a transactions element with a bad payload (no kind)"
-      $ decodeRecordTransactions "{\"transactions\":[{\"sourceAccount\":\"Cash\"}]}"
-      `shouldSatisfy` isLeft
+    it "recovers a single bad element (no kind) as a Left rather than failing the parse" $ do
+      case decodeRecordTransactions "{\"transactions\":[{\"sourceAccount\":\"Cash\"}]}" of
+        Right [Left (TransactionDecodeError _)] -> pure ()
+        other -> expectationFailure ("expected one recovered bad element, got: " <> show other)
     it "rejects non-JSON"
       $ decodeRecordTransactions "oops"
       `shouldSatisfy` isLeft

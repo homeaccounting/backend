@@ -85,10 +85,16 @@ handlePrompt uid selected userText
           -- json_object works across all OpenAI-compatible providers. Many
           -- models (e.g. Groq's llama-3.3-70b) reject json_schema outright.
           callOnce msgs = liftIO (client.complete (LlmRequest msgs Nothing))
-          dispatch tis =
-            ExceptT (fmap (first PromptDomainError) (Txn.runRecordTransactions uid rctx userText tis))
-          -- The model returned nothing to record (empty list) even after a
-          -- retry: a comprehension miss, not an upstream outage, so a 400.
+          -- Pass the WHOLE decoded list (including any 'Left RowError' elements)
+          -- so malformed rows are reported as per-row failures while the
+          -- well-formed rows still commit.
+          dispatch rows =
+            ExceptT (fmap (first PromptDomainError) (Txn.runRecordTransactions uid rctx userText rows))
+          -- At least one usable (decoded) transaction to record.
+          hasUsable rows = not (null (rights rows))
+          -- The model returned nothing usable to record (empty list, or every
+          -- element malformed) even after a retry: a comprehension miss, not an
+          -- upstream outage, so a 400.
           emptyErr =
             PromptDomainError
               (ValidationErr (mkValidationError "transactions" "couldn't identify a transaction in that text" userText))
@@ -97,10 +103,10 @@ handlePrompt uid selected userText
               (ValidationErr (mkValidationError "intent" ("Unsupported request: " <> n) userText))
       resp1 <- ExceptT (fmap (first (const (PromptUpstreamError "LLM request failed"))) (callOnce baseMsgs))
       case decodePromptIntent (toLBS resp1.content) of
-        Right (RecordTransactionsIntent tis) | not (null tis) -> dispatch tis
+        Right (RecordTransactionsIntent rows) | hasUsable rows -> dispatch rows
         Left (UnknownIntent n) -> throwError (unknownErr n)
-        -- Malformed body OR an empty transactions list: retry once with a
-        -- JSON-only nudge.
+        -- Malformed body OR no usable transactions (empty list, or every element
+        -- malformed): retry once with a JSON-only nudge.
         _ -> do
           let retryMsgs =
                 baseMsgs
@@ -110,7 +116,7 @@ handlePrompt uid selected userText
                      ]
           resp2 <- ExceptT (fmap (first (const (PromptUpstreamError "LLM request failed"))) (callOnce retryMsgs))
           case decodePromptIntent (toLBS resp2.content) of
-            Right (RecordTransactionsIntent tis) | not (null tis) -> dispatch tis
+            Right (RecordTransactionsIntent rows) | hasUsable rows -> dispatch rows
             Right (RecordTransactionsIntent _) -> throwError emptyErr
             Left (UnknownIntent n) -> throwError (unknownErr n)
             Left _ -> throwError (PromptUpstreamError "LLM returned unparseable output")

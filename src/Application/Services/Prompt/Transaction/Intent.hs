@@ -28,6 +28,7 @@ module Application.Services.Prompt.Transaction.Intent
   ( IntentKind (..),
     IntentAllocation (..),
     TransactionIntent (..),
+    TransactionDecodeError (..),
     parseTransactionFields,
     parseRecordTransactionsFields,
     decodeTransactionIntent,
@@ -49,6 +50,20 @@ import qualified RIO.Text as T
 -- | The name of this intent, used as the envelope @intent@ discriminator.
 recordTransactionsIntentName :: Text
 recordTransactionsIntentName = "record_transactions"
+
+-- | One @transactions@ element the model returned that failed to decode.
+--
+-- Prompt-local and intentionally minimal: it carries only the reason. Its
+-- position in the list is the transaction's @index@ (the same zero-based
+-- position 'Application.Services.Prompt.Types.FailedTransaction' /
+-- 'Application.Services.Prompt.Types.RecordedTransaction' carry), assigned by
+-- the consumer's enumeration — so the type needs no index of its own.
+--
+-- Deliberately NOT the bank statement-import 'RowError': there a file "row" is
+-- one transaction, but a prompt transaction spans multiple allocation lines, so
+-- "row"/"line" would be the wrong word for a whole-transaction decode failure.
+newtype TransactionDecodeError = TransactionDecodeError Text
+  deriving (Show, Eq)
 
 -- | The kind of one transaction in the list (income, expense, or transfer).
 data IntentKind = IncomeKind | ExpenseKind | TransferKind
@@ -142,19 +157,29 @@ decodeTransactionIntent bs = case Aeson.eitherDecode bs of
 --
 -- This is the reusable parser the generic envelope/router calls __after__ it
 -- has read the envelope's @intent@ field; it reads only @transactions@ and
--- deliberately __ignores__ @intent@. An absent or non-array @transactions@ is a
--- parse failure.
-parseRecordTransactionsFields :: Object -> Parser [TransactionIntent]
-parseRecordTransactionsFields o =
-  o
-    .: "transactions"
-    >>= traverse (withObject "TransactionIntent" parseTransactionFields)
+-- deliberately __ignores__ @intent@.
+--
+-- The parse is __per-element tolerant__: an absent or non-array @transactions@
+-- is a structural failure of the whole parse (surfacing as a malformed
+-- envelope), but a single element that does not decode becomes a
+-- 'Left' 'RowError' at its position rather than failing the batch — the good
+-- elements still decode. This lets the router commit the well-formed
+-- transactions and report the malformed ones individually.
+parseRecordTransactionsFields :: Object -> Parser [Either TransactionDecodeError TransactionIntent]
+parseRecordTransactionsFields o = do
+  els <- o .: "transactions"
+  pure (map decodeElem els)
+  where
+    decodeElem v =
+      case parseEither (withObject "TransactionIntent" parseTransactionFields) v of
+        Left err -> Left (TransactionDecodeError (T.pack err))
+        Right ti -> Right ti
 
 -- | Standalone convenience decoder for tests and isolated reuse: decode a JSON
 -- byte string straight into the @transactions@ list, skipping the generic
 -- envelope. The real request path runs through
 -- 'Application.Services.Prompt.Types.decodePromptIntent'.
-decodeRecordTransactions :: BL.ByteString -> Either Text [TransactionIntent]
+decodeRecordTransactions :: BL.ByteString -> Either Text [Either TransactionDecodeError TransactionIntent]
 decodeRecordTransactions bs = case Aeson.eitherDecode bs of
   Left e -> Left ("intent: invalid JSON: " <> T.pack e)
   Right v -> first T.pack (parseEither (withObject "RecordTransactions" parseRecordTransactionsFields) v)
