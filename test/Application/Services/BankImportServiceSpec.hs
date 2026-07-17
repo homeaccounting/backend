@@ -16,6 +16,8 @@
 --   - Resolves categories from per-user banking configuration (Phase 2)
 module Application.Services.BankImportServiceSpec (spec) where
 
+import Application.ReadModels.Account (AccountData (..))
+import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.BankImportReadModel
   ( bankImportReadModel,
     isImported,
@@ -51,6 +53,7 @@ import Domain.Core.Types
     AccountType (..),
     Currency (..),
     ExternalTransactionId,
+    Money,
     TransactionId,
     TransactionType (..),
     UserId,
@@ -64,6 +67,7 @@ import Domain.Transaction.Events
   ( TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
   )
+import Domain.Transaction.Projection (TransactionStatus (Completed))
 import Eventium (Codec (..), EventHandler (..), GlobalStreamEvent, ReadModel (..), SequenceNumber, StreamEvent (..), catchUpReadModel, emptyMetadata, rebuildReadModel)
 import Eventium.Store.Postgresql (jsonStringCodec)
 import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)
@@ -171,8 +175,21 @@ mkHoldTransaction amount extId =
 --   - An External account
 --   - Seeded default configuration (with MCC map and banking defaults)
 -- Returns (env, bankAccountId).
+--
+-- The bank account is given a generous overdraft so the imported transfers
+-- clear: bank imports debit the BankAccount from a zero initial balance. Most
+-- of these service-level tests are about dedup / classification / field
+-- mapping, so a roomy overdraft keeps the saga green and the focus off balance
+-- accounting. Tests that specifically exercise the underfunded path use
+-- 'setupTestEnvWithBankOverdraft' with a tighter limit.
 setupTestEnv :: IO (AppEnv, AccountId)
-setupTestEnv = do
+setupTestEnv = setupTestEnvWithBankOverdraft (Just (Just (mockMoneyWith UAH 1000000)))
+
+-- | 'setupTestEnv' with a configurable bank-account overdraft limit, so a test
+-- can import into an account that cannot cover the transaction and observe the
+-- import-bypasses-balance behaviour end to end.
+setupTestEnvWithBankOverdraft :: Maybe (Maybe Money) -> IO (AppEnv, AccountId)
+setupTestEnvWithBankOverdraft bankOverdraft = do
   env <- createTestAppEnvWithProcessManager
 
   -- Create accounts: External account (for the user) and a bank account
@@ -192,12 +209,6 @@ setupTestEnv = do
           }
     let (extId, _) = fromRight' extResult
 
-    -- Create bank account. Give it a generous overdraft so the imported
-    -- transfers clear: bank imports debit the BankAccount from a zero
-    -- initial balance; without room to overdraw, every expense saga would
-    -- emit TransactionPostingFailed. Dedup is now permanent (a failed posting
-    -- is never evicted), but the overdraft keeps these service-level tests
-    -- focused on dedup semantics rather than balance accounting.
     bankResult <-
       createAccount
         CreateAccount
@@ -205,7 +216,7 @@ setupTestEnv = do
             initialBalance = mockMoneyWith UAH 0,
             createdBy = testUserId,
             accountType = Regular defaultBankAccount,
-            overdraftLimit = Just (Just (mockMoneyWith UAH 1000000))
+            overdraftLimit = bankOverdraft
           }
     let (bankId, _) = fromRight' bankResult
     return (extId, bankId)
@@ -302,6 +313,36 @@ spec = describe "BankImportService" $ do
       -- Default income category (income.other) when no MCC lookup applies for income
       txData.transactionType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 100))
       txData.date `shouldBe` testTime
+
+    it "posts an expense import even when the account cannot cover it (bypasses the balance guard)" $ do
+      -- Zero balance, zero overdraft: a manual transfer this size would be
+      -- rejected for insufficient funds, but a bank import records money that
+      -- already moved at the bank and must post regardless, driving the local
+      -- balance negative. This is the end-to-end guard for the retry-blocked-by-
+      -- dedup fix: the import no longer Fails, so it never leaves a permanent
+      -- dedup tombstone that blocks re-import.
+      (env, bankAccId) <- setupTestEnvWithBankOverdraft (Just (Just (mockMoneyWith UAH 0)))
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      let tx = mkTestTransaction (-50) "tx-underfunded"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      txId <- expectImported result
+
+      -- The posting saga runs synchronously in the test harness: the transaction
+      -- reached the Completed terminal state rather than Failed.
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.status `shouldBe` Completed
+
+      -- The debit posted against the underfunded account, taking it negative.
+      maybeBank <- runDbIn env (AccountRM.getAccount bankAccId)
+      case maybeBank of
+        Just bankData ->
+          let AccountData {balance = bankBalance} = bankData
+           in bankBalance `shouldBe` mockMoneyWith UAH (-50)
+        Nothing -> expectationFailure "bank account not found"
 
   describe "importMany" $ do
     it "imports every transaction whose externalAccountId is in the link" $ do

@@ -213,6 +213,18 @@ handleAccountCommand account (RevokeAccountAccessAccountCommand RevokeAccountAcc
 handleAccountCommand account (DebitAccountAccountCommand DebitAccount {..})
   | T.null (account ^. #name) = Left AccountDoesNotExist
   | moneyCurrency amount /= moneyCurrency (account ^. #balance) = Left CurrencyMismatch
+  -- Bank imports set 'allowOverdraft': the money already moved at the bank, so
+  -- the debit must post regardless of the local balance mirror. A resulting
+  -- negative balance truthfully signals an earlier transaction still awaiting
+  -- import, rather than being an error to reject.
+  | allowOverdraft =
+      Right
+        [ AccountDebitedAccountEvent
+            AccountDebited
+              { amount = amount,
+                transactionId = transactionId
+              }
+        ]
   | otherwise =
       case account ^. #overdraftLimit of
         Nothing ->

@@ -305,7 +305,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                   ?~ debitAmt
               command =
                 DebitAccountAccountCommand
-                  $ DebitAccount debitAmt txId
+                  $ DebitAccount debitAmt txId False
               result = handleAccountCommand account command
            in result =/= Left InsufficientFunds
 
@@ -318,7 +318,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                 -- Default overdraft is 0, so any positive debit on zero balance fails
                 command =
                   DebitAccountAccountCommand
-                    $ DebitAccount debitAmt txId
+                    $ DebitAccount debitAmt txId False
                 result = handleAccountCommand account command
              in result === Left InsufficientFunds
 
@@ -332,9 +332,23 @@ businessRuleSpec = describe "Business Rule Properties" $ do
                   .~ Nothing
               command =
                 DebitAccountAccountCommand
-                  $ DebitAccount debitAmt txId
+                  $ DebitAccount debitAmt txId False
               result = handleAccountCommand account command
            in result =/= Left InsufficientFunds
+
+    it "Then debit with allowOverdraft bypasses the insufficient-funds check"
+      $ property
+      $ \(ownerId :: UserId) (txId :: TransactionId) ->
+        forAll (genPositiveMoneyIn USD) $ \debitAmt ->
+          unMoney debitAmt > 0 ==>
+            -- Zero balance, zero overdraft limit: a normal debit is rejected,
+            -- but an import-issued debit (allowOverdraft = True) must post.
+            let account = createAccountWithOwner "Test" (mockMoney 0) ownerId (Regular defaultCash)
+                command =
+                  DebitAccountAccountCommand
+                    $ DebitAccount debitAmt txId True
+                result = handleAccountCommand account command
+             in result =/= Left InsufficientFunds
 
   describe "Overdraft limit management" $ do
     it "Then only owner can set overdraft limit"
@@ -365,7 +379,7 @@ businessRuleSpec = describe "Business Rule Properties" $ do
           let account = createAccountWithOwner "Test" (mockMoney 1000) ownerId (Regular defaultCash)
               command =
                 DebitAccountAccountCommand
-                  $ DebitAccount amt txId
+                  $ DebitAccount amt txId False
               result = handleAccountCommand account command
            in result === Left CurrencyMismatch
 

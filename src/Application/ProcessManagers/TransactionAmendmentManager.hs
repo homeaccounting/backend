@@ -323,7 +323,8 @@ fallibleLegToEffect (DebitNewSource (acct, amt, txId)) =
     ( embedWith
         accountCommandEmbedding
         ( DebitAccountAccountCommand
-            DebitAccount {amount = amt, transactionId = txId}
+            -- User-initiated amendment: keep the balance guard (allowOverdraft = False).
+            DebitAccount {amount = amt, transactionId = txId, allowOverdraft = False}
         )
     )
     id

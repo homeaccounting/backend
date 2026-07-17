@@ -171,14 +171,23 @@ data RevokeAccountAccess = RevokeAccountAccess
 --   - Regular accounts: balance must be >= amount, otherwise rejected
 --   - External accounts: always succeed (negative balance allowed)
 --   - Account must exist (name not empty)
+--   - When 'allowOverdraft' is set, the overdraft/insufficient-funds check is
+--     bypassed and the debit always succeeds (currency match is still enforced).
+--     The posting saga sets this for /bank imports/: a bank transaction records
+--     money that already moved at the bank, so it must not be rejected because
+--     the local balance mirror is behind — a transient negative balance is the
+--     truthful signal that an earlier transaction has not been imported yet.
+--     User-initiated transfers and amendments leave it 'False'.
 --
 -- Example:
--- >>> DebitAccount (Money 200) txId
+-- >>> DebitAccount (Money 200) txId False
 data DebitAccount = DebitAccount
   { -- | Amount to debit (always positive)
     amount :: Money,
     -- | Transaction ID for saga correlation
-    transactionId :: TransactionId
+    transactionId :: TransactionId,
+    -- | Bypass the overdraft/insufficient-funds check (bank imports only).
+    allowOverdraft :: Bool
   }
   deriving (Show, Eq)
 

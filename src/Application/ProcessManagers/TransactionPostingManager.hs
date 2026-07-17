@@ -55,6 +55,7 @@ where
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import Domain.Core.Types (AccountId, Money, TransactionId, mkTransactionIdSafe, unAccountId, unTransactionId)
 import Domain.Models
 import Eventium
@@ -200,7 +201,12 @@ reactToTransactionPostingEvent manager (StreamEvent txUuid _ _ (TransactionPosti
                       ( DebitAccountAccountCommand
                           DebitAccount
                             { amount = evt.sourceAmount,
-                              transactionId = txId
+                              transactionId = txId,
+                              -- A bank import carries an externalTransactionId; such
+                              -- debits bypass the balance guard so an already-settled
+                              -- bank transaction always posts. Manual transfers
+                              -- (no external id) keep the guard.
+                              allowOverdraft = isJust evt.externalTransactionId
                             }
                       )
                   )

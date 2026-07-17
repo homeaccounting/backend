@@ -206,6 +206,8 @@ spec = describe "TransactionPostingManager (Saga)" $ do
             DebitAccountCommand debit -> do
               debit.amount `shouldBe` unsafeMoney USD 200
               debit.transactionId `shouldBe` unsafeTransactionId txUuid
+              -- Manual transfer (no externalTransactionId): balance guard stays on.
+              debit.allowOverdraft `shouldBe` False
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
           -- Verify compensation produces FailTransactionPosting
           let compensationEffects = onFailure (RejectionReason "Insufficient funds")
@@ -232,6 +234,9 @@ spec = describe "TransactionPostingManager (Saga)" $ do
             DebitAccountCommand debit -> do
               debit.amount `shouldBe` unsafeMoney USD 200
               debit.transactionId `shouldBe` unsafeTransactionId txUuid
+              -- Bank import (externalTransactionId set): debit bypasses the
+              -- balance guard so an already-settled bank tx always posts.
+              debit.allowOverdraft `shouldBe` True
             other -> expectationFailure $ "Expected DebitAccountCommand, got: " ++ show other
         _ -> expectationFailure "Expected exactly 1 IssueCommandWithCompensation effect"
 

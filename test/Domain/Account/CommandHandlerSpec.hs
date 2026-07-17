@@ -623,7 +623,8 @@ currencyMismatchSpec = describe "CurrencyMismatch" $ do
               DebitAccountAccountCommand
                 $ DebitAccount
                   { amount = mockMoneyWith EUR 100,
-                    transactionId = testTransactionId
+                    transactionId = testTransactionId,
+                    allowOverdraft = False
                   }
         let result = handleAccountCommand account command
         result `shouldBe` Left CurrencyMismatch
