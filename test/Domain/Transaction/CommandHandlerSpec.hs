@@ -70,7 +70,7 @@ pendingTransaction fromId toId amt =
             by = testUserId,
             at = mockTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     ]
@@ -90,7 +90,7 @@ completedTransaction fromId toId amt =
             by = testUserId,
             at = mockTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           },
       TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
@@ -111,7 +111,7 @@ failedTransaction fromId toId amt =
             by = testUserId,
             at = mockTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           },
       TransactionPostingFailedTransactionEvent $ TransactionPostingFailed "Insufficient funds"
@@ -141,7 +141,7 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    externalTransactionId = Nothing,
+                    importInfo = Nothing,
                     labels = Set.empty,
                     relation = Nothing
                   }
@@ -159,7 +159,7 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
               _ -> expectationFailure "Expected TransactionPostingInitiated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
-      it "Then emits TransactionPostingInitiated carrying labels and externalTransactionId when both are set" $ do
+      it "Then emits TransactionPostingInitiated carrying labels and import info when both are set" $ do
         fromId <- mockAccountId <$> UUID.nextRandom
         toId <- mockAccountId <$> UUID.nextRandom
         lbl1 <- mockDictionaryEntryId <$> UUID.nextRandom
@@ -179,14 +179,14 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    externalTransactionId = Just extTxId,
+                    importInfo = Just ImportInfo {externalTransactionId = extTxId, mcc = Nothing},
                     labels = labels,
                     relation = Nothing
                   }
         case handleTransactionCommand transaction command of
           Right events -> case head events of
             TransactionPostingInitiatedTransactionEvent initiated -> do
-              initiated.externalTransactionId `shouldBe` Just extTxId
+              (importInfoExternalTransactionId <$> initiated.importInfo) `shouldBe` Just extTxId
               initiated.labels `shouldBe` labels
             _ -> expectationFailure "Expected TransactionPostingInitiated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
@@ -207,7 +207,7 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    externalTransactionId = Nothing,
+                    importInfo = Nothing,
                     labels = Set.empty,
                     relation = Nothing
                   }
@@ -235,7 +235,7 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    externalTransactionId = Nothing,
+                    importInfo = Nothing,
                     labels = Set.empty,
                     relation = Nothing
                   }
@@ -260,7 +260,7 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    externalTransactionId = Nothing,
+                    importInfo = Nothing,
                     labels = Set.empty,
                     relation = Nothing
                   }
@@ -288,7 +288,7 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    externalTransactionId = Nothing,
+                    importInfo = Nothing,
                     labels = Set.empty,
                     relation = Nothing
                   }

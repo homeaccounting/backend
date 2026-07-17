@@ -60,6 +60,7 @@ import Domain.Core.Types
     defaultBankAccount,
     mkMoney,
     unTransactionId,
+    ImportInfo (..),
     unsafeExternalTransactionId,
   )
 import Domain.Models (AccountingEvent (..))
@@ -446,6 +447,8 @@ spec = describe "BankImportService" $ do
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
       txData.transactionType `shouldBe` singletonExpense expense.food.entryId (fromRight' (mkMoney UAH 50))
+      -- The original MCC is retained on the imported transaction.
+      txData.mcc `shouldBe` Just "5411"
 
     it "falls back to defaultExpenseCategory when MCC is not in the map" $ do
       -- MCC "9999" is not in the default MCC map → falls back to expense.other
@@ -476,6 +479,8 @@ spec = describe "BankImportService" $ do
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
       txData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
+      -- A transaction with no MCC records no MCC.
+      txData.mcc `shouldBe` Nothing
 
     it "records BankingError in AccountImportResult.failed when no expense default is configured" $ do
       -- Seed a configuration without defaultExpenseCategory set, then import
@@ -664,7 +669,7 @@ mkInitiatedEvent txId mExtId seqNo =
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = testTime,
                   transactionType = Transfer,
-                  externalTransactionId = mExtId,
+                  importInfo = fmap (\e -> ImportInfo {externalTransactionId = e, mcc = Nothing}) mExtId,
                   labels = Set.empty
                 }
           )
@@ -687,7 +692,7 @@ storeInitiatedEvent env txId extId =
               by = mockUserId (UUID.fromWords 9 0 0 0),
               at = testTime,
               transactionType = Transfer,
-              externalTransactionId = Just extId,
+              importInfo = Just ImportInfo {externalTransactionId = extId, mcc = Nothing},
               labels = Set.empty
             }
    in runAppM env

@@ -55,7 +55,7 @@ import Database.Persist.TH
     share,
     sqlSettings,
   )
-import Domain.Core.Types (ExternalTransactionId, TransactionId, mkTransactionIdSafe)
+import Domain.Core.Types (ExternalTransactionId, TransactionId, importInfoExternalTransactionId, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransactionPostingInitiated (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, ReadModel (..))
@@ -117,7 +117,7 @@ applyBankImportEvent globalEvent =
   let (streamUuid, payload) = unpackGlobalEvent globalEvent
    in case payload of
         TransactionPostingInitiatedEvent evt ->
-          case (evt.externalTransactionId, mkTransactionIdSafe streamUuid) of
+          case (importInfoExternalTransactionId <$> evt.importInfo, mkTransactionIdSafe streamUuid) of
             (Just extId, Just txId) ->
               void $ insertUnique (ImportedTransactionEntity extId txId)
             _ -> pure ()

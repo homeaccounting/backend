@@ -83,7 +83,7 @@ genTransactionPostingInitiatedEvent = do
                 description = "Property test transfer",
                 by = unsafeUserId userId,
                 transactionType = Transfer,
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty,
                 at = UTCTime (fromGregorian 2026 1 1) 0
               }

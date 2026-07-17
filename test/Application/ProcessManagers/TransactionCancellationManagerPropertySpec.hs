@@ -122,7 +122,7 @@ mkTransactionPostingInitiatedFor txUuid src tgt srcAmt tgtAmt at_ by_ =
             by = by_,
             at = at_,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     )

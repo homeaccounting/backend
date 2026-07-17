@@ -48,7 +48,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -112,8 +112,9 @@ data TransactionPostingInitiated = TransactionPostingInitiated
     at :: UTCTime,
     -- | Type of transfer (Income, Expense, Transfer)
     transactionType :: TransactionType,
-    -- | Identifier for this transaction in an external system (e.g., Monobank)
-    externalTransactionId :: Maybe ExternalTransactionId,
+    -- | Import provenance when this transaction originates from a bank import
+    -- (external id + optional MCC). 'Nothing' for manual entries.
+    importInfo :: Maybe ImportInfo,
     -- | Labels attached to this transfer (may be empty).
     labels :: Set LabelId
   }
@@ -348,7 +349,7 @@ instance FromJSON TransactionPostingInitiated where
       <*> o .: "by"
       <*> o .: "at"
       <*> o .: "transactionType"
-      <*> o .:? "externalTransactionId" .!= Nothing
+      <*> o .:? "importInfo" .!= Nothing
       <*> (fromMaybe Set.empty <$> o .:? "labels")
 
 deriveJSON defaultOptions ''TransactionPostingCompleted

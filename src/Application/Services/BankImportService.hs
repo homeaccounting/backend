@@ -62,6 +62,7 @@ import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
     CategoryId,
+    ImportInfo (..),
     MCC,
     Money,
     TransactionId,
@@ -636,7 +637,12 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
           initiatedBy = uid,
           at = bankTx.time,
           transactionType = transactionType,
-          externalTransactionId = Just bankTx.externalId,
+          importInfo =
+            Just
+              ImportInfo
+                { externalTransactionId = bankTx.externalId,
+                  mcc = bankTx.mcc
+                },
           labels = Set.empty,
           relation = Nothing
         }

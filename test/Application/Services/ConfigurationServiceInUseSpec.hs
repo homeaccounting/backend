@@ -119,7 +119,7 @@ seedTransaction env userId tt labels = do
               initiatedBy = userId,
               at = UTCTime (fromGregorian 2026 4 1) 0,
               transactionType = tt,
-              externalTransactionId = Nothing,
+              importInfo = Nothing,
               labels = labels,
               relation = Nothing
             }

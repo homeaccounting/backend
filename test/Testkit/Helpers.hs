@@ -240,6 +240,7 @@ mockTransactionData src tgt srcAmt tgtAmt rate tt =
       status = Completed,
       transactionType = tt,
       date = fixtureTime,
+      mcc = Nothing,
       labels = mempty,
       relations = [],
       amendmentCount = 0

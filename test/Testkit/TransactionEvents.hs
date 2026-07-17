@@ -63,7 +63,7 @@ postingInitiatedGlobal txId src tgt tt labelSet businessAt persistedAt seqNo =
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = businessAt,
                   transactionType = tt,
-                  externalTransactionId = Nothing,
+                  importInfo = Nothing,
                   labels = labelSet
                 }
           )

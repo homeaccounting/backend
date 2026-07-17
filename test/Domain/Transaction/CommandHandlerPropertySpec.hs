@@ -70,7 +70,7 @@ createPendingTransaction fromId toId amt =
             by = testUserId,
             at = mockTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     ]
@@ -92,7 +92,7 @@ determinismSpec = describe "Determinism Properties" $ do
               events2 = handleTransactionCommand transaction command
            in events1 === events2
 
-    it "Then InitiateTransaction preserves labels and externalTransactionId"
+    it "Then InitiateTransaction preserves labels and import info"
       $ property
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) (extRaw :: Text) ->
         fromId /= toId && unMoney amt > 0 && not (T.null extRaw) ==>
@@ -100,11 +100,12 @@ determinismSpec = describe "Determinism Properties" $ do
             $ \labels ->
               let transaction = applyEvents []
                   extTxId = unsafeExternalTransactionId extRaw
-                  command = InitiateTransactionTransactionCommand $ InitiateTransaction fromId toId amt amt Nothing rsn testUserId mockTime Transfer (Just extTxId) labels Nothing
+                  info = ImportInfo {externalTransactionId = extTxId, mcc = Just "5411"}
+                  command = InitiateTransactionTransactionCommand $ InitiateTransaction fromId toId amt amt Nothing rsn testUserId mockTime Transfer (Just info) labels Nothing
                in case handleTransactionCommand transaction command of
                     Right (TransactionPostingInitiatedTransactionEvent initiated : _) ->
                       initiated.labels === labels
-                        .&&. initiated.externalTransactionId === Just extTxId
+                        .&&. initiated.importInfo === Just info
                     Right _ -> counterexample "Expected TransactionPostingInitiated event first" False
                     Left e -> counterexample ("Expected Right, got: " ++ show e) False
 
@@ -282,7 +283,7 @@ completedTxWithType fromId toId tt =
                 by = testUserId,
                 at = mockTime,
                 transactionType = tt,
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty
               },
           TransactionPostingCompletedTransactionEvent TransactionPostingCompleted

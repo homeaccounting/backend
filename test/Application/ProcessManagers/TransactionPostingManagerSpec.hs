@@ -36,6 +36,7 @@ import Domain.Core.Types
     TransactionType (..),
     unsafeAccountId,
     unsafeDictionaryEntryId,
+    ImportInfo (..),
     unsafeExternalTransactionId,
     unsafeMoney,
     unsafeTransactionId,
@@ -98,7 +99,7 @@ mkTransactionPostingInitiatedEventAt t =
             by = unsafeUserId userUuid,
             at = t,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     )
@@ -123,7 +124,7 @@ mkTransactionPostingInitiatedEventWithLabelsAndExternalId =
             by = unsafeUserId userUuid,
             at = sampleAt,
             transactionType = Transfer,
-            externalTransactionId = Just (unsafeExternalTransactionId "mono:stmt-42"),
+            importInfo = Just ImportInfo {externalTransactionId = unsafeExternalTransactionId "mono:stmt-42", mcc = Nothing},
             labels = Set.fromList [unsafeDictionaryEntryId (UUID.fromWords 10 0 0 1), unsafeDictionaryEntryId (UUID.fromWords 10 0 0 2)]
           }
     )
@@ -264,7 +265,7 @@ spec = describe "TransactionPostingManager (Saga)" $ do
                       by = unsafeUserId userUuid,
                       at = sampleAt,
                       transactionType = Transfer,
-                      externalTransactionId = Nothing,
+                      importInfo = Nothing,
                       labels = Set.empty
                     }
               )

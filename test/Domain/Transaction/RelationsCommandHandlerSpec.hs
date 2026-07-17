@@ -78,7 +78,7 @@ baseInitiate =
       initiatedBy = unsafeUserId (UUID.fromWords 99 0 0 0),
       at = mockTime,
       transactionType = Transfer,
-      externalTransactionId = Nothing,
+      importInfo = Nothing,
       labels = Set.empty,
       relation = Nothing
     }
@@ -101,7 +101,7 @@ completedTx =
             by = unsafeUserId (UUID.fromWords 99 0 0 0),
             at = mockTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           },
       TransactionPostingCompletedTransactionEvent TransactionPostingCompleted

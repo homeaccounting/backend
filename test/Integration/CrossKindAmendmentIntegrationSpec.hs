@@ -33,6 +33,7 @@ import Domain.Core.Types
     unAccountId,
     unDictionaryEntryId,
     unTransactionId,
+    ImportInfo (..),
     unsafeExternalTransactionId,
     unsafeMoney,
   )
@@ -120,7 +121,7 @@ seedIncomeWithExtId seed accId amount extId = do
             initiatedBy = seed.seedUserId,
             at = now,
             transactionType = tt,
-            externalTransactionId = Just (unsafeExternalTransactionId extId),
+            importInfo = Just ImportInfo {externalTransactionId = unsafeExternalTransactionId extId, mcc = Nothing},
             labels = Set.empty,
             relation = Nothing
           }

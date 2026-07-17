@@ -57,6 +57,7 @@ import Domain.Core.Types
     defaultCash,
     unsafeAccountId,
     unsafeDictionaryEntryId,
+    ImportInfo (..),
     unsafeExternalTransactionId,
     unsafeMoney,
     unsafeTransactionId,
@@ -201,7 +202,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             initiatedBy = unsafeUserId userUuid,
             at = mockTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty,
             relation = Nothing
           }
@@ -242,7 +243,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             initiatedBy = unsafeUserId userUuid,
             at = mockTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty,
             relation = Nothing
           }
@@ -687,7 +688,7 @@ categorizedTransferSpec =
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
                 transactionType = singletonIncome testSalaryCatId (unsafeMoney USD 3000),
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty,
                 relation = Nothing
               }
@@ -761,7 +762,7 @@ categorizedTransferSpec =
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
                 transactionType = singletonExpense testFoodCatId (unsafeMoney USD 150),
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty,
                 relation = Nothing
               }
@@ -807,7 +808,7 @@ categorizedTransferSpec =
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
                 transactionType = Transfer,
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty,
                 relation = Nothing
               }
@@ -843,7 +844,7 @@ categorizedTransferSpec =
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
                 transactionType = Transfer,
-                externalTransactionId = Just extTxId,
+                importInfo = Just ImportInfo {externalTransactionId = extTxId, mcc = Nothing},
                 labels = expectedLabels,
                 relation = Nothing
               }

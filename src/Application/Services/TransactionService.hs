@@ -296,7 +296,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
                   initiatedBy = userId,
                   at = date,
                   transactionType = tt,
-                  externalTransactionId = Nothing,
+                  importInfo = Nothing,
                   labels = labels,
                   relation = rel
                 }
@@ -362,7 +362,7 @@ initiateExpense userId sourceAccountId amount allocations labels description may
                   initiatedBy = userId,
                   at = date,
                   transactionType = tt,
-                  externalTransactionId = Nothing,
+                  importInfo = Nothing,
                   labels = labels,
                   relation = rel
                 }
@@ -429,7 +429,7 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
                   initiatedBy = userId,
                   at = date,
                   transactionType = Transfer,
-                  externalTransactionId = Nothing,
+                  importInfo = Nothing,
                   labels = labels,
                   relation = rel
                 }

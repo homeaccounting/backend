@@ -223,7 +223,7 @@ spec = describe "Allocations / worked examples" $ do
                   initiatedBy = unsafeUserId (UUID.fromWords 99 0 0 0),
                   at = Time.UTCTime (Time.fromGregorian 2025 1 1) 0,
                   transactionType = Expense contraBadAllocs,
-                  externalTransactionId = Nothing,
+                  importInfo = Nothing,
                   labels = Set.empty,
                   relation = Nothing
                 }

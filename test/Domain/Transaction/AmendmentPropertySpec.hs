@@ -136,7 +136,7 @@ projectAmendments extra =
             by = amendedByU,
             at = transactionDefault ^. #at,
             transactionType = seedTransactionType,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
         : TransactionPostingCompletedTransactionEvent TransactionPostingCompleted

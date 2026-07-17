@@ -125,7 +125,7 @@ seedInitiated =
             by = userId_,
             at = sampleAt,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     )
@@ -429,7 +429,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
                     by = userId_,
                     at = sampleAt,
                     transactionType = Transfer,
-                    externalTransactionId = Nothing,
+                    importInfo = Nothing,
                     labels = Set.empty
                   }
             )

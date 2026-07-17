@@ -148,6 +148,11 @@ module Domain.Core.Types
     unsafeExternalTransactionId,
     unExternalTransactionId,
 
+    -- * Import provenance
+    ImportInfo (..),
+    importInfoExternalTransactionId,
+    importInfoMcc,
+
     -- * Password Types
     PasswordHash (..),
     unPasswordHash,
@@ -1419,6 +1424,38 @@ instance FromJSON ExternalTransactionId where
     case mkExternalTransactionId t of
       Right eid -> pure eid
       Left err -> fail (T.unpack err)
+
+-- | Provenance for an imported transaction, threaded through
+-- 'Domain.Transaction.Commands.InitiateTransaction' and
+-- 'Domain.Transaction.Events.TransactionPostingInitiated' as
+-- @Maybe ImportInfo@: 'Nothing' is a manual entry, 'Just' is an import.
+--
+-- 'externalTransactionId' is required (every import has one; it drives the
+-- overdraft-bypass guard and import dedup), while 'mcc' is optional because only
+-- some providers supply a merchant category code (monobank does; PrivatBank does
+-- not). Grouping the import-only fields keeps future provider metadata in one
+-- place. Mirrors 'RelationSpec' in shape and role.
+data ImportInfo = ImportInfo
+  { externalTransactionId :: ExternalTransactionId,
+    mcc :: Maybe MCC
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ImportInfo
+
+instance FromJSON ImportInfo
+
+-- | The external identifier carried by an import. Accessor function provided
+-- because dot-access on the shared @externalTransactionId@\/@mcc@ field names is
+-- ambiguous under @DuplicateRecordFields@ at call sites that also see other
+-- records with those field names.
+importInfoExternalTransactionId :: ImportInfo -> ExternalTransactionId
+importInfoExternalTransactionId ImportInfo {externalTransactionId = e} = e
+
+-- | The merchant category code carried by an import, if the provider supplied
+-- one.
+importInfoMcc :: ImportInfo -> Maybe MCC
+importInfoMcc ImportInfo {mcc = m} = m
 
 -- -----------------------------------------------------------------------------
 -- Password Types

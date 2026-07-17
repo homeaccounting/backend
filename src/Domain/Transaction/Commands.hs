@@ -45,7 +45,7 @@ import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ExternalTransactionId, LabelId, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -119,8 +119,9 @@ data InitiateTransaction = InitiateTransaction
     at :: UTCTime,
     -- | Type of transfer (Income, Expense, Transfer)
     transactionType :: TransactionType,
-    -- | Identifier for this transaction in an external system (e.g., Monobank)
-    externalTransactionId :: Maybe ExternalTransactionId,
+    -- | Import provenance when this transaction originates from a bank import
+    -- (external id + optional MCC). 'Nothing' for manual entries.
+    importInfo :: Maybe ImportInfo,
     -- | Labels to attach to the transfer (may be empty).
     labels :: Set LabelId,
     -- | Optional at-creation typed relationship to a pre-existing transaction

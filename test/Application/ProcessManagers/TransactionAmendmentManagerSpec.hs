@@ -111,7 +111,7 @@ seedInitiated =
             by = userId_,
             at = sampleAt,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     )
@@ -139,7 +139,7 @@ seedIncomeInitiated =
             by = userId_,
             at = sampleAt,
             transactionType = singletonIncome (mockDictionaryEntryId incomeCatUuid) (m 100),
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     )

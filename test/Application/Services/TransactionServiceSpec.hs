@@ -138,7 +138,7 @@ spec = describe "TransactionService" $ do
                 initiatedBy = testUserId1,
                 at = mockTime,
                 transactionType = Transfer,
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty,
                 relation = Nothing
               }
@@ -164,7 +164,7 @@ spec = describe "TransactionService" $ do
                 initiatedBy = testUserId1,
                 at = mockTime,
                 transactionType = Transfer,
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty,
                 relation = Nothing
               }
@@ -200,7 +200,7 @@ spec = describe "TransactionService" $ do
                 initiatedBy = testUserId1,
                 at = mockTime,
                 transactionType = Transfer,
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = Set.empty,
                 relation = Nothing
               }

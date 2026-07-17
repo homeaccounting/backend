@@ -57,7 +57,7 @@ seedTransaction tt =
             by = unsafeUserId (UUID.fromWords 99 0 0 0),
             at = UTCTime (fromGregorian 2026 3 15) (secondsToDiffTime 0),
             transactionType = tt,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = Set.empty
           }
     ]

@@ -202,11 +202,11 @@ reactToTransactionPostingEvent manager (StreamEvent txUuid _ _ (TransactionPosti
                           DebitAccount
                             { amount = evt.sourceAmount,
                               transactionId = txId,
-                              -- A bank import carries an externalTransactionId; such
-                              -- debits bypass the balance guard so an already-settled
+                              -- A bank import carries 'importInfo'; such debits
+                              -- bypass the balance guard so an already-settled
                               -- bank transaction always posts. Manual transfers
-                              -- (no external id) keep the guard.
-                              allowOverdraft = isJust evt.externalTransactionId
+                              -- (no import info) keep the guard.
+                              allowOverdraft = isJust evt.importInfo
                             }
                       )
                   )

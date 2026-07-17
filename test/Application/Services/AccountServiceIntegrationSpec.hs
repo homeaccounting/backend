@@ -447,7 +447,7 @@ creditAccountAt env accountId atTime amt = do
             initiatedBy = unsafeUserId (UUID.fromWords 42 0 0 2),
             at = atTime,
             transactionType = Transfer,
-            externalTransactionId = Nothing,
+            importInfo = Nothing,
             labels = mempty,
             relation = Nothing
           }

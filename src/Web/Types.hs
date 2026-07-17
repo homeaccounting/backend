@@ -631,7 +631,10 @@ data TransactionResponse
     -- | Outbound typed relationships declared by this transaction (e.g. a
     -- 'Refund' edge to the expense it refunds). Empty for transactions with
     -- no declared edges.
-    relations :: [TransactionRelation]
+    relations :: [TransactionRelation],
+    -- | Original provider merchant category code for imported transactions;
+    -- @null@ for manual entries and providers that supply no MCC.
+    mcc :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -1101,7 +1104,8 @@ fromTransactionData txId TransactionData {..} =
       relations =
         [ TransactionRelation (unTransactionId rel) (renderRelationKind k)
         | (rel, k) <- relations
-        ]
+        ],
+      mcc = mcc
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -1134,7 +1138,8 @@ fromTransaction txId tx =
       date = "",
       labels = sort [unDictionaryEntryId eid | eid <- Set.toList tx.labels],
       amendmentCount = tx.amendmentCount,
-      relations = []
+      relations = [],
+      mcc = Nothing
     }
 
 -- | Converts TransactionStatus to Text representation.

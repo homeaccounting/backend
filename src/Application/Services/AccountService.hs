@@ -569,7 +569,7 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
                 initiatedBy = userId,
                 at = date,
                 transactionType = Adjustment,
-                externalTransactionId = Nothing,
+                importInfo = Nothing,
                 labels = mempty,
                 relation = Nothing
               }

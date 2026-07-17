@@ -5,11 +5,11 @@
 -- Module      : Domain.Transaction.EventsSpec
 -- Description : Backwards-compatibility tests for transaction event JSON
 --
--- Events emitted before the @externalTransactionId@ field was added
--- (pre-bank-integration) must still decode from the event store. These
--- tests pin that contract: a 'TransactionPostingInitiated' payload without the
--- field decodes as 'Nothing', and the round-trip preserves explicit
--- 'Just' values.
+-- Events emitted before the @importInfo@ field was added (pre-bank-integration,
+-- and events that predate grouping the external id under 'ImportInfo') must
+-- still decode from the event store. These tests pin that contract: a
+-- 'TransactionPostingInitiated' payload without the field decodes as 'Nothing',
+-- and the round-trip preserves explicit 'Just' values.
 module Domain.Transaction.EventsSpec (spec) where
 
 import Data.Aeson (Value (Object), decode, eitherDecode, encode)
@@ -20,7 +20,8 @@ import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( RelationKind (..),
+  ( ImportInfo (..),
+    RelationKind (..),
     TransactionId,
     unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
@@ -41,17 +42,21 @@ spec = do
 
 postingInitiatedSpec :: Spec
 postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
-  it "decodes legacy payloads without externalTransactionId as Nothing" $ do
-    let legacy = stripKey "externalTransactionId" (encode sampleEvent)
+  it "decodes legacy payloads without importInfo as Nothing" $ do
+    let legacy = stripKey "importInfo" (encode sampleEvent)
     case eitherDecode legacy :: Either String TransactionPostingInitiated of
       Left err -> expectationFailure $ "legacy decode failed: " <> err
-      Right decoded -> decoded.externalTransactionId `shouldBe` Nothing
+      Right decoded -> decoded.importInfo `shouldBe` Nothing
 
-  it "round-trips TransactionPostingInitiated with Just externalTransactionId" $ do
+  it "round-trips TransactionPostingInitiated with Just importInfo carrying an mcc" $ do
     let evt =
           sampleEvent
-            { externalTransactionId =
-                Just (unsafeExternalTransactionId "mono-tx-123")
+            { importInfo =
+                Just
+                  ImportInfo
+                    { externalTransactionId = unsafeExternalTransactionId "mono-tx-123",
+                      mcc = Just "5411"
+                    }
             }
     (eitherDecode (encode evt) :: Either String TransactionPostingInitiated)
       `shouldBe` Right evt
@@ -85,7 +90,7 @@ sampleEvent =
       by = mockUserId (uuidFromInt 3),
       at = UTCTime (fromGregorian 2026 4 1) 0,
       transactionType = singletonIncome (unsafeDictionaryEntryId (uuidFromInt 4)) (mockMoney 10),
-      externalTransactionId = Nothing,
+      importInfo = Nothing,
       labels = Set.empty
     }
   where

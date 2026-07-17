@@ -96,7 +96,7 @@ mkInitiated =
       by = transactionDefault ^. #initiatedBy,
       at = t0,
       transactionType = Income (mkIncomeAllocations (Allocation (unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)) (unsafeMoney USD 100) Nothing :| [])),
-      externalTransactionId = Nothing,
+      importInfo = Nothing,
       labels = Set.empty
     }
 

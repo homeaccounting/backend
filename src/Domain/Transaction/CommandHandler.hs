@@ -216,7 +216,7 @@ handleTransactionCommand transaction (InitiateTransactionTransactionCommand Init
                               by = initiatedBy,
                               at = at,
                               transactionType = transactionType,
-                              externalTransactionId = externalTransactionId,
+                              importInfo = importInfo,
                               labels = labels
                             }
                   -- No self-link check here: the freshly-generated aggregate id

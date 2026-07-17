@@ -46,6 +46,7 @@ sampleTxn tt =
       status = Completed,
       transactionType = tt,
       date = UTCTime (fromGregorian 2026 4 18) (secondsToDiffTime (14 * 3600 + 30 * 60)),
+      mcc = Nothing,
       labels = Set.empty,
       relations = [],
       amendmentCount = 0

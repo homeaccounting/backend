@@ -98,6 +98,8 @@ import Domain.Core.Types
     DictionaryEntryId,
     ExchangeRate,
     LabelId,
+    MCC,
+    importInfoMcc,
     Money,
     RelationKind (..),
     TransactionId,
@@ -151,6 +153,9 @@ data TransactionData = TransactionData
     status :: TransactionStatus,
     transactionType :: TransactionType,
     date :: UTCTime,
+    -- | Original provider MCC for imported transactions; 'Nothing' for manual
+    -- entries and providers that supply no MCC.
+    mcc :: Maybe MCC,
     labels :: Set LabelId,
     -- | Outbound typed relationship edges declared by this transaction as
     -- @(relatedTransactionId, kind)@ — e.g. a 'Refund' edge to the expense it
@@ -220,6 +225,7 @@ TransactionEntity sql=transactions
     failureReason Text Maybe
     transactionType TransactionType
     date UTCTime
+    mcc Text Maybe
     amendmentCount Int
     version EventVersion
     UniqueTransactionId transactionId
@@ -308,6 +314,7 @@ applyTransactionEvent globalEvent =
                     transactionEntityFailureReason = Nothing,
                     transactionEntityTransactionType = evt.transactionType,
                     transactionEntityDate = evt.at,
+                    transactionEntityMcc = evt.importInfo >>= importInfoMcc,
                     transactionEntityAmendmentCount = 0,
                     transactionEntityVersion = ver
                   }
@@ -388,6 +395,7 @@ entToData e ls rels =
       status = statusFromKind e.transactionEntityStatusKind e.transactionEntityFailureReason,
       transactionType = e.transactionEntityTransactionType,
       date = e.transactionEntityDate,
+      mcc = e.transactionEntityMcc,
       labels = Set.fromList ls,
       relations = rels,
       amendmentCount = fromIntegral (max 0 e.transactionEntityAmendmentCount)

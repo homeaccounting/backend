@@ -64,7 +64,7 @@ mkInitiated =
       by = transactionDefault ^. #initiatedBy,
       at = anyTime,
       transactionType = Income seedIncomeAllocs,
-      externalTransactionId = Nothing,
+      importInfo = Nothing,
       labels = Set.empty
     }
 
