@@ -116,14 +116,10 @@ watch-test:
     @echo "Starting continuous test runner..."
     ghcid --test=:test
 
-# Setup development environment
-dev-setup: hpack db-up
-    @echo "Development environment ready!"
-    @echo ""
-    @echo "Next steps:"
-    @echo "  1. Run 'just build' to build the project"
-    @echo "  2. Run 'just run' to start the server"
-    @echo "  3. Visit http://localhost:8080"
+# Prepare everything needed before `just run` (env, db, hpack, build)
+dev-setup: hpack db-up build
+    @[ -f .env ] || (cp .env.example .env && echo "✓ Created .env from .env.example")
+    @echo "✓ Development environment ready — run 'just run' to start the server (http://localhost:8080)"
 
 # Clean and rebuild
 rebuild: clean build
@@ -192,7 +188,7 @@ ci:
 
 # Build and push image to ghcr.io. Tag defaults to dev-<short-sha>.
 # Requires `gh auth login` and `docker login ghcr.io` (or runs gh-token login below).
-publish tag="":
+publish tag="": hpack
     #!/usr/bin/env bash
     set -euo pipefail
     SHA="$(git rev-parse --short HEAD)"
