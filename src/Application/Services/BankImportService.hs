@@ -46,7 +46,7 @@ where
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.BankImportReadModel (isImported)
-import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
+import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItemIds, dictionaryItems)
 import qualified Application.ReadModels.User as UserRM
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
@@ -56,7 +56,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime, utctDay)
 import Domain.Banking.Types (ExternalAccountId, unExternalAccountId)
-import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
+import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
 import Domain.Configuration.Projection (BankingConfiguration (..), ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
@@ -363,15 +363,15 @@ resolveCategory ::
   Either DomainError (CategoryId, CategoryResolution)
 resolveCategory banking cfg direction maybeMcc =
   let ConfigurationDefaults {incomeCategory = mIncomeDefault, expenseCategory = mExpenseDefault} = cfg.defaults
-      (dictId, deflt) = case direction of
-        ClassifiedIncome -> (incomeCategoryDictId, mIncomeDefault)
-        ClassifiedExpense -> (expenseCategoryDictId, mExpenseDefault)
-      dictEntries =
-        maybe Map.empty (.entries) (Map.lookup dictId cfg.dictionaries)
+      (dictKind, deflt) = case direction of
+        ClassifiedIncome -> (incomeCategoryDictKind, mIncomeDefault)
+        ClassifiedExpense -> (expenseCategoryDictKind, mExpenseDefault)
+      dictItemIds =
+        maybe Set.empty dictionaryItemIds (Map.lookup dictKind cfg.dictionaries)
       mccHit = case direction of
         ClassifiedExpense -> maybeMcc >>= \m -> (m,) <$> Map.lookup m banking.mccExpenseCategoryMap
         ClassifiedIncome -> Nothing
-      existsInDict eid = Map.member eid dictEntries
+      existsInDict eid = Set.member eid dictItemIds
    in case mccHit of
         Just (mcc, eid) | existsInDict eid -> Right (eid, MccHit mcc)
         _ -> case deflt of
@@ -413,14 +413,13 @@ logCategoryResolution tx direction cfg categoryId resolution =
     <> " merchant="
     <> display tx.description
   where
-    dictId = case direction of
-      ClassifiedIncome -> incomeCategoryDictId
-      ClassifiedExpense -> expenseCategoryDictId
+    dictKind = case direction of
+      ClassifiedIncome -> incomeCategoryDictKind
+      ClassifiedExpense -> expenseCategoryDictKind
     categoryName =
       maybe "<unknown>" unEntryName
-        $ Map.lookup dictId cfg.dictionaries
-        >>= Map.lookup categoryId
-        . (.entries)
+        $ Map.lookup dictKind cfg.dictionaries
+        >>= (lookup categoryId . dictionaryItems)
     resolutionTag :: Text
     resolutionTag = case resolution of
       MccHit _ -> "MccHit"

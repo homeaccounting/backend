@@ -29,13 +29,14 @@ import qualified Application.ReadModels.Transaction as TxRM
 import Application.ReadModels.User (UserData (..), getUser)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
-    incomeCategoryDictId,
+    incomeCategoryDictKind,
     seedDefaultConfiguration,
   )
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.UUID.V4 as UUID4
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
@@ -75,7 +76,7 @@ setupHarness email = do
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
   accId <- createDefaultAccount env uid "Wallet"
-  startingCategory <- firstDictionaryEntry env uid incomeCategoryDictId
+  startingCategory <- firstDictionaryEntry env uid incomeCategoryDictKind
   pure
     Harness
       { harnessEnv = env,
@@ -140,9 +141,9 @@ incomeCategoryNames h = do
       case mCfg of
         Nothing -> fail "configuration not found"
         Just cfg ->
-          case Map.lookup incomeCategoryDictId cfg.dictionaries of
+          case Map.lookup incomeCategoryDictKind cfg.dictionaries of
             Nothing -> pure []
-            Just dict -> pure $ map unEntryName (Map.elems dict.entries)
+            Just dict -> pure $ map (unEntryName . snd) (ConfigRM.dictionaryItems dict)
 
 unwrap :: String -> Either DomainError a -> IO a
 unwrap ctx = \case
@@ -162,7 +163,7 @@ spec = describe "Integration / TransactionAllocationsEdit" $ do
     newCategoryId <-
       runAppM
         h.harnessEnv
-        (addDictionaryEntry h.harnessUser incomeCategoryDictId (unsafeEntryName "Test-Freelance"))
+        (addDictionaryEntry h.harnessUser incomeCategoryDictKind (unsafeEntryName "Test-Freelance") ItemRole Nothing)
         >>= unwrap "addDictionaryEntry Test-Freelance"
     names <- incomeCategoryNames h
     List.sort (filter (== "Test-Freelance") names) `shouldBe` ["Test-Freelance"]

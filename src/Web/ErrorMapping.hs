@@ -220,6 +220,16 @@ mapDomainError (CategoryInUse eid n) =
                     ]
             }
     }
+mapDomainError DictionaryGroupNotEmpty =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot remove a dictionary group that still has entries",
+              code = "DICTIONARY_GROUP_NOT_EMPTY",
+              details = Nothing
+            }
+    }
 mapDomainError CannotEditUncompletedTransaction =
   err409
     { errBody =

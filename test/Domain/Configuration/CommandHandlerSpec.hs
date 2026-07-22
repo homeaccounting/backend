@@ -20,7 +20,9 @@ module Domain.Configuration.CommandHandlerSpec (spec) where
 import qualified Data.Map.Strict as Map
 import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration
-import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
+import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
+import Domain.Configuration.Dictionary (EntryRole (..))
+import qualified Domain.Configuration.Dictionary as DictKind
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
@@ -58,6 +60,9 @@ spec = do
   setDefaultSubtypeAccountsSpec
   setBankingMccExpenseCategoryMapSpec
   removeDictionaryEntryBankingGuardSpec
+  addTreeGuardSpec
+  moveTreeGuardSpec
+  removeGroupGuardSpec
   addBankConnectionSpec
   bankConnectionMissingSpec
   setBankConnectionAccountMapSpec
@@ -83,8 +88,8 @@ testEntryId1 = mockDictionaryEntryId (read "33333333-3333-3333-3333-333333333333
 testEntryId2 :: DictionaryEntryId
 testEntryId2 = mockDictionaryEntryId (read "44444444-4444-4444-4444-444444444444")
 
-testDictId :: DictionaryId
-testDictId = DictionaryId "expense-category"
+testDictId :: DictKind.DictionaryKind
+testDictId = DictKind.ExpenseKind
 
 -- | Entry IDs used as CategoryIds in banking tests
 testCategoryId1 :: CategoryId
@@ -129,9 +134,11 @@ configWithOneEntry =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = testDictId,
+          { dictionaryKind = testDictId,
             entryId = testEntryId1,
-            name = testEntryName1
+            name = testEntryName1,
+            role = ItemRole,
+            parentId = Nothing
           }
     ]
 
@@ -147,15 +154,19 @@ configWithTwoEntries =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = testDictId,
+          { dictionaryKind = testDictId,
             entryId = testEntryId1,
-            name = testEntryName1
+            name = testEntryName1,
+            role = ItemRole,
+            parentId = Nothing
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = testDictId,
+          { dictionaryKind = testDictId,
             entryId = testEntryId2,
-            name = testEntryName2
+            name = testEntryName2,
+            role = ItemRole,
+            parentId = Nothing
           }
     ]
 
@@ -171,9 +182,11 @@ configWithIncomeEntry =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = incomeCategoryDictId,
+          { dictionaryKind = incomeCategoryDictKind,
             entryId = testCategoryId1,
-            name = mockEntryName "Salary"
+            name = mockEntryName "Salary",
+            role = ItemRole,
+            parentId = Nothing
           }
     ]
 
@@ -189,9 +202,11 @@ configWithExpenseEntry =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = expenseCategoryDictId,
+          { dictionaryKind = expenseCategoryDictKind,
             entryId = testCategoryId1,
-            name = mockEntryName "Food"
+            name = mockEntryName "Food",
+            role = ItemRole,
+            parentId = Nothing
           }
     ]
 
@@ -207,15 +222,19 @@ configWithTwoExpenseEntries =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = expenseCategoryDictId,
+          { dictionaryKind = expenseCategoryDictKind,
             entryId = testCategoryId1,
-            name = mockEntryName "Food"
+            name = mockEntryName "Food",
+            role = ItemRole,
+            parentId = Nothing
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = expenseCategoryDictId,
+          { dictionaryKind = expenseCategoryDictKind,
             entryId = testCategoryId2,
-            name = mockEntryName "Transport"
+            name = mockEntryName "Transport",
+            role = ItemRole,
+            parentId = Nothing
           }
     ]
 
@@ -232,15 +251,19 @@ configWithDefaultIncomeCategory =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = incomeCategoryDictId,
+          { dictionaryKind = incomeCategoryDictKind,
             entryId = testCategoryId1,
-            name = mockEntryName "Salary"
+            name = mockEntryName "Salary",
+            role = ItemRole,
+            parentId = Nothing
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = incomeCategoryDictId,
+          { dictionaryKind = incomeCategoryDictKind,
             entryId = testCategoryId2,
-            name = mockEntryName "Freelance"
+            name = mockEntryName "Freelance",
+            role = ItemRole,
+            parentId = Nothing
           },
       DefaultIncomeCategorySetConfigurationEvent
         DefaultIncomeCategorySet
@@ -261,15 +284,19 @@ configWithDefaultExpenseCategory =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = expenseCategoryDictId,
+          { dictionaryKind = expenseCategoryDictKind,
             entryId = testCategoryId1,
-            name = mockEntryName "Food"
+            name = mockEntryName "Food",
+            role = ItemRole,
+            parentId = Nothing
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = expenseCategoryDictId,
+          { dictionaryKind = expenseCategoryDictKind,
             entryId = testCategoryId2,
-            name = mockEntryName "Transport"
+            name = mockEntryName "Transport",
+            role = ItemRole,
+            parentId = Nothing
           },
       DefaultExpenseCategorySetConfigurationEvent
         DefaultExpenseCategorySet
@@ -290,15 +317,19 @@ configWithMccMapEntry =
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = expenseCategoryDictId,
+          { dictionaryKind = expenseCategoryDictKind,
             entryId = testCategoryId1,
-            name = mockEntryName "Food"
+            name = mockEntryName "Food",
+            role = ItemRole,
+            parentId = Nothing
           },
       DictionaryEntryAddedConfigurationEvent
         DictionaryEntryAdded
-          { dictionaryId = expenseCategoryDictId,
+          { dictionaryKind = expenseCategoryDictKind,
             entryId = testCategoryId2,
-            name = mockEntryName "Transport"
+            name = mockEntryName "Transport",
+            role = ItemRole,
+            parentId = Nothing
           },
       BankingMccExpenseCategoryMapSetConfigurationEvent
         BankingMccExpenseCategoryMapSet
@@ -463,9 +494,11 @@ addDictionaryEntrySpec = describe "AddDictionaryEntry Command" $ do
         let command =
               AddDictionaryEntryConfigurationCommand
                 AddDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   }
         let result = handleConfigurationCommand config command
 
@@ -474,7 +507,7 @@ addDictionaryEntrySpec = describe "AddDictionaryEntry Command" $ do
             length events `shouldBe` 1
             case head events of
               DictionaryEntryAddedConfigurationEvent added -> do
-                added.dictionaryId `shouldBe` testDictId
+                added.dictionaryKind `shouldBe` testDictId
                 added.entryId `shouldBe` testEntryId1
                 added.name `shouldBe` testEntryName1
               _ -> expectationFailure "Expected DictionaryEntryAdded event"
@@ -493,9 +526,11 @@ addDictionaryEntrySpec = describe "AddDictionaryEntry Command" $ do
         let command =
               AddDictionaryEntryConfigurationCommand
                 AddDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   }
         case handleConfigurationCommand config command of
           Right events -> do
@@ -510,13 +545,80 @@ addDictionaryEntrySpec = describe "AddDictionaryEntry Command" $ do
         let command =
               AddDictionaryEntryConfigurationCommand
                 AddDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId2,
-                    name = testEntryName1 -- Same name as existing entry
+                    -- Same name as existing entry
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   }
         let result = handleConfigurationCommand config command
 
         result `shouldBe` Left DuplicateEntryName
+
+  context "Given entries grouped under different parents" $ do
+    let parentA = mockDictionaryEntryId (read "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        parentB = mockDictionaryEntryId (read "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        childA = mockDictionaryEntryId (read "cccccccc-cccc-cccc-cccc-cccccccccccc")
+        otherName = mockEntryName "Other"
+        siblingConfig =
+          applyEvents
+            [ ConfigurationCreatedConfigurationEvent
+                ConfigurationCreated
+                  { baseCurrency = UAH,
+                    defaultCurrency = UAH,
+                    createdBy = System
+                  },
+              DictionaryEntryAddedConfigurationEvent
+                DictionaryEntryAdded
+                  { dictionaryKind = testDictId,
+                    entryId = parentA,
+                    name = mockEntryName "Group A",
+                    role = GroupRole,
+                    parentId = Nothing
+                  },
+              DictionaryEntryAddedConfigurationEvent
+                DictionaryEntryAdded
+                  { dictionaryKind = testDictId,
+                    entryId = parentB,
+                    name = mockEntryName "Group B",
+                    role = GroupRole,
+                    parentId = Nothing
+                  },
+              DictionaryEntryAddedConfigurationEvent
+                DictionaryEntryAdded
+                  { dictionaryKind = testDictId,
+                    entryId = childA,
+                    name = otherName,
+                    role = ItemRole,
+                    parentId = Just parentA
+                  }
+            ]
+    describe "When adding a name that already exists under a different parent" $ do
+      it "Then succeeds (uniqueness is scoped to siblings)" $ do
+        let command =
+              AddDictionaryEntryConfigurationCommand
+                AddDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = otherName,
+                    role = ItemRole,
+                    parentId = Just parentB
+                  }
+        handleConfigurationCommand siblingConfig command `shouldSatisfy` isRight
+
+    describe "When adding a name that already exists under the same parent" $ do
+      it "Then returns DuplicateEntryName error" $ do
+        let command =
+              AddDictionaryEntryConfigurationCommand
+                AddDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = otherName,
+                    role = ItemRole,
+                    parentId = Just parentA
+                  }
+        handleConfigurationCommand siblingConfig command `shouldBe` Left DuplicateEntryName
 
   context "Given uncreated aggregate" $ do
     describe "When attempting to add entry" $ do
@@ -525,9 +627,11 @@ addDictionaryEntrySpec = describe "AddDictionaryEntry Command" $ do
         let command =
               AddDictionaryEntryConfigurationCommand
                 AddDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   }
         let result = handleConfigurationCommand config command
 
@@ -546,7 +650,7 @@ renameDictionaryEntrySpec = describe "RenameDictionaryEntry Command" $ do
         let command =
               RenameDictionaryEntryConfigurationCommand
                 RenameDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
                     newName = testEntryName3
                   }
@@ -557,7 +661,7 @@ renameDictionaryEntrySpec = describe "RenameDictionaryEntry Command" $ do
             length events `shouldBe` 1
             case head events of
               DictionaryEntryRenamedConfigurationEvent renamed -> do
-                renamed.dictionaryId `shouldBe` testDictId
+                renamed.dictionaryKind `shouldBe` testDictId
                 renamed.entryId `shouldBe` testEntryId1
                 renamed.newName `shouldBe` testEntryName3
               _ -> expectationFailure "Expected DictionaryEntryRenamed event"
@@ -569,7 +673,7 @@ renameDictionaryEntrySpec = describe "RenameDictionaryEntry Command" $ do
         let command =
               RenameDictionaryEntryConfigurationCommand
                 RenameDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
                     newName = testEntryName2 -- Name already used by entry 2
                   }
@@ -584,7 +688,7 @@ renameDictionaryEntrySpec = describe "RenameDictionaryEntry Command" $ do
         let command =
               RenameDictionaryEntryConfigurationCommand
                 RenameDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
                     newName = testEntryName3
                   }
@@ -599,7 +703,7 @@ renameDictionaryEntrySpec = describe "RenameDictionaryEntry Command" $ do
         let command =
               RenameDictionaryEntryConfigurationCommand
                 RenameDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId2, -- This entry doesn't exist
                     newName = testEntryName3
                   }
@@ -614,7 +718,7 @@ renameDictionaryEntrySpec = describe "RenameDictionaryEntry Command" $ do
         let command =
               RenameDictionaryEntryConfigurationCommand
                 RenameDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
                     newName = testEntryName3
                   }
@@ -635,7 +739,7 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1
                   }
         let result = handleConfigurationCommand config command
@@ -645,7 +749,7 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
             length events `shouldBe` 1
             case head events of
               DictionaryEntryRemovedConfigurationEvent removed -> do
-                removed.dictionaryId `shouldBe` testDictId
+                removed.dictionaryKind `shouldBe` testDictId
                 removed.entryId `shouldBe` testEntryId1
               _ -> expectationFailure "Expected DictionaryEntryRemoved event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
@@ -657,7 +761,7 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1
                   }
         let result = handleConfigurationCommand config command
@@ -671,7 +775,7 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1
                   }
         let result = handleConfigurationCommand config command
@@ -685,7 +789,7 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = mockDictionaryEntryId (read "55555555-5555-5555-5555-555555555555")
                   }
         let result = handleConfigurationCommand config command
@@ -699,7 +803,7 @@ removeDictionaryEntrySpec = describe "RemoveDictionaryEntry Command" $ do
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1
                   }
         let result = handleConfigurationCommand config command
@@ -902,7 +1006,7 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = incomeCategoryDictId,
+                  { dictionaryKind = incomeCategoryDictKind,
                     entryId = testCategoryId1
                   }
         let result = handleConfigurationCommand config command
@@ -916,7 +1020,7 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = expenseCategoryDictId,
+                  { dictionaryKind = expenseCategoryDictKind,
                     entryId = testCategoryId1
                   }
         let result = handleConfigurationCommand config command
@@ -930,7 +1034,7 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = expenseCategoryDictId,
+                  { dictionaryKind = expenseCategoryDictKind,
                     entryId = testCategoryId1
                   }
         let result = handleConfigurationCommand config command
@@ -951,15 +1055,19 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
                       },
                   DictionaryEntryAddedConfigurationEvent
                     DictionaryEntryAdded
-                      { dictionaryId = expenseCategoryDictId,
+                      { dictionaryKind = expenseCategoryDictKind,
                         entryId = testCategoryId1,
-                        name = mockEntryName "Food"
+                        name = mockEntryName "Food",
+                        role = ItemRole,
+                        parentId = Nothing
                       },
                   DictionaryEntryAddedConfigurationEvent
                     DictionaryEntryAdded
-                      { dictionaryId = expenseCategoryDictId,
+                      { dictionaryKind = expenseCategoryDictKind,
                         entryId = testCategoryId2,
-                        name = mockEntryName "Transport"
+                        name = mockEntryName "Transport",
+                        role = ItemRole,
+                        parentId = Nothing
                       },
                   DefaultExpenseCategorySetConfigurationEvent
                     DefaultExpenseCategorySet
@@ -969,7 +1077,7 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
         let command =
               RemoveDictionaryEntryConfigurationCommand
                 RemoveDictionaryEntry
-                  { dictionaryId = expenseCategoryDictId,
+                  { dictionaryKind = expenseCategoryDictKind,
                     entryId = testCategoryId2 -- the free entry
                   }
         let result = handleConfigurationCommand config command
@@ -982,6 +1090,253 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
                 removed.entryId `shouldBe` testCategoryId2
               _ -> expectationFailure "Expected DictionaryEntryRemoved event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
+-- Dictionary Tree Guard Tests (parent-exists, parent-is-group, depth, cycle)
+-- -----------------------------------------------------------------------------
+
+-- | Entry ids for a valid depth-2 fixture: a root group @grpA@ holding one item
+-- child @grpAChild@, an empty root group @grpB@, and a standalone root item
+-- @rootItem@ — all in the same dictionary. @treeAbsent@ is never present.
+treeGrpA, treeGrpAChild, treeGrpB, treeRootItem, treeAbsent :: DictionaryEntryId
+treeGrpA = mockDictionaryEntryId (read "a1000000-0000-0000-0000-000000000001")
+treeGrpAChild = mockDictionaryEntryId (read "a1000000-0000-0000-0000-000000000002")
+treeGrpB = mockDictionaryEntryId (read "b1000000-0000-0000-0000-000000000001")
+treeRootItem = mockDictionaryEntryId (read "b1000000-0000-0000-0000-000000000002")
+treeAbsent = mockDictionaryEntryId (read "c1000000-0000-0000-0000-000000000099")
+
+-- | A config whose expense dictionary holds two root groups (one with an item
+-- child, one empty) and a standalone root item — the maximal depth-2 shape.
+treeConfig :: Configuration
+treeConfig =
+  applyEvents
+    ( ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          }
+        : map
+          addEntry
+          [ (treeGrpA, "GA", GroupRole, Nothing),
+            (treeGrpAChild, "GAC", ItemRole, Just treeGrpA),
+            (treeGrpB, "GB", GroupRole, Nothing),
+            (treeRootItem, "RootItem", ItemRole, Nothing)
+          ]
+    )
+  where
+    addEntry (eid, nm, entryRole, parent) =
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = testDictId,
+            entryId = eid,
+            name = mockEntryName nm,
+            role = entryRole,
+            parentId = parent
+          }
+
+addTreeGuardSpec :: Spec
+addTreeGuardSpec = describe "AddDictionaryEntry tree guards" $ do
+  context "Given a parent id that does not exist" $ do
+    describe "When adding an entry under it" $ do
+      it "Then returns ParentEntryNotFound" $ do
+        let command =
+              AddDictionaryEntryConfigurationCommand
+                AddDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = mockEntryName "New",
+                    role = ItemRole,
+                    parentId = Just treeAbsent
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left ParentEntryNotFound
+
+  context "Given a parent that is an item, not a group" $ do
+    describe "When adding an entry under it" $ do
+      it "Then returns ParentNotAGroup" $ do
+        let command =
+              AddDictionaryEntryConfigurationCommand
+                AddDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = mockEntryName "UnderItem",
+                    role = ItemRole,
+                    parentId = Just treeRootItem
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left ParentNotAGroup
+
+  context "Given a group parent at the root" $ do
+    describe "When adding a nested group under it" $ do
+      it "Then returns MaxDepthExceeded (groups may not nest at depth 2)" $ do
+        let command =
+              AddDictionaryEntryConfigurationCommand
+                AddDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = mockEntryName "NestedGroup",
+                    role = GroupRole,
+                    parentId = Just treeGrpA
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left MaxDepthExceeded
+
+  context "Given a group parent at the root" $ do
+    describe "When adding an item child under it" $ do
+      it "Then succeeds (a group's items sit at depth 2)" $ do
+        let command =
+              AddDictionaryEntryConfigurationCommand
+                AddDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = mockEntryName "OkItem",
+                    role = ItemRole,
+                    parentId = Just treeGrpB
+                  }
+        handleConfigurationCommand treeConfig command `shouldSatisfy` isRight
+
+moveTreeGuardSpec :: Spec
+moveTreeGuardSpec = describe "MoveDictionaryEntry tree guards" $ do
+  context "Given a target entry that does not exist" $ do
+    describe "When moving an absent entry" $ do
+      it "Then returns EntryNotFound" $ do
+        let command =
+              MoveDictionaryEntryConfigurationCommand
+                MoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeAbsent,
+                    newParentId = Nothing
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left EntryNotFound
+
+  context "Given a new parent id that does not exist" $ do
+    describe "When moving to a missing new parent" $ do
+      it "Then returns ParentEntryNotFound" $ do
+        let command =
+              MoveDictionaryEntryConfigurationCommand
+                MoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeGrpAChild,
+                    newParentId = Just treeAbsent
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left ParentEntryNotFound
+
+  context "Given a move under an item parent" $ do
+    describe "When moving a node under an item" $ do
+      it "Then returns ParentNotAGroup" $ do
+        let command =
+              MoveDictionaryEntryConfigurationCommand
+                MoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeGrpB,
+                    newParentId = Just treeRootItem
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left ParentNotAGroup
+
+  context "Given a move onto itself" $ do
+    describe "When moving a group under itself" $ do
+      it "Then returns MoveWouldCreateCycle" $ do
+        let command =
+              MoveDictionaryEntryConfigurationCommand
+                MoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeGrpA,
+                    newParentId = Just treeGrpA
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left MoveWouldCreateCycle
+
+  context "Given a group moved under another group" $ do
+    describe "When the resulting depth would exceed the limit" $ do
+      it "Then returns MaxDepthExceeded (no nested groups at depth 2)" $ do
+        let command =
+              MoveDictionaryEntryConfigurationCommand
+                MoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeGrpA,
+                    newParentId = Just treeGrpB
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left MaxDepthExceeded
+
+  context "Given a valid move within the depth limit" $ do
+    describe "When moving a root item under a root group" $ do
+      it "Then succeeds" $ do
+        let command =
+              MoveDictionaryEntryConfigurationCommand
+                MoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeRootItem,
+                    newParentId = Just treeGrpB
+                  }
+        handleConfigurationCommand treeConfig command `shouldSatisfy` isRight
+
+  context "Given the new parent already has a child with the moved entry's name" $ do
+    describe "When moving the entry under that parent" $ do
+      it "Then returns DuplicateEntryName" $ do
+        -- parentP already has a child "Dup"; entryToMove (also "Dup") lives under
+        -- parentQ. Moving it under parentP collides with the existing sibling.
+        let parentP = mockDictionaryEntryId (read "d0000000-0000-0000-0000-000000000001")
+            parentQ = mockDictionaryEntryId (read "d0000000-0000-0000-0000-000000000002")
+            existingDup = mockDictionaryEntryId (read "d0000000-0000-0000-0000-000000000003")
+            entryToMove = mockDictionaryEntryId (read "d0000000-0000-0000-0000-000000000004")
+            dupConfig =
+              applyEvents
+                ( ConfigurationCreatedConfigurationEvent
+                    ConfigurationCreated
+                      { baseCurrency = UAH,
+                        defaultCurrency = UAH,
+                        createdBy = System
+                      }
+                    : map
+                      ( \(eid, nm, entryRole, parent) ->
+                          DictionaryEntryAddedConfigurationEvent
+                            DictionaryEntryAdded
+                              { dictionaryKind = testDictId,
+                                entryId = eid,
+                                name = mockEntryName nm,
+                                role = entryRole,
+                                parentId = parent
+                              }
+                      )
+                      [ (parentP, "P", GroupRole, Nothing),
+                        (parentQ, "Q", GroupRole, Nothing),
+                        (existingDup, "Dup", ItemRole, Just parentP),
+                        (entryToMove, "Dup", ItemRole, Just parentQ)
+                      ]
+                )
+        let command =
+              MoveDictionaryEntryConfigurationCommand
+                MoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = entryToMove,
+                    newParentId = Just parentP
+                  }
+        handleConfigurationCommand dupConfig command `shouldBe` Left DuplicateEntryName
+
+-- -----------------------------------------------------------------------------
+-- RemoveDictionaryEntry Group Guard Tests (non-empty group rejection)
+-- -----------------------------------------------------------------------------
+
+removeGroupGuardSpec :: Spec
+removeGroupGuardSpec = describe "RemoveDictionaryEntry group guard" $ do
+  context "Given an entry that still has children" $ do
+    describe "When removing that group" $ do
+      it "Then returns GroupNotEmpty" $ do
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeGrpA
+                  }
+        handleConfigurationCommand treeConfig command `shouldBe` Left GroupNotEmpty
+
+  context "Given a leaf entry with no children" $ do
+    describe "When removing that leaf" $ do
+      it "Then emits DictionaryEntryRemoved event" $ do
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryKind = testDictId,
+                    entryId = treeGrpAChild
+                  }
+        handleConfigurationCommand treeConfig command `shouldSatisfy` isRight
 
 -- -----------------------------------------------------------------------------
 -- Bank Connection Test Fixtures

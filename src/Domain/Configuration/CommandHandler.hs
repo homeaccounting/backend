@@ -32,17 +32,31 @@ module Domain.Configuration.CommandHandler
 
     -- * Handler Function (exported for testing)
     handleConfigurationCommand,
+
+    -- * Tree helpers (exported for testing)
+    maxDictionaryDepth,
+    maxDepthForRole,
+    isGroupEntry,
+    entriesOf,
+    lookupEntry,
+    childrenOf,
+    depthOf,
+    descendantsOf,
+    subtreeHeight,
   )
 where
 
+import Data.List (find)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (isNothing)
 import Data.Time (UTCTime)
 import Domain.Banking.Types (BankConnectionId, ExternalAccountId)
 import Domain.Configuration.Commands
-import Domain.Configuration.Defaults (expenseCategoryDictId, incomeCategoryDictId)
+import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
+import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), DictionaryKind (..), EntryRole (..))
 import Domain.Configuration.Events
 import Domain.Configuration.Projection
-import Domain.Core.Types (AccountId, CategoryId, Dictionary (..), DictionaryEntry (..), DictionaryEntryId, DictionaryId (..), EntryName)
+import Domain.Core.Types (AccountId, CategoryId, DictionaryEntryId, EntryName)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 
@@ -65,6 +79,18 @@ data ConfigurationError
   | EntryNotInDictionary
   | EntryIsGlobalDefault
   | EntryIsInMccMap
+  | -- | An add/move named a parent entry that does not exist in the dictionary.
+    ParentEntryNotFound
+  | -- | An add/move named a parent that exists but is an item, not a group.
+    -- Only groups may hold children (ADR 002).
+    ParentNotAGroup
+  | -- | A move would place an entry under itself or one of its own descendants,
+    -- forming a cycle.
+    MoveWouldCreateCycle
+  | -- | An add/move would push a node beyond 'maxDictionaryDepth'.
+    MaxDepthExceeded
+  | -- | A remove targeted a group (a node that still has children).
+    GroupNotEmpty
   | -- | 'CloseBooksThrough' would rewind (or leave unchanged) the cutoff.
     -- The cutoff is advance-only: @attempted@ must be strictly greater than
     -- @current@.
@@ -94,45 +120,123 @@ constructSumType
 -- -----------------------------------------------------------------------------
 
 -- | Check if a dictionary exists in the configuration.
-dictionaryExists :: DictionaryId -> Configuration -> Bool
-dictionaryExists dictId config = Map.member dictId config.dictionaries
+dictionaryExists :: DictionaryKind -> Configuration -> Bool
+dictionaryExists kind config = Map.member kind config.dictionaries
 
 -- | Check if an entry exists in a dictionary.
-entryExists :: DictionaryEntryId -> DictionaryId -> Configuration -> Bool
-entryExists eid dictId config =
-  case Map.lookup dictId config.dictionaries of
+entryExists :: DictionaryEntryId -> DictionaryKind -> Configuration -> Bool
+entryExists eid kind config =
+  case Map.lookup kind config.dictionaries of
     Nothing -> False
     Just dict -> any (\e -> e.entryId == eid) dict.entries
 
--- | Check if a dictionary already has an entry with the given name.
-hasDuplicateName :: EntryName -> DictionaryId -> Configuration -> Bool
-hasDuplicateName ename dictId config =
-  case Map.lookup dictId config.dictionaries of
+-- | Look up an entry in a dictionary.
+findEntry :: DictionaryEntryId -> DictionaryKind -> Configuration -> Maybe DictionaryEntry
+findEntry eid kind config =
+  case Map.lookup kind config.dictionaries of
+    Nothing -> Nothing
+    Just dict -> find (\e -> e.entryId == eid) dict.entries
+
+-- | True if a sibling (same parent) in the dictionary already has this name.
+-- @exclude@ skips a specific entry (used by rename so a no-op rename passes).
+hasDuplicateSiblingName ::
+  EntryName -> Maybe DictionaryEntryId -> Maybe DictionaryEntryId -> DictionaryKind -> Configuration -> Bool
+hasDuplicateSiblingName ename parent exclude kind config =
+  case Map.lookup kind config.dictionaries of
     Nothing -> False
-    Just dict -> any (\e -> e.name == ename) dict.entries
+    Just dict ->
+      any
+        (\e -> e.name == ename && e.parentId == parent && Just e.entryId /= exclude)
+        dict.entries
+
+-- -----------------------------------------------------------------------------
+-- Tree helpers
+-- -----------------------------------------------------------------------------
+
+-- | Maximum nesting depth for dictionary entries. Root nodes are level 1; a
+-- root group's items are level 2. Extend to 3 by bumping this constant and
+-- relaxing the group rule (allow a group to hold sub-groups) — see
+-- 'maxDepthForRole'.
+maxDictionaryDepth :: Int
+maxDictionaryDepth = 2 -- root nodes are level 1
+
+-- | The deepest level at which a node of this role may sit. An item is a leaf
+-- (may go to the full depth); a group must leave room for at least one level of
+-- item children, so it is capped one level shallower. At 'maxDictionaryDepth'
+-- = 2: items <= 2, groups <= 1 (root only). Bumping the constant to 3 lets
+-- groups nest one level — the whole "extend to 3" change.
+maxDepthForRole :: EntryRole -> Int
+maxDepthForRole ItemRole = maxDictionaryDepth
+maxDepthForRole GroupRole = maxDictionaryDepth - 1
+
+-- | 'True' when the id resolves to a group entry in the list.
+isGroupEntry :: DictionaryEntryId -> [DictionaryEntry] -> Bool
+isGroupEntry eid es = maybe False (\e -> e.role == GroupRole) (lookupEntry eid es)
+
+-- | All entries of a dictionary (empty when the dictionary is absent).
+entriesOf :: DictionaryKind -> Configuration -> [DictionaryEntry]
+entriesOf kind config = maybe [] (.entries) (Map.lookup kind config.dictionaries)
+
+-- | Look up an entry by id within a flat entry list.
+lookupEntry :: DictionaryEntryId -> [DictionaryEntry] -> Maybe DictionaryEntry
+lookupEntry eid = find (\e -> e.entryId == eid)
+
+-- | Direct children of a node within a flat entry list.
+childrenOf :: DictionaryEntryId -> [DictionaryEntry] -> [DictionaryEntry]
+childrenOf pid = filter (\e -> e.parentId == Just pid)
+
+-- | Depth of a node counting itself: a root node is 1. Assumes the acyclic
+-- invariant (enforced by the Add/Move parent-exists + cycle guards); the fuel
+-- bound (the entry count) is a defensive backstop that also guarantees
+-- termination. On fuel exhaustion — only reachable if stored data is corrupt
+-- and cyclic — it fails SAFE by returning @maxDictionaryDepth + 1@, so the
+-- depth guards reject (returning 'maxBound' here would overflow the callers'
+-- @+ 1@ / @+ subtreeHeight@ into a negative and let the guard silently pass).
+depthOf :: DictionaryEntryId -> [DictionaryEntry] -> Int
+depthOf eid es = go (length es) eid
+  where
+    go 0 _ = maxDictionaryDepth + 1 -- fail safe: corrupt cycle in stored data
+    go fuel x = case lookupEntry x es >>= (.parentId) of
+      Nothing -> 1
+      Just p -> 1 + go (fuel - 1) p
+
+-- | All transitive descendants of a node (excludes the node itself). Assumes
+-- the acyclic invariant (enforced by the Add/Move parent-exists + cycle
+-- guards); unlike 'depthOf' it carries no fuel bound, so a corrupt cycle in
+-- stored data would not terminate.
+descendantsOf :: DictionaryEntryId -> [DictionaryEntry] -> [DictionaryEntryId]
+descendantsOf eid es =
+  let kids = map (.entryId) (childrenOf eid es)
+   in kids <> concatMap (`descendantsOf` es) kids
+
+-- | Height of the subtree rooted at a node counting itself: a leaf is 1.
+subtreeHeight :: DictionaryEntryId -> [DictionaryEntry] -> Int
+subtreeHeight eid es = case childrenOf eid es of
+  [] -> 1
+  kids -> 1 + maximum (map (\k -> subtreeHeight k.entryId es) kids)
 
 -- | Dictionaries that must never become empty.
--- income-category and expense-category are required because every Income
+-- Income and expense categories are required because every Income
 -- and Expense transaction references exactly one entry.
--- The `labels` dictionary is optional — may be emptied freely.
-requiresNonEmpty :: DictionaryId -> Bool
-requiresNonEmpty (DictionaryId "income-category") = True
-requiresNonEmpty (DictionaryId "expense-category") = True
+-- The labels dictionary is optional — may be emptied freely.
+requiresNonEmpty :: DictionaryKind -> Bool
+requiresNonEmpty IncomeKind = True
+requiresNonEmpty ExpenseKind = True
 requiresNonEmpty _ = False
 
 -- | Check whether removing the targeted entry would empty a required dictionary.
-wouldEmptyRequiredDictionary :: DictionaryId -> Configuration -> Bool
-wouldEmptyRequiredDictionary dictId config
-  | not (requiresNonEmpty dictId) = False
+wouldEmptyRequiredDictionary :: DictionaryKind -> Configuration -> Bool
+wouldEmptyRequiredDictionary kind config
+  | not (requiresNonEmpty kind) = False
   | otherwise =
-      case Map.lookup dictId config.dictionaries of
+      case Map.lookup kind config.dictionaries of
         Nothing -> False
         Just dict -> length dict.entries == 1
 
 -- | Reject the command if the given entry is not a member of the given dictionary.
-requireEntryIn :: DictionaryId -> CategoryId -> Configuration -> Either ConfigurationError ()
-requireEntryIn dictId entryId config =
-  case Map.lookup dictId config.dictionaries of
+requireEntryIn :: DictionaryKind -> CategoryId -> Configuration -> Either ConfigurationError ()
+requireEntryIn kind entryId config =
+  case Map.lookup kind config.dictionaries of
     Nothing -> Left EntryNotInDictionary
     Just dict
       | any (\e -> e.entryId == entryId) dict.entries -> Right ()
@@ -215,50 +319,93 @@ handleConfigurationCommand config (ChangeDefaultCurrencyConfigurationCommand Cha
 -- Handle AddDictionaryEntry command
 handleConfigurationCommand config (AddDictionaryEntryConfigurationCommand AddDictionaryEntry {..})
   | not config.isCreated = Left ConfigurationNotCreated
-  | hasDuplicateName name dictionaryId config = Left DuplicateEntryName
+  | hasDuplicateSiblingName name parentId Nothing dictionaryKind config = Left DuplicateEntryName
+  | Just p <- parentId, isNothing (lookupEntry p es) = Left ParentEntryNotFound
+  | Just p <- parentId, not (isGroupEntry p es) = Left ParentNotAGroup
+  | parentDepth + 1 > maxDepthForRole role = Left MaxDepthExceeded
   | otherwise =
       Right
         [ DictionaryEntryAddedConfigurationEvent
             DictionaryEntryAdded
-              { dictionaryId = dictionaryId,
+              { dictionaryKind = dictionaryKind,
                 entryId = entryId,
-                name = name
+                name = name,
+                role = role,
+                parentId = parentId
               }
         ]
+  where
+    es = entriesOf dictionaryKind config
+    parentDepth = maybe 0 (`depthOf` es) parentId
 -- Handle RenameDictionaryEntry command
 handleConfigurationCommand config (RenameDictionaryEntryConfigurationCommand RenameDictionaryEntry {..})
   | not config.isCreated = Left ConfigurationNotCreated
-  | not (dictionaryExists dictionaryId config) = Left DictionaryNotFound
-  | not (entryExists entryId dictionaryId config) = Left EntryNotFound
-  | hasDuplicateName newName dictionaryId config = Left DuplicateEntryName
+  | not (dictionaryExists dictionaryKind config) = Left DictionaryNotFound
+  | not (entryExists entryId dictionaryKind config) = Left EntryNotFound
+  | hasDuplicateSiblingName newName entryParent (Just entryId) dictionaryKind config = Left DuplicateEntryName
   | otherwise =
       Right
         [ DictionaryEntryRenamedConfigurationEvent
             DictionaryEntryRenamed
-              { dictionaryId = dictionaryId,
+              { dictionaryKind = dictionaryKind,
                 entryId = entryId,
                 newName = newName
               }
         ]
+  where
+    entryParent = findEntry entryId dictionaryKind config >>= (.parentId)
 -- Handle RemoveDictionaryEntry command
 handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand RemoveDictionaryEntry {..})
   | not config.isCreated = Left ConfigurationNotCreated
-  | not (dictionaryExists dictionaryId config) = Left DictionaryNotFound
-  | not (entryExists entryId dictionaryId config) = Left EntryNotFound
-  | wouldEmptyRequiredDictionary dictionaryId config = Left CannotRemoveLastEntry
+  | not (dictionaryExists dictionaryKind config) = Left DictionaryNotFound
+  | not (entryExists entryId dictionaryKind config) = Left EntryNotFound
+  | wouldEmptyRequiredDictionary dictionaryKind config = Left CannotRemoveLastEntry
+  | not (null (childrenOf entryId (entriesOf dictionaryKind config))) = Left GroupNotEmpty
   | isGlobalDefault entryId config = Left EntryIsGlobalDefault
   | isInMccMap entryId config = Left EntryIsInMccMap
   | otherwise =
       Right
         [ DictionaryEntryRemovedConfigurationEvent
             DictionaryEntryRemoved
-              { dictionaryId = dictionaryId,
+              { dictionaryKind = dictionaryKind,
                 entryId = entryId
               }
         ]
+-- Handle MoveDictionaryEntry command. Enforces the full tree invariants:
+-- entry exists, new parent exists, the move is cycle-free (new parent is neither
+-- the entry itself nor one of its descendants), the resulting subtree stays
+-- within the depth limit, and the moved name is unique among its new siblings.
+handleConfigurationCommand config (MoveDictionaryEntryConfigurationCommand MoveDictionaryEntry {..})
+  | not (entryExists entryId dictionaryKind config) = Left EntryNotFound
+  | Just p <- newParentId, isNothing (lookupEntry p es) = Left ParentEntryNotFound
+  | Just p <- newParentId, not (isGroupEntry p es) = Left ParentNotAGroup
+  | Just p <- newParentId, p == entryId || p `elem` descendantsOf entryId es = Left MoveWouldCreateCycle
+  | newParentDepth + requiredHeight > maxDictionaryDepth = Left MaxDepthExceeded
+  | maybe False (\nm -> hasDuplicateSiblingName nm newParentId (Just entryId) dictionaryKind config) entryName =
+      Left DuplicateEntryName
+  | otherwise =
+      Right
+        [ DictionaryEntryMovedConfigurationEvent
+            DictionaryEntryMoved
+              { dictionaryKind = dictionaryKind,
+                entryId = entryId,
+                newParentId = newParentId
+              }
+        ]
+  where
+    es = entriesOf dictionaryKind config
+    newParentDepth = maybe 0 (`depthOf` es) newParentId
+    movedEntry = lookupEntry entryId es
+    entryName = (.name) <$> movedEntry
+    -- A group must reserve room for its items even when currently empty. The
+    -- floor of 2 mirrors 'maxDepthForRole' GroupRole (one level for items); bump it
+    -- alongside 'maxDictionaryDepth'/'maxDepthForRole' for the "extend to 3" change.
+    requiredHeight = case (.role) <$> movedEntry of
+      Just GroupRole -> max (subtreeHeight entryId es) 2
+      _ -> subtreeHeight entryId es
 -- Handle SetDefaultIncomeCategory command
 handleConfigurationCommand config (SetDefaultIncomeCategoryConfigurationCommand SetDefaultIncomeCategory {..}) = do
-  requireEntryIn incomeCategoryDictId categoryId config
+  requireEntryIn incomeCategoryDictKind categoryId config
   Right
     [ DefaultIncomeCategorySetConfigurationEvent
         DefaultIncomeCategorySet
@@ -267,7 +414,7 @@ handleConfigurationCommand config (SetDefaultIncomeCategoryConfigurationCommand 
     ]
 -- Handle SetDefaultExpenseCategory command
 handleConfigurationCommand config (SetDefaultExpenseCategoryConfigurationCommand SetDefaultExpenseCategory {..}) = do
-  requireEntryIn expenseCategoryDictId categoryId config
+  requireEntryIn expenseCategoryDictKind categoryId config
   Right
     [ DefaultExpenseCategorySetConfigurationEvent
         DefaultExpenseCategorySet
@@ -290,7 +437,7 @@ handleConfigurationCommand _ (SetDefaultSubtypeAccountsConfigurationCommand SetD
     ]
 -- Handle SetBankingMccExpenseCategoryMap command
 handleConfigurationCommand config (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {..}) = do
-  mapM_ (\cid -> requireEntryIn expenseCategoryDictId cid config) (Map.elems mapping)
+  mapM_ (\cid -> requireEntryIn expenseCategoryDictKind cid config) (Map.elems mapping)
   Right
     [ BankingMccExpenseCategoryMapSetConfigurationEvent
         BankingMccExpenseCategoryMapSet

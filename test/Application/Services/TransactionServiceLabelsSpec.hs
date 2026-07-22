@@ -26,8 +26,8 @@ import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
-    incomeCategoryDictId,
-    labelsDictId,
+    incomeCategoryDictKind,
+    labelsDictKind,
     seedDefaultConfiguration,
   )
 import Application.Services.TransactionService
@@ -40,6 +40,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
@@ -86,10 +87,10 @@ setupFixture env email = do
   uid <- registerUser env email
   addedLabelA <-
     expectEntry "addDictionaryEntry labelA"
-      =<< runAppM env (addDictionaryEntry uid labelsDictId (unsafeEntryName "kids"))
+      =<< runAppM env (addDictionaryEntry uid labelsDictKind (unsafeEntryName "kids") ItemRole Nothing)
   addedLabelB <-
     expectEntry "addDictionaryEntry labelB"
-      =<< runAppM env (addDictionaryEntry uid labelsDictId (unsafeEntryName "school"))
+      =<< runAppM env (addDictionaryEntry uid labelsDictKind (unsafeEntryName "school") ItemRole Nothing)
   categoryId <- firstIncomeCategory env uid
   accId <- createDefaultAccount env uid "Wallet"
   pure
@@ -120,7 +121,7 @@ firstIncomeCategory env uid = do
     Nothing -> fail "user not found"
     Just ud -> do
       cfg <- fetchCfg env ud
-      case dictEntries cfg incomeCategoryDictId of
+      case dictEntries cfg incomeCategoryDictKind of
         (eid : _) -> pure eid
         [] -> fail "income-category dictionary is empty"
   where
@@ -129,7 +130,7 @@ firstIncomeCategory env uid = do
         >>= maybe (fail "config not found") pure
     dictEntries cfg dictId =
       case Map.lookup dictId cfg.dictionaries of
-        Just d -> Map.keys d.entries
+        Just d -> map fst (ConfigRM.dictionaryItems d)
         Nothing -> []
 
 createDefaultAccount :: AppEnv -> UserId -> Text -> IO AccountId
@@ -329,7 +330,7 @@ spec = describe "TransactionService / labels" $ do
       -- A second income-category entry to switch to.
       bonusCategory <-
         expectEntry "addDictionaryEntry second category"
-          =<< runAppM env (addDictionaryEntry fx.userId incomeCategoryDictId (unsafeEntryName "Bonus"))
+          =<< runAppM env (addDictionaryEntry fx.userId incomeCategoryDictKind (unsafeEntryName "Bonus") ItemRole Nothing)
 
       create <-
         runAppM env

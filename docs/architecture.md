@@ -189,6 +189,25 @@ src/
 - Expense: `Regular → External`
 - Internal: `Regular → Regular`
 
+### Configuration Aggregate (`Domain.Configuration`)
+
+**Responsibility**: Per-user configuration — base/default currency, bank connections, and the **dictionaries** (categories, labels, contacts) used to classify transactions.
+
+**Dictionaries** are a closed, code-defined set keyed by `DictionaryKind` (`IncomeKind`, `ExpenseKind`, `LabelKind`, `ContactKind`) — a sum type, not a free-text id — held as `Map DictionaryKind Dictionary`. There is no user-created dictionary. Entries form a **tree** via an adjacency list: each `DictionaryEntry` carries a `parentId :: Maybe DictionaryEntryId` (`Nothing` = root). A "group" is emergent — any node that has children — not a distinct type. `groupsSelectable :: DictionaryKind -> Bool` is a pure per-kind policy (never stored), and `entryAssignable` derives from it whether a given node may be attached to a transaction.
+
+**Commands** (dictionary subset): `AddDictionaryEntry` (with optional `parentId`), `RenameDictionaryEntry`, `MoveDictionaryEntry`, `RemoveDictionaryEntry`.
+
+**Events** (dictionary subset): `DictionaryEntryAdded`, `DictionaryEntryRenamed`, `DictionaryEntryMoved`, `DictionaryEntryRemoved`.
+
+**Key Invariants** (dictionary tree):
+- Names are unique per sibling group, not dictionary-wide
+- A parent referenced by `parentId`/`newParentId` must exist
+- Moves are cycle-free — a node cannot be reparented under itself or a descendant (`MoveWouldCreateCycle`)
+- Tree depth is bounded at `maxDictionaryDepth = 4` (root = level 1) for both add and move (`MaxDepthExceeded`)
+- A non-empty group cannot be removed (`GroupNotEmpty`)
+
+The nesting is *derived* from the flat `parentId` adjacency, never stored as nesting: read-model rows persist `parentId` as a column, and the API layer server-materialises the nested-tree DTO (`groupsSelectable` + recursive `roots`).
+
 ## Data Flow
 
 ### Command Flow (Write Path)

@@ -28,6 +28,7 @@ module Application.Services.ConfigurationService
     addDictionaryEntry,
     renameDictionaryEntry,
     removeDictionaryEntry,
+    moveDictionaryEntry,
     setDefaultIncomeCategory,
     setDefaultExpenseCategory,
     setDefaultAccount,
@@ -45,15 +46,15 @@ module Application.Services.ConfigurationService
     closeBooksThrough,
     seedDefaultConfiguration,
 
-    -- * Well-known Dictionary IDs
-    incomeCategoryDictId,
-    expenseCategoryDictId,
-    labelsDictId,
+    -- * Well-known Dictionary Kinds
+    incomeCategoryDictKind,
+    expenseCategoryDictKind,
+    labelsDictKind,
   )
 where
 
 import Application.ReadModels.Account (AccountData (..), getAccessibleAccounts)
-import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
+import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), dictionaryEntriesParentFirst, getConfiguration)
 import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..))
 import Application.Services.AuthorizationService (AccountAuthData (..), canModifyAccount)
@@ -99,6 +100,7 @@ import Domain.Configuration.Commands
     ChangeDefaultCurrency (..),
     CloseBooksThrough (..),
     CreateConfiguration (..),
+    MoveDictionaryEntry (..),
     RemoveBankConnection (..),
     RemoveDictionaryEntry (..),
     RenameBankConnection (..),
@@ -119,10 +121,11 @@ import Domain.Configuration.Defaults
     defaultIncomeCategories,
     defaultMccExpenseCategoryMap,
     expense,
-    expenseCategoryDictId,
+    expenseCategoryDictKind,
     income,
-    incomeCategoryDictId,
+    incomeCategoryDictKind,
   )
+import Domain.Configuration.Dictionary (DictionaryKind (..), EntryRole)
 import Domain.Configuration.Projection
   ( BankConnection (..),
     BankingConfiguration (connections, mccExpenseCategoryMap),
@@ -138,7 +141,6 @@ import Domain.Core.Types
     CreatedBy (..),
     Currency (..),
     DictionaryEntryId,
-    DictionaryId (..),
     EntryName,
     MCC,
     UserId,
@@ -177,12 +179,12 @@ import RIO
 import qualified RIO.Text as T
 
 -- -----------------------------------------------------------------------------
--- Well-known Dictionary IDs
+-- Well-known Dictionary Kinds
 -- -----------------------------------------------------------------------------
 
--- | Dictionary ID for transaction labels (optional, multi-valued per txn).
-labelsDictId :: DictionaryId
-labelsDictId = DictionaryId "labels"
+-- | Dictionary kind for transaction labels (optional, multi-valued per txn).
+labelsDictKind :: DictionaryKind
+labelsDictKind = LabelKind
 
 -- -----------------------------------------------------------------------------
 -- Service Functions
@@ -215,7 +217,7 @@ changeBaseCurrency userId newCurrency = runExceptT $ do
     (unAccountId externalAccId)
     (ChangeAccountCurrencyAccountCommand ChangeAccountCurrency {newCurrency = newCurrency})
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     (unConfigurationId configId)
     (ChangeBaseCurrencyConfigurationCommand ChangeBaseCurrency {baseCurrency = newCurrency})
@@ -227,43 +229,45 @@ changeDefaultCurrency userId newCurrency = runExceptT $ do
   lift $ logInfo $ "Changing default currency to " <> displayShow newCurrency <> " for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     (unConfigurationId configId)
     (ChangeDefaultCurrencyConfigurationCommand ChangeDefaultCurrency {defaultCurrency = newCurrency})
   lift $ logInfo "Default currency changed successfully"
 
 -- | Add a new entry to a dictionary in the user's configuration.
-addDictionaryEntry :: UserId -> DictionaryId -> EntryName -> AppM (Either DomainError DictionaryEntryId)
-addDictionaryEntry userId dictId entryName = runExceptT $ do
-  lift $ logInfo $ "Adding dictionary entry to " <> displayShow dictId <> " for user " <> displayShow userId
+addDictionaryEntry :: UserId -> DictionaryKind -> EntryName -> EntryRole -> Maybe DictionaryEntryId -> AppM (Either DomainError DictionaryEntryId)
+addDictionaryEntry userId dictKind entryName role parentId = runExceptT $ do
+  lift $ logInfo $ "Adding dictionary entry to " <> displayShow dictKind <> " for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   entryUuid <- liftIO UUID.nextRandom
   let entryId = unsafeDictionaryEntryId entryUuid
       cmd =
         AddDictionaryEntryConfigurationCommand
           AddDictionaryEntry
-            { dictionaryId = dictId,
+            { dictionaryKind = dictKind,
               entryId = entryId,
-              name = entryName
+              name = entryName,
+              role = role,
+              parentId = parentId
             }
-  runConfigurationCmd defaultTranslateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry added successfully"
   pure entryId
 
 -- | Rename an entry in a dictionary in the user's configuration.
-renameDictionaryEntry :: UserId -> DictionaryId -> DictionaryEntryId -> EntryName -> AppM (Either DomainError ())
-renameDictionaryEntry userId dictId entryId newName = runExceptT $ do
-  lift $ logInfo $ "Renaming dictionary entry in " <> displayShow dictId <> " for user " <> displayShow userId
+renameDictionaryEntry :: UserId -> DictionaryKind -> DictionaryEntryId -> EntryName -> AppM (Either DomainError ())
+renameDictionaryEntry userId dictKind entryId newName = runExceptT $ do
+  lift $ logInfo $ "Renaming dictionary entry in " <> displayShow dictKind <> " for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   let cmd =
         RenameDictionaryEntryConfigurationCommand
           RenameDictionaryEntry
-            { dictionaryId = dictId,
+            { dictionaryKind = dictKind,
               entryId = entryId,
               newName = newName
             }
-  runConfigurationCmd defaultTranslateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry renamed successfully"
 
 -- | Remove an entry from a dictionary in the user's configuration.
@@ -273,12 +277,12 @@ renameDictionaryEntry userId dictId entryId newName = runExceptT $ do
 -- 'TransactionType'). The check is performed at the service layer because it
 -- depends on the transaction read model; the pure configuration command
 -- handler enforces only the aggregate-local "last-entry" rule.
-removeDictionaryEntry :: UserId -> DictionaryId -> DictionaryEntryId -> AppM (Either DomainError ())
-removeDictionaryEntry userId dictId entryId = runExceptT $ do
-  lift $ logInfo $ "Removing dictionary entry from " <> displayShow dictId <> " for user " <> displayShow userId
+removeDictionaryEntry :: UserId -> DictionaryKind -> DictionaryEntryId -> AppM (Either DomainError ())
+removeDictionaryEntry userId dictKind entryId = runExceptT $ do
+  lift $ logInfo $ "Removing dictionary entry from " <> displayShow dictKind <> " for user " <> displayShow userId
   usageCount <- lift (runDb (findReferencingTransactions entryId))
   let inUse =
-        if dictId == labelsDictId
+        if dictKind == labelsDictKind
           then LabelInUse {entryId = T.pack (show (unDictionaryEntryId entryId)), usageCount = usageCount}
           else CategoryInUse {entryId = T.pack (show (unDictionaryEntryId entryId)), usageCount = usageCount}
   guardE (usageCount == 0) inUse
@@ -286,11 +290,32 @@ removeDictionaryEntry userId dictId entryId = runExceptT $ do
   let cmd =
         RemoveDictionaryEntryConfigurationCommand
           RemoveDictionaryEntry
-            { dictionaryId = dictId,
+            { dictionaryKind = dictKind,
               entryId = entryId
             }
-  runConfigurationCmd defaultTranslateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry removed successfully"
+
+-- | Move a dictionary entry to a new parent group (or to the root when
+-- @newParentId@ is 'Nothing').
+--
+-- The pure command handler enforces the full tree invariants (the target
+-- parent exists, the move is cycle-free, the subtree stays within the depth
+-- limit, and the moved name is unique among its new siblings); this service
+-- function only clones-on-write and dispatches the command.
+moveDictionaryEntry :: UserId -> DictionaryKind -> DictionaryEntryId -> Maybe DictionaryEntryId -> AppM (Either DomainError ())
+moveDictionaryEntry userId dictKind entryId newParentId = runExceptT $ do
+  lift $ logInfo $ "Moving dictionary entry in " <> displayShow dictKind <> " for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  let cmd =
+        MoveDictionaryEntryConfigurationCommand
+          MoveDictionaryEntry
+            { dictionaryKind = dictKind,
+              entryId = entryId,
+              newParentId = newParentId
+            }
+  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  lift $ logInfo "Dictionary entry moved successfully"
 
 -- | Set the global default income category in the user's configuration.
 setDefaultIncomeCategory :: UserId -> CategoryId -> AppM (Either DomainError ())
@@ -298,7 +323,7 @@ setDefaultIncomeCategory userId categoryId = runExceptT $ do
   lift $ logInfo $ "Setting default income category for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     (unConfigurationId configId)
     (SetDefaultIncomeCategoryConfigurationCommand SetDefaultIncomeCategory {categoryId = categoryId})
@@ -310,7 +335,7 @@ setDefaultExpenseCategory userId categoryId = runExceptT $ do
   lift $ logInfo $ "Setting default expense category for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     (unConfigurationId configId)
     (SetDefaultExpenseCategoryConfigurationCommand SetDefaultExpenseCategory {categoryId = categoryId})
@@ -351,7 +376,7 @@ setDefaultAccount userId accountId = runExceptT $ do
   validateOwnedRegularAccounts userId "account" [accountId]
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     (unConfigurationId configId)
     (SetDefaultAccountConfigurationCommand SetDefaultAccount {accountId = accountId})
@@ -365,7 +390,7 @@ setDefaultSubtypeAccounts userId mapping = runExceptT $ do
   validateOwnedRegularAccounts userId "subtypeAccounts" (Map.elems mapping)
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     (unConfigurationId configId)
     (SetDefaultSubtypeAccountsConfigurationCommand SetDefaultSubtypeAccounts {subtypeAccounts = mapping})
@@ -377,7 +402,7 @@ setBankingMccExpenseCategoryMap userId mapping = runExceptT $ do
   lift $ logInfo $ "Setting banking MCC expense category map for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     (unConfigurationId configId)
     (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {mapping = mapping})
@@ -715,6 +740,19 @@ closeBooksThrough userId newCutoff = runExceptT $ do
 -- Only 'ConfigCh.CannotRewindBooksCloseDate' has a dedicated mapping; every
 -- other failure mode falls through to the generic 'ConfigurationError'
 -- carrier so existing behaviour is preserved.
+--
+-- Dictionary-tree rejections are mapped to meaningful public errors so the HTTP
+-- layer returns sensible codes:
+--
+--   * 'ConfigCh.ParentEntryNotFound', 'ConfigCh.ParentNotAGroup',
+--     'ConfigCh.MoveWouldCreateCycle', and 'ConfigCh.MaxDepthExceeded' are
+--     bad-request rejections (the client asked for an impossible tree shape) and
+--     surface as a 400-class 'ConfigurationError'.
+--   * 'ConfigCh.GroupNotEmpty' is a conflict with the current tree state (the
+--     group still has children) and surfaces as the 409-class
+--     'DictionaryGroupNotEmpty'.
+--
+-- Any other rejection falls through to the generic 'ConfigurationError' carrier.
 translateConfigurationError ::
   CommandHandlerError ConfigCh.ConfigurationError ->
   DomainError
@@ -724,16 +762,19 @@ translateConfigurationError (CommandRejected ConfigCh.BankConnectionNotFound) =
   BankConnectionNotFound
 translateConfigurationError (CommandRejected ConfigCh.BankConnectionAccountConflict) =
   BankConnectionAccountConflict
+translateConfigurationError (CommandRejected ConfigCh.ParentEntryNotFound) =
+  ConfigurationError "The specified parent entry does not exist"
+translateConfigurationError (CommandRejected ConfigCh.ParentNotAGroup) =
+  ConfigurationError "The specified parent is not a group; only groups can contain entries"
+translateConfigurationError (CommandRejected ConfigCh.MoveWouldCreateCycle) =
+  ConfigurationError "Moving this entry under the target would create a cycle in the dictionary tree"
+translateConfigurationError (CommandRejected ConfigCh.MaxDepthExceeded) =
+  ConfigurationError
+    ("Dictionary nesting would exceed the maximum depth of " <> tshow ConfigCh.maxDictionaryDepth)
+translateConfigurationError (CommandRejected ConfigCh.GroupNotEmpty) =
+  DictionaryGroupNotEmpty
 translateConfigurationError other =
   ConfigurationError (T.pack (show other))
-
--- | Default translator used by call sites that have no structured-error
--- payloads to preserve. Stringifies the rejection into the generic
--- 'ConfigurationError' carrier.
-defaultTranslateConfigurationError ::
-  CommandHandlerError ConfigCh.ConfigurationError ->
-  DomainError
-defaultTranslateConfigurationError err = ConfigurationError (T.pack (show err))
 
 -- | Seed the default system configuration if it does not already exist.
 --
@@ -780,9 +821,11 @@ seedFresh = do
         let cmd =
               AddDictionaryEntryConfigurationCommand
                 AddDictionaryEntry
-                  { dictionaryId = incomeCategoryDictId,
+                  { dictionaryKind = incomeCategoryDictKind,
                     entryId = entry.entryId,
-                    name = unsafeEntryName entry.entryName
+                    name = unsafeEntryName entry.entryName,
+                    role = entry.role,
+                    parentId = entry.parentId
                   }
         result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
         case result of
@@ -794,9 +837,11 @@ seedFresh = do
         let cmd =
               AddDictionaryEntryConfigurationCommand
                 AddDictionaryEntry
-                  { dictionaryId = expenseCategoryDictId,
+                  { dictionaryKind = expenseCategoryDictKind,
                     entryId = entry.entryId,
-                    name = unsafeEntryName entry.entryName
+                    name = unsafeEntryName entry.entryName,
+                    role = entry.role,
+                    parentId = entry.parentId
                   }
         result <- liftIO $ applyConfigurationCommand writer reader id configUuid cmd
         case result of
@@ -878,7 +923,7 @@ cloneConfiguration userId sourceConfigId configData = runExceptT $ do
       (mkConfigurationId newConfigUuid)
   let newConfigUuidVal = unConfigurationId newConfigId
   runConfigurationCmd
-    defaultTranslateConfigurationError
+    translateConfigurationError
     id
     newConfigUuidVal
     ( CreateConfigurationConfigurationCommand
@@ -909,18 +954,20 @@ cloneConfiguration userId sourceConfigId configData = runExceptT $ do
 -- | Copy every dictionary entry from a source configuration's dictionaries
 -- map into the freshly created clone. Per-entry failures are logged and
 -- skipped — clone-on-write must succeed even when one entry fails to copy.
-copyDictionaries :: UUID -> Map DictionaryId DictionaryData -> AppM ()
+copyDictionaries :: UUID -> Map DictionaryKind DictionaryData -> AppM ()
 copyDictionaries newConfigUuidVal dictionaries = do
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
-  forM_ (Map.toList dictionaries) $ \(dictId, dictData) ->
-    forM_ (Map.toList dictData.entries) $ \(eId, eName) -> do
+  forM_ (Map.toList dictionaries) $ \(dictKind, dictData) ->
+    forM_ (dictionaryEntriesParentFirst dictData) $ \(eId, entryName, entryRole, mParent) -> do
       let cmd =
             AddDictionaryEntryConfigurationCommand
               AddDictionaryEntry
-                { dictionaryId = dictId,
+                { dictionaryKind = dictKind,
                   entryId = eId,
-                  name = eName
+                  name = entryName,
+                  role = entryRole,
+                  parentId = mParent
                 }
       addResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
       case addResult of

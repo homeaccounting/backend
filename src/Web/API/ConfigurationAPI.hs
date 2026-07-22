@@ -37,7 +37,7 @@ module Web.API.ConfigurationAPI
     BankingConfigurationDTO (..),
     BankConnectionDTO (..),
     DictionaryResponse (..),
-    DictionaryEntryResponse (..),
+    DictionaryEntryNode (..),
     ChangeCurrencyRequest (..),
     UpdateBankingRequest (..),
     UpdateDefaultsRequest (..),
@@ -45,6 +45,7 @@ module Web.API.ConfigurationAPI
     AddEntryRequest (..),
     AddEntryResponse (..),
     RenameEntryRequest (..),
+    MoveEntryRequest (..),
     AddConnectionRequest (..),
     UpdateConnectionRequest (..),
     ChangeTokenRequest (..),
@@ -53,6 +54,9 @@ module Web.API.ConfigurationAPI
 
     -- * Server
     configurationServer,
+
+    -- * Response builders
+    buildDictionaryResponse,
   )
 where
 
@@ -61,7 +65,7 @@ import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryD
 import qualified Application.Services.ConfigurationService as ConfigService
 import Application.Services.Internal (getUserExternalAccountId)
 import Control.Monad.Except (runExceptT)
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:), (.:?), (.=))
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
@@ -76,14 +80,16 @@ import Domain.Banking.Types
     unBankProviderId,
     unExternalAccountId,
   )
+import Domain.Configuration.Dictionary (DictionaryKind, DictionaryNode (..), EntryRole (..), dictionaryKindSlug, parseDictionaryKind)
 import Domain.Configuration.Projection
   ( BankConnection (..),
     BankingConfiguration (..),
     ConfigurationDefaults (..),
   )
+import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountSubtypeKind,
-    DictionaryId (..),
+    DictionaryEntryId,
     UserId,
     mkAccountId,
     mkDictionaryEntryId,
@@ -91,7 +97,6 @@ import Domain.Core.Types
     parseCurrency,
     unAccountId,
     unDictionaryEntryId,
-    unDictionaryId,
     unEntryName,
   )
 import Infrastructure.App (AppM, HasBankProviderRegistry (..), bankingFeatureEnabled, runDb)
@@ -209,6 +214,19 @@ type ConfigurationAPI =
       :> "entries"
       :> Capture "entryId" UUID
       :> Delete '[JSON] NoContent
+    -- PATCH …/dictionaries/:dictId/entries/:entryId/parent - Move entry to a new parent
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "dictionaries"
+      :> Capture "dictId" Text
+      :> "entries"
+      :> Capture "entryId" UUID
+      :> "parent"
+      :> ReqBody '[JSON] MoveEntryRequest
+      :> Patch '[JSON] NoContent
     -- POST …/configuration/banking/connections - Add a bank connection
     :<|> AuthProtect "jwt"
       :> "api"
@@ -409,9 +427,13 @@ instance ToJSON ConfigurationResponse
 
 instance FromJSON ConfigurationResponse
 
--- | Dictionary response DTO.
-data DictionaryResponse = DictionaryResponse
-  { entries :: [DictionaryEntryResponse]
+-- | Dictionary response DTO — a server-materialised tree per dictionary.
+--
+-- @roots@ carries the nested entry tree so the client renders it directly
+-- without any @parentId@ assembly. Each node's role is carried explicitly
+-- (ADR 002); there is no per-dictionary @groupsAssignable@ flag.
+newtype DictionaryResponse = DictionaryResponse
+  { roots :: [DictionaryEntryNode]
   }
   deriving (Show, Eq, Generic)
 
@@ -419,16 +441,39 @@ instance ToJSON DictionaryResponse
 
 instance FromJSON DictionaryResponse
 
--- | Dictionary entry response DTO.
-data DictionaryEntryResponse = DictionaryEntryResponse
+-- | A node in the materialised tree. @type@ is "group" or "item"; a group may
+-- have children, an item never does. Role is explicit (an empty group has no
+-- children yet is still a group).
+data DictionaryEntryNode = DictionaryEntryNode
   { id :: UUID,
-    name :: Text
+    name :: Text,
+    type_ :: EntryRole,
+    children :: [DictionaryEntryNode]
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON DictionaryEntryResponse
+-- The JSON key must be @type@ (a Haskell keyword), so map it by hand to the
+-- @type_@ field. 'EntryRole' already serialises to "group"/"item".
+instance ToJSON DictionaryEntryNode where
+  toJSON n =
+    object
+      [ "id" .= n.id,
+        "name" .= n.name,
+        "type" .= n.type_,
+        "children" .= n.children
+      ]
 
-instance FromJSON DictionaryEntryResponse
+instance FromJSON DictionaryEntryNode where
+  parseJSON = withObject "DictionaryEntryNode" $ \o ->
+    DictionaryEntryNode
+      <$> o
+      .: "id"
+      <*> o
+      .: "name"
+      <*> o
+      .: "type"
+      <*> o
+      .: "children"
 
 -- | Request to change base or default currency.
 data ChangeCurrencyRequest = ChangeCurrencyRequest
@@ -442,13 +487,33 @@ instance FromJSON ChangeCurrencyRequest
 
 -- | Request to add a dictionary entry.
 data AddEntryRequest = AddEntryRequest
-  { name :: Text
+  { name :: Text,
+    -- | Whether the new entry is a group (container) or item (leaf).
+    type_ :: EntryRole,
+    -- | Parent group for the new entry, or absent/null for a root-level node.
+    parentId :: Maybe UUID
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON AddEntryRequest
+-- The JSON key must be @type@ (a Haskell keyword), so map it by hand to the
+-- @type_@ field.
+instance ToJSON AddEntryRequest where
+  toJSON r =
+    object
+      [ "name" .= r.name,
+        "type" .= r.type_,
+        "parentId" .= r.parentId
+      ]
 
-instance FromJSON AddEntryRequest
+instance FromJSON AddEntryRequest where
+  parseJSON = withObject "AddEntryRequest" $ \o ->
+    AddEntryRequest
+      <$> o
+      .: "name"
+      <*> o
+      .: "type"
+      <*> o
+      .:? "parentId"
 
 -- | Response after adding a dictionary entry.
 data AddEntryResponse = AddEntryResponse
@@ -470,6 +535,17 @@ data RenameEntryRequest = RenameEntryRequest
 instance ToJSON RenameEntryRequest
 
 instance FromJSON RenameEntryRequest
+
+-- | Request to move a dictionary entry to a new parent group. A 'Nothing'
+-- (absent or null) @parentId@ moves the entry to the root level.
+newtype MoveEntryRequest = MoveEntryRequest
+  { parentId :: Maybe UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON MoveEntryRequest
+
+instance FromJSON MoveEntryRequest
 
 -- | Partial-update request body for PUT /api/users/me/configuration/banking.
 --
@@ -581,6 +657,7 @@ configurationServer =
     :<|> addEntryHandler
     :<|> renameEntryHandler
     :<|> removeEntryHandler
+    :<|> moveEntryHandler
     :<|> addConnectionHandler
     :<|> updateConnectionHandler
     :<|> changeConnectionTokenHandler
@@ -708,31 +785,38 @@ closeBooksThroughHandler user req = do
       featureEnabled <- computeBankingFeatureEnabled
       return $ toConfigurationResponse editable featureEnabled configData
 
+-- | Resolve a dictionary slug to its 'DictionaryKind', 404ing on an unknown
+-- slug (no more "unknown dictionary id" domain error path).
+requireDictionaryKind :: Text -> AppM DictionaryKind
+requireDictionaryKind t =
+  maybe (throwDomainError (NotFound "Dictionary" t)) pure (parseDictionaryKind t)
+
+-- | Validate an optional parent-entry UUID into a 'DictionaryEntryId',
+-- reporting a field-level validation error under @label@ on a malformed value.
+-- 'Nothing' (absent/null) passes through as 'Nothing' (root-level target).
+validateOptionalEntryId :: Text -> Maybe UUID -> AppM (Maybe DictionaryEntryId)
+validateOptionalEntryId label =
+  traverse (\u -> validateFieldCtx label (tshow u) (mkDictionaryEntryId u))
+
 -- | Handler for GET /api/users/me/configuration/dictionaries/:dictId
 listDictionaryHandler :: AuthenticatedUser -> Text -> AppM DictionaryResponse
 listDictionaryHandler user dictIdText = do
-  let dictId = DictionaryId dictIdText
+  dictKind <- requireDictionaryKind dictIdText
   result <- ConfigService.getConfigurationForUser user.userId
   case result of
     Left err -> throwDomainError err
     Right configData ->
-      case Map.lookup dictId configData.dictionaries of
-        Nothing -> return $ DictionaryResponse []
-        Just dictData ->
-          return
-            $ DictionaryResponse
-              { entries =
-                  map
-                    (\(eId, eName) -> DictionaryEntryResponse {id = unDictionaryEntryId eId, name = unEntryName eName})
-                    (Map.toList dictData.entries)
-              }
+      return
+        $ buildDictionaryResponse
+        $ Map.findWithDefault (DictionaryData []) dictKind configData.dictionaries
 
 -- | Handler for POST /api/users/me/configuration/dictionaries/:dictId/entries
 addEntryHandler :: AuthenticatedUser -> Text -> AddEntryRequest -> AppM AddEntryResponse
 addEntryHandler user dictIdText req = do
-  let dictId = DictionaryId dictIdText
+  dictKind <- requireDictionaryKind dictIdText
   entryName <- validateFieldCtx "name" req.name $ mkEntryName req.name
-  result <- ConfigService.addDictionaryEntry user.userId dictId entryName
+  parentId <- validateOptionalEntryId "parentId" req.parentId
+  result <- ConfigService.addDictionaryEntry user.userId dictKind entryName req.type_ parentId
   case result of
     Left err -> throwDomainError err
     Right entryId ->
@@ -745,10 +829,10 @@ addEntryHandler user dictIdText req = do
 -- | Handler for PUT /api/users/me/configuration/dictionaries/:dictId/entries/:entryId
 renameEntryHandler :: AuthenticatedUser -> Text -> UUID -> RenameEntryRequest -> AppM NoContent
 renameEntryHandler user dictIdText entryUuid req = do
-  let dictId = DictionaryId dictIdText
+  dictKind <- requireDictionaryKind dictIdText
   entryId <- validateFieldCtx "entryId" (tshow entryUuid) $ mkDictionaryEntryId entryUuid
   entryName <- validateFieldCtx "name" req.name $ mkEntryName req.name
-  result <- ConfigService.renameDictionaryEntry user.userId dictId entryId entryName
+  result <- ConfigService.renameDictionaryEntry user.userId dictKind entryId entryName
   case result of
     Left err -> throwDomainError err
     Right () -> return NoContent
@@ -756,9 +840,24 @@ renameEntryHandler user dictIdText entryUuid req = do
 -- | Handler for DELETE /api/users/me/configuration/dictionaries/:dictId/entries/:entryId
 removeEntryHandler :: AuthenticatedUser -> Text -> UUID -> AppM NoContent
 removeEntryHandler user dictIdText entryUuid = do
-  let dictId = DictionaryId dictIdText
+  dictKind <- requireDictionaryKind dictIdText
   entryId <- validateFieldCtx "entryId" (tshow entryUuid) $ mkDictionaryEntryId entryUuid
-  result <- ConfigService.removeDictionaryEntry user.userId dictId entryId
+  result <- ConfigService.removeDictionaryEntry user.userId dictKind entryId
+  case result of
+    Left err -> throwDomainError err
+    Right () -> return NoContent
+
+-- | Handler for PATCH /api/users/me/configuration/dictionaries/:dictId/entries/:entryId/parent
+--
+-- Moves the entry under a new parent group, or to the root when @newParentId@
+-- is 'Nothing'. Tree invariants (parent exists, cycle-free, depth, sibling-name
+-- uniqueness) are enforced by the Configuration command handler.
+moveEntryHandler :: AuthenticatedUser -> Text -> UUID -> MoveEntryRequest -> AppM NoContent
+moveEntryHandler user dictIdText entryUuid req = do
+  dictKind <- requireDictionaryKind dictIdText
+  entryId <- validateFieldCtx "entryId" (tshow entryUuid) $ mkDictionaryEntryId entryUuid
+  newParentId <- validateOptionalEntryId "parentId" req.parentId
+  result <- ConfigService.moveDictionaryEntry user.userId dictKind entryId newParentId
   case result of
     Left err -> throwDomainError err
     Right () -> return NoContent
@@ -918,8 +1017,8 @@ toConfigurationResponse editable featureEnabled configData =
         { baseCurrency = tshow configData.baseCurrency,
           defaultCurrency = tshow configData.defaultCurrency,
           dictionaries =
-            Map.mapKeys unDictionaryId
-              $ Map.map toDictionaryResponse configData.dictionaries,
+            Map.mapKeys dictionaryKindSlug
+              $ Map.map buildDictionaryResponse configData.dictionaries,
           banking = toBankingDTO configData.banking,
           defaults = defaultsDTO,
           booksClosedThrough = configData.booksClosedThrough,
@@ -951,14 +1050,20 @@ computeBaseCurrencyEditable uid = do
       mAccount <- runDb (getAccount extAccId)
       pure $ maybe True (not . (.hasTransactions)) mAccount
 
--- | Convert domain DictionaryData to API response DTO.
-toDictionaryResponse ::
-  DictionaryData ->
-  DictionaryResponse
-toDictionaryResponse dictData =
-  DictionaryResponse
-    { entries =
-        map
-          (\(eId, eName) -> DictionaryEntryResponse {id = unDictionaryEntryId eId, name = unEntryName eName})
-          (Map.toList dictData.entries)
-    }
+-- | Map the read-model's already-materialised dictionary tree onto the nested
+-- tree DTO. Each node carries its role explicitly ("group" / "item"); an item
+-- is always a leaf.
+--
+-- Sibling order follows the read model's per-parent grouping and is out of
+-- scope (see the design spec) — it is NOT id-sorted and callers must not rely
+-- on it. Orphans and corrupt cycles were already dropped when the tree was
+-- materialised in 'loadDictionaries', so this mapping is total.
+buildDictionaryResponse :: DictionaryData -> DictionaryResponse
+buildDictionaryResponse dictData =
+  DictionaryResponse {roots = map toNode dictData.roots}
+  where
+    toNode :: DictionaryNode -> DictionaryEntryNode
+    toNode (ItemNode eid nm) =
+      DictionaryEntryNode {id = unDictionaryEntryId eid, name = unEntryName nm, type_ = ItemRole, children = []}
+    toNode (GroupNode eid nm kids) =
+      DictionaryEntryNode {id = unDictionaryEntryId eid, name = unEntryName nm, type_ = GroupRole, children = map toNode kids}

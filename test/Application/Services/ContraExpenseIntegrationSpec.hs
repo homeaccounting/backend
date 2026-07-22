@@ -29,12 +29,13 @@ import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TxRM
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
-    expenseCategoryDictId,
-    incomeCategoryDictId,
+    expenseCategoryDictKind,
+    incomeCategoryDictKind,
     seedDefaultConfiguration,
   )
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Set as Set
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
@@ -95,12 +96,12 @@ setupHarness email = do
 
 addIncomeEntry :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
 addIncomeEntry env uid name = do
-  res <- runAppM env $ addDictionaryEntry uid incomeCategoryDictId (unsafeEntryName name)
+  res <- runAppM env $ addDictionaryEntry uid incomeCategoryDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addDictionaryEntry(income) " <> show name) res
 
 addExpenseEntry :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
 addExpenseEntry env uid name = do
-  res <- runAppM env $ addDictionaryEntry uid expenseCategoryDictId (unsafeEntryName name)
+  res <- runAppM env $ addDictionaryEntry uid expenseCategoryDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addDictionaryEntry(expense) " <> show name) res
 
 unwrap :: String -> Either DomainError a -> IO a

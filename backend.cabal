@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.7.0
+version:        0.8.0
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -81,6 +81,7 @@ library
       Domain.Configuration.CommandHandler
       Domain.Configuration.Commands
       Domain.Configuration.Defaults
+      Domain.Configuration.Dictionary
       Domain.Configuration.Errors
       Domain.Configuration.Events
       Domain.Configuration.Projection
@@ -318,6 +319,7 @@ test-suite backend-test
       Application.ReadModels.AccountSpec
       Application.ReadModels.AmendmentBalanceSpec
       Application.ReadModels.BalanceAsOfJoinSpec
+      Application.ReadModels.ConfigurationDictionaryDataSpec
       Application.ReadModels.ExchangeRatePropertySpec
       Application.ReadModels.PersistentAccountReadModelSpec
       Application.ReadModels.PersistentExchangeRateReadModelSpec
@@ -333,6 +335,7 @@ test-suite backend-test
       Application.Services.AuthServiceSpec
       Application.Services.BankImportServiceSpec
       Application.Services.BooksCloseServiceSpec
+      Application.Services.ConfigurationDictionaryTreeIntegrationSpec
       Application.Services.ConfigurationServiceIntegrationSpec
       Application.Services.ConfigurationServiceInUseSpec
       Application.Services.ConfigurationServiceSpec
@@ -364,7 +367,9 @@ test-suite backend-test
       Domain.Banking.TypesSpec
       Domain.Configuration.BooksCloseSpec
       Domain.Configuration.CommandHandlerSpec
+      Domain.Configuration.ConfigurationTreePropertySpec
       Domain.Configuration.DefaultsSpec
+      Domain.Configuration.DictionaryPropertySpec
       Domain.Configuration.LabelsDictionarySpec
       Domain.Configuration.ProjectionSpec
       Domain.Core.AccountSubtypeKindSpec
@@ -445,6 +450,7 @@ test-suite backend-test
       Web.API.BankImportFileAPISpec
       Web.API.BankingAPISpec
       Web.API.ConfigurationBankingAPISpec
+      Web.API.ConfigurationDictionaryTreeSpec
       Web.API.PromptAPISpec
       Web.API.TransactionAllocationsAPISpec
       Web.API.TransactionAPISpec

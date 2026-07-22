@@ -18,19 +18,19 @@ module Domain.Configuration.Defaults
     configNamespace,
     mkDeterministicEntryId,
 
-    -- * Well-known dictionary IDs
-    incomeCategoryDictId,
-    expenseCategoryDictId,
+    -- * Well-known dictionary kinds
+    incomeCategoryDictKind,
+    expenseCategoryDictKind,
 
     -- * Default-entry value
-    DefaultEntry (entryName, entryId),
+    DefaultEntry (entryName, entryId, role, parentId),
 
     -- * Expense namespace
-    ExpenseDefaults (food, dining, transport, utilities, rent, entertainment, fitness, health, education, clothing, insurance, subscriptions, household, travel, gifts, charity, taxesFees, beauty, pets, electronics, shopping, other),
+    ExpenseDefaults (foodAndDining, housing, healthWellness, shoppingGoods, leisureTravel, groceries, dining, transport, utilities, rent, entertainment, fitness, health, education, clothing, insurance, subscriptions, household, travel, gifts, charity, taxesFees, beauty, pets, electronics, shopping, other),
     expense,
 
     -- * Income namespace
-    IncomeDefaults (salary, freelance, investment, business, rental, gift, refund, other),
+    IncomeDefaults (earned, passive, salary, freelance, investment, business, rental, gift, refund, other),
     income,
 
     -- * Derived lists (seed loop consumes these)
@@ -46,9 +46,9 @@ import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.UUID (UUID)
 import qualified Data.UUID.V5 as UUID5
+import Domain.Configuration.Dictionary (DictionaryKind (..), EntryRole (..), dictionaryKindSlug)
 import Domain.Core.Types
   ( CategoryId,
-    DictionaryId (..),
     MCC,
     unsafeDictionaryEntryId,
   )
@@ -59,37 +59,69 @@ configNamespace :: UUID
 configNamespace =
   UUID5.generateNamed UUID5.namespaceURL (BS.unpack $ encodeUtf8 "homeaccounting/config")
 
--- | Generate a deterministic 'CategoryId' from a dictionary id and entry
---   name. Every invocation with the same inputs returns the same UUID.
-mkDeterministicEntryId :: DictionaryId -> Text -> CategoryId
-mkDeterministicEntryId (DictionaryId dictIdText) entryNameText =
+-- | Generate a deterministic 'CategoryId' from a dictionary kind and entry
+--   name. Every invocation with the same inputs returns the same UUID. Keying
+--   off the kind's stable slug (rather than the old id text) is a one-time
+--   reseed; anchoring to the slug — the contractually-stable representation —
+--   rather than the incidental 'Show' output means a future constructor rename
+--   cannot silently reseed every default-category id.
+mkDeterministicEntryId :: DictionaryKind -> Text -> CategoryId
+mkDeterministicEntryId kind entryNameText =
   unsafeDictionaryEntryId
     $ UUID5.generateNamed configNamespace
-    $ BS.unpack (encodeUtf8 (dictIdText <> ":" <> entryNameText))
+    $ BS.unpack (encodeUtf8 (dictionaryKindSlug kind <> ":" <> entryNameText))
 
-incomeCategoryDictId :: DictionaryId
-incomeCategoryDictId = DictionaryId "income-category"
+incomeCategoryDictKind :: DictionaryKind
+incomeCategoryDictKind = IncomeKind
 
-expenseCategoryDictId :: DictionaryId
-expenseCategoryDictId = DictionaryId "expense-category"
+expenseCategoryDictKind :: DictionaryKind
+expenseCategoryDictKind = ExpenseKind
 
 -- | One default category entry; the name is what 'AddDictionaryEntry' will
 --   see, the id is the deterministic 'CategoryId' both the seed code and
---   the MCC map point to.
+--   the MCC map point to. A root or group node has @parentId = Nothing@; a
+--   child carries @Just@ its group's 'entryId'.
 data DefaultEntry = DefaultEntry
   { entryName :: !Text,
-    entryId :: !CategoryId
+    entryId :: !CategoryId,
+    role :: !EntryRole,
+    parentId :: !(Maybe CategoryId)
   }
   deriving (Show, Eq)
 
-mkExpense :: Text -> DefaultEntry
-mkExpense n = DefaultEntry n (mkDeterministicEntryId expenseCategoryDictId n)
+-- | A root-level expense group (container, never assignable).
+mkExpenseGroup :: Text -> DefaultEntry
+mkExpenseGroup n = DefaultEntry n (mkDeterministicEntryId expenseCategoryDictKind n) GroupRole Nothing
 
+-- | A root-level expense item (leaf, assignable).
+mkExpense :: Text -> DefaultEntry
+mkExpense n = DefaultEntry n (mkDeterministicEntryId expenseCategoryDictKind n) ItemRole Nothing
+
+-- | A child expense item nested under the group whose id is @pid@.
+mkExpenseChild :: CategoryId -> Text -> DefaultEntry
+mkExpenseChild pid n = DefaultEntry n (mkDeterministicEntryId expenseCategoryDictKind n) ItemRole (Just pid)
+
+-- | A root-level income group (container, never assignable).
+mkIncomeGroup :: Text -> DefaultEntry
+mkIncomeGroup n = DefaultEntry n (mkDeterministicEntryId incomeCategoryDictKind n) GroupRole Nothing
+
+-- | A root-level income item (leaf, assignable).
 mkIncome :: Text -> DefaultEntry
-mkIncome n = DefaultEntry n (mkDeterministicEntryId incomeCategoryDictId n)
+mkIncome n = DefaultEntry n (mkDeterministicEntryId incomeCategoryDictKind n) ItemRole Nothing
+
+-- | A child income item nested under the group whose id is @pid@.
+mkIncomeChild :: CategoryId -> Text -> DefaultEntry
+mkIncomeChild pid n = DefaultEntry n (mkDeterministicEntryId incomeCategoryDictKind n) ItemRole (Just pid)
 
 data ExpenseDefaults = ExpenseDefaults
-  { food :: !DefaultEntry,
+  { -- Group nodes (containers, never assignable; carry no MCCs)
+    foodAndDining :: !DefaultEntry,
+    housing :: !DefaultEntry,
+    healthWellness :: !DefaultEntry,
+    shoppingGoods :: !DefaultEntry,
+    leisureTravel :: !DefaultEntry,
+    -- Leaves
+    groceries :: !DefaultEntry,
     dining :: !DefaultEntry,
     transport :: !DefaultEntry,
     utilities :: !DefaultEntry,
@@ -114,7 +146,11 @@ data ExpenseDefaults = ExpenseDefaults
   }
 
 data IncomeDefaults = IncomeDefaults
-  { salary :: !DefaultEntry,
+  { -- Group nodes (containers, never assignable; carry no MCCs)
+    earned :: !DefaultEntry,
+    passive :: !DefaultEntry,
+    -- Leaves
+    salary :: !DefaultEntry,
     freelance :: !DefaultEntry,
     investment :: !DefaultEntry,
     business :: !DefaultEntry,
@@ -130,76 +166,112 @@ data IncomeDefaults = IncomeDefaults
 expense :: ExpenseDefaults
 expense =
   ExpenseDefaults
-    { food = mkExpense "Food",
-      dining = mkExpense "Dining",
+    { foodAndDining = foodGroup,
+      housing = housingGroup,
+      healthWellness = wellnessGroup,
+      shoppingGoods = goodsGroup,
+      leisureTravel = leisureGroup,
+      groceries = mkExpenseChild foodGroup.entryId "Groceries",
+      dining = mkExpenseChild foodGroup.entryId "Dining",
       transport = mkExpense "Transport",
-      utilities = mkExpense "Utilities",
-      rent = mkExpense "Rent",
-      entertainment = mkExpense "Entertainment",
-      fitness = mkExpense "Fitness",
-      health = mkExpense "Health",
+      utilities = mkExpenseChild housingGroup.entryId "Utilities",
+      rent = mkExpenseChild housingGroup.entryId "Rent",
+      entertainment = mkExpenseChild leisureGroup.entryId "Entertainment",
+      fitness = mkExpenseChild wellnessGroup.entryId "Fitness",
+      health = mkExpenseChild wellnessGroup.entryId "Health",
       education = mkExpense "Education",
-      clothing = mkExpense "Clothing",
+      clothing = mkExpenseChild goodsGroup.entryId "Clothing",
       insurance = mkExpense "Insurance",
       subscriptions = mkExpense "Subscriptions",
-      household = mkExpense "Household",
-      travel = mkExpense "Travel",
-      gifts = mkExpense "Gifts",
+      household = mkExpenseChild housingGroup.entryId "Household",
+      travel = mkExpenseChild leisureGroup.entryId "Travel",
+      gifts = mkExpenseChild goodsGroup.entryId "Gifts",
       charity = mkExpense "Charity",
       taxesFees = mkExpense "Taxes & Fees",
-      beauty = mkExpense "Beauty & Personal Care",
+      beauty = mkExpenseChild wellnessGroup.entryId "Beauty & Personal Care",
       pets = mkExpense "Pets",
-      electronics = mkExpense "Electronics",
-      shopping = mkExpense "Shopping",
+      electronics = mkExpenseChild goodsGroup.entryId "Electronics",
+      shopping = mkExpenseChild goodsGroup.entryId "Shopping",
       other = mkExpense "Other"
     }
+  where
+    foodGroup = mkExpenseGroup "Food"
+    housingGroup = mkExpenseGroup "Housing"
+    wellnessGroup = mkExpenseGroup "Wellness"
+    goodsGroup = mkExpenseGroup "Goods"
+    leisureGroup = mkExpenseGroup "Leisure"
 
 income :: IncomeDefaults
 income =
   IncomeDefaults
-    { salary = mkIncome "Salary",
-      freelance = mkIncome "Freelance",
-      investment = mkIncome "Investment",
-      business = mkIncome "Business",
-      rental = mkIncome "Rental",
+    { earned = earnedGroup,
+      passive = passiveGroup,
+      salary = mkIncomeChild earnedGroup.entryId "Salary",
+      freelance = mkIncomeChild earnedGroup.entryId "Freelance",
+      investment = mkIncomeChild passiveGroup.entryId "Investment",
+      business = mkIncomeChild earnedGroup.entryId "Business",
+      rental = mkIncomeChild passiveGroup.entryId "Rental",
       gift = mkIncome "Gift",
       refund = mkIncome "Refund",
       other = mkIncome "Other"
     }
+  where
+    earnedGroup = mkIncomeGroup "Earned"
+    passiveGroup = mkIncomeGroup "Passive"
 
+-- | Default expense categories in seed order. Every group node precedes its
+-- children so the seed loop's parent-exists guard never rejects a child.
 defaultExpenseCategories :: [DefaultEntry]
 defaultExpenseCategories =
-  [ expense.food,
+  [ -- Food group + children
+    expense.foodAndDining,
+    expense.groceries,
     expense.dining,
-    expense.transport,
-    expense.utilities,
+    -- Housing group + children
+    expense.housing,
     expense.rent,
-    expense.entertainment,
-    expense.fitness,
-    expense.health,
-    expense.education,
-    expense.clothing,
-    expense.insurance,
-    expense.subscriptions,
+    expense.utilities,
     expense.household,
-    expense.travel,
-    expense.gifts,
-    expense.charity,
-    expense.taxesFees,
+    -- Wellness group + children
+    expense.healthWellness,
+    expense.health,
+    expense.fitness,
     expense.beauty,
-    expense.pets,
+    -- Goods group + children
+    expense.shoppingGoods,
+    expense.clothing,
     expense.electronics,
     expense.shopping,
+    expense.gifts,
+    -- Leisure group + children
+    expense.leisureTravel,
+    expense.entertainment,
+    expense.travel,
+    -- Standalone roots
+    expense.transport,
+    expense.subscriptions,
+    expense.education,
+    expense.insurance,
+    expense.taxesFees,
+    expense.charity,
+    expense.pets,
     expense.other
   ]
 
+-- | Default income categories in seed order. Every group node precedes its
+-- children so the seed loop's parent-exists guard never rejects a child.
 defaultIncomeCategories :: [DefaultEntry]
 defaultIncomeCategories =
-  [ income.salary,
+  [ -- Earned group + children
+    income.earned,
+    income.salary,
     income.freelance,
-    income.investment,
     income.business,
+    -- Passive group + children
+    income.passive,
+    income.investment,
     income.rental,
+    -- Standalone roots
     income.gift,
     income.refund,
     income.other
@@ -212,7 +284,7 @@ defaultIncomeCategories =
 -- glance. 'defaultMccExpenseCategoryMap' is derived from this by inverting it.
 defaultCategoryMccs :: [(DefaultEntry, [MCC])]
 defaultCategoryMccs =
-  [ ( expense.food,
+  [ ( expense.groceries,
       [ "5411", -- Grocery stores, supermarkets
         "5422", -- Meat provisioners
         "5451", -- Dairy product stores

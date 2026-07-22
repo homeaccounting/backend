@@ -17,7 +17,7 @@
 -- in-memory stores and needs no Postgres.
 module Web.API.TransactionRelationsAPISpec (spec) where
 
-import Application.Services.ConfigurationService (expenseCategoryDictId)
+import Application.Services.ConfigurationService (expenseCategoryDictKind)
 import qualified Application.Services.TransactionService as TransactionService
 import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import qualified Data.Set as Set
@@ -59,7 +59,7 @@ import Web.Types
 -- resolves to Completed.
 seedExpense :: Seed -> IO TransactionId
 seedExpense seed = do
-  cat <- firstDictionaryEntry seed.seedEnv seed.seedUserId expenseCategoryDictId
+  cat <- firstDictionaryEntry seed.seedEnv seed.seedUserId expenseCategoryDictKind
   res <-
     runAppM seed.seedEnv
       $ TransactionService.initiateExpense

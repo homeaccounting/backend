@@ -34,8 +34,8 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Configuration.Defaults
-  ( expenseCategoryDictId,
-    incomeCategoryDictId,
+  ( expenseCategoryDictKind,
+    incomeCategoryDictKind,
     mkDeterministicEntryId,
   )
 import Domain.Core.Types (unDictionaryEntryId)
@@ -65,11 +65,11 @@ import Web.Types (ErrorResponse (..))
 
 -- | UUID of the "Other" entry in the income-category dictionary.
 incomeOtherUUID :: UUID.UUID
-incomeOtherUUID = unDictionaryEntryId (mkDeterministicEntryId incomeCategoryDictId "Other")
+incomeOtherUUID = unDictionaryEntryId (mkDeterministicEntryId incomeCategoryDictKind "Other")
 
 -- | UUID of the "Other" entry in the expense-category dictionary.
 expenseOtherUUID :: UUID.UUID
-expenseOtherUUID = unDictionaryEntryId (mkDeterministicEntryId expenseCategoryDictId "Other")
+expenseOtherUUID = unDictionaryEntryId (mkDeterministicEntryId expenseCategoryDictKind "Other")
 
 -- | A random UUID that is not in any dictionary.
 unknownUUID :: UUID.UUID

@@ -47,6 +47,7 @@ import Domain.Banking.Types
     BankProviderId,
     ExternalAccountId,
   )
+import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), DictionaryKind)
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
@@ -64,6 +65,7 @@ import Domain.Configuration.Events
     DefaultIncomeCategorySet (..),
     DefaultSubtypeAccountsSet (..),
     DictionaryEntryAdded (..),
+    DictionaryEntryMoved (..),
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
     configurationEvents,
@@ -74,9 +76,6 @@ import Domain.Core.Types
     CategoryId,
     CreatedBy (..),
     Currency (..),
-    Dictionary (..),
-    DictionaryEntry (..),
-    DictionaryId,
     EntryName,
     MCC,
   )
@@ -175,8 +174,8 @@ data Configuration = Configuration
     baseCurrency :: Currency,
     -- | Default currency for new accounts
     defaultCurrency :: Currency,
-    -- | Map of dictionaries keyed by DictionaryId
-    dictionaries :: Map DictionaryId Dictionary,
+    -- | Map of dictionaries keyed by DictionaryKind
+    dictionaries :: Map DictionaryKind Dictionary,
     -- | Banking-specific configuration
     banking :: BankingConfiguration,
     -- | Who created this configuration
@@ -279,32 +278,43 @@ handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfiguration
       defaults = defaults
     }
 handleConfigurationEvent config (DictionaryEntryAddedConfigurationEvent DictionaryEntryAdded {..}) =
-  let newEntry = DictionaryEntry {entryId = entryId, name = name}
+  let newEntry = DictionaryEntry {entryId = entryId, name = name, role = role, parentId = parentId}
       updatedDicts =
         Map.alter
           ( \case
               Nothing -> Just (Dictionary {entries = [newEntry]})
               Just dict -> Just dict {entries = dict.entries ++ [newEntry]}
           )
-          dictionaryId
+          dictionaryKind
           config.dictionaries
    in config {dictionaries = updatedDicts}
 handleConfigurationEvent config (DictionaryEntryRenamedConfigurationEvent DictionaryEntryRenamed {..}) =
   let renameEntry :: EntryName -> DictionaryEntry -> DictionaryEntry
       renameEntry n entry
-        | entry.entryId == entryId = DictionaryEntry {entryId = entry.entryId, name = n}
+        | entry.entryId == entryId = DictionaryEntry {entryId = entry.entryId, name = n, role = entry.role, parentId = entry.parentId}
         | otherwise = entry
       updatedDicts =
         Map.adjust
           (\dict -> dict {entries = map (renameEntry newName) dict.entries})
-          dictionaryId
+          dictionaryKind
           config.dictionaries
    in config {dictionaries = updatedDicts}
 handleConfigurationEvent config (DictionaryEntryRemovedConfigurationEvent DictionaryEntryRemoved {..}) =
   let updatedDicts =
         Map.adjust
           (\dict -> dict {entries = filter (\e -> e.entryId /= entryId) dict.entries})
-          dictionaryId
+          dictionaryKind
+          config.dictionaries
+   in config {dictionaries = updatedDicts}
+handleConfigurationEvent config (DictionaryEntryMovedConfigurationEvent DictionaryEntryMoved {..}) =
+  let reparent :: DictionaryEntry -> DictionaryEntry
+      reparent entry
+        | entry.entryId == entryId = DictionaryEntry {entryId = entry.entryId, name = entry.name, role = entry.role, parentId = newParentId}
+        | otherwise = entry
+      updatedDicts =
+        Map.adjust
+          (\dict -> dict {entries = map reparent dict.entries})
+          dictionaryKind
           config.dictionaries
    in config {dictionaries = updatedDicts}
 handleConfigurationEvent config (DefaultIncomeCategorySetConfigurationEvent evt) =

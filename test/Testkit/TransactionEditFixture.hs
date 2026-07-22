@@ -33,9 +33,9 @@ where
 
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
-    expenseCategoryDictId,
-    incomeCategoryDictId,
-    labelsDictId,
+    expenseCategoryDictKind,
+    incomeCategoryDictKind,
+    labelsDictKind,
     seedDefaultConfiguration,
   )
 import qualified Application.Services.TransactionService as TransactionService
@@ -44,6 +44,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
@@ -88,7 +89,7 @@ mkSeed mkEnv email = do
   uid <- registerUser env email
   labelA <- addLabel env uid "kids"
   labelB <- addLabel env uid "school"
-  categoryId <- firstDictionaryEntry env uid incomeCategoryDictId
+  categoryId <- firstDictionaryEntry env uid incomeCategoryDictKind
   accId <- createDefaultAccount env uid "Wallet"
   pure
     Seed
@@ -104,7 +105,7 @@ mkSeed mkEnv email = do
 
 addLabel :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
 addLabel env uid name = do
-  res <- runAppM env $ addDictionaryEntry uid labelsDictId (unsafeEntryName name)
+  res <- runAppM env $ addDictionaryEntry uid labelsDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addDictionaryEntry " <> show name) res
 
 -- | Add a fresh income-category entry to the seed user's dictionary and
@@ -114,7 +115,7 @@ addIncomeCategory :: Seed -> Text -> IO DictionaryEntryId
 addIncomeCategory seed name = do
   res <-
     runAppM seed.seedEnv
-      $ addDictionaryEntry seed.seedUserId incomeCategoryDictId (unsafeEntryName name)
+      $ addDictionaryEntry seed.seedUserId incomeCategoryDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addIncomeCategory " <> show name) res
 
 -- | Add a fresh expense-category entry to the seed user's dictionary
@@ -124,7 +125,7 @@ addExpenseCategory :: Seed -> Text -> IO DictionaryEntryId
 addExpenseCategory seed name = do
   res <-
     runAppM seed.seedEnv
-      $ addDictionaryEntry seed.seedUserId expenseCategoryDictId (unsafeEntryName name)
+      $ addDictionaryEntry seed.seedUserId expenseCategoryDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addExpenseCategory " <> show name) res
 
 unwrap :: String -> Either DomainError a -> IO a

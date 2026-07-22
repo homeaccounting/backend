@@ -32,8 +32,8 @@ module Integration.TransactionRelationsIntegrationSpec (spec) where
 
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.Services.ConfigurationService
-  ( expenseCategoryDictId,
-    incomeCategoryDictId,
+  ( expenseCategoryDictKind,
+    incomeCategoryDictKind,
     seedDefaultConfiguration,
   )
 import Application.Services.ReportingService (spendingByCategory)
@@ -93,8 +93,8 @@ setupFixture :: AppEnv -> Text -> IO Fixture
 setupFixture env email = do
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
-  incomeCat <- firstDictionaryEntry env uid incomeCategoryDictId
-  expenseCat <- firstDictionaryEntry env uid expenseCategoryDictId
+  incomeCat <- firstDictionaryEntry env uid incomeCategoryDictKind
+  expenseCat <- firstDictionaryEntry env uid expenseCategoryDictKind
   accId <- createDefaultAccount env uid "Wallet"
   pure
     Fixture

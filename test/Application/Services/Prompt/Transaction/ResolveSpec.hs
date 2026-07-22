@@ -208,6 +208,24 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
       errField (resolveIntent ctx "x" (expCategory (Just "Xyz")))
         `shouldBe` Just "category"
 
+    it "resolves name-paths, bare leaves, and a bare group name to its first item" $ do
+      let groceries = mockCategoryIdN 1
+          dining = mockCategoryIdN 2
+          -- As 'buildContexts' builds it: leaf name-paths plus a group→first-item
+          -- fallback candidate (the group name "Food" mapped to its first item).
+          ctx = sampleCtx {expenseCategories = [(groceries, "Food / Groceries"), (dining, "Food / Dining"), (groceries, "Food")]}
+          resolvedCat cat =
+            case resolveIntent ctx "x" (expCategory (Just cat)) of
+              Right (ResolvedExpense _ _ allocs _ _ _, _) -> fmap (.categoryId) (headMaybe allocs.expenses)
+              _ -> Nothing
+      -- The prompt emits the full path; the resolver maps it to the leaf.
+      resolvedCat "Food / Groceries" `shouldBe` Just groceries
+      -- A bare leaf still matches via substring.
+      resolvedCat "Groceries" `shouldBe` Just groceries
+      resolvedCat "Food / Dining" `shouldBe` Just dining
+      -- A bare group name resolves to the group's first item, NOT the default.
+      resolvedCat "Food" `shouldBe` Just groceries
+
   describe "allocations" $ do
     it "resolves the 5-line example: one allocation per line, comment = original text, no merge" $ do
       let ti =

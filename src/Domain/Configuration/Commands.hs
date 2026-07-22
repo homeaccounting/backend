@@ -21,6 +21,7 @@ module Domain.Configuration.Commands
     AddDictionaryEntry (..),
     RenameDictionaryEntry (..),
     RemoveDictionaryEntry (..),
+    MoveDictionaryEntry (..),
     SetDefaultIncomeCategory (..),
     SetDefaultExpenseCategory (..),
     SetDefaultAccount (..),
@@ -46,6 +47,7 @@ import Domain.Banking.Types
     BankProviderId,
     ExternalAccountId,
   )
+import Domain.Configuration.Dictionary (DictionaryKind, EntryRole)
 import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
@@ -53,7 +55,6 @@ import Domain.Core.Types
     CreatedBy,
     Currency,
     DictionaryEntryId,
-    DictionaryId,
     EntryName,
     MCC,
   )
@@ -76,6 +77,7 @@ configurationCommands =
     ''AddDictionaryEntry,
     ''RenameDictionaryEntry,
     ''RemoveDictionaryEntry,
+    ''MoveDictionaryEntry,
     ''SetDefaultIncomeCategory,
     ''SetDefaultExpenseCategory,
     ''SetDefaultAccount,
@@ -131,11 +133,15 @@ data ChangeDefaultCurrency = ChangeDefaultCurrency
 -- If accepted, produces a DictionaryEntryAdded event.
 data AddDictionaryEntry = AddDictionaryEntry
   { -- | Dictionary to add the entry to
-    dictionaryId :: DictionaryId,
+    dictionaryKind :: DictionaryKind,
     -- | Unique identifier for the new entry
     entryId :: DictionaryEntryId,
     -- | Display name of the new entry
-    name :: EntryName
+    name :: EntryName,
+    -- | Whether the new entry is a group (container) or item (leaf). Immutable.
+    role :: EntryRole,
+    -- | Parent group, or 'Nothing' for a root-level node
+    parentId :: Maybe DictionaryEntryId
   }
   deriving (Show, Eq)
 
@@ -144,7 +150,7 @@ data AddDictionaryEntry = AddDictionaryEntry
 -- If accepted, produces a DictionaryEntryRenamed event.
 data RenameDictionaryEntry = RenameDictionaryEntry
   { -- | Dictionary containing the entry
-    dictionaryId :: DictionaryId,
+    dictionaryKind :: DictionaryKind,
     -- | Identifier of the entry to rename
     entryId :: DictionaryEntryId,
     -- | New display name
@@ -160,9 +166,22 @@ data RenameDictionaryEntry = RenameDictionaryEntry
 --   - Cannot remove the last entry in a dictionary
 data RemoveDictionaryEntry = RemoveDictionaryEntry
   { -- | Dictionary containing the entry
-    dictionaryId :: DictionaryId,
+    dictionaryKind :: DictionaryKind,
     -- | Identifier of the entry to remove
     entryId :: DictionaryEntryId
+  }
+  deriving (Show, Eq)
+
+-- | Command to move an entry to a new parent group (or to the root).
+--
+-- If accepted, produces a DictionaryEntryMoved event.
+data MoveDictionaryEntry = MoveDictionaryEntry
+  { -- | Dictionary containing the entry
+    dictionaryKind :: DictionaryKind,
+    -- | Identifier of the entry to move
+    entryId :: DictionaryEntryId,
+    -- | New parent group, or 'Nothing' to move to the root
+    newParentId :: Maybe DictionaryEntryId
   }
   deriving (Show, Eq)
 
@@ -312,6 +331,7 @@ deriveJSON defaultOptions ''ChangeDefaultCurrency
 deriveJSON defaultOptions ''AddDictionaryEntry
 deriveJSON defaultOptions ''RenameDictionaryEntry
 deriveJSON defaultOptions ''RemoveDictionaryEntry
+deriveJSON defaultOptions ''MoveDictionaryEntry
 deriveJSON defaultOptions ''SetDefaultIncomeCategory
 deriveJSON defaultOptions ''SetDefaultExpenseCategory
 deriveJSON defaultOptions ''SetDefaultAccount

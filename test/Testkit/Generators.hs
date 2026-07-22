@@ -26,9 +26,10 @@ module Testkit.Generators
     genUserId,
     genConfigurationId,
     genDictionaryEntryId,
-    genDictionaryId,
+    genDictionaryKind,
     genEntryName,
     genDictionaryEntry,
+    genDictionaryTree,
     genDictionary,
     genLabelSet,
     genCreatedBy,
@@ -63,6 +64,7 @@ import qualified Data.Text as T
 import Data.Time.Calendar (Day, addDays, fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), DictionaryKind, EntryRole (..))
 import Domain.Core.Types
 import Domain.Transaction.Commands (AmendTransaction (..))
 import Domain.Transaction.Projection (StatusKind (..))
@@ -233,14 +235,9 @@ genDictionaryEntryId = unsafeDictionaryEntryId <$> genUUID `suchThat` (/= UUID.n
 instance Arbitrary DictionaryEntryId where
   arbitrary = genDictionaryEntryId
 
--- | Generate a valid DictionaryId.
---
--- Restricted to the three well-known ids actually used by the domain
--- ('income-category', 'expense-category', and 'labels') so property
--- tests don't accidentally exercise dictionary ids that no command
--- handler knows about.
-genDictionaryId :: Gen DictionaryId
-genDictionaryId = DictionaryId <$> elements ["income-category", "expense-category", "labels"]
+-- | Generate a valid DictionaryKind.
+genDictionaryKind :: Gen DictionaryKind
+genDictionaryKind = elements [minBound .. maxBound]
 
 -- | Generate a valid EntryName.
 genEntryName :: Gen EntryName
@@ -249,9 +246,39 @@ genEntryName =
     <$> elements
       ["Salary", "Food", "Transport", "Rent", "Gift", "Other", "Utilities", "Entertainment"]
 
--- | Generate a valid DictionaryEntry.
+-- | Generate a valid DictionaryEntry: a root-level item (@role = ItemRole@,
+-- @parentId = Nothing@) — always assignable and depth-1, so it is accepted
+-- unconditionally by the command handler.
 genDictionaryEntry :: Gen DictionaryEntry
-genDictionaryEntry = DictionaryEntry <$> genDictionaryEntryId <*> genEntryName
+genDictionaryEntry =
+  (\eid nm -> DictionaryEntry eid nm ItemRole Nothing) <$> genDictionaryEntryId <*> genEntryName
+
+-- | Generate a structurally-valid dictionary tree under the depth-2 rules
+-- (ADR 002): roots are a mix of groups and items; only groups may hold
+-- children, and a group's children are always items (a group-under-group would
+-- exceed the depth cap). Nodes are emitted parent-before-child, so replaying
+-- the adds in order reconstructs the tree faithfully. Always yields at least
+-- one entry.
+genDictionaryTree :: Gen [DictionaryEntry]
+genDictionaryTree = do
+  nRoots <- choose (1, 5 :: Int)
+  foldM addRoot [] [1 .. nRoots]
+  where
+    freshId acc = genDictionaryEntryId `suchThat` (\e -> e `notElem` map (.entryId) acc)
+    addRoot acc _ = do
+      eid <- freshId acc
+      nm <- genEntryName
+      isGroup <- elements [True, False]
+      if isGroup
+        then do
+          let acc' = acc <> [DictionaryEntry eid nm GroupRole Nothing]
+          nKids <- choose (0, 3 :: Int)
+          foldM (addItemChild eid) acc' [1 .. nKids]
+        else pure (acc <> [DictionaryEntry eid nm ItemRole Nothing])
+    addItemChild parent acc _ = do
+      eid <- freshId acc
+      nm <- genEntryName
+      pure (acc <> [DictionaryEntry eid nm ItemRole (Just parent)])
 
 -- | Generate a valid Dictionary with at least one entry.
 genDictionary :: Gen Dictionary

@@ -52,7 +52,7 @@ where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
-import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
+import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItemIds)
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), TransactionFilter)
 import qualified Application.ReadModels.Transaction as ReadModel
@@ -76,6 +76,7 @@ import qualified Data.Set as Set
 import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
+import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Page (Page)
 import Domain.Core.Types
@@ -85,7 +86,6 @@ import Domain.Core.Types
     Allocations (..),
     Currency,
     DictionaryEntryId,
-    DictionaryId,
     ExchangeRate,
     LabelId,
     Money,
@@ -742,7 +742,7 @@ validateLabels userId labels
   | Set.null labels = pure (Right ())
   | otherwise = runExceptT $ do
       cfg <- ExceptT (ConfigurationService.getConfigurationForUser userId)
-      let known = dictionaryEntryIds ConfigurationService.labelsDictId cfg
+      let known = assignableEntryIds ConfigurationService.labelsDictKind cfg
           missing = Set.difference labels known
       case Set.toList missing of
         [] -> pure ()
@@ -1146,20 +1146,19 @@ translateTransactionError (CommandRejected TxCh.RelationSelfLink) =
 translateTransactionError other =
   TransactionError (T.pack (show other))
 
--- | Look up the entry ids for the given dictionary in a configuration
--- snapshot, returning an empty set when the dictionary is missing.
-dictionaryEntryIds :: DictionaryId -> ConfigurationData -> Set DictionaryEntryId
-dictionaryEntryIds dictId cfg =
-  case Map.lookup dictId cfg.dictionaries of
-    Just dict -> Map.keysSet dict.entries
-    Nothing -> Set.empty
+-- | Assignable (item) entry ids for a dictionary — groups are excluded, since
+-- only items may be attached to a transaction (ADR 002). Returns an empty set
+-- when the dictionary is missing.
+assignableEntryIds :: DictionaryKind -> ConfigurationData -> Set DictionaryEntryId
+assignableEntryIds dictKind cfg =
+  maybe Set.empty dictionaryItemIds (Map.lookup dictKind cfg.dictionaries)
 
--- | Pick the dictionary id matching the current transfer type. Internal
+-- | Pick the dictionary kind matching the current transfer type. Internal
 -- transfers and adjustments have no category and return 'Nothing'.
-pickCategoryDict :: TransactionType -> Maybe DictionaryId
+pickCategoryDict :: TransactionType -> Maybe DictionaryKind
 pickCategoryDict tt = case kindOf tt of
-  IncomeKind -> Just ConfigurationService.incomeCategoryDictId
-  ExpenseKind -> Just ConfigurationService.expenseCategoryDictId
+  IncomeKind -> Just ConfigurationService.incomeCategoryDictKind
+  ExpenseKind -> Just ConfigurationService.expenseCategoryDictKind
   TransferKind -> Nothing
   AdjustmentKind -> Nothing
 
@@ -1175,8 +1174,8 @@ validateAllocationsAgainstDictionary ::
   AppM (Either DomainError ())
 validateAllocationsAgainstDictionary userId a = runExceptT $ do
   cfg <- ExceptT (ConfigurationService.getConfigurationForUser userId)
-  let incomeKnown = dictionaryEntryIds ConfigurationService.incomeCategoryDictId cfg
-      expenseKnown = dictionaryEntryIds ConfigurationService.expenseCategoryDictId cfg
+  let incomeKnown = assignableEntryIds ConfigurationService.incomeCategoryDictKind cfg
+      expenseKnown = assignableEntryIds ConfigurationService.expenseCategoryDictKind cfg
       badIncome = filter (\x -> not (Set.member x.categoryId incomeKnown)) a.incomes
       badExpense = filter (\x -> not (Set.member x.categoryId expenseKnown)) a.expenses
   case badIncome <> badExpense of

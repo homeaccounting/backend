@@ -23,11 +23,12 @@ where
 import Application.ReadModels.Account (RegularAccountData (..), getUserRegularAccounts)
 import Application.ReadModels.Configuration
   ( ConfigurationData (..),
-    DictionaryData (..),
+    dictionaryGroupFallbacks,
+    dictionaryItemPaths,
   )
 import Application.Services.ConfigurationService
   ( getConfigurationForUser,
-    labelsDictId,
+    labelsDictKind,
   )
 import Application.Services.Prompt.Transaction.Intent
   ( PromptContext (..),
@@ -48,17 +49,15 @@ import Application.Services.Prompt.Types
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
 import Domain.Configuration.Defaults
-  ( expenseCategoryDictId,
-    incomeCategoryDictId,
+  ( expenseCategoryDictKind,
+    incomeCategoryDictKind,
   )
+import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
     DictionaryEntryId,
-    DictionaryId,
-    EntryName,
     UserId,
-    unEntryName,
   )
 import Infrastructure.App (AppM, runDb)
 import RIO
@@ -88,13 +87,16 @@ buildContexts ::
   Maybe AccountId ->
   (PromptContext, ResolveContext)
 buildContexts accts cfg selected =
-  let entriesOf dictId =
-        [ (cid, unEntryName nm)
-        | (cid, nm) <- entriesOfDict dictId cfg
-        ]
-      incomeCats = entriesOf incomeCategoryDictId
-      expenseCats = entriesOf expenseCategoryDictId
-      labelEntries = entriesOf labelsDictId
+  let entriesOf dictKind = entriesOfDict dictKind cfg
+      groupFallbacksOf dictKind =
+        maybe [] dictionaryGroupFallbacks (Map.lookup dictKind cfg.dictionaries)
+      -- The prompt lists only leaf name-paths, but the resolver ALSO accepts a
+      -- bare group name, mapping it to that group's first item — a better guess
+      -- than the global default when the model names a group.
+      resolveCatsOf dictKind = entriesOf dictKind <> groupFallbacksOf dictKind
+      incomeCats = entriesOf incomeCategoryDictKind
+      expenseCats = entriesOf expenseCategoryDictKind
+      labelEntries = entriesOf labelsDictKind
       pctx =
         PromptContext
           { accountNames = [a.name | (_, a) <- accts],
@@ -105,21 +107,24 @@ buildContexts accts cfg selected =
       rctx =
         ResolveContext
           { accounts = accts,
-            incomeCategories = incomeCats,
-            expenseCategories = expenseCats,
-            labels = labelEntries,
+            incomeCategories = resolveCatsOf incomeCategoryDictKind,
+            expenseCategories = resolveCatsOf expenseCategoryDictKind,
+            labels = resolveCatsOf labelsDictKind,
             defaults = cfg.defaults,
             selectedAccount = selected
           }
    in (pctx, rctx)
 
--- | Look up a dictionary's entries as an association list, empty when absent.
+-- | The dictionary's assignable (item) entries as @(leaf id, group-qualified
+-- name-path)@ pairs, empty when absent. The name-path (e.g. @"Food / Groceries"@)
+-- gives the LLM the group context it needs to map free text to the right leaf,
+-- while the id still points at the assignable leaf.
 entriesOfDict ::
-  DictionaryId ->
+  DictionaryKind ->
   ConfigurationData ->
-  [(DictionaryEntryId, EntryName)]
-entriesOfDict dictId cfg =
-  maybe [] (Map.toList . (.entries)) (Map.lookup dictId cfg.dictionaries)
+  [(DictionaryEntryId, Text)]
+entriesOfDict dictKind cfg =
+  maybe [] dictionaryItemPaths (Map.lookup dictKind cfg.dictionaries)
 
 -- | Resolve and commit each decoded transaction independently against the
 -- user's data, tagging each with its zero-based position in list order.

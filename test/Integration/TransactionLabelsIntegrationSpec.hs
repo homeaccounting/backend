@@ -35,8 +35,8 @@ import qualified Application.ReadModels.Transaction as TxRM
 import Application.ReadModels.User (UserData (..), getUser)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
-    expenseCategoryDictId,
-    labelsDictId,
+    expenseCategoryDictKind,
+    labelsDictKind,
     removeDictionaryEntry,
     renameDictionaryEntry,
     seedDefaultConfiguration,
@@ -44,6 +44,7 @@ import Application.Services.ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
@@ -80,7 +81,7 @@ setupHarness email = do
   runAppM env seedDefaultConfiguration
   uid <- registerUser env email
   accId <- createDefaultAccount env uid "Wallet"
-  categoryId <- firstDictionaryEntry env uid expenseCategoryDictId
+  categoryId <- firstDictionaryEntry env uid expenseCategoryDictKind
   pure
     Harness
       { harnessEnv = env,
@@ -91,7 +92,7 @@ setupHarness email = do
 
 addLabel :: Harness -> Text -> IO DictionaryEntryId
 addLabel h name = do
-  res <- runAppM h.harnessEnv $ addDictionaryEntry h.harnessUser labelsDictId (unsafeEntryName name)
+  res <- runAppM h.harnessEnv $ addDictionaryEntry h.harnessUser labelsDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addDictionaryEntry " <> show name) res
 
 userConfigLabelNames :: Harness -> IO [Text]
@@ -104,9 +105,9 @@ userConfigLabelNames h = do
       case mCfg of
         Nothing -> fail "configuration not found"
         Just cfg ->
-          case Map.lookup labelsDictId cfg.dictionaries of
+          case Map.lookup labelsDictKind cfg.dictionaries of
             Nothing -> pure []
-            Just dict -> pure $ map unEntryName (Map.elems dict.entries)
+            Just dict -> pure $ map (unEntryName . snd) (ConfigRM.dictionaryItems dict)
 
 seedExpense :: Harness -> Set DictionaryEntryId -> IO TransactionId
 seedExpense h labels = do
@@ -177,7 +178,7 @@ spec = describe "Integration / TransactionLabels" $ do
       h.harnessEnv
       ( renameDictionaryEntry
           h.harnessUser
-          labelsDictId
+          labelsDictKind
           kidsId
           (unsafeEntryName "children")
       )
@@ -199,7 +200,7 @@ spec = describe "Integration / TransactionLabels" $ do
     -- reference it.
     deleteBlocked <-
       runAppM h.harnessEnv
-        $ removeDictionaryEntry h.harnessUser labelsDictId kidsId
+        $ removeDictionaryEntry h.harnessUser labelsDictKind kidsId
     case deleteBlocked of
       Left (LabelInUse _ n) -> n `shouldBe` 2
       other -> expectationFailure $ "expected LabelInUse 2, got: " <> show other
@@ -209,5 +210,5 @@ spec = describe "Integration / TransactionLabels" $ do
     setLabels h expenseB Set.empty
     deleteAllowed <-
       runAppM h.harnessEnv
-        $ removeDictionaryEntry h.harnessUser labelsDictId kidsId
+        $ removeDictionaryEntry h.harnessUser labelsDictKind kidsId
     deleteAllowed `shouldSatisfy` isRight

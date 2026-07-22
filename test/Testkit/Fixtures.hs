@@ -38,8 +38,8 @@ import Application.ReadModels.User (UserData (..), applyUserEvent, getUser)
 import qualified Application.Services.AccountService as AccountService
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
-  ( expenseCategoryDictId,
-    incomeCategoryDictId,
+  ( expenseCategoryDictKind,
+    incomeCategoryDictKind,
     seedDefaultConfiguration,
   )
 import qualified Data.Map.Strict as Map
@@ -47,6 +47,7 @@ import Data.Time (getCurrentTime, utctDay)
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..), CreditAccount (..))
+import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
@@ -54,7 +55,6 @@ import Domain.Core.Types
     Allocation (..),
     Allocations,
     DictionaryEntryId,
-    DictionaryId,
     Money,
     UserId,
     defaultBankAccount,
@@ -189,13 +189,13 @@ userExternalAccountId env uid = do
     Nothing -> fail $ "userExternalAccountId: user not found: " <> show uid
     Just ud -> pure ud.externalAccountId
 
--- | Return the first 'DictionaryEntryId' from the named dictionary on the
--- given user's configuration.
+-- | Return the first assignable (item) 'DictionaryEntryId' from the named
+-- dictionary on the given user's configuration.
 --
--- "First" is whatever 'Map.keys' returns from the dictionary's entry map —
--- callers should only rely on stability within a single test, not on a
--- specific ordering across runs.
-firstDictionaryEntry :: AppEnv -> UserId -> DictionaryId -> IO DictionaryEntryId
+-- "First" is the first item in 'dictionaryItems' pre-order — callers should
+-- only rely on stability within a single test, not on a specific ordering
+-- across runs.
+firstDictionaryEntry :: AppEnv -> UserId -> DictionaryKind -> IO DictionaryEntryId
 firstDictionaryEntry env uid dictId = do
   mUser <- runDbIn env (getUser uid)
   case mUser of
@@ -208,8 +208,8 @@ firstDictionaryEntry env uid dictId = do
           case Map.lookup dictId cfg.dictionaries of
             Nothing -> fail $ "firstDictionaryEntry: dictionary " <> show dictId <> " missing"
             Just dict ->
-              case Map.keys dict.entries of
-                (eid : _) -> pure eid
+              case ConfigRM.dictionaryItems dict of
+                ((eid, _) : _) -> pure eid
                 [] -> fail $ "firstDictionaryEntry: dictionary " <> show dictId <> " is empty"
 
 -- | Seed the default configuration and register a fresh user. Returns
@@ -249,8 +249,8 @@ expenseAllocs fx amt = mkExpenseAllocations (Allocation fx.expenseCategory amt N
 setupMetadataFixture :: AppEnv -> Text -> IO MetadataFixture
 setupMetadataFixture env email = do
   uid <- seedDefaultAndRegister env email
-  incomeCat <- firstDictionaryEntry env uid incomeCategoryDictId
-  expenseCat <- firstDictionaryEntry env uid expenseCategoryDictId
+  incomeCat <- firstDictionaryEntry env uid incomeCategoryDictKind
+  expenseCat <- firstDictionaryEntry env uid expenseCategoryDictKind
   accId <- createDefaultAccount env uid "Wallet"
   pure
     MetadataFixture

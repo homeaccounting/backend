@@ -13,7 +13,9 @@ module Application.Services.ConfigurationServiceIntegrationSpec (spec) where
 
 import Application.ReadModels.Configuration
   ( ConfigurationData (..),
-    DictionaryData (..),
+    DictionaryData,
+    dictionaryEntriesParentFirst,
+    dictionaryItems,
     getConfiguration,
   )
 import Application.ReadModels.User (UserData (..), getUser)
@@ -22,7 +24,8 @@ import Application.Services.ConfigurationService
   ( addDictionaryEntry,
     changeBaseCurrency,
     changeDefaultCurrency,
-    incomeCategoryDictId,
+    expenseCategoryDictKind,
+    incomeCategoryDictKind,
     removeDictionaryEntry,
     renameDictionaryEntry,
     seedDefaultConfiguration,
@@ -33,12 +36,22 @@ import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreditAccount (..))
+import Domain.Configuration.Defaults
+  ( DefaultEntry (entryId, entryName, parentId),
+    ExpenseDefaults (household, housing),
+    defaultExpenseCategories,
+    defaultIncomeCategories,
+    expense,
+  )
+import Domain.Configuration.Dictionary (EntryRole (..))
 import Domain.Configuration.Projection (ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountSubtypeKind (..),
     CreatedBy (..),
     Currency (..),
+    DictionaryEntryId,
+    EntryName,
     defaultCash,
     defaultConfigurationId,
     unAccountId,
@@ -49,6 +62,7 @@ import Domain.Core.Types
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand)
 import RIO
+import qualified RIO.List as List
 import Test.Hspec
 import Testkit.Fixtures (createAccount)
 import Testkit.Helpers (mockAccountId)
@@ -83,7 +97,7 @@ seedDefaultConfigurationSpec =
           config.defaultCurrency `shouldBe` USD
           config.createdBy `shouldBe` System
           -- Should have income and expense dictionaries with entries
-          Map.lookup incomeCategoryDictId config.dictionaries `shouldSatisfy` isJust
+          Map.lookup incomeCategoryDictKind config.dictionaries `shouldSatisfy` isJust
 
     it "is idempotent (second call is a no-op)" $ do
       env <- createTestAppEnv
@@ -180,6 +194,69 @@ cloneOnWriteSpec =
                 Just config ->
                   config.defaultCurrency `shouldBe` GBP
 
+    it "preserves the nested default category tree through a clone" $ do
+      -- Regression: clone-on-write copies dictionary entries by walking the
+      -- id-keyed entry map, whose UUID order can place a child before its
+      -- parent (e.g. "Household" sorts before its "Housing" group). Copying in
+      -- that raw order makes the parent-exists guard reject — and silently drop
+      -- — the child. Every seeded default (with its parentId) must survive.
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+
+      regResult <- runRIO env $ register "clonetree@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          -- Any mutation triggers clone-on-write off the System default.
+          cloneResult <- runRIO env $ changeDefaultCurrency userId EUR
+          cloneResult `shouldSatisfy` isRight
+
+          maybeUser <- runDbIn env (getUser userId)
+          case maybeUser of
+            Nothing -> expectationFailure "User not found after clone"
+            Just userData -> do
+              userData.configurationId `shouldNotBe` defaultConfigurationId
+              maybeConfig <- runDbIn env (getConfiguration userData.configurationId)
+              case maybeConfig of
+                Nothing -> expectationFailure "Cloned config not found"
+                Just config -> do
+                  let expenseDict = Map.lookup expenseCategoryDictKind config.dictionaries
+                      incomeDict = Map.lookup incomeCategoryDictKind config.dictionaries
+                  case (expenseDict, incomeDict) of
+                    (Just eDict, Just iDict) -> do
+                      -- The full default forest round-trips: every default
+                      -- entry is present with its parentId intact.
+                      assertDefaultsCloned eDict defaultExpenseCategories
+                      assertDefaultsCloned iDict defaultIncomeCategories
+                      -- Focused child-before-parent case ("Household" id sorts
+                      -- before its "Housing" group id under UUID order).
+                      Map.lookup expense.housing.entryId (entryIndex eDict)
+                        `shouldBe` Just (unsafeEntryName "Housing", GroupRole, Nothing)
+                      Map.lookup expense.household.entryId (entryIndex eDict)
+                        `shouldBe` Just (unsafeEntryName "Household", ItemRole, Just expense.housing.entryId)
+                    _ -> expectationFailure "Cloned config missing category dictionaries"
+
+-- | An id-keyed index of a dictionary tree's nodes: name, role, parent id.
+-- Rebuilds the flat view the assertions below need from the materialised tree.
+entryIndex :: DictionaryData -> Map DictionaryEntryId (EntryName, EntryRole, Maybe DictionaryEntryId)
+entryIndex dict =
+  Map.fromList
+    [ (eid, (nm, role, parent))
+    | (eid, nm, role, parent) <- dictionaryEntriesParentFirst dict
+    ]
+
+-- | Assert every default entry survived a clone into @dict@ with its parent
+-- link intact.
+assertDefaultsCloned :: DictionaryData -> [DefaultEntry] -> Expectation
+assertDefaultsCloned dict = mapM_ check
+  where
+    check de = case Map.lookup de.entryId (entryIndex dict) of
+      Nothing ->
+        expectationFailure $ "cloned dictionary is missing default entry: " <> show de.entryName
+      Just (_, _, clonedParent) ->
+        clonedParent `shouldBe` de.parentId
+
 -- -----------------------------------------------------------------------------
 -- changeBaseCurrency
 -- -----------------------------------------------------------------------------
@@ -247,7 +324,7 @@ dictionaryCRUDSpec =
         Left err -> expectationFailure $ "Registration failed: " <> show err
         Right authResult -> do
           let userId = authResult.userId
-          result <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "Bonus")
+          result <- runRIO env $ addDictionaryEntry userId incomeCategoryDictKind (unsafeEntryName "Bonus") ItemRole Nothing
           result `shouldSatisfy` isRight
 
           -- Verify the entry exists in the cloned config
@@ -259,11 +336,11 @@ dictionaryCRUDSpec =
               case maybeConfig of
                 Nothing -> expectationFailure "Config not found"
                 Just config -> do
-                  let incomeDict = Map.lookup incomeCategoryDictId config.dictionaries
+                  let incomeDict = Map.lookup incomeCategoryDictKind config.dictionaries
                   case incomeDict of
                     Nothing -> expectationFailure "Income dictionary not found"
                     Just dict ->
-                      Map.elems dict.entries `shouldSatisfy` elem (unsafeEntryName "Bonus")
+                      map snd (dictionaryItems dict) `shouldSatisfy` elem (unsafeEntryName "Bonus")
 
     it "renames an existing entry" $ do
       env <- createTestAppEnv
@@ -276,12 +353,12 @@ dictionaryCRUDSpec =
           let userId = authResult.userId
 
           -- Add a new entry first (this triggers clone)
-          addResult <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "Temp")
+          addResult <- runRIO env $ addDictionaryEntry userId incomeCategoryDictKind (unsafeEntryName "Temp") ItemRole Nothing
           case addResult of
             Left err -> expectationFailure $ "Add failed: " <> show err
             Right entryId -> do
               -- Rename it
-              renameResult <- runRIO env $ renameDictionaryEntry userId incomeCategoryDictId entryId (unsafeEntryName "Renamed")
+              renameResult <- runRIO env $ renameDictionaryEntry userId incomeCategoryDictKind entryId (unsafeEntryName "Renamed")
               renameResult `shouldSatisfy` isRight
 
               -- Verify the rename
@@ -293,11 +370,11 @@ dictionaryCRUDSpec =
                   case maybeConfig of
                     Nothing -> expectationFailure "Config not found"
                     Just config -> do
-                      let incomeDict = Map.lookup incomeCategoryDictId config.dictionaries
+                      let incomeDict = Map.lookup incomeCategoryDictKind config.dictionaries
                       case incomeDict of
                         Nothing -> expectationFailure "Income dictionary not found"
                         Just dict ->
-                          Map.lookup entryId dict.entries `shouldBe` Just (unsafeEntryName "Renamed")
+                          lookup entryId (dictionaryItems dict) `shouldBe` Just (unsafeEntryName "Renamed")
 
     it "removes an entry from a dictionary" $ do
       env <- createTestAppEnv
@@ -310,15 +387,15 @@ dictionaryCRUDSpec =
           let userId = authResult.userId
 
           -- Add two entries (triggering clone on first)
-          addResult1 <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "ToKeep")
+          addResult1 <- runRIO env $ addDictionaryEntry userId incomeCategoryDictKind (unsafeEntryName "ToKeep") ItemRole Nothing
           addResult1 `shouldSatisfy` isRight
 
-          addResult2 <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "ToRemove")
+          addResult2 <- runRIO env $ addDictionaryEntry userId incomeCategoryDictKind (unsafeEntryName "ToRemove") ItemRole Nothing
           case addResult2 of
             Left err -> expectationFailure $ "Add failed: " <> show err
             Right entryId -> do
               -- Remove the second entry
-              removeResult <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId entryId
+              removeResult <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind entryId
               removeResult `shouldSatisfy` isRight
 
               -- Verify it's gone
@@ -330,11 +407,11 @@ dictionaryCRUDSpec =
                   case maybeConfig of
                     Nothing -> expectationFailure "Config not found"
                     Just config -> do
-                      let incomeDict = Map.lookup incomeCategoryDictId config.dictionaries
+                      let incomeDict = Map.lookup incomeCategoryDictKind config.dictionaries
                       case incomeDict of
                         Nothing -> expectationFailure "Income dictionary not found"
                         Just dict ->
-                          Map.lookup entryId dict.entries `shouldBe` Nothing
+                          Map.lookup entryId (entryIndex dict) `shouldBe` Nothing
 
     it "rejects removing the last entry in a dictionary" $ do
       env <- createTestAppEnv
@@ -358,7 +435,7 @@ dictionaryCRUDSpec =
               case maybeConfig of
                 Nothing -> expectationFailure "Config not found"
                 Just config -> do
-                  let incomeDict = Map.lookup incomeCategoryDictId config.dictionaries
+                  let incomeDict = Map.lookup incomeCategoryDictKind config.dictionaries
                   case incomeDict of
                     Nothing -> expectationFailure "Income dictionary not found"
                     Just dict -> do
@@ -367,20 +444,34 @@ dictionaryCRUDSpec =
                       -- it is the last entry. We remove all non-default entries, then verify
                       -- the global-default entry also cannot be removed.
                       let ConfigurationDefaults {incomeCategory = bankingDefaultId} = config.defaults
-                          allEntries = Map.keys dict.entries
-                          nonDefaultEntries = filter (\eid -> Just eid /= bankingDefaultId) allEntries
+                          idx = entryIndex dict
+                          allEntries = Map.keys idx
+                          -- Children must be removed before their parent groups
+                          -- (a non-empty group rejects removal), so order the
+                          -- removals deepest-first. Assumes the acyclic invariant;
+                          -- the fuel bound (entry count) fails safe on a corrupt
+                          -- cycle instead of looping forever.
+                          entryCount = Map.size idx
+                          depthOf = go entryCount (0 :: Int)
+                          go 0 acc _ = acc + entryCount
+                          go fuel acc eid = case Map.lookup eid idx >>= (\(_, _, p) -> p) of
+                            Just parent -> go (fuel - 1) (acc + 1) parent
+                            Nothing -> acc
+                          nonDefaultEntries =
+                            List.sortOn (negate . depthOf)
+                              $ filter (\eid -> Just eid /= bankingDefaultId) allEntries
                       -- Remove all non-default entries (all should succeed)
                       forM_ nonDefaultEntries $ \eid -> do
-                        res <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId eid
+                        res <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind eid
                         res `shouldSatisfy` isRight
 
                       -- Now try to remove the banking-default (or the last remaining) entry - should fail
                       let lastResult = case bankingDefaultId of
-                            Just bid -> runRIO env $ removeDictionaryEntry userId incomeCategoryDictId bid
+                            Just bid -> runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind bid
                             Nothing ->
                               -- Fallback: try whichever entry remains
                               case filter (`notElem` nonDefaultEntries) allEntries of
-                                (eid : _) -> runRIO env $ removeDictionaryEntry userId incomeCategoryDictId eid
+                                (eid : _) -> runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind eid
                                 [] -> return $ Left $ ConfigurationError "No entries left"
                       finalResult <- lastResult
                       finalResult `shouldSatisfy` isLeft

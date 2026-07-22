@@ -66,15 +66,11 @@ module Domain.Core.Types
     LabelId,
     CategoryId,
     MCC,
-    DictionaryId (..),
-    unDictionaryId,
     EntryName,
     mkEntryName,
     unsafeEntryName,
     unEntryName,
     CreatedBy (..),
-    DictionaryEntry (..),
-    Dictionary (..),
     TelegramId (..),
 
     -- * Account Types
@@ -663,26 +659,6 @@ type CategoryId = DictionaryEntryId
 type MCC = Text
 
 -- -----------------------------------------------------------------------------
--- Dictionary Id
--- -----------------------------------------------------------------------------
-
--- | Opaque dictionary key — no domain semantics in Configuration context.
-newtype DictionaryId = DictionaryId
-  { unDictionaryId :: Text
-  }
-  deriving (Show, Eq, Ord, Generic)
-
--- | Extract the Text from a DictionaryId.
-unDictionaryId :: DictionaryId -> Text
-unDictionaryId (DictionaryId t) = t
-
-instance ToJSON DictionaryId where
-  toJSON = toJSON . unDictionaryId
-
-instance FromJSON DictionaryId where
-  parseJSON v = DictionaryId <$> parseJSON v
-
--- -----------------------------------------------------------------------------
 -- Entry Name
 -- -----------------------------------------------------------------------------
 
@@ -726,27 +702,6 @@ data CreatedBy
 instance ToJSON CreatedBy
 
 instance FromJSON CreatedBy
-
--- | A single dictionary entry.
-data DictionaryEntry = DictionaryEntry
-  { entryId :: DictionaryEntryId,
-    name :: EntryName
-  }
-  deriving (Show, Eq, Generic)
-
-instance ToJSON DictionaryEntry
-
-instance FromJSON DictionaryEntry
-
--- | A collection of entries.
-data Dictionary = Dictionary
-  { entries :: [DictionaryEntry]
-  }
-  deriving (Show, Eq, Generic)
-
-instance ToJSON Dictionary
-
-instance FromJSON Dictionary
 
 -- -----------------------------------------------------------------------------
 -- Telegram Identifier

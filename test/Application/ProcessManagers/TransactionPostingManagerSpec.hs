@@ -33,10 +33,10 @@ import Domain.Account.Events
   )
 import Domain.Core.Types
   ( Currency (..),
+    ImportInfo (..),
     TransactionType (..),
     unsafeAccountId,
     unsafeDictionaryEntryId,
-    ImportInfo (..),
     unsafeExternalTransactionId,
     unsafeMoney,
     unsafeTransactionId,

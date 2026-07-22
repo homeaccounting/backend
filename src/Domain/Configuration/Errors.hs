@@ -36,7 +36,8 @@ module Domain.Configuration.Errors
 where
 
 import Data.Aeson (FromJSON, ToJSON)
-import Domain.Core.Types (ConfigurationId, DictionaryEntryId, DictionaryId, EntryName)
+import Domain.Configuration.Dictionary (DictionaryKind)
+import Domain.Core.Types (ConfigurationId, DictionaryEntryId, EntryName)
 import GHC.Generics (Generic)
 
 -- -----------------------------------------------------------------------------
@@ -58,27 +59,27 @@ data ConfigurationError
     DictionaryNotFound
       { -- | The configuration ID containing the dictionary
         dictionaryNotFoundConfigId :: ConfigurationId,
-        -- | The dictionary ID that was not found
-        dictionaryNotFoundDictId :: DictionaryId
+        -- | The dictionary kind that was not found
+        dictionaryNotFoundDictKind :: DictionaryKind
       }
   | -- | Entry not found within a dictionary
     EntryNotFound
-      { -- | The dictionary ID containing the entry
-        entryNotFoundDictId :: DictionaryId,
+      { -- | The dictionary kind containing the entry
+        entryNotFoundDictKind :: DictionaryKind,
         -- | The entry ID that was not found
         entryNotFoundEntryId :: DictionaryEntryId
       }
   | -- | Duplicate entry name within a dictionary
     DuplicateEntryName
-      { -- | The dictionary ID containing the duplicate
-        duplicateEntryDictId :: DictionaryId,
+      { -- | The dictionary kind containing the duplicate
+        duplicateEntryDictKind :: DictionaryKind,
         -- | The duplicate entry name
         duplicateEntryName :: EntryName
       }
   | -- | Cannot remove the last entry from a dictionary
     CannotRemoveLastEntry
-      { -- | The dictionary ID with the last entry
-        cannotRemoveLastDictId :: DictionaryId
+      { -- | The dictionary kind with the last entry
+        cannotRemoveLastDictKind :: DictionaryKind
       }
   deriving (Show, Eq, Generic)
 
@@ -111,13 +112,13 @@ mkConfigurationNotFound configId =
 mkDictionaryNotFound ::
   -- | Configuration ID containing the dictionary
   ConfigurationId ->
-  -- | Dictionary ID that was not found
-  DictionaryId ->
+  -- | Dictionary kind that was not found
+  DictionaryKind ->
   ConfigurationError
-mkDictionaryNotFound configId dictId =
+mkDictionaryNotFound configId kind =
   DictionaryNotFound
     { dictionaryNotFoundConfigId = configId,
-      dictionaryNotFoundDictId = dictId
+      dictionaryNotFoundDictKind = kind
     }
 
 -- | Create an EntryNotFound error.
@@ -125,14 +126,14 @@ mkDictionaryNotFound configId dictId =
 -- This error indicates that an entry with the given ID does not exist
 -- within the specified dictionary.
 mkEntryNotFound ::
-  -- | Dictionary ID containing the entry
-  DictionaryId ->
+  -- | Dictionary kind containing the entry
+  DictionaryKind ->
   -- | Entry ID that was not found
   DictionaryEntryId ->
   ConfigurationError
-mkEntryNotFound dictId entryId =
+mkEntryNotFound kind entryId =
   EntryNotFound
-    { entryNotFoundDictId = dictId,
+    { entryNotFoundDictKind = kind,
       entryNotFoundEntryId = entryId
     }
 
@@ -141,14 +142,14 @@ mkEntryNotFound dictId entryId =
 -- This error indicates that an entry with the given name already exists
 -- within the specified dictionary.
 mkDuplicateEntryName ::
-  -- | Dictionary ID containing the duplicate
-  DictionaryId ->
+  -- | Dictionary kind containing the duplicate
+  DictionaryKind ->
   -- | The duplicate entry name
   EntryName ->
   ConfigurationError
-mkDuplicateEntryName dictId name =
+mkDuplicateEntryName kind name =
   DuplicateEntryName
-    { duplicateEntryDictId = dictId,
+    { duplicateEntryDictKind = kind,
       duplicateEntryName = name
     }
 
@@ -156,10 +157,10 @@ mkDuplicateEntryName dictId name =
 --
 -- This error indicates that the last entry in a dictionary cannot be removed.
 mkCannotRemoveLastEntry ::
-  -- | Dictionary ID with the last entry
-  DictionaryId ->
+  -- | Dictionary kind with the last entry
+  DictionaryKind ->
   ConfigurationError
-mkCannotRemoveLastEntry dictId =
+mkCannotRemoveLastEntry kind =
   CannotRemoveLastEntry
-    { cannotRemoveLastDictId = dictId
+    { cannotRemoveLastDictKind = kind
     }

@@ -21,6 +21,7 @@ module Domain.Configuration
     DictionaryEntryAdded (..),
     DictionaryEntryRenamed (..),
     DictionaryEntryRemoved (..),
+    DictionaryEntryMoved (..),
     configurationEvents,
 
     -- * Projection
@@ -35,6 +36,7 @@ import Domain.Configuration.Events
     ConfigurationCreated (ConfigurationCreated),
     DefaultCurrencyChanged (..),
     DictionaryEntryAdded (..),
+    DictionaryEntryMoved (..),
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
     configurationEvents,

@@ -36,6 +36,13 @@ module Application.ReadModels.Configuration
     ConfigurationData (..),
     DictionaryData (..),
 
+    -- * Dictionary tree accessors
+    dictionaryItems,
+    dictionaryItemIds,
+    dictionaryItemPaths,
+    dictionaryGroupFallbacks,
+    dictionaryEntriesParentFirst,
+
     -- * Read model
     configurationReadModel,
     configurationProjectionName,
@@ -57,16 +64,20 @@ import Control.Monad (forM, forM_, void)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Database.Persist
   ( Entity (..),
     Filter,
+    SelectOpt (Asc, Desc),
     deleteWhere,
     getBy,
     insertUnique,
     insert_,
     replace,
+    selectFirst,
     selectList,
     updateWhere,
     upsertBy,
@@ -76,6 +87,7 @@ import Database.Persist
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
 import Domain.Banking.Types (BankConnectionId, BankProviderId, unExternalAccountId, unsafeExternalAccountId)
+import Domain.Configuration.Dictionary (DictionaryEntry (..), DictionaryKind, DictionaryNode (..), EntryRole (..), ItemPath, buildDictionaryTree, groupItemFallbacks, itemPaths)
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
@@ -93,6 +105,7 @@ import Domain.Configuration.Events
     DefaultIncomeCategorySet (..),
     DefaultSubtypeAccountsSet (..),
     DictionaryEntryAdded (..),
+    DictionaryEntryMoved (..),
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
   )
@@ -109,7 +122,6 @@ import Domain.Core.Types
     Currency,
     DefaultSubtypeAccounts (..),
     DictionaryEntryId,
-    DictionaryId,
     EntryName,
     mkConfigurationIdSafe,
     unDefaultSubtypeAccounts,
@@ -139,7 +151,7 @@ data ConfigurationData = ConfigurationData
     -- | Default currency for new accounts
     defaultCurrency :: Currency,
     -- | Dictionaries with their entries
-    dictionaries :: Map DictionaryId DictionaryData,
+    dictionaries :: Map DictionaryKind DictionaryData,
     -- | Banking-specific configuration
     banking :: BankingConfiguration,
     -- | All per-configuration defaults (categories + accounts), grouped.
@@ -153,12 +165,58 @@ data ConfigurationData = ConfigurationData
   }
   deriving (Show, Eq, Generic)
 
--- | Denormalized dictionary data containing entries.
+-- | Denormalized dictionary data holding the already-materialised tree. The
+-- flat @parentId@ adjacency stored in @configuration_dictionary_entries@ is
+-- folded into roots-first 'DictionaryNode's by 'loadDictionaries' (via the
+-- domain materialiser 'buildDictionaryTree'), so consumers read the tree
+-- directly instead of re-deriving it. Use the accessors ('dictionaryItems',
+-- 'dictionaryItemIds', 'dictionaryEntriesParentFirst') for the common
+-- flat views.
 newtype DictionaryData = DictionaryData
-  { -- | Map of entry IDs to entry names
-    entries :: Map DictionaryEntryId EntryName
+  { -- | Root-level nodes of the materialised dictionary tree.
+    roots :: [DictionaryNode]
   }
   deriving (Show, Eq, Generic)
+
+-- | Pre-order DFS collecting the tree's leaf items as @(id, name)@ pairs.
+-- Groups contribute only through their descendants; an 'ItemNode' is always a
+-- leaf. This is the set of entries a client may assign to a transaction.
+dictionaryItems :: DictionaryData -> [(DictionaryEntryId, EntryName)]
+dictionaryItems (DictionaryData ns) = concatMap go ns
+  where
+    go (ItemNode eid nm) = [(eid, nm)]
+    go (GroupNode _ _ kids) = concatMap go kids
+
+-- | Every assignable leaf paired with its group-qualified 'ItemPath' (e.g.
+-- @"Food / Groceries"@), for a category picker or the LLM prompt. Delegates to
+-- the domain materialiser so the path format lives in one place.
+dictionaryItemPaths :: DictionaryData -> [(DictionaryEntryId, ItemPath)]
+dictionaryItemPaths (DictionaryData ns) = itemPaths ns
+
+-- | For each group, a @(first-descendant-item id, group 'ItemPath')@ pair, so a
+-- category that names a group resolves to the group's first assignable item —
+-- its curated primary, since sibling order is the persisted position — rather
+-- than the global default. Groups with no items are omitted.
+dictionaryGroupFallbacks :: DictionaryData -> [(DictionaryEntryId, ItemPath)]
+dictionaryGroupFallbacks (DictionaryData ns) = groupItemFallbacks ns
+
+-- | The assignable (item) entry ids of a dictionary — the ids from
+-- 'dictionaryItems'. Groups are excluded (ADR 002).
+dictionaryItemIds :: DictionaryData -> Set DictionaryEntryId
+dictionaryItemIds = Set.fromList . map fst . dictionaryItems
+
+-- | Pre-order DFS yielding every node with its structural role and parent id
+-- (root parent is 'Nothing'). A parent always precedes its children, so the
+-- clone path can replay @AddDictionaryEntry@ in this order without violating
+-- the parent-exists guard.
+dictionaryEntriesParentFirst ::
+  DictionaryData ->
+  [(DictionaryEntryId, EntryName, EntryRole, Maybe DictionaryEntryId)]
+dictionaryEntriesParentFirst (DictionaryData ns) = concatMap (go Nothing) ns
+  where
+    go parent (ItemNode eid nm) = [(eid, nm, ItemRole, parent)]
+    go parent (GroupNode eid nm kids) =
+      (eid, nm, GroupRole, parent) : concatMap (go (Just eid)) kids
 
 -- -----------------------------------------------------------------------------
 -- Schema
@@ -182,10 +240,13 @@ ConfigurationEntity sql=configurations
     deriving Show Eq
 ConfigDictionaryEntryEntity sql=configuration_dictionary_entries
     configId ConfigurationId
-    dictionaryId DictionaryId
+    dictionaryKind DictionaryKind
     entryId DictionaryEntryId
     name EntryName
-    UniqueConfigDictEntry configId dictionaryId entryId
+    role EntryRole
+    parentId DictionaryEntryId Maybe
+    position Int
+    UniqueConfigDictEntry configId dictionaryKind entryId
     deriving Show Eq
 ConfigMccCategoryEntity sql=configuration_mcc_categories
     configId ConfigurationId
@@ -281,17 +342,31 @@ applyConfigurationEvent globalEvent =
           BooksClosedThroughSetEvent evt ->
             modifyConfig configId (\e -> e {configurationEntityBooksClosedThrough = Just evt.closedThrough, configurationEntityVersion = ver})
           DictionaryEntryAddedEvent evt ->
-            whenConfig configId ver $
+            whenConfig configId ver $ do
+              -- Append order: one past the current max position within this
+              -- (config, kind). Using max+1 (not count) keeps positions
+              -- collision-free across removes and deterministic on replay.
+              -- Not in the update list, so a re-applied Added never shifts it.
+              mLast <-
+                selectFirst
+                  [ ConfigDictionaryEntryEntityConfigId ==. configId,
+                    ConfigDictionaryEntryEntityDictionaryKind ==. evt.dictionaryKind
+                  ]
+                  [Desc ConfigDictionaryEntryEntityPosition]
+              let nextPos = maybe 0 (\(Entity _ r) -> r.configDictionaryEntryEntityPosition + 1) mLast
               void $
                 upsertBy
-                  (UniqueConfigDictEntry configId evt.dictionaryId evt.entryId)
-                  (ConfigDictionaryEntryEntity configId evt.dictionaryId evt.entryId evt.name)
-                  [ConfigDictionaryEntryEntityName =. evt.name]
+                  (UniqueConfigDictEntry configId evt.dictionaryKind evt.entryId)
+                  (ConfigDictionaryEntryEntity configId evt.dictionaryKind evt.entryId evt.name evt.role evt.parentId nextPos)
+                  [ ConfigDictionaryEntryEntityName =. evt.name,
+                    ConfigDictionaryEntryEntityRole =. evt.role,
+                    ConfigDictionaryEntryEntityParentId =. evt.parentId
+                  ]
           DictionaryEntryRenamedEvent evt ->
             whenConfig configId ver $
               updateWhere
                 [ ConfigDictionaryEntryEntityConfigId ==. configId,
-                  ConfigDictionaryEntryEntityDictionaryId ==. evt.dictionaryId,
+                  ConfigDictionaryEntryEntityDictionaryKind ==. evt.dictionaryKind,
                   ConfigDictionaryEntryEntityEntryId ==. evt.entryId
                 ]
                 [ConfigDictionaryEntryEntityName =. evt.newName]
@@ -299,9 +374,17 @@ applyConfigurationEvent globalEvent =
             whenConfig configId ver $
               deleteWhere
                 [ ConfigDictionaryEntryEntityConfigId ==. configId,
-                  ConfigDictionaryEntryEntityDictionaryId ==. evt.dictionaryId,
+                  ConfigDictionaryEntryEntityDictionaryKind ==. evt.dictionaryKind,
                   ConfigDictionaryEntryEntityEntryId ==. evt.entryId
                 ]
+          DictionaryEntryMovedEvent evt ->
+            whenConfig configId ver $
+              updateWhere
+                [ ConfigDictionaryEntryEntityConfigId ==. configId,
+                  ConfigDictionaryEntryEntityDictionaryKind ==. evt.dictionaryKind,
+                  ConfigDictionaryEntryEntityEntryId ==. evt.entryId
+                ]
+                [ConfigDictionaryEntryEntityParentId =. evt.newParentId]
           BankingMccExpenseCategoryMapSetEvent evt ->
             whenConfig configId ver $ do
               deleteWhere [ConfigMccCategoryEntityConfigId ==. configId]
@@ -412,18 +495,26 @@ getConfiguration configId = do
               version = e.configurationEntityVersion
             }
 
--- | Assemble the configuration's dictionaries from their entry rows.
-loadDictionaries :: (MonadIO m) => ConfigurationId -> SqlPersistT m (Map DictionaryId DictionaryData)
+-- | Assemble the configuration's dictionaries from their entry rows. The flat
+-- rows are grouped per kind and materialised into a tree by 'buildDictionaryTree'.
+loadDictionaries :: (MonadIO m) => ConfigurationId -> SqlPersistT m (Map DictionaryKind DictionaryData)
 loadDictionaries configId = do
-  rows <- selectList [ConfigDictionaryEntryEntityConfigId ==. configId] []
+  rows <- selectList [ConfigDictionaryEntryEntityConfigId ==. configId] [Asc ConfigDictionaryEntryEntityPosition]
   pure $
-    Map.fromListWith
-      mergeDict
-      [ (r.configDictionaryEntryEntityDictionaryId, DictionaryData (Map.singleton r.configDictionaryEntryEntityEntryId r.configDictionaryEntryEntityName))
-      | Entity _ r <- rows
-      ]
-  where
-    mergeDict (DictionaryData a) (DictionaryData b) = DictionaryData (Map.union a b)
+    DictionaryData . buildDictionaryTree
+      <$> Map.fromListWith
+        (flip (<>))
+        [ ( r.configDictionaryEntryEntityDictionaryKind,
+            [ DictionaryEntry
+                { entryId = r.configDictionaryEntryEntityEntryId,
+                  name = r.configDictionaryEntryEntityName,
+                  role = r.configDictionaryEntryEntityRole,
+                  parentId = r.configDictionaryEntryEntityParentId
+                }
+            ]
+          )
+        | Entity _ r <- rows
+        ]
 
 -- | Assemble the configuration's banking configuration from the MCC-map,
 -- connection, and account-map rows.

@@ -1,5 +1,5 @@
 name: backend
-version: 0.7.0
+version: 0.8.0
 synopsis: Accounting system backend with CQRS and Event Sourcing
 description: |
   A REST API for an accounting system built with CQRS and Event Sourcing patterns

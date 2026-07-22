@@ -31,12 +31,13 @@ import qualified Application.ReadModels.Transaction as TxRM
 import Application.ReadModels.User (UserData (..), getUser)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
-    expenseCategoryDictId,
+    expenseCategoryDictKind,
     seedDefaultConfiguration,
   )
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
@@ -100,7 +101,7 @@ setupHarness email = do
 
 addExpense :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
 addExpense env uid name = do
-  res <- runAppM env $ addDictionaryEntry uid expenseCategoryDictId (unsafeEntryName name)
+  res <- runAppM env $ addDictionaryEntry uid expenseCategoryDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addDictionaryEntry " <> show name) res
 
 unwrap :: String -> Either DomainError a -> IO a
@@ -152,7 +153,7 @@ sanityCheckCloned h = do
       case mCfg of
         Nothing -> fail "sanityCheckCloned: configuration not found"
         Just cfg ->
-          case Map.lookup expenseCategoryDictId cfg.dictionaries of
+          case Map.lookup expenseCategoryDictKind cfg.dictionaries of
             Nothing -> fail "sanityCheckCloned: expense dictionary missing"
             Just _ -> pure ()
 

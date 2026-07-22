@@ -21,6 +21,8 @@ module Domain.Configuration.ProjectionSpec (spec) where
 import qualified Data.Map.Strict as Map
 import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration
+import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), EntryRole (..))
+import qualified Domain.Configuration.Dictionary as DictKind
 import Domain.Configuration.Events
   ( BankConnectionAccountMapSet (..),
     BankConnectionAdded (..),
@@ -39,6 +41,7 @@ import Domain.Core.Types
 import Eventium (latestProjection)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret (..))
 import RIO
+import RIO.List (find)
 import Test.Hspec
 import Testkit.Generators ()
 import Testkit.Helpers
@@ -53,6 +56,7 @@ spec = do
   dictionaryEntryAddedSpec
   dictionaryEntryRenamedSpec
   dictionaryEntryRemovedSpec
+  dictionaryEntryMovedSpec
   bankingProjectionSpec
   bankConnectionProjectionSpec
 
@@ -92,8 +96,8 @@ testEntryId1 = mockDictionaryEntryId (read "33333333-3333-3333-3333-333333333333
 testEntryId2 :: DictionaryEntryId
 testEntryId2 = mockDictionaryEntryId (read "44444444-4444-4444-4444-444444444444")
 
-testDictId :: DictionaryId
-testDictId = DictionaryId "expense-category"
+testDictId :: DictKind.DictionaryKind
+testDictId = DictKind.ExpenseKind
 
 testEntryName1 :: EntryName
 testEntryName1 = mockEntryName "Food"
@@ -216,9 +220,11 @@ dictionaryEntryAddedSpec = describe "DictionaryEntryAdded event" $ do
             [ createdEvent,
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   }
             ]
     Map.member testDictId config.dictionaries `shouldBe` True
@@ -229,9 +235,11 @@ dictionaryEntryAddedSpec = describe "DictionaryEntryAdded event" $ do
             [ createdEvent,
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   }
             ]
     case Map.lookup testDictId config.dictionaries of
@@ -248,15 +256,19 @@ dictionaryEntryAddedSpec = describe "DictionaryEntryAdded event" $ do
             [ createdEvent,
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   },
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId2,
-                    name = testEntryName2
+                    name = testEntryName2,
+                    role = ItemRole,
+                    parentId = Nothing
                   }
             ]
     case Map.lookup testDictId config.dictionaries of
@@ -275,13 +287,15 @@ dictionaryEntryRenamedSpec = describe "DictionaryEntryRenamed event" $ do
             [ createdEvent,
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   },
               DictionaryEntryRenamedConfigurationEvent
                 DictionaryEntryRenamed
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
                     newName = testEntryName3
                   }
@@ -299,19 +313,23 @@ dictionaryEntryRenamedSpec = describe "DictionaryEntryRenamed event" $ do
             [ createdEvent,
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   },
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId2,
-                    name = testEntryName2
+                    name = testEntryName2,
+                    role = ItemRole,
+                    parentId = Nothing
                   },
               DictionaryEntryRenamedConfigurationEvent
                 DictionaryEntryRenamed
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
                     newName = testEntryName3
                   }
@@ -322,6 +340,32 @@ dictionaryEntryRenamedSpec = describe "DictionaryEntryRenamed event" $ do
         length dict.entries `shouldBe` 2
         let entry2 = dict.entries !! 1
         entry2.name `shouldBe` testEntryName2
+
+  it "preserves the entry's role across a rename" $ do
+    let config =
+          applyEvents
+            [ createdEvent,
+              DictionaryEntryAddedConfigurationEvent
+                DictionaryEntryAdded
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = testEntryName1,
+                    role = GroupRole,
+                    parentId = Nothing
+                  },
+              DictionaryEntryRenamedConfigurationEvent
+                DictionaryEntryRenamed
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    newName = testEntryName3
+                  }
+            ]
+    case Map.lookup testDictId config.dictionaries of
+      Nothing -> expectationFailure "Dictionary should exist"
+      Just dict -> do
+        let entry = head dict.entries
+        entry.name `shouldBe` testEntryName3
+        entry.role `shouldBe` GroupRole
 
 -- -----------------------------------------------------------------------------
 -- DictionaryEntryRemoved Tests
@@ -335,19 +379,23 @@ dictionaryEntryRemovedSpec = describe "DictionaryEntryRemoved event" $ do
             [ createdEvent,
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1,
-                    name = testEntryName1
+                    name = testEntryName1,
+                    role = ItemRole,
+                    parentId = Nothing
                   },
               DictionaryEntryAddedConfigurationEvent
                 DictionaryEntryAdded
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId2,
-                    name = testEntryName2
+                    name = testEntryName2,
+                    role = ItemRole,
+                    parentId = Nothing
                   },
               DictionaryEntryRemovedConfigurationEvent
                 DictionaryEntryRemoved
-                  { dictionaryId = testDictId,
+                  { dictionaryKind = testDictId,
                     entryId = testEntryId1
                   }
             ]
@@ -358,6 +406,51 @@ dictionaryEntryRemovedSpec = describe "DictionaryEntryRemoved event" $ do
         let entry = head dict.entries
         entry.entryId `shouldBe` testEntryId2
         entry.name `shouldBe` testEntryName2
+
+-- -----------------------------------------------------------------------------
+-- DictionaryEntryMoved Tests
+-- -----------------------------------------------------------------------------
+
+dictionaryEntryMovedSpec :: Spec
+dictionaryEntryMovedSpec = describe "DictionaryEntryMoved event" $ do
+  it "reparents an entry under a new parent" $ do
+    let config =
+          applyEvents
+            [ createdEvent,
+              DictionaryEntryAddedConfigurationEvent
+                DictionaryEntryAdded
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId2,
+                    name = testEntryName2,
+                    role = GroupRole,
+                    parentId = Nothing
+                  },
+              DictionaryEntryAddedConfigurationEvent
+                DictionaryEntryAdded
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    name = testEntryName1,
+                    role = GroupRole,
+                    parentId = Nothing
+                  },
+              DictionaryEntryMovedConfigurationEvent
+                DictionaryEntryMoved
+                  { dictionaryKind = testDictId,
+                    entryId = testEntryId1,
+                    newParentId = Just testEntryId2
+                  }
+            ]
+    case Map.lookup testDictId config.dictionaries of
+      Nothing -> expectationFailure "Dictionary should exist"
+      Just dict ->
+        case find (\e -> e.entryId == testEntryId1) dict.entries of
+          Nothing -> expectationFailure "Moved entry should exist"
+          Just entry -> do
+            entry.parentId `shouldBe` Just testEntryId2
+            -- The move never carries a role; it must be preserved. Using a
+            -- Group here exercises the role x move cell the rename test (Group)
+            -- and add tests (both) leave otherwise uncovered for moves.
+            entry.role `shouldBe` GroupRole
 
 -- -----------------------------------------------------------------------------
 -- Banking Projection Tests

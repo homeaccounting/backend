@@ -17,16 +17,16 @@ module Application.Services.ConfigurationServiceInUseSpec (spec) where
 
 import Application.ReadModels.Configuration
   ( ConfigurationData (..),
-    DictionaryData (..),
+    dictionaryItems,
     getConfiguration,
   )
 import Application.ReadModels.User (UserData (..), getUser)
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
-    expenseCategoryDictId,
-    incomeCategoryDictId,
-    labelsDictId,
+    expenseCategoryDictKind,
+    incomeCategoryDictKind,
+    labelsDictKind,
     removeDictionaryEntry,
     seedDefaultConfiguration,
   )
@@ -38,6 +38,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID.V4 as UUID
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( DictionaryEntryId,
@@ -84,13 +85,13 @@ firstEntryId env userId dictName = do
           case Map.lookup (toDictId dictName) cfg.dictionaries of
             Nothing -> fail $ "dictionary " <> show dictName <> " not found"
             Just dict ->
-              case Map.keys dict.entries of
+              case dictionaryItems dict of
                 [] -> fail $ "dictionary " <> show dictName <> " is empty"
-                (eid : _) -> pure eid
+                ((eid, _) : _) -> pure eid
   where
-    toDictId "income-category" = incomeCategoryDictId
-    toDictId "expense-category" = expenseCategoryDictId
-    toDictId "labels" = labelsDictId
+    toDictId "income-category" = incomeCategoryDictKind
+    toDictId "expense-category" = expenseCategoryDictKind
+    toDictId "labels" = labelsDictKind
     toDictId other = error $ "unknown dict: " <> show other
 
 -- | Write a TransactionPostingInitiated event through the in-memory event store.
@@ -140,12 +141,12 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     userId <- registerUser env "inuse-cat-income@test.com"
 
     -- Trigger clone-on-write by adding any entry; the user then owns the config.
-    _ <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "Spark")
+    _ <- runRIO env $ addDictionaryEntry userId incomeCategoryDictKind (unsafeEntryName "Spark") ItemRole Nothing
 
     categoryId <- firstEntryId env userId "income-category"
     seedTransaction env userId (singletonIncome categoryId (unsafeMoney Core.USD 100)) Set.empty
 
-    result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId categoryId
+    result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind categoryId
     case result of
       Left (CategoryInUse _ n) -> n `shouldBe` 1
       other -> expectationFailure $ "expected CategoryInUse, got: " <> show other
@@ -155,7 +156,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     runRIO env seedDefaultConfiguration
     userId <- registerUser env "inuse-label@test.com"
 
-    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictId (unsafeEntryName "kids")
+    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictKind (unsafeEntryName "kids") ItemRole Nothing
     labelId <- case addLabel of
       Left err -> fail $ "addDictionaryEntry failed: " <> show err
       Right eid -> pure eid
@@ -165,7 +166,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId)
     seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId)
 
-    result <- runRIO env $ removeDictionaryEntry userId labelsDictId labelId
+    result <- runRIO env $ removeDictionaryEntry userId labelsDictKind labelId
     case result of
       Left (LabelInUse _ n) -> n `shouldBe` 2
       other -> expectationFailure $ "expected LabelInUse with count 2, got: " <> show other
@@ -175,12 +176,12 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     runRIO env seedDefaultConfiguration
     userId <- registerUser env "unused-label@test.com"
 
-    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictId (unsafeEntryName "solo")
+    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictKind (unsafeEntryName "solo") ItemRole Nothing
     labelId <- case addLabel of
       Left err -> fail $ "addDictionaryEntry failed: " <> show err
       Right eid -> pure eid
 
-    result <- runRIO env $ removeDictionaryEntry userId labelsDictId labelId
+    result <- runRIO env $ removeDictionaryEntry userId labelsDictKind labelId
     result `shouldSatisfy` isRight
 
   -- \| An Adjustment carries no category, so it must never contribute to the
@@ -194,7 +195,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     userId <- registerUser env "inuse-cat-adjustment@test.com"
 
     -- Clone-on-write the configuration so the user owns it.
-    _ <- runRIO env $ addDictionaryEntry userId incomeCategoryDictId (unsafeEntryName "Spark")
+    _ <- runRIO env $ addDictionaryEntry userId incomeCategoryDictKind (unsafeEntryName "Spark") ItemRole Nothing
 
     categoryId <- firstEntryId env userId "income-category"
     -- One real Income reference + several Adjustments that should be invisible
@@ -204,7 +205,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     seedTransaction env userId Adjustment Set.empty
     seedTransaction env userId Adjustment Set.empty
 
-    result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictId categoryId
+    result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind categoryId
     case result of
       Left (CategoryInUse _ n) -> n `shouldBe` 1
       other -> expectationFailure $ "expected CategoryInUse with count 1, got: " <> show other
@@ -221,7 +222,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     userId <- registerUser env "cancelled-label-deletion@test.com"
 
     -- Add a label to the user's dictionary (clone-on-write).
-    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictId (unsafeEntryName "holiday")
+    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictKind (unsafeEntryName "holiday") ItemRole Nothing
     labelId <- case addLabel of
       Left err -> fail $ "addDictionaryEntry failed: " <> show err
       Right eid -> pure eid
@@ -254,5 +255,5 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
 
     -- The label must now be deletable because the only referencing transaction
     -- has been cancelled.
-    result <- runRIO env $ removeDictionaryEntry userId labelsDictId labelId
+    result <- runRIO env $ removeDictionaryEntry userId labelsDictKind labelId
     result `shouldSatisfy` isRight

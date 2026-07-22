@@ -14,32 +14,32 @@ import Domain.Configuration.CommandHandler
     handleConfigurationCommand,
   )
 import Domain.Configuration.Commands (RemoveDictionaryEntry (..))
+import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), DictionaryKind (..), EntryRole (ItemRole))
 import Domain.Configuration.Projection (Configuration (..), emptyBankingConfiguration, emptyConfigurationDefaults)
 import Domain.Core.Types
   ( CreatedBy (System),
     Currency (USD),
-    Dictionary (..),
-    DictionaryEntry (..),
-    DictionaryId (..),
     unsafeDictionaryEntryId,
     unsafeEntryName,
   )
 import RIO
 import Test.Hspec
 
-seedConfig :: DictionaryId -> Configuration
-seedConfig dictId =
+seedConfig :: DictionaryKind -> Configuration
+seedConfig dictKind =
   Configuration
     { baseCurrency = USD,
       defaultCurrency = USD,
       dictionaries =
         Map.singleton
-          dictId
+          dictKind
           Dictionary
             { entries =
                 [ DictionaryEntry
                     { entryId = unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0),
-                      name = unsafeEntryName "only"
+                      name = unsafeEntryName "only",
+                      role = ItemRole,
+                      parentId = Nothing
                     }
                 ]
             },
@@ -53,31 +53,31 @@ seedConfig dictId =
 spec :: Spec
 spec = describe "CannotRemoveLastEntry predicate" $ do
   it "still refuses for income-category when it would become empty"
-    $ let config = seedConfig (DictionaryId "income-category")
+    $ let config = seedConfig IncomeKind
           cmd =
             RemoveDictionaryEntryConfigurationCommand
               RemoveDictionaryEntry
-                { dictionaryId = DictionaryId "income-category",
+                { dictionaryKind = IncomeKind,
                   entryId = unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)
                 }
        in handleConfigurationCommand config cmd `shouldBe` Left CannotRemoveLastEntry
 
   it "still refuses for expense-category when it would become empty"
-    $ let config = seedConfig (DictionaryId "expense-category")
+    $ let config = seedConfig ExpenseKind
           cmd =
             RemoveDictionaryEntryConfigurationCommand
               RemoveDictionaryEntry
-                { dictionaryId = DictionaryId "expense-category",
+                { dictionaryKind = ExpenseKind,
                   entryId = unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)
                 }
        in handleConfigurationCommand config cmd `shouldBe` Left CannotRemoveLastEntry
 
   it "allows removing the last labels entry"
-    $ let config = seedConfig (DictionaryId "labels")
+    $ let config = seedConfig LabelKind
           cmd =
             RemoveDictionaryEntryConfigurationCommand
               RemoveDictionaryEntry
-                { dictionaryId = DictionaryId "labels",
+                { dictionaryKind = LabelKind,
                   entryId = unsafeDictionaryEntryId (UUID.fromWords 1 0 0 0)
                 }
        in handleConfigurationCommand config cmd `shouldSatisfy` isRight

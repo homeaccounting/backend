@@ -22,6 +22,7 @@ import Data.UUID (UUID)
 import Database.Persist (PersistField (..), PersistValue (..))
 import Database.Persist.Sql (PersistFieldSql (..), SqlType (SqlString))
 import Domain.Banking.Types (BankConnectionId, BankProviderId)
+import Domain.Configuration.Dictionary (DictionaryKind, EntryRole (..), dictionaryKindSlug, parseDictionaryKind)
 import Domain.Core.Types
   ( AccountId,
     AccountRole,
@@ -35,7 +36,6 @@ import Domain.Core.Types
     Currency,
     DefaultSubtypeAccounts,
     DictionaryEntryId,
-    DictionaryId,
     EntryName,
     ExchangeRate,
     ExternalTransactionId,
@@ -332,12 +332,28 @@ instance PersistFieldSql Provider where
 -- ever fetched whole by id, so these columns are never filtered on — each is
 -- stored as its JSON token for a uniform, lossless round-trip.
 
--- | 'DictionaryId' wraps 'Text' (a dictionary key like @"expense-category"@).
-instance PersistField DictionaryId where
-  toPersistValue = jsonToPersist
-  fromPersistValue = jsonFromPersist
+-- | 'DictionaryKind' persists as its stable slug text.
+instance PersistField DictionaryKind where
+  toPersistValue = toPersistValue . dictionaryKindSlug
+  fromPersistValue v = do
+    t <- fromPersistValue v
+    maybe (Left ("Invalid DictionaryKind: " <> t)) Right (parseDictionaryKind t)
 
-instance PersistFieldSql DictionaryId where
+instance PersistFieldSql DictionaryKind where
+  sqlType _ = SqlString
+
+-- | 'EntryRole' persists as its lowercased role name text.
+instance PersistField EntryRole where
+  toPersistValue GroupRole = toPersistValue ("group" :: Text)
+  toPersistValue ItemRole = toPersistValue ("item" :: Text)
+  fromPersistValue v = do
+    t <- fromPersistValue v
+    case (t :: Text) of
+      "group" -> Right GroupRole
+      "item" -> Right ItemRole
+      other -> Left ("Invalid EntryRole: " <> other)
+
+instance PersistFieldSql EntryRole where
   sqlType _ = SqlString
 
 -- | 'EntryName' wraps 'Text' (a dictionary entry's display name).

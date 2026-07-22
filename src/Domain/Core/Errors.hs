@@ -83,6 +83,10 @@ data DomainError
       { entryId :: Text,
         usageCount :: Int
       }
+  | -- | Cannot remove a dictionary entry that is a non-empty group (it still
+    -- has child entries). The children must be moved or removed first. A
+    -- conflict with the current tree state, surfaced as HTTP 409.
+    DictionaryGroupNotEmpty
   | -- | Cannot edit metadata (labels, category, description, business date) on a
     -- transaction that is not in the Completed state.
     --
@@ -277,6 +281,8 @@ renderDomainError err = case err of
     "Cannot delete label " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
   CategoryInUse eid n ->
     "Cannot delete category " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
+  DictionaryGroupNotEmpty ->
+    "Cannot remove a dictionary group that still has entries; move or remove its children first"
   CannotEditUncompletedTransaction ->
     "Transaction metadata can only be changed after the transfer has completed"
   AllocationsDoNotSumToTotal ->

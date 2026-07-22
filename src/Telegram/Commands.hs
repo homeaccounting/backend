@@ -55,7 +55,7 @@ import Application.ReadModels.Account
     getAccount,
   )
 import qualified Application.ReadModels.Account as AccountRM
-import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), getConfiguration)
+import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItems, getConfiguration)
 import Application.ReadModels.Transaction (TransactionData (..), mkTransactionFilter)
 import Application.ReadModels.User
   ( UserData (..),
@@ -63,7 +63,7 @@ import Application.ReadModels.User
   )
 import Application.Services.AccountService (createAccount)
 import Application.Services.AuthService (findOrCreateTelegramBotUser, redeemTelegramLinkCode)
-import Application.Services.ConfigurationService (expenseCategoryDictId, incomeCategoryDictId, labelsDictId)
+import Application.Services.ConfigurationService (expenseCategoryDictKind, incomeCategoryDictKind, labelsDictKind)
 import Application.Services.Prompt.Types
   ( FailedTransaction (..),
     PromptError (..),
@@ -77,6 +77,7 @@ import qualified Data.Set as Set
 import Data.Time (addUTCTime, getCurrentTime)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Errors (renderDomainError)
 import Domain.Core.Page (Page (..))
 import Domain.Core.Range (mkRange)
@@ -84,7 +85,6 @@ import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     DictionaryEntryId,
-    DictionaryId,
     EntryName,
     Money,
     TelegramId (..),
@@ -389,7 +389,7 @@ handleIncome botState telegramId chatId = do
   case selected of
     Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
     Just _ -> do
-      entries <- getCategoryEntries telegramId incomeCategoryDictId
+      entries <- getCategoryEntries telegramId incomeCategoryDictKind
       case entries of
         Nothing -> sendMsg chatId "Could not load income categories. Please try again."
         Just cats -> do
@@ -404,7 +404,7 @@ handleExpense botState telegramId chatId = do
   case selected of
     Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
     Just _ -> do
-      entries <- getCategoryEntries telegramId expenseCategoryDictId
+      entries <- getCategoryEntries telegramId expenseCategoryDictKind
       case entries of
         Nothing -> sendMsg chatId "Could not load expense categories. Please try again."
         Just cats -> do
@@ -839,8 +839,8 @@ clearConversation botState telegramId =
 --
 -- Looks up the user, their configuration, and returns the entries for the
 -- specified dictionary ID as a list of (DictionaryEntryId, EntryName) pairs.
-getCategoryEntries :: TelegramId -> DictionaryId -> AppM (Maybe [(DictionaryEntryId, EntryName)])
-getCategoryEntries telegramId dictId = do
+getCategoryEntries :: TelegramId -> DictionaryKind -> AppM (Maybe [(DictionaryEntryId, EntryName)])
+getCategoryEntries telegramId dictKind = do
   maybeUser <- runDb (getUserByTelegramId telegramId)
   case maybeUser of
     Nothing -> return Nothing
@@ -849,9 +849,9 @@ getCategoryEntries telegramId dictId = do
       case maybeConfig of
         Nothing -> return Nothing
         Just configData ->
-          case Map.lookup dictId configData.dictionaries of
+          case Map.lookup dictKind configData.dictionaries of
             Nothing -> return $ Just []
-            Just dictData -> return $ Just $ Map.toList dictData.entries
+            Just dictData -> return $ Just $ dictionaryItems dictData
 
 -- | Build a flat DictionaryEntryId -> name lookup from the user's
 --   configuration, merging the income, expense, and labels dictionaries
@@ -869,12 +869,15 @@ getDictionaryEntryNames telegramId = do
       return $ case maybeConfig of
         Nothing -> Map.empty
         Just configData ->
-          let entriesFor dictId =
-                maybe Map.empty (.entries) (Map.lookup dictId configData.dictionaries)
-           in fmap unEntryName
-                $ entriesFor incomeCategoryDictId
-                <> entriesFor expenseCategoryDictId
-                <> entriesFor labelsDictId
+          let entriesFor dictKind =
+                maybe [] dictionaryItems (Map.lookup dictKind configData.dictionaries)
+           in Map.fromList
+                [ (cid, unEntryName nm)
+                | (cid, nm) <-
+                    entriesFor incomeCategoryDictKind
+                      <> entriesFor expenseCategoryDictKind
+                      <> entriesFor labelsDictKind
+                ]
 
 -- | Send the shared, structured confirmation for a just-recorded
 -- transaction. Resolves category/label names and the user's own account

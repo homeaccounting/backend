@@ -53,6 +53,7 @@ import Domain.Core.Types
     AccountType (..),
     Currency (..),
     ExternalTransactionId,
+    ImportInfo (..),
     Money,
     TransactionId,
     TransactionType (..),
@@ -60,7 +61,6 @@ import Domain.Core.Types
     defaultBankAccount,
     mkMoney,
     unTransactionId,
-    ImportInfo (..),
     unsafeExternalTransactionId,
   )
 import Domain.Models (AccountingEvent (..))
@@ -434,7 +434,7 @@ spec = describe "BankImportService" $ do
 
   describe "category resolution (Phase 2)" $ do
     it "maps a known MCC to the configured category id" $ do
-      -- MCC 5411 → expense.food in the default MCC map
+      -- MCC 5411 → expense.groceries in the default MCC map
       (env, bankAccId) <- setupTestEnv
       let accountLink :: [(ExternalAccountId, AccountId)]
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
@@ -446,7 +446,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
-      txData.transactionType `shouldBe` singletonExpense expense.food.entryId (fromRight' (mkMoney UAH 50))
+      txData.transactionType `shouldBe` singletonExpense expense.groceries.entryId (fromRight' (mkMoney UAH 50))
       -- The original MCC is retained on the imported transaction.
       txData.mcc `shouldBe` Just "5411"
 

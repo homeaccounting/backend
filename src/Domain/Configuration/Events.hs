@@ -28,6 +28,7 @@ module Domain.Configuration.Events
     DictionaryEntryAdded (..),
     DictionaryEntryRenamed (..),
     DictionaryEntryRemoved (..),
+    DictionaryEntryMoved (..),
     DefaultIncomeCategorySet (..),
     DefaultExpenseCategorySet (..),
     DefaultAccountSet (..),
@@ -53,6 +54,7 @@ import Domain.Banking.Types
     BankProviderId,
     ExternalAccountId,
   )
+import Domain.Configuration.Dictionary (DictionaryKind, EntryRole)
 import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
@@ -60,7 +62,6 @@ import Domain.Core.Types
     CreatedBy,
     Currency,
     DictionaryEntryId,
-    DictionaryId,
     EntryName,
     MCC,
   )
@@ -83,6 +84,7 @@ configurationEvents =
     ''DictionaryEntryAdded,
     ''DictionaryEntryRenamed,
     ''DictionaryEntryRemoved,
+    ''DictionaryEntryMoved,
     ''DefaultIncomeCategorySet,
     ''DefaultExpenseCategorySet,
     ''DefaultAccountSet,
@@ -129,18 +131,22 @@ data DefaultCurrencyChanged = DefaultCurrencyChanged
 -- | Event emitted when an entry is added to a dictionary.
 data DictionaryEntryAdded = DictionaryEntryAdded
   { -- | Dictionary to which the entry was added
-    dictionaryId :: DictionaryId,
+    dictionaryKind :: DictionaryKind,
     -- | Unique identifier for the new entry
     entryId :: DictionaryEntryId,
     -- | Display name of the new entry
-    name :: EntryName
+    name :: EntryName,
+    -- | Whether the new entry is a group (container) or item (leaf). Immutable.
+    role :: EntryRole,
+    -- | Parent group, or 'Nothing' for a root-level node
+    parentId :: Maybe DictionaryEntryId
   }
   deriving (Show, Eq)
 
 -- | Event emitted when an entry in a dictionary is renamed.
 data DictionaryEntryRenamed = DictionaryEntryRenamed
   { -- | Dictionary containing the entry
-    dictionaryId :: DictionaryId,
+    dictionaryKind :: DictionaryKind,
     -- | Identifier of the entry being renamed
     entryId :: DictionaryEntryId,
     -- | New display name
@@ -151,9 +157,20 @@ data DictionaryEntryRenamed = DictionaryEntryRenamed
 -- | Event emitted when an entry is removed from a dictionary.
 data DictionaryEntryRemoved = DictionaryEntryRemoved
   { -- | Dictionary from which the entry was removed
-    dictionaryId :: DictionaryId,
+    dictionaryKind :: DictionaryKind,
     -- | Identifier of the removed entry
     entryId :: DictionaryEntryId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when an entry is moved to a new parent group (or the root).
+data DictionaryEntryMoved = DictionaryEntryMoved
+  { -- | Dictionary containing the entry
+    dictionaryKind :: DictionaryKind,
+    -- | Identifier of the moved entry
+    entryId :: DictionaryEntryId,
+    -- | New parent group, or 'Nothing' for a root-level node
+    newParentId :: Maybe DictionaryEntryId
   }
   deriving (Show, Eq)
 
@@ -270,6 +287,7 @@ deriveJSON defaultOptions ''DefaultCurrencyChanged
 deriveJSON defaultOptions ''DictionaryEntryAdded
 deriveJSON defaultOptions ''DictionaryEntryRenamed
 deriveJSON defaultOptions ''DictionaryEntryRemoved
+deriveJSON defaultOptions ''DictionaryEntryMoved
 deriveJSON defaultOptions ''DefaultIncomeCategorySet
 deriveJSON defaultOptions ''DefaultExpenseCategorySet
 deriveJSON defaultOptions ''DefaultAccountSet

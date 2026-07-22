@@ -28,12 +28,12 @@ import qualified Data.Set as Set
 import Data.Time (getCurrentTime)
 import Domain.Core.Types
   ( AccountId,
+    ImportInfo (..),
     TransactionId,
     mkIncome,
     unAccountId,
     unDictionaryEntryId,
     unTransactionId,
-    ImportInfo (..),
     unsafeExternalTransactionId,
     unsafeMoney,
   )
