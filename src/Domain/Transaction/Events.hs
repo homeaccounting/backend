@@ -230,7 +230,7 @@ data TransactionDateChanged = TransactionDateChanged
   }
   deriving (Show, Eq)
 
--- | Saga-trigger event: the user has submitted an 'AmendTransaction'
+-- | Saga-trigger event: the user has submitted an 'InitiateTransactionAmendment'
 -- command and the domain handler accepted it. The process manager
 -- reacts by computing the minimum leg diff between the snapshotted
 -- old state and the new payload, then issuing the corresponding leg
@@ -303,7 +303,7 @@ newtype TransactionAmendmentFailed = TransactionAmendmentFailed
   }
   deriving (Show, Eq)
 
--- | Saga-trigger event: the user has submitted a 'CancelTransaction'
+-- | Saga-trigger event: the user has submitted a 'InitiateTransactionCancellation'
 -- command and the domain handler accepted it. The
 -- 'Application.ProcessManagers.TransactionCancellationManager' process
 -- manager reacts to this event by issuing the two reversal commands on
@@ -333,7 +333,7 @@ data TransactionCancellationCompleted = TransactionCancellationCompleted
   }
   deriving (Show, Eq)
 
--- | Saga-trigger event: the user submitted a 'MergeTransaction' command and
+-- | Saga-trigger event: the user submitted a 'InitiateTransactionMerge' command and
 -- the domain handler accepted it. The 'Application.ProcessManagers.TransactionMergeManager'
 -- process manager reacts by amending the target (this stream) to absorb the
 -- combined amount + allocations, then, per source in order, records a 'Merge'
@@ -393,7 +393,7 @@ newtype TransactionMergeFailed = TransactionMergeFailed
 -- | Event emitted when a typed relationship from this transaction to another is
 -- recorded. The owning ("from") endpoint is the stream key — it is NOT a payload
 -- field, mirroring 'TransactionPostingInitiated' which also carries no self-id
--- (the pure InitiateTransaction handler cannot know the freshly-generated
+-- (the pure InitiateTransactionPosting handler cannot know the freshly-generated
 -- aggregate id). The read model reads "from" from the stream key.
 data TransactionRelationAdded = TransactionRelationAdded
   { -- | The referenced (pre-existing) transaction — the "to" endpoint.

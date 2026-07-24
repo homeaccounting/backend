@@ -66,7 +66,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), DictionaryKind, EntryRole (..))
 import Domain.Core.Types
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Domain.Transaction.Projection (StatusKind (..))
 import RIO
 import qualified RIO.NonEmpty as NE
@@ -607,16 +607,16 @@ genTransactionData = do
 -- Cross-kind Amendment Generators
 -- -----------------------------------------------------------------------------
 
--- | Generate a '(TransactionData, AmendTransaction)' pair where every field
+-- | Generate a '(TransactionData, InitiateTransactionAmendment)' pair where every field
 -- compared by 'isIdentityAmend' is copied from 'TransactionData' verbatim,
 -- so the predicate is guaranteed to return 'True'.
-genIdentityAmendInputs :: Gen (TransactionData, AmendTransaction)
+genIdentityAmendInputs :: Gen (TransactionData, InitiateTransactionAmendment)
 genIdentityAmendInputs = do
   td <- genTransactionData
   txId <- genTransactionId
   uid <- genUserId
   let cmd =
-        AmendTransaction
+        InitiateTransactionAmendment
           { transactionId = txId,
             newSourceAccountId = td.sourceAccountId,
             newTargetAccountId = td.targetAccountId,

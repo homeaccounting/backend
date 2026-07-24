@@ -52,7 +52,7 @@ import Domain.Core.Types
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
@@ -112,8 +112,8 @@ seedTransaction env userId tt labels contact = do
   srcUuid <- UUID.nextRandom
   tgtUuid <- UUID.nextRandom
   let cmd =
-        InitiateTransactionTransactionCommand
-          InitiateTransaction
+        InitiateTransactionPostingTransactionCommand
+          InitiateTransactionPosting
             { sourceAccountId = unsafeAccountId srcUuid,
               targetAccountId = unsafeAccountId tgtUuid,
               sourceAmount = unsafeMoney Core.USD 100,

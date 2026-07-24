@@ -60,11 +60,11 @@ module Web.Types
     TransferRequest (..),
     SetTransactionLabelsRequest (..),
     SetTransactionContactRequest (..),
-    SetTransactionAllocationsRequest (..),
+    ChangeTransactionAllocationsRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ChangeTransactionDateRequest (..),
     AmendTransactionRequest (..),
-    MergeTransactionsRequest (..),
+    MergeTransactionRequest (..),
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
@@ -496,14 +496,14 @@ instance FromJSON SetTransactionContactRequest
 -- amounts sum to the transaction's categorised total and which share
 -- the categorised currency. The transaction's kind (Income vs Expense)
 -- is structurally preserved — only the allocation breakdown changes.
-newtype SetTransactionAllocationsRequest = SetTransactionAllocationsRequest
+newtype ChangeTransactionAllocationsRequest = ChangeTransactionAllocationsRequest
   { newAllocations :: Allocations
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON SetTransactionAllocationsRequest
+instance ToJSON ChangeTransactionAllocationsRequest
 
-instance FromJSON SetTransactionAllocationsRequest
+instance FromJSON ChangeTransactionAllocationsRequest
 
 -- | Body for @PUT \/api\/transactions\/:id\/description@ — replaces the
 -- description on a Completed transaction.
@@ -532,15 +532,15 @@ instance FromJSON ChangeTransactionDateRequest
 -- An empty list is rejected by the handler with a field-scoped 400.
 --
 -- Mirrored by the web client DTO in @web src\/api\/types.ts@
--- (@MergeTransactionsRequest@); keep the two in lockstep.
-newtype MergeTransactionsRequest = MergeTransactionsRequest
+-- (@MergeTransactionRequest@); keep the two in lockstep.
+newtype MergeTransactionRequest = MergeTransactionRequest
   { sourceTransactionIds :: [UUID]
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON MergeTransactionsRequest
+instance ToJSON MergeTransactionRequest
 
-instance FromJSON MergeTransactionsRequest
+instance FromJSON MergeTransactionRequest
 
 -- | Body for @PUT \/api\/transactions\/:id\/amendment@ — replaces the
 -- posting facts on a Completed transaction. The client supplies the

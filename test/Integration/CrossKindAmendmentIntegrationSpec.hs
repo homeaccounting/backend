@@ -38,7 +38,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Infrastructure.App (runAppM)
 import Network.HTTP.Types (Status, status200)
 import Network.Wai.Test (SResponse (..), simpleBody, simpleStatus)
@@ -112,7 +112,7 @@ seedIncomeWithExtId seed accId amount extId = do
         Left err -> error ("seedIncomeWithExtId: mkIncome failed: " <> show err)
         Right v -> v
       cmd =
-        InitiateTransaction
+        InitiateTransactionPosting
           { sourceAccountId = externalAccId,
             targetAccountId = accId,
             sourceAmount = amt,

@@ -4,19 +4,19 @@
 
 -- |
 -- Module      : Domain.Transaction.CancellationCommandHandlerSpec
--- Description : Unit tests for CancelTransaction / CompleteTransactionCancellation
---               and the amended AmendTransaction arm
+-- Description : Unit tests for InitiateTransactionCancellation / CompleteTransactionCancellation
+--               and the amended InitiateTransactionAmendment arm
 --
 -- Covers the pure business-rule enforcement in the command handler for the
 -- two cancellation commands and verifies the cross-saga gating introduced
--- by adding @cancellationInProgress@ awareness to the existing @AmendTransaction@
+-- by adding @cancellationInProgress@ awareness to the existing @InitiateTransactionAmendment@
 -- arm:
 --
---   * CancelTransaction              – user-facing command; accepted only on Completed
+--   * InitiateTransactionCancellation              – user-facing command; accepted only on Completed
 --                                      with both saga flags False
 --   * CompleteTransactionCancellation – saga-internal; accepted only when
 --                                       @cancellationInProgress = True@
---   * AmendTransaction (regression)     – verifies existing checks still fire when
+--   * InitiateTransactionAmendment (regression)     – verifies existing checks still fire when
 --                                       @cancellationInProgress = False@, and
 --                                       the new @CannotAmendDuringCancellation@
 --                                       check fires when @cancellationInProgress = True@
@@ -39,10 +39,10 @@ import Domain.Transaction.CommandHandler
     handleTransactionCommand,
   )
 import Domain.Transaction.Commands
-  ( AmendTransaction (..),
-    CancelTransaction (..),
-    ChangeTransactionDescription (..),
+  ( ChangeTransactionDescription (..),
     CompleteTransactionCancellation (..),
+    InitiateTransactionAmendment (..),
+    InitiateTransactionCancellation (..),
     SetTransactionLabels (..),
   )
 import Domain.Transaction.Events
@@ -131,11 +131,11 @@ completedTxWithCancellationInProgress =
 -- Commands
 -- -----------------------------------------------------------------------------
 
--- | Minimal valid 'CancelTransaction' command.
+-- | Minimal valid 'InitiateTransactionCancellation' command.
 validCancelCmd :: TransactionCommand
 validCancelCmd =
-  CancelTransactionTransactionCommand
-    CancelTransaction
+  InitiateTransactionCancellationTransactionCommand
+    InitiateTransactionCancellation
       { transactionId = txId,
         by = cancelledBy
       }
@@ -149,11 +149,11 @@ validCompleteCancelCmd =
         by = cancelledBy
       }
 
--- | Minimal valid 'AmendTransaction' command (different accounts, non-zero amounts).
+-- | Minimal valid 'InitiateTransactionAmendment' command (different accounts, non-zero amounts).
 validAmendCmd :: TransactionCommand
 validAmendCmd =
-  AmendTransactionTransactionCommand
-    AmendTransaction
+  InitiateTransactionAmendmentTransactionCommand
+    InitiateTransactionAmendment
       { transactionId = txId,
         newSourceAccountId = altSrcId,
         newTargetAccountId = altTgtId,
@@ -166,11 +166,11 @@ validAmendCmd =
         by = amendedBy
       }
 
--- | 'AmendTransaction' with the same account on both legs — should be rejected.
+-- | 'InitiateTransactionAmendment' with the same account on both legs — should be rejected.
 sameAccountAmendCmd :: TransactionCommand
 sameAccountAmendCmd =
-  AmendTransactionTransactionCommand
-    AmendTransaction
+  InitiateTransactionAmendmentTransactionCommand
+    InitiateTransactionAmendment
       { transactionId = txId,
         newSourceAccountId = altSrcId,
         newTargetAccountId = altSrcId,
@@ -183,11 +183,11 @@ sameAccountAmendCmd =
         by = amendedBy
       }
 
--- | 'AmendTransaction' with zero source amount — should be rejected.
+-- | 'InitiateTransactionAmendment' with zero source amount — should be rejected.
 zeroSourceAmendCmd :: TransactionCommand
 zeroSourceAmendCmd =
-  AmendTransactionTransactionCommand
-    AmendTransaction
+  InitiateTransactionAmendmentTransactionCommand
+    InitiateTransactionAmendment
       { transactionId = txId,
         newSourceAccountId = altSrcId,
         newTargetAccountId = altTgtId,
@@ -224,7 +224,7 @@ setLabelsCmd =
 
 spec :: Spec
 spec = do
-  describe "CancelTransaction" $ do
+  describe "InitiateTransactionCancellation" $ do
     it "accepted in Completed state (both flags False) and emits TransactionCancellationInitiated" $ do
       let result = handleTransactionCommand completedTx validCancelCmd
       case result of
@@ -288,7 +288,7 @@ spec = do
       $ handleTransactionCommand completedTx validCompleteCancelCmd
       `shouldBe` Left NoCancellationInProgress
 
-  describe "AmendTransaction (cross-saga gating)" $ do
+  describe "InitiateTransactionAmendment (cross-saga gating)" $ do
     it "rejected when cancellationInProgress = True with CannotAmendDuringCancellation"
       $ handleTransactionCommand completedTxWithCancellationInProgress validAmendCmd
       `shouldBe` Left CannotAmendDuringCancellation

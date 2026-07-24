@@ -18,11 +18,11 @@
 --  * Allocations applied to a Transfer aggregate are rejected by the
 --    pure command handler with
 --    'CannotSetAllocationsOnUncategorisedTransaction'.
---  * Handler-level contra-income guard: 'InitiateTransaction' carrying an
+--  * Handler-level contra-income guard: 'InitiateTransactionPosting' carrying an
 --    'Expense' with a non-empty income bucket is rejected.
---  * 'SetTransactionAllocations' re-anchors to the transaction's own amount,
+--  * 'ChangeTransactionAllocations' re-anchors to the transaction's own amount,
 --    not the stored allocation sum.
---  * 'SetTransactionAllocations' contra-income guard on a completed Expense.
+--  * 'ChangeTransactionAllocations' contra-income guard on a completed Expense.
 module Domain.Transaction.AllocationsSpec (spec) where
 
 import qualified Data.Set as Set
@@ -47,8 +47,8 @@ import Domain.Transaction.CommandHandler
   )
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
-  ( InitiateTransaction (..),
-    SetTransactionAllocations (..),
+  ( ChangeTransactionAllocations (..),
+    InitiateTransactionPosting (..),
   )
 import Domain.Transaction.Events (TransactionAllocationsChanged (..))
 import Domain.Transaction.Projection
@@ -175,12 +175,12 @@ spec = describe "Allocations / worked examples" $ do
         Left (ValidationErr ve) -> ve.validationField `shouldBe` "allocations"
         other -> expectationFailure $ "expected sum ValidationErr, got " <> show other
 
-  describe "SetTransactionAllocations on a Transfer" $ do
+  describe "ChangeTransactionAllocations on a Transfer" $ do
     it "is rejected with CannotSetAllocationsOnUncategorisedTransaction" $ do
       let allocs = Core.mkExpenseAllocations (Allocation groceryStaples (unsafeMoney UAH 10) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = unsafeTransactionId (UUID.fromWords 100 0 0 0),
                   newAllocations = allocs
                 }
@@ -192,15 +192,15 @@ spec = describe "Allocations / worked examples" $ do
   -- --------------------------------------------------------------------------
 
   describe "handler-level ContraIncomeNotSupported" $ do
-    -- Test 1: InitiateTransaction with Expense carrying a non-empty incomes
+    -- Test 1: InitiateTransactionPosting with Expense carrying a non-empty incomes
     -- bucket is rejected at the handler boundary.
     --
     -- WHY it would fail if the rule were removed: the handler arm for
-    -- 'InitiateTransaction' would fall through the
+    -- 'InitiateTransactionPosting' would fall through the
     --   "if null allocs.incomes then Right () else Left ContraIncomeNotSupported"
     -- branch without emitting the error, so the test would see a 'Right [...]'
     -- instead of 'Left ContraIncomeNotSupported'.
-    it "InitiateTransaction: Expense with non-empty incomes bucket is rejected" $ do
+    it "InitiateTransactionPosting: Expense with non-empty incomes bucket is rejected" $ do
       -- Build the contra-income allocations directly, bypassing mkExpense
       -- (which also rejects them).  The $40 income + $360 expense sum to $400
       -- (the source amount), so the sum check passes first and the
@@ -212,8 +212,8 @@ spec = describe "Allocations / worked examples" $ do
               (Allocation salaryCat (unsafeMoney USD 40) Nothing :| [])
               (Allocation rentCat (unsafeMoney USD 360) Nothing :| [])
           cmd =
-            InitiateTransactionTransactionCommand
-              InitiateTransaction
+            InitiateTransactionPostingTransactionCommand
+              InitiateTransactionPosting
                 { sourceAccountId = unsafeAccountId (UUID.fromWords 10 0 0 0),
                   targetAccountId = unsafeAccountId (UUID.fromWords 11 0 0 0),
                   sourceAmount = srcAmount,
@@ -233,13 +233,13 @@ spec = describe "Allocations / worked examples" $ do
       handleTransactionCommand transactionDefault cmd
         `shouldBe` Left TxCh.ContraIncomeNotSupported
 
-    -- Test 3: SetTransactionAllocations on a completed Expense with a
+    -- Test 3: ChangeTransactionAllocations on a completed Expense with a
     -- non-empty incomes bucket is rejected.
     --
     -- WHY it would fail if the rule were removed: the handler would skip the
     --   "case transaction.transactionType of Expense _ | not (null newAllocations.incomes) -> Left ContraIncomeNotSupported"
     -- guard and emit 'Right [TransactionAllocationsChanged...]' instead.
-    it "SetTransactionAllocations: completed Expense with non-empty incomes bucket is rejected" $ do
+    it "ChangeTransactionAllocations: completed Expense with non-empty incomes bucket is rejected" $ do
       let expenseAmount = unsafeMoney USD 500
           -- Completed Expense fixture: $500 expense with a single expense alloc.
           completedExpense =
@@ -257,8 +257,8 @@ spec = describe "Allocations / worked examples" $ do
               (Allocation salaryCat (unsafeMoney USD 50) Nothing :| [])
               (Allocation rentCat (unsafeMoney USD 450) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = unsafeTransactionId (UUID.fromWords 200 0 0 0),
                   newAllocations = contraNewAllocs
                 }
@@ -266,10 +266,10 @@ spec = describe "Allocations / worked examples" $ do
         `shouldBe` Left TxCh.ContraIncomeNotSupported
 
   -- --------------------------------------------------------------------------
-  -- SetTransactionAllocations anchors to the transaction's own amount
+  -- ChangeTransactionAllocations anchors to the transaction's own amount
   -- --------------------------------------------------------------------------
 
-  describe "SetTransactionAllocations anchor re-check" $ do
+  describe "ChangeTransactionAllocations anchor re-check" $ do
     -- Test 2a: new allocations summing to targetAmount are accepted.
     --
     -- WHY it would fail if the rule were removed / broken: if the handler used
@@ -293,8 +293,8 @@ spec = describe "Allocations / worked examples" $ do
           newAllocs = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 500) Nothing :| [])
           txId = unsafeTransactionId (UUID.fromWords 300 0 0 0)
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = txId,
                   newAllocations = newAllocs
                 }
@@ -328,8 +328,8 @@ spec = describe "Allocations / worked examples" $ do
           -- New allocations sum to old alloc total ($300), NOT targetAmount ($500).
           newAllocsOldSum = Core.mkIncomeAllocations (Allocation salaryCat (unsafeMoney USD 300) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = unsafeTransactionId (UUID.fromWords 301 0 0 0),
                   newAllocations = newAllocsOldSum
                 }

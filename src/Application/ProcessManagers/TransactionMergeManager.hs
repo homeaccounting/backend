@@ -18,12 +18,12 @@
 --
 -- Phases:
 --
---   1. 'TransactionMergeInitiated' → issue 'AmendTransaction' on the target
+--   1. 'TransactionMergeInitiated' → issue 'InitiateTransactionAmendment' on the target
 --      (the pre-resolved payload from the service). Saga state records the
 --      target, the resolved amend fields, and the ordered source list.
 --   2. 'TransactionAmendmentCompleted' for that target → per source, in order,
 --      issue 'AddTransactionRelation' (Merge, source → target) THEN
---      'CancelTransaction'. The edge must precede the cancel because
+--      'InitiateTransactionCancellation'. The edge must precede the cancel because
 --      'AddTransactionRelation' only accepts a Completed from-aggregate.
 --   3. 'TransactionCancellationCompleted' for the LAST source → issue
 --      'CompleteTransactionMerge' on the target.
@@ -89,7 +89,7 @@ import RIO.List (find)
 
 -- | Saga lifecycle for an in-flight merge.
 --
---   * 'MergeAwaitingAmend' — the target 'AmendTransaction' has been issued and
+--   * 'MergeAwaitingAmend' — the target 'InitiateTransactionAmendment' has been issued and
 --     we are waiting for 'TransactionAmendmentCompleted' (or …Failed).
 --   * 'MergeAwaitingCancellations' — the amend landed; per-source edges +
 --     cancels have been issued. The set holds the sources whose
@@ -101,7 +101,7 @@ data MergePhase
   deriving (Show, Eq)
 
 -- | Per-merge tracking. Carries the fully-resolved amend payload (so the saga
--- can issue 'AmendTransaction' without touching the read model) plus the
+-- can issue 'InitiateTransactionAmendment' without touching the read model) plus the
 -- ordered source list and the saga phase.
 data TransactionMergeData = TransactionMergeData
   { -- | The target (survivor) transaction — the stream key of the merge events.
@@ -208,7 +208,7 @@ clearByKey key manager = case mkTransactionIdSafe key of
 -- React
 -- -----------------------------------------------------------------------------
 
--- | Issue the target 'AmendTransaction' (fully-resolved payload). Wired with
+-- | Issue the target 'InitiateTransactionAmendment' (fully-resolved payload). Wired with
 -- compensation so a command-level rejection (a guard bug) fails the merge
 -- cleanly; the amend SAGA's own failure surfaces separately as
 -- 'TransactionAmendmentFailed'.
@@ -218,8 +218,8 @@ amendEffect md =
     (unTransactionId md.targetId)
     ( embedWith
         transactionCommandEmbedding
-        ( AmendTransactionTransactionCommand
-            AmendTransaction
+        ( InitiateTransactionAmendmentTransactionCommand
+            InitiateTransactionAmendment
               { transactionId = md.targetId,
                 newSourceAccountId = md.newSourceAccountId,
                 newTargetAccountId = md.newTargetAccountId,
@@ -258,8 +258,8 @@ sourceEffects target by src =
       (unTransactionId src)
       ( embedWith
           transactionCommandEmbedding
-          ( CancelTransactionTransactionCommand
-              CancelTransaction {transactionId = src, by = by}
+          ( InitiateTransactionCancellationTransactionCommand
+              InitiateTransactionCancellation {transactionId = src, by = by}
           )
       )
       id

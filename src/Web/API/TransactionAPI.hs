@@ -76,7 +76,7 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Page (Page (..), mkPage)
 import Domain.Core.Range (mkRange)
 import Domain.Core.Types (Allocation (..), Allocations, Currency, Money (..), RelationKind (..), RelationSpec (..), TransactionType (..), allAllocations, mkAccountId, mkAllocation, mkAllocations, mkDictionaryEntryId, mkTransactionId, parseCurrency, parseRelationKind, renderRelationKind, unTransactionId, unsafeDictionaryEntryId)
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Domain.Transaction.Projection (StatusKind)
 import Infrastructure.App (AppM)
 import RIO
@@ -88,12 +88,12 @@ import Web.Types
   ( AllocationsRequest (..),
     AmendTransactionRequest (..),
     CategoryAmount (..),
+    ChangeTransactionAllocationsRequest (..),
     ChangeTransactionDateRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ExpenseRequest (..),
     IncomeRequest (..),
-    MergeTransactionsRequest (..),
-    SetTransactionAllocationsRequest (..),
+    MergeTransactionRequest (..),
     SetTransactionContactRequest (..),
     SetTransactionLabelsRequest (..),
     TransactionListResponse (..),
@@ -181,7 +181,7 @@ type TransactionAPI =
       :> "transactions"
       :> Capture "id" UUID
       :> "allocations"
-      :> ReqBody '[JSON] SetTransactionAllocationsRequest
+      :> ReqBody '[JSON] ChangeTransactionAllocationsRequest
       :> Patch '[JSON] TransactionResponse
     -- PUT /api/transactions/:id/description - Replace the description on a Completed transaction.
     :<|> AuthProtect "jwt"
@@ -215,7 +215,7 @@ type TransactionAPI =
       :> "transactions"
       :> Capture "id" UUID
       :> "merge"
-      :> ReqBody '[JSON] MergeTransactionsRequest
+      :> ReqBody '[JSON] MergeTransactionRequest
       :> Post '[JSON] TransactionResponse
     -- GET /api/transactions/:id/history - Audit history (TX-aggregate events).
     :<|> AuthProtect "jwt"
@@ -410,7 +410,7 @@ setContactHandler user rawId req = do
 setAllocationsHandler ::
   AuthenticatedUser ->
   UUID ->
-  SetTransactionAllocationsRequest ->
+  ChangeTransactionAllocationsRequest ->
   AppM TransactionResponse
 setAllocationsHandler user rawId req = do
   transactionId <- validateField "id" $ mkTransactionId rawId
@@ -472,7 +472,7 @@ amendTransactionHandler user rawId req = do
     validateField "exchangeRate" $ parseOptionalExchangeRate srcCur tgtCur req.exchangeRate
   contact <- validateField "contactId" $ parseContactId req.contactId
   let cmd =
-        AmendTransaction
+        InitiateTransactionAmendment
           { transactionId = transactionId,
             newSourceAccountId = newSource,
             newTargetAccountId = newTarget,
@@ -484,7 +484,7 @@ amendTransactionHandler user rawId req = do
             -- in TransactionService.amendTransaction before dispatch. The
             -- DTO does not expose this field; it's service-internal.
             newTransactionType = Transfer,
-            -- AmendTransaction.contactId is full-replacement (Nothing =
+            -- InitiateTransactionAmendment.contactId is full-replacement (Nothing =
             -- clear), so the request must always carry the client's full
             -- desired contact state — resend the current value to preserve
             -- it, omit/null to clear it. Mirrors how the other amendment
@@ -511,7 +511,7 @@ amendTransactionHandler user rawId req = do
 mergeTransactionsHandler ::
   AuthenticatedUser ->
   UUID ->
-  MergeTransactionsRequest ->
+  MergeTransactionRequest ->
   AppM TransactionResponse
 mergeTransactionsHandler user rawId req = do
   targetId <- validateField "id" (mkTransactionId rawId)

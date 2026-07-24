@@ -21,7 +21,7 @@
 --   - transactionCommandHandler: CommandHandler for eventium integration
 --
 -- Business Rules Enforced:
---   - InitiateTransaction: Source and target must be different, amount must be positive
+--   - InitiateTransactionPosting: Source and target must be different, amount must be positive
 --   - CompleteTransactionPosting: Can only complete transactions in Pending status
 --   - FailTransactionPosting: Can only fail transactions in Pending status
 --
@@ -78,10 +78,10 @@ data TransactionError
   | -- | An edit command (labels, category, description, business date)
     -- was issued against a transaction whose status is not Completed.
     CannotEditUncompletedTransaction
-  | -- | 'SetTransactionAllocations' issued against a Transfer or Adjustment,
+  | -- | 'ChangeTransactionAllocations' issued against a Transfer or Adjustment,
     -- which has no allocations to set.
     CannotSetAllocationsOnUncategorisedTransaction
-  | -- | 'SetTransactionAllocations' / 'AmendTransaction' issued with a
+  | -- | 'ChangeTransactionAllocations' / 'InitiateTransactionAmendment' issued with a
     -- @newTransactionType@ whose kind differs from the existing transaction's.
     CannotChangeKindOfCategorisedTransaction
   | -- | Sum of allocation amounts does not equal the categorised total.
@@ -96,37 +96,37 @@ data TransactionError
   | -- | Allocation payload has both buckets empty; at least one allocation
     -- is required on a categorised transaction.
     AllocationsEmpty
-  | -- | AmendTransaction payload referenced the same account on both legs.
+  | -- | InitiateTransactionAmendment payload referenced the same account on both legs.
     AmendTransferToSameAccountPair
-  | -- | AmendTransaction payload carried a zero source or target amount.
+  | -- | InitiateTransactionAmendment payload carried a zero source or target amount.
     AmendTransferToZeroAmount
   | -- | A saga-completion or saga-failure command was issued without
     -- a prior 'TransactionAmendmentInitiated' on the stream.
     NoAmendmentInProgress
-  | -- | 'CancelTransaction' was issued against a transaction that is already
+  | -- | 'InitiateTransactionCancellation' was issued against a transaction that is already
     -- in the 'Cancelled' state.
     TransactionAlreadyCancelled
-  | -- | 'CancelTransaction' was issued while a cancellation saga is already
+  | -- | 'InitiateTransactionCancellation' was issued while a cancellation saga is already
     -- in flight (@cancellationInProgress = True@).
     CancellationAlreadyInProgress
-  | -- | 'CancelTransaction' was issued while an amendment saga is in flight
+  | -- | 'InitiateTransactionCancellation' was issued while an amendment saga is in flight
     -- (@amendmentInProgress = True@). The amendment must complete or fail
     -- first.
     CannotCancelDuringAmendment
   | -- | 'CompleteTransactionCancellation' was issued when no cancellation is
     -- in progress (@cancellationInProgress = False@).
     NoCancellationInProgress
-  | -- | 'AmendTransaction' was issued while a cancellation saga is in flight
+  | -- | 'InitiateTransactionAmendment' was issued while a cancellation saga is in flight
     -- (@cancellationInProgress = True@).
     CannotAmendDuringCancellation
-  | -- | 'AmendTransaction' supplied a 'newTransactionType' whose kind is
+  | -- | 'InitiateTransactionAmendment' supplied a 'newTransactionType' whose kind is
     --   'Adjustment'. Cross-kind amendment into Adjustment is unsupported.
     CannotAmendToAdjustmentKind
   | -- | 'AddTransactionRelation' referenced the owning transaction as its own
     -- related endpoint (@transactionId == relatedTransactionId@). A transaction
     -- cannot be related to itself.
     RelationSelfLink
-  | -- | 'MergeTransaction' was issued while an amendment, cancellation, or
+  | -- | 'InitiateTransactionMerge' was issued while an amendment, cancellation, or
     -- merge saga is already in flight on the target (@*InProgress = True@).
     MergeAlreadyInProgress
   | -- | 'CompleteTransactionMerge' / 'FailTransactionMerge' was issued when no
@@ -142,7 +142,7 @@ data TransactionError
 --
 -- This Template Haskell splice creates:
 --  data TransactionCommand
---    = InitiateTransactionTransactionCommand InitiateTransaction
+--    = InitiateTransactionPostingTransactionCommand InitiateTransactionPosting
 --    | CompleteTransactionPostingTransactionCommand CompleteTransactionPosting
 --    | FailTransactionPostingTransactionCommand FailTransactionPosting
 --
@@ -166,12 +166,12 @@ constructSumType
 -- the current aggregate state. It is pure and deterministic.
 --
 -- Command Handling:
---  - InitiateTransaction: Validates accounts differ, amount positive, emits TransactionPostingInitiated
+--  - InitiateTransactionPosting: Validates accounts differ, amount positive, emits TransactionPostingInitiated
 --  - CompleteTransactionPosting: Validates status is Pending, emits TransactionPostingCompleted
 --  - FailTransactionPosting: Validates status is Pending, emits TransactionPostingFailed
 --
 -- Business Rules:
---  1. InitiateTransaction can only be first command (status must not be set)
+--  1. InitiateTransactionPosting can only be first command (status must not be set)
 --  2. Source and target accounts must be different
 --  3. Transfer amount must be positive
 --  4. CompleteTransactionPosting only works on Pending transactions
@@ -188,8 +188,8 @@ constructSumType
 -- State Machine Enforcement:
 --  Only Pending transactions can transition to Completed or Failed.
 handleTransactionCommand :: Transaction -> TransactionCommand -> Either TransactionError [TransactionEvent]
--- Handle InitiateTransaction command
-handleTransactionCommand transaction (InitiateTransactionTransactionCommand InitiateTransaction {..}) =
+-- Handle InitiateTransactionPosting command
+handleTransactionCommand transaction (InitiateTransactionPostingTransactionCommand InitiateTransactionPosting {..}) =
   case transaction ^. #status of
     Pending
       | unMoney transaction.sourceAmount == 0 ->
@@ -283,7 +283,7 @@ handleTransactionCommand transaction (SetTransactionContactTransactionCommand Se
               }
         ]
     _ -> Left CannotEditUncompletedTransaction
--- Handle SetTransactionAllocations command
+-- Handle ChangeTransactionAllocations command
 --
 -- The command carries only the new allocation list; the surrounding
 -- kind (Income / Expense) is preserved from the existing transaction.
@@ -291,7 +291,7 @@ handleTransactionCommand transaction (SetTransactionContactTransactionCommand Se
 -- kind to compare with — so we only check that the existing
 -- transaction is categorised, then validate the allocations against
 -- the existing categorised total / currency / positivity.
-handleTransactionCommand transaction (SetTransactionAllocationsTransactionCommand SetTransactionAllocations {..}) =
+handleTransactionCommand transaction (ChangeTransactionAllocationsTransactionCommand ChangeTransactionAllocations {..}) =
   case transaction ^. #status of
     Completed ->
       case allocationsOf (transaction ^. #transactionType) of
@@ -339,12 +339,12 @@ handleTransactionCommand transaction (ChangeTransactionDateTransactionCommand Ch
               }
         ]
     _ -> Left CannotEditUncompletedTransaction
--- Handle AmendTransaction command
+-- Handle InitiateTransactionAmendment command
 --
 -- The service layer has already synthesised the full @newTransactionType@
 -- (kind ⊕ allocations). The handler only validates structural
 -- invariants and the allocation shape against the supplied amounts.
-handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTransaction {..}) =
+handleTransactionCommand transaction (InitiateTransactionAmendmentTransactionCommand InitiateTransactionAmendment {..}) =
   case transaction ^. #status of
     Completed
       | transaction ^. #cancellationInProgress ->
@@ -356,7 +356,7 @@ handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTr
       | otherwise -> do
           -- Validate the service-synthesised newTransactionType against
           -- the new posting amounts. checkAllocationsAgainst is the
-          -- same helper used by InitiateTransaction (sum, currency,
+          -- same helper used by InitiateTransactionPosting (sum, currency,
           -- positivity). 'do' here is the Either monad: a Left short-
           -- circuits and is returned; Right () proceeds.
           case newTransactionType of
@@ -415,8 +415,8 @@ handleTransactionCommand transaction (FailTransactionAmendmentTransactionCommand
               { reason = reason
               }
         ]
--- Handle CancelTransaction command
-handleTransactionCommand transaction (CancelTransactionTransactionCommand CancelTransaction {..}) =
+-- Handle InitiateTransactionCancellation command
+handleTransactionCommand transaction (InitiateTransactionCancellationTransactionCommand InitiateTransactionCancellation {..}) =
   case transaction ^. #status of
     Completed
       | transaction ^. #amendmentInProgress -> Left CannotCancelDuringAmendment
@@ -443,7 +443,7 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
                 by = by
               }
         ]
--- Handle MergeTransaction command
+-- Handle InitiateTransactionMerge command
 --
 -- Initiating command for the merge saga (routed to the target/survivor).
 -- The service layer has already resolved amounts + synthesised
@@ -452,7 +452,7 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
 -- is the stream key, so it is not a payload field). The @*InProgress@ flags are
 -- only ever True on uncommitted state, so this guard is effectively a defensive
 -- re-entrancy check.
-handleTransactionCommand transaction (MergeTransactionTransactionCommand MergeTransaction {..}) =
+handleTransactionCommand transaction (InitiateTransactionMergeTransactionCommand InitiateTransactionMerge {..}) =
   case transaction ^. #status of
     Completed
       | transaction ^. #amendmentInProgress
@@ -538,7 +538,7 @@ handleTransactionCommand transaction (RemoveTransactionRelationTransactionComman
 
 -- | Check that an allocation list is consistent with the expected total:
 -- currency equality, sum equality, and per-allocation positivity. Used by
--- 'InitiateTransaction', 'SetTransactionAllocations', and 'AmendTransaction'
+-- 'InitiateTransactionPosting', 'ChangeTransactionAllocations', and 'InitiateTransactionAmendment'
 -- handler arms as a defensive boundary check (the smart constructors in
 -- 'Domain.Core.Types' already enforce these — the re-check covers
 -- direct constructions bypassing them).

@@ -55,7 +55,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec
@@ -75,7 +75,7 @@ import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 -- Local helpers
 -- -----------------------------------------------------------------------------
 
--- | Construct an 'AmendTransaction' with the minimum required fields.
+-- | Construct an 'InitiateTransactionAmendment' with the minimum required fields.
 -- 'newTransactionType' is a placeholder — the service overwrites it via
 -- 'synthesiseAmendmentTransactionType' before dispatching.
 buildAmend ::
@@ -86,9 +86,9 @@ buildAmend ::
   Rational ->
   Maybe Allocations ->
   UserId ->
-  AmendTransaction
+  InitiateTransactionAmendment
 buildAmend txId src tgt srcAmt tgtAmt mAllocs uid =
-  AmendTransaction
+  InitiateTransactionAmendment
     { transactionId = txId,
       newSourceAccountId = src,
       newTargetAccountId = tgt,

@@ -47,7 +47,7 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
@@ -436,8 +436,8 @@ creditAccountAt env accountId atTime amt = do
       env.eventStoreReader
       id
       txUuid
-      $ InitiateTransactionTransactionCommand
-        InitiateTransaction
+      $ InitiateTransactionPostingTransactionCommand
+        InitiateTransactionPosting
           { sourceAccountId = accountId,
             targetAccountId = accountId,
             sourceAmount = amt,

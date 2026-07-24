@@ -9,10 +9,10 @@
 --
 -- Covers the phase machine:
 --
---   * 'TransactionMergeInitiated' → issue 'AmendTransaction' on the target
+--   * 'TransactionMergeInitiated' → issue 'InitiateTransactionAmendment' on the target
 --     (with compensation → 'FailTransactionMerge').
 --   * 'TransactionAmendmentCompleted' for the target → per source, in order,
---     'AddTransactionRelation' (Merge) then 'CancelTransaction'.
+--     'AddTransactionRelation' (Merge) then 'InitiateTransactionCancellation'.
 --   * The LAST 'TransactionCancellationCompleted' → 'CompleteTransactionMerge';
 --     earlier ones issue nothing.
 --   * 'TransactionAmendmentFailed' for the target → 'FailTransactionMerge'.
@@ -43,10 +43,10 @@ import Domain.Models
   )
 import Domain.Transaction.Commands
   ( AddTransactionRelation (..),
-    AmendTransaction (..),
-    CancelTransaction (..),
     CompleteTransactionMerge (..),
     FailTransactionMerge (..),
+    InitiateTransactionAmendment (..),
+    InitiateTransactionCancellation (..),
   )
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
@@ -179,17 +179,17 @@ spec = describe "TransactionMergeManager (Saga)" $ do
           md.sources `shouldBe` [s1Id]
           md.phase `shouldBe` MergeAwaitingAmend
 
-    it "issues AmendTransaction on the target (with compensation)" $ do
+    it "issues InitiateTransactionAmendment on the target (with compensation)" $ do
       let ev = mkMergeInitiated [s1Id]
           st = runProjection [ev]
           effects = reactToTransactionMergeEvent st ev
       case effects of
-        [IssueCommandWithCompensation target (AmendTransactionCommand amend) _ _] -> do
+        [IssueCommandWithCompensation target (InitiateTransactionAmendmentCommand amend) _ _] -> do
           target `shouldBe` targetUuid
           amend.transactionId `shouldBe` targetId
           amend.newSourceAmount `shouldBe` m 65
           amend.newTargetAmount `shouldBe` m 65
-        _ -> expectationFailure "expected a single AmendTransaction (with compensation)"
+        _ -> expectationFailure "expected a single InitiateTransactionAmendment (with compensation)"
 
     it "compensation on the amend rejection issues FailTransactionMerge" $ do
       let ev = mkMergeInitiated [s1Id]
@@ -211,15 +211,15 @@ spec = describe "TransactionMergeManager (Saga)" $ do
         Just md -> md.phase `shouldBe` MergeAwaitingCancellations (Set.fromList [s1Id, s2Id])
         Nothing -> expectationFailure "expected a merge entry"
 
-    it "issues per-source AddTransactionRelation(Merge) then CancelTransaction, in order" $ do
+    it "issues per-source AddTransactionRelation(Merge) then InitiateTransactionCancellation, in order" $ do
       let st = runProjection [mkMergeInitiated [s1Id, s2Id], mkAmendmentCompleted]
           effects = reactToTransactionMergeEvent st mkAmendmentCompleted
       length effects `shouldBe` 4
       case effects of
         [ IssueCommandWithCompensation e1 (AddTransactionRelationCommand edge1) _ _,
-          IssueCommandWithCompensation c1 (CancelTransactionCommand cancel1) _ _,
+          IssueCommandWithCompensation c1 (InitiateTransactionCancellationCommand cancel1) _ _,
           IssueCommandWithCompensation e2 (AddTransactionRelationCommand edge2) _ _,
-          IssueCommandWithCompensation c2 (CancelTransactionCommand cancel2) _ _
+          IssueCommandWithCompensation c2 (InitiateTransactionCancellationCommand cancel2) _ _
           ] -> do
             e1 `shouldBe` s1Uuid
             edge1.transactionId `shouldBe` s1Id

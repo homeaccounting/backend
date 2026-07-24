@@ -10,7 +10,7 @@
 -- This module tests the Transaction aggregate command handler business logic.
 --
 -- Test Coverage:
---   - InitiateTransaction: Transfer validation, business rules
+--   - InitiateTransactionPosting: Transfer validation, business rules
 --   - CompleteTransactionPosting: State transition validation
 --   - FailTransactionPosting: State transition validation
 --   - State machine enforcement
@@ -121,11 +121,11 @@ failedTransaction fromId toId amt =
     ]
 
 -- -----------------------------------------------------------------------------
--- InitiateTransaction Tests
+-- InitiateTransactionPosting Tests
 -- -----------------------------------------------------------------------------
 
 initiateTransferSpec :: Spec
-initiateTransferSpec = describe "InitiateTransaction Command" $ do
+initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
   context "Given empty transaction" $ do
     describe "When initiating valid transfer" $ do
       it "Then emits TransactionPostingInitiated event" $ do
@@ -133,8 +133,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
         toId <- mockAccountId <$> UUID.nextRandom
         let transaction = emptyTransaction
         let command =
-              InitiateTransactionTransactionCommand
-                $ InitiateTransaction
+              InitiateTransactionPostingTransactionCommand
+                $ InitiateTransactionPosting
                   { sourceAccountId = fromId,
                     targetAccountId = toId,
                     sourceAmount = mockMoney 500,
@@ -172,8 +172,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
             extTxId = unsafeExternalTransactionId "mono:stmt-42"
             labels = Set.fromList [lbl1, lbl2]
         let command =
-              InitiateTransactionTransactionCommand
-                $ InitiateTransaction
+              InitiateTransactionPostingTransactionCommand
+                $ InitiateTransactionPosting
                   { sourceAccountId = fromId,
                     targetAccountId = toId,
                     sourceAmount = mockMoney 500,
@@ -201,8 +201,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
         toId <- mockAccountId <$> UUID.nextRandom
         let transaction = emptyTransaction
         let command =
-              InitiateTransactionTransactionCommand
-                $ InitiateTransaction
+              InitiateTransactionPostingTransactionCommand
+                $ InitiateTransactionPosting
                   { sourceAccountId = fromId,
                     targetAccountId = toId,
                     sourceAmount = mockMoney 500,
@@ -230,8 +230,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
         accountId <- mockAccountId <$> UUID.nextRandom
         let transaction = emptyTransaction
         let command =
-              InitiateTransactionTransactionCommand
-                $ InitiateTransaction
+              InitiateTransactionPostingTransactionCommand
+                $ InitiateTransactionPosting
                   { sourceAccountId = accountId,
                     targetAccountId = accountId,
                     sourceAmount = mockMoney 500,
@@ -256,8 +256,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
         toId <- mockAccountId <$> UUID.nextRandom
         let transaction = emptyTransaction
         let command =
-              InitiateTransactionTransactionCommand
-                $ InitiateTransaction
+              InitiateTransactionPostingTransactionCommand
+                $ InitiateTransactionPosting
                   { sourceAccountId = fromId,
                     targetAccountId = toId,
                     sourceAmount = mockMoney 0,
@@ -285,8 +285,8 @@ initiateTransferSpec = describe "InitiateTransaction Command" $ do
         toId2 <- mockAccountId <$> UUID.nextRandom
         let transaction = pendingTransaction fromId1 toId1 (mockMoney 100)
         let command =
-              InitiateTransactionTransactionCommand
-                $ InitiateTransaction
+              InitiateTransactionPostingTransactionCommand
+                $ InitiateTransactionPosting
                   { sourceAccountId = fromId2,
                     targetAccountId = toId2,
                     sourceAmount = mockMoney 200,

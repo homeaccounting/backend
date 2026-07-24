@@ -54,7 +54,7 @@ import Domain.Core.Types
     unsafeEntryName,
     unsafeMoney,
   )
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
@@ -232,7 +232,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
               Allocation h.harnessSnacks (money 800) Nothing
             ]
         amend =
-          AmendTransaction
+          InitiateTransactionAmendment
             { transactionId = txId,
               newSourceAccountId = td.sourceAccountId,
               newTargetAccountId = td.targetAccountId,

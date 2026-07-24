@@ -66,10 +66,10 @@ import Domain.Core.Types
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
       ( CompleteTransactionPostingTransactionCommand,
-        InitiateTransactionTransactionCommand
+        InitiateTransactionPostingTransactionCommand
       ),
   )
-import Domain.Transaction.Commands (CompleteTransactionPosting (..), InitiateTransaction (..))
+import Domain.Transaction.Commands (CompleteTransactionPosting (..), InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
@@ -170,7 +170,7 @@ setupRegularAccountsWithPM = do
 
 -- | Initiate and complete a transfer between two accounts.
 --
--- Simulates the full transfer workflow by issuing InitiateTransaction
+-- Simulates the full transfer workflow by issuing InitiateTransactionPosting
 -- followed by CompleteTransactionPosting (mimicking the process manager behavior).
 --
 -- Returns the transaction UUID.
@@ -191,8 +191,8 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
   -- Step 1: Initiate the transfer
   _ <-
     applyTransactionCommand writer reader id txUuid
-      $ InitiateTransactionTransactionCommand
-        InitiateTransaction
+      $ InitiateTransactionPostingTransactionCommand
+        InitiateTransactionPosting
           { sourceAccountId = unsafeAccountId fromUuid,
             targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney USD amt,
@@ -233,8 +233,8 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
 
   _ <-
     applyTransactionCommand writer reader id txUuid
-      $ InitiateTransactionTransactionCommand
-        InitiateTransaction
+      $ InitiateTransactionPostingTransactionCommand
+        InitiateTransactionPosting
           { sourceAccountId = unsafeAccountId fromUuid,
             targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney USD amt,
@@ -504,10 +504,10 @@ authorizationSpec =
 processManagerDrivenSpec :: Spec
 processManagerDrivenSpec =
   describe "Process Manager Driven (full saga)" $ do
-    it "auto-completes transfer when only InitiateTransaction is issued" $ do
+    it "auto-completes transfer when only InitiateTransactionPosting is issued" $ do
       (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
 
-      -- Only issue InitiateTransaction - the PM should auto-complete
+      -- Only issue InitiateTransactionPosting - the PM should auto-complete
       txUuid <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 200 "PM test transfer"
 
       -- Verify transaction reached Completed status
@@ -679,8 +679,8 @@ categorizedTransferSpec =
       txUuid <- UUID.nextRandom
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransactionTransactionCommand
-            InitiateTransaction
+          $ InitiateTransactionPostingTransactionCommand
+            InitiateTransactionPosting
               { sourceAccountId = unsafeAccountId extUuid,
                 targetAccountId = unsafeAccountId regUuid,
                 sourceAmount = unsafeMoney USD 3000,
@@ -754,8 +754,8 @@ categorizedTransferSpec =
       txUuid <- UUID.nextRandom
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransactionTransactionCommand
-            InitiateTransaction
+          $ InitiateTransactionPostingTransactionCommand
+            InitiateTransactionPosting
               { sourceAccountId = unsafeAccountId regUuid,
                 targetAccountId = unsafeAccountId extUuid,
                 sourceAmount = unsafeMoney USD 150,
@@ -801,8 +801,8 @@ categorizedTransferSpec =
           reader = env.eventStoreReader
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransactionTransactionCommand
-            InitiateTransaction
+          $ InitiateTransactionPostingTransactionCommand
+            InitiateTransactionPosting
               { sourceAccountId = unsafeAccountId acct1Uuid,
                 targetAccountId = unsafeAccountId acct2Uuid,
                 sourceAmount = unsafeMoney USD 300,
@@ -838,8 +838,8 @@ categorizedTransferSpec =
           expectedLabels = Set.fromList [lbl1, lbl2]
       _ <-
         applyTransactionCommand writer reader id txUuid
-          $ InitiateTransactionTransactionCommand
-            InitiateTransaction
+          $ InitiateTransactionPostingTransactionCommand
+            InitiateTransactionPosting
               { sourceAccountId = unsafeAccountId acct1Uuid,
                 targetAccountId = unsafeAccountId acct2Uuid,
                 sourceAmount = unsafeMoney USD 150,

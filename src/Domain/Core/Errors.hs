@@ -118,15 +118,15 @@ data DomainError
   | -- | `mkAllocations` rejected a payload with both buckets empty —
     --   a categorised transaction must carry at least one allocation.
     AllocationsEmpty
-  | -- | 'SetTransactionAllocations' or 'AmendTransaction' issued with a
+  | -- | 'ChangeTransactionAllocations' or 'InitiateTransactionAmendment' issued with a
     --   @newTransactionType@ whose kind differs from the existing transaction's.
     --   Recategorising across the kind boundary is a delete-and-repost
     --   operation.
     CannotChangeKindOfCategorisedTransaction
-  | -- | 'SetTransactionAllocations' issued against a Transfer or Adjustment,
+  | -- | 'ChangeTransactionAllocations' issued against a Transfer or Adjustment,
     --   which has no allocations to set.
     CannotSetAllocationsOnUncategorisedTransaction
-  | -- | 'SetTransactionAllocations' issued against a non-Completed transaction.
+  | -- | 'ChangeTransactionAllocations' issued against a non-Completed transaction.
     TransactionMustBeCompletedForAllocationsEdit
   | -- | Edit (or backdated creation) would land in a closed period.
     --   @current@ is the user's @booksClosedThrough@; @attempted@ is the
@@ -147,11 +147,11 @@ data DomainError
     CannotAmendToSameAccountPair
   | -- | Transfer amendment would set the amount to zero.
     CannotAmendToZeroAmount
-  | -- | 'AmendTransaction' supplied 'newAllocations = Nothing' for a kind
+  | -- | 'InitiateTransactionAmendment' supplied 'newAllocations = Nothing' for a kind
     --   change into Income or Expense. Caller must supply the new
     --   allocations covering the new categorised total.
     AllocationsRequiredForCategorisedKind
-  | -- | 'AmendTransaction' supplied allocations but the derived new kind
+  | -- | 'InitiateTransactionAmendment' supplied allocations but the derived new kind
     --   is Transfer. Transfer carries no allocations.
     AllocationsNotAllowedForTransferKind
   | -- | The synthesised 'newTransactionType' is 'Adjustment'. Reachable
@@ -184,10 +184,10 @@ data DomainError
     -- not exist, or that the user does not own/edit. The payload carries the
     -- offending field name (e.g. @"accountMap"@) for the HTTP field-error.
     BankConnectionAccountInvalid Text
-  | -- | 'CancelTransaction' issued while an amendment saga is in flight on the
+  | -- | 'InitiateTransactionCancellation' issued while an amendment saga is in flight on the
     -- same transaction.
     CannotCancelDuringAmendment
-  | -- | 'AmendTransaction' issued while a cancellation saga is in flight on the
+  | -- | 'InitiateTransactionAmendment' issued while a cancellation saga is in flight on the
     -- same transaction.
     CannotAmendDuringCancellation
   | -- | A refund income was linked to a target transaction that is not an

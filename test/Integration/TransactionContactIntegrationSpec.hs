@@ -53,7 +53,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
@@ -154,7 +154,7 @@ amendContact :: Harness -> TransactionId -> Maybe DictionaryEntryId -> IO ()
 amendContact h txId contact = do
   td <- getTransaction h txId
   let amend =
-        AmendTransaction
+        InitiateTransactionAmendment
           { transactionId = txId,
             newSourceAccountId = td.sourceAccountId,
             newTargetAccountId = td.targetAccountId,

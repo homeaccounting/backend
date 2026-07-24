@@ -6,7 +6,7 @@
 -- Module      : Web.API.TransactionMergeAPISpec
 -- Description : HTTP-level tests for POST /api/transactions/:id/merge (tracker#30).
 --
--- Exercises the merge endpoint: the request DTO ('MergeTransactionsRequest'),
+-- Exercises the merge endpoint: the request DTO ('MergeTransactionRequest'),
 -- the 200 happy path (the response is the refreshed target with the combined
 -- amount), and the validation / conflict status mapping (400 empty list, 404
 -- missing target, 422 incompatibility, 409 non-Completed / closed period /

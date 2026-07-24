@@ -59,7 +59,7 @@ import Domain.Models
     TransactionContactSet (..),
     TransactionPostingInitiated (..),
   )
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Eventium (EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
@@ -393,7 +393,7 @@ spec = describe "TransactionService / contacts" $ do
       -- it has no way to see the prior contact since the read model does
       -- not yet surface contactId).
       let amend =
-            AmendTransaction
+            InitiateTransactionAmendment
               { transactionId = txId,
                 newSourceAccountId = seedTd.sourceAccountId,
                 newTargetAccountId = seedTd.targetAccountId,
@@ -434,7 +434,7 @@ spec = describe "TransactionService / contacts" $ do
 
       alien <- unsafeDictionaryEntryId <$> UUID.nextRandom
       let amend =
-            AmendTransaction
+            InitiateTransactionAmendment
               { transactionId = txId,
                 newSourceAccountId = seedTd.sourceAccountId,
                 newTargetAccountId = seedTd.targetAccountId,
@@ -475,7 +475,7 @@ spec = describe "TransactionService / contacts" $ do
       -- contact differs. The read model now surfaces contactId, so
       -- isIdentityAmend must not treat this as a no-op amendment.
       let amend =
-            AmendTransaction
+            InitiateTransactionAmendment
               { transactionId = txId,
                 newSourceAccountId = seedTd.sourceAccountId,
                 newTargetAccountId = seedTd.targetAccountId,
@@ -516,7 +516,7 @@ spec = describe "TransactionService / contacts" $ do
         Left err -> fail $ "initiateTransfer failed: " <> show err
 
       let amend =
-            AmendTransaction
+            InitiateTransactionAmendment
               { transactionId = txId,
                 newSourceAccountId = seedTd.sourceAccountId,
                 newTargetAccountId = seedTd.targetAccountId,

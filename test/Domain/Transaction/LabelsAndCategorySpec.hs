@@ -4,7 +4,7 @@
 
 -- |
 -- Module      : Domain.Transaction.LabelsAndCategorySpec
--- Description : SetTransactionLabels / SetTransactionAllocations command-handler rules.
+-- Description : SetTransactionLabels / ChangeTransactionAllocations command-handler rules.
 module Domain.Transaction.LabelsAndCategorySpec (spec) where
 
 import qualified Data.Set as Set
@@ -27,7 +27,7 @@ import Domain.Transaction.CommandHandler
     handleTransactionCommand,
   )
 import Domain.Transaction.Commands
-  ( SetTransactionAllocations (..),
+  ( ChangeTransactionAllocations (..),
     SetTransactionContact (..),
     SetTransactionLabels (..),
   )
@@ -143,13 +143,13 @@ spec = do
                 }
       handleTransactionCommand failed cmd `shouldBe` Left CannotEditUncompletedTransaction
 
-  describe "SetTransactionAllocations" $ do
+  describe "ChangeTransactionAllocations" $ do
     it "accepted on Income with same kind + matching sum" $ do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 4 0 0 0)
           newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = txId,
                   newAllocations = newAllocs
                 }
@@ -159,8 +159,8 @@ spec = do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 5 0 0 0)
           newAllocs = mkExpenseAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = txId,
                   newAllocations = newAllocs
                 }
@@ -170,8 +170,8 @@ spec = do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 6 0 0 0)
           newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = txId,
                   newAllocations = newAllocs
                 }
@@ -182,8 +182,8 @@ spec = do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 8 0 0 0)
           newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 50) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = txId,
                   newAllocations = newAllocs
                 }
@@ -194,8 +194,8 @@ spec = do
       let newCat = unsafeDictionaryEntryId (UUID.fromWords 9 0 0 0)
           newAllocs = mkIncomeAllocations (Allocation newCat (unsafeMoney USD 100) Nothing :| [])
           cmd =
-            SetTransactionAllocationsTransactionCommand
-              SetTransactionAllocations
+            ChangeTransactionAllocationsTransactionCommand
+              ChangeTransactionAllocations
                 { transactionId = txId,
                   newAllocations = newAllocs
                 }

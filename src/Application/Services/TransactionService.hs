@@ -17,7 +17,7 @@
 -- DTO conversion is the responsibility of the API handlers.
 --
 -- The actual transfer is coordinated by the 'TransactionPostingManager' process manager
--- (saga). This service initiates the transfer by issuing the InitiateTransaction
+-- (saga). This service initiates the transfer by issuing the InitiateTransactionPosting
 -- command; the TransactionPostingManager then handles the debit/credit/complete/fail flow.
 --
 -- Usage:
@@ -130,14 +130,14 @@ import Domain.Models
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
       ( AddTransactionRelationTransactionCommand,
-        AmendTransactionTransactionCommand,
-        CancelTransactionTransactionCommand,
+        ChangeTransactionAllocationsTransactionCommand,
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
-        InitiateTransactionTransactionCommand,
-        MergeTransactionTransactionCommand,
+        InitiateTransactionAmendmentTransactionCommand,
+        InitiateTransactionCancellationTransactionCommand,
+        InitiateTransactionMergeTransactionCommand,
+        InitiateTransactionPostingTransactionCommand,
         RemoveTransactionRelationTransactionCommand,
-        SetTransactionAllocationsTransactionCommand,
         SetTransactionContactTransactionCommand,
         SetTransactionLabelsTransactionCommand
       ),
@@ -146,14 +146,14 @@ import Domain.Transaction.CommandHandler
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
   ( AddTransactionRelation (..),
-    AmendTransaction (..),
-    CancelTransaction (..),
+    ChangeTransactionAllocations (..),
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
-    InitiateTransaction (..),
-    MergeTransaction (..),
+    InitiateTransactionAmendment (..),
+    InitiateTransactionCancellation (..),
+    InitiateTransactionMerge (..),
+    InitiateTransactionPosting (..),
     RemoveTransactionRelation (..),
-    SetTransactionAllocations (..),
     SetTransactionContact (..),
     SetTransactionLabels (..),
   )
@@ -181,11 +181,11 @@ import qualified RIO.Text as T
 -- | Initiate a money transfer between accounts.
 --
 -- Accepts a validated domain command. The caller (Web handler) is responsible
--- for converting the HTTP request DTO into an 'InitiateTransaction' command.
+-- for converting the HTTP request DTO into an 'InitiateTransactionPosting' command.
 --
 -- Orchestrates:
 --   1. Generate new transaction ID (UUID)
---   2. Execute InitiateTransaction command via event store
+--   2. Execute InitiateTransactionPosting command via event store
 --   3. Query read model for the created transaction
 --
 -- The TransactionPostingManager process manager will then:
@@ -195,7 +195,7 @@ import qualified RIO.Text as T
 --
 -- Returns the TransactionId and TransactionData on success.
 initiateTransaction ::
-  InitiateTransaction ->
+  InitiateTransactionPosting ->
   AppM (Either DomainError (TransactionId, TransactionData))
 initiateTransaction transferCmd = runExceptT $ do
   lift $ logInfo "Initiating money transfer..."
@@ -209,7 +209,7 @@ initiateTransaction transferCmd = runExceptT $ do
     (\_ -> TransactionError "Transfer initiation rejected by domain")
     id
     transactionUuid
-    (InitiateTransactionTransactionCommand transferCmd)
+    (InitiateTransactionPostingTransactionCommand transferCmd)
   ExceptT (queryTransactionResult transactionId)
 
 -- | Get a transaction by UUID.
@@ -304,7 +304,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
           $ \date srcAmt tgtAmt rate -> do
             tt <- mkIncome tgtAmt allocations
             Right
-              InitiateTransaction
+              InitiateTransactionPosting
                 { sourceAccountId = externalAccId,
                   targetAccountId = targetAccountId,
                   sourceAmount = srcAmt,
@@ -373,7 +373,7 @@ initiateExpense userId sourceAccountId amount allocations labels description may
           $ \date srcAmt tgtAmt rate -> do
             tt <- mkExpense srcAmt allocations
             Right
-              InitiateTransaction
+              InitiateTransactionPosting
                 { sourceAccountId = sourceAccountId,
                   targetAccountId = externalAccId,
                   sourceAmount = srcAmt,
@@ -447,7 +447,7 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
       ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate
           $ \date srcAmt tgtAmt rate ->
             Right
-              InitiateTransaction
+              InitiateTransactionPosting
                 { sourceAccountId = sourceAccountId,
                   targetAccountId = targetAccountId,
                   sourceAmount = srcAmt,
@@ -562,8 +562,8 @@ setTransactionAllocations userId transactionId newAllocations = runExceptT $ do
         newAllocations
     )
   let cmd =
-        SetTransactionAllocationsTransactionCommand
-          SetTransactionAllocations
+        ChangeTransactionAllocationsTransactionCommand
+          ChangeTransactionAllocations
             { transactionId = transactionId,
               newAllocations = newAllocations
             }
@@ -641,7 +641,7 @@ changeTransactionDate userId transactionId newAt = runExceptT $ do
 --      delete-and-repost to recategorise across the boundary.
 --   5. Identity short-circuit (spec §4.3): if the payload exactly matches
 --      current canonical state, return the read-model entry unchanged.
---   6. Dispatch 'AmendTransaction'. The pure handler rejects same-account
+--   6. Dispatch 'InitiateTransactionAmendment'. The pure handler rejects same-account
 --      and zero-amount payloads.
 --   7. Read the TX stream to distinguish saga success
 --      ('TransactionAmendmentCompleted') from saga failure
@@ -649,7 +649,7 @@ changeTransactionDate userId transactionId newAt = runExceptT $ do
 amendTransaction ::
   UserId ->
   TransactionId ->
-  AmendTransaction ->
+  InitiateTransactionAmendment ->
   AppM (Either DomainError TransactionData)
 amendTransaction userId transactionId amendCmd = runExceptT $ do
   lift
@@ -667,10 +667,10 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
       ExceptT
         ( dispatchAndAwaitAmendment
             transactionId
-            (AmendTransactionTransactionCommand dispatched)
+            (InitiateTransactionAmendmentTransactionCommand dispatched)
         )
 
--- | Resolve an 'AmendTransaction' payload against the read model: validate
+-- | Resolve an 'InitiateTransactionAmendment' payload against the read model: validate
 -- Editor+ on the new accounts, derive the kind, validate/attach the contact,
 -- synthesise the full 'newTransactionType', and resolve the leg amounts +
 -- exchange rate against the actual account currencies (mirroring the create
@@ -686,8 +686,8 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
 resolveAmendment ::
   UserId ->
   TransactionData ->
-  AmendTransaction ->
-  AppM (Either DomainError AmendTransaction)
+  InitiateTransactionAmendment ->
+  AppM (Either DomainError InitiateTransactionAmendment)
 resolveAmendment userId transaction amendCmd = runExceptT $ do
   (newSrcAcc, newTgtAcc) <-
     ExceptT
@@ -727,10 +727,10 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
           rateDay
       )
   -- Explicit construction (not a record update): 'newTransactionType' etc. are
-  -- now shared field labels with 'MergeTransaction', so an anonymous update is
+  -- now shared field labels with 'InitiateTransactionMerge', so an anonymous update is
   -- ambiguous under DuplicateRecordFields.
   pure
-    AmendTransaction
+    InitiateTransactionAmendment
       { transactionId = amendCmd.transactionId,
         newSourceAccountId = amendCmd.newSourceAccountId,
         newTargetAccountId = amendCmd.newTargetAccountId,
@@ -749,7 +749,7 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
 --
 --   1. Verify caller has Editor+ access to the transaction's accounts.
 --   2. Books-close gate against the transaction's current business date.
---   3. Dispatch 'CancelTransaction'. The pure handler rejects requests when
+--   3. Dispatch 'InitiateTransactionCancellation'. The pure handler rejects requests when
 --      the transaction is already cancelled, a cancellation or amendment
 --      saga is already in flight.
 --   4. Read the TX stream to confirm the saga terminated with
@@ -770,8 +770,8 @@ cancelTransaction userId transactionId = runExceptT $ do
   ExceptT
     ( dispatchAndAwaitCancellation
         transactionId
-        ( CancelTransactionTransactionCommand
-            CancelTransaction {transactionId = transactionId, by = userId}
+        ( InitiateTransactionCancellationTransactionCommand
+            InitiateTransactionCancellation {transactionId = transactionId, by = userId}
         )
     )
 
@@ -779,7 +779,7 @@ cancelTransaction userId transactionId = runExceptT $ do
 --
 -- See @docs/specs/2026-07-24-transaction-merge-operation-design.md@. Modelled
 -- exactly like amend/cancel: the service does ALL read-model-dependent work up
--- front, then emits a single 'MergeTransaction' command whose entire
+-- front, then emits a single 'InitiateTransactionMerge' command whose entire
 -- downstream cascade commits in ONE transaction via the
 -- 'Application.ProcessManagers.TransactionMergeManager' saga. A failing leg
 -- rolls back the whole merge — no partial state — so there is no
@@ -800,7 +800,7 @@ cancelTransaction userId transactionId = runExceptT $ do
 --      the target amend payload ('resolveAmendment' — currency/amount
 --      resolution + 'TransactionType' synthesis), because the saga process
 --      manager cannot touch the read model or ECB rates.
---   7. Emit 'MergeTransaction' with the resolved payload + ordered source
+--   7. Emit 'InitiateTransactionMerge' with the resolved payload + ordered source
 --      list; the saga amends the target, records a 'Merge' edge and cancels
 --      each source in order, then completes. Await the terminal
 --      'TransactionMergeCompleted' / 'TransactionMergeFailed' and return the
@@ -845,7 +845,7 @@ mergeTransactions userId targetId sourceIds = runExceptT $ do
   combined <- ExceptT (pure (combinedCategorisedAmount allTxns))
   let combinedAllocs = combineAllocations allTxns
       amendCmd =
-        AmendTransaction
+        InitiateTransactionAmendment
           { transactionId = targetId,
             newSourceAccountId = target.sourceAccountId,
             newTargetAccountId = target.targetAccountId,
@@ -865,7 +865,7 @@ mergeTransactions userId targetId sourceIds = runExceptT $ do
   -- 7. Emit the single atomic-merge command; the saga runs the whole cascade
   -- synchronously in one transaction and returns the refreshed target.
   let mergeCmd =
-        MergeTransaction
+        InitiateTransactionMerge
           { newSourceAccountId = resolved.newSourceAccountId,
             newTargetAccountId = resolved.newTargetAccountId,
             newSourceAmount = resolved.newSourceAmount,
@@ -880,7 +880,7 @@ mergeTransactions userId targetId sourceIds = runExceptT $ do
   ExceptT
     ( dispatchAndAwaitMerge
         targetId
-        (MergeTransactionTransactionCommand mergeCmd)
+        (InitiateTransactionMergeTransactionCommand mergeCmd)
     )
 
 -- | True when the source id list contains a duplicate.
@@ -1206,7 +1206,7 @@ dispatchEdit transactionId cmd = runExceptT $ do
 -- exchange rate, transactionType (deep equality, including allocations), and
 -- contactId — an amendment that changes only the contact must NOT be
 -- short-circuited as a no-op.
-isIdentityAmend :: TransactionData -> AmendTransaction -> Bool
+isIdentityAmend :: TransactionData -> InitiateTransactionAmendment -> Bool
 isIdentityAmend td cmd =
   td.sourceAccountId
     == cmd.newSourceAccountId
@@ -1223,7 +1223,7 @@ isIdentityAmend td cmd =
     && td.contactId
     == cmd.contactId
 
--- | Synthesise the full new 'TransactionType' for an 'AmendTransaction'
+-- | Synthesise the full new 'TransactionType' for an 'InitiateTransactionAmendment'
 -- from the derived kind and the caller-supplied 'newAllocations'.
 --
 -- Amount-changing amendments no longer rescale existing allocations:
@@ -1244,7 +1244,7 @@ synthesiseAmendmentTransactionType ::
   UserId ->
   TransactionKind ->
   TransactionType ->
-  AmendTransaction ->
+  InitiateTransactionAmendment ->
   AppM (Either DomainError TransactionType)
 synthesiseAmendmentTransactionType userId derivedKind _existingTT cmd = runExceptT
   $ case (cmd.newAllocations, derivedKind) of
@@ -1290,7 +1290,7 @@ ensureEditorOnNewAccounts userId newSrc newTgt = runExceptT $ do
     (AccountError "User does not have edit access to the new target account")
   pure (src, tgt)
 
--- | Dispatch 'AmendTransaction' and surface the saga's outcome.
+-- | Dispatch 'InitiateTransactionAmendment' and surface the saga's outcome.
 --
 -- Eventium's in-process event bus dispatches synchronously and
 -- depth-first: by the time 'runTransactionCmd' returns, every event the
@@ -1342,7 +1342,7 @@ lastAmendmentOutcome = foldl' step AmendmentUnknown
       AmendmentFailed r
     step acc _ = acc
 
--- | Dispatch 'CancelTransaction' and surface the saga's outcome.
+-- | Dispatch 'InitiateTransactionCancellation' and surface the saga's outcome.
 --
 -- Mirrors 'dispatchAndAwaitAmendment'. By the time 'runTransactionCmd'
 -- returns the in-process bus has delivered all downstream events; we
@@ -1389,7 +1389,7 @@ lastCancellationOutcome = foldl' step CancellationUnknown
     step _ (TransactionCancellationCompletedEvent _) = CancellationSucceeded
     step acc _ = acc
 
--- | Dispatch 'MergeTransaction' and surface the saga's outcome.
+-- | Dispatch 'InitiateTransactionMerge' and surface the saga's outcome.
 --
 -- Mirrors 'dispatchAndAwaitAmendment'. Eventium dispatches synchronously and
 -- depth-first, so by the time 'runTransactionCmd' returns the whole merge
@@ -1544,7 +1544,7 @@ resolveAndInitiate ::
   Currency ->
   Bool ->
   Maybe Rational ->
-  (UTCTime -> Money -> Money -> Maybe ExchangeRate -> Either DomainError InitiateTransaction) ->
+  (UTCTime -> Money -> Money -> Maybe ExchangeRate -> Either DomainError InitiateTransactionPosting) ->
   AppM (Either DomainError (TransactionId, TransactionData))
 resolveAndInitiate maybeTransferDate now userAmount srcCurrency tgtCurrency userAmountIsSource maybeUserRate mkCmd = runExceptT $ do
   let transferDate = fromMaybe now maybeTransferDate

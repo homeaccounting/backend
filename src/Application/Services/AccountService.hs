@@ -100,7 +100,7 @@ import Domain.Core.Types
     subtractMoney,
     unAccountId,
   )
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),
@@ -559,7 +559,7 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
         Nothing
         $ \date srcAmt tgtAmt rate ->
           Right
-            InitiateTransaction
+            InitiateTransactionPosting
               { sourceAccountId = sourceAccId,
                 targetAccountId = targetAccId,
                 sourceAmount = srcAmt,

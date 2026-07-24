@@ -35,7 +35,7 @@
 --
 -- Successful Transfer:
 -- >>> -- User initiates transfer
--- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 100) "Rent")
+-- >>> issueCommand txId (InitiateTransactionPosting sourceId targetId (Money 100) "Rent")
 -- >>> → TransactionPostingInitiated event
 -- >>>
 -- >>> -- Process manager receives event
@@ -53,7 +53,7 @@
 --
 -- Failed Transfer:
 -- >>> -- User initiates transfer
--- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 1000) "Payment")
+-- >>> issueCommand txId (InitiateTransactionPosting sourceId targetId (Money 1000) "Payment")
 -- >>> → TransactionPostingInitiated event
 -- >>>
 -- >>> -- Process manager receives event

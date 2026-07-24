@@ -40,8 +40,8 @@ import Domain.Transaction.CommandHandler
     handleTransactionCommand,
   )
 import Domain.Transaction.Commands
-  ( CancelTransaction (..),
-    CompleteTransactionCancellation (..),
+  ( CompleteTransactionCancellation (..),
+    InitiateTransactionCancellation (..),
   )
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
@@ -100,7 +100,7 @@ seedBy :: UserId
 seedBy = unsafeUserId (UUID.fromWords 2 0 0 0)
 
 -- | A completed transaction with both saga flags False — the valid base state
--- for issuing a 'CancelTransaction' command.
+-- for issuing a 'InitiateTransactionCancellation' command.
 --
 -- Built directly by record update so it can be used as a simple, readable
 -- fixture.  'completedViaProjection' provides an alternative construction path
@@ -180,13 +180,13 @@ cancelledTx = applyEventsTo completedBase [initiatedEvt, completedEvt]
 -- Generators
 -- -----------------------------------------------------------------------------
 
--- | Generator for a 'CancelTransaction' command using an arbitrary user.
+-- | Generator for a 'InitiateTransactionCancellation' command using an arbitrary user.
 genCancelTransaction :: Gen TransactionCommand
 genCancelTransaction = do
   uid <- arbitrary :: Gen UserId
   pure
-    $ CancelTransactionTransactionCommand
-      CancelTransaction
+    $ InitiateTransactionCancellationTransactionCommand
+      InitiateTransactionCancellation
         { transactionId = txId,
           by = uid
         }
@@ -215,7 +215,7 @@ newtype AnyCancellationCommand = AnyCancellationCommand {unCmd :: TransactionCom
 
 instance Show AnyCancellationCommand where
   show (AnyCancellationCommand cmd) = case cmd of
-    CancelTransactionTransactionCommand _ -> "AnyCancellationCommand{CancelTransaction}"
+    InitiateTransactionCancellationTransactionCommand _ -> "AnyCancellationCommand{InitiateTransactionCancellation}"
     CompleteTransactionCancellationTransactionCommand _ -> "AnyCancellationCommand{CompleteTransactionCancellation}"
     _ -> "AnyCancellationCommand{other}"
 

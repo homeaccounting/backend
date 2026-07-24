@@ -12,7 +12,7 @@
 -- This module implements the core orchestration logic for importing bank
 -- transactions into the accounting system. It is transport-neutral: it consumes
 -- a list of 'BankTransaction's (pulled by the caller via a 'PullCapability')
--- plus a @classify@ function, and creates 'InitiateTransaction' commands.
+-- plus a @classify@ function, and creates 'InitiateTransactionPosting' commands.
 --
 -- Key Functions:
 --   - importConnection: Fetch statements for a date range and import each transaction
@@ -80,7 +80,7 @@ import Domain.Core.Types
     moneyCurrency,
     unEntryName,
   )
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Infrastructure.App
   ( AppM,
     runDb,
@@ -545,7 +545,7 @@ logCategoryResolution tx direction cfg categoryId resolution =
 --   5. Take absolute value of major-unit amount
 --   6. Classify transaction (income/expense)
 --   7. Resolve category from user's banking configuration
---   8. Create and execute InitiateTransaction command
+--   8. Create and execute InitiateTransactionPosting command
 importTransaction ::
   (BankTransaction -> TransactionClassification) ->
   UserId ->
@@ -731,7 +731,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
           (externalAcc, localAcc, Income allocs)
 
     buildTransferCmd uid bankTx sourceAccId targetAccId srcAmt tgtAmt rate transactionType contactResolution =
-      InitiateTransaction
+      InitiateTransactionPosting
         { sourceAccountId = sourceAccId,
           targetAccountId = targetAccId,
           sourceAmount = srcAmt,

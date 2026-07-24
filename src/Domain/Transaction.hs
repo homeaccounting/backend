@@ -10,7 +10,7 @@
 --
 -- This gives you access to:
 --   - Events: TransactionPostingInitiated, TransactionPostingCompleted, TransactionPostingFailed
---   - Commands: InitiateTransaction, CompleteTransactionPosting, FailTransactionPosting
+--   - Commands: InitiateTransactionPosting, CompleteTransactionPosting, FailTransactionPosting
 --   - Projection: Transaction, transactionProjection, TransactionEvent, TransactionStatus
 --   - Command Handler: transactionCommandHandler, TransactionCommand
 --   - Errors: TransactionError, SourceAccountNotFound, TargetAccountNotFound, etc.
@@ -26,7 +26,7 @@
 -- Transaction Lifecycle:
 --
 -- 1. User initiates transfer:
---    >>> let cmd = InitiateTransaction sourceId targetId (Money 500.0) "Rent"
+--    >>> let cmd = InitiateTransactionPosting sourceId targetId (Money 500.0) "Rent"
 --    >>> let events = handleTransactionCommand transactionDefault cmd
 --    [TransactionPostingInitiatedTransactionEvent (TransactionPostingInitiated ...)]
 --
@@ -42,7 +42,7 @@
 --    [TransactionPostingCompletedTransactionEvent TransactionPostingCompleted]
 --
 -- State Machine:
---   [Uninitialized] --InitiateTransaction-→ [Pending]
+--   [Uninitialized] --InitiateTransactionPosting-→ [Pending]
 --                                           ↓
 --                   CompleteTransactionPosting ← [Pending] → FailTransactionPosting
 --                         ↓                             ↓
@@ -68,7 +68,7 @@
 --
 -- Successful transfer:
 -- >>> -- User initiates
--- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 100) "Payment")
+-- >>> issueCommand txId (InitiateTransactionPosting sourceId targetId (Money 100) "Payment")
 -- → TransactionPostingInitiated event
 --
 -- >>> -- Process manager reacts
@@ -83,7 +83,7 @@
 --
 -- Failed transfer:
 -- >>> -- User initiates
--- >>> issueCommand txId (InitiateTransaction sourceId targetId (Money 1000) "Payment")
+-- >>> issueCommand txId (InitiateTransactionPosting sourceId targetId (Money 1000) "Payment")
 -- → TransactionPostingInitiated event
 --
 -- >>> -- Process manager reacts

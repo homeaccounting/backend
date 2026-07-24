@@ -65,10 +65,10 @@ otherId = unsafeTransactionId (UUID.fromWords 2 0 0 0)
 purchaseId :: TransactionId
 purchaseId = unsafeTransactionId (UUID.fromWords 3 0 0 0)
 
--- | A valid Transfer 'InitiateTransaction' with no relation attached.
-baseInitiate :: InitiateTransaction
+-- | A valid Transfer 'InitiateTransactionPosting' with no relation attached.
+baseInitiate :: InitiateTransactionPosting
 baseInitiate =
-  InitiateTransaction
+  InitiateTransactionPosting
     { sourceAccountId = unsafeAccountId (UUID.fromWords 10 0 0 0),
       targetAccountId = unsafeAccountId (UUID.fromWords 11 0 0 0),
       sourceAmount = unsafeMoney USD 100,
@@ -110,15 +110,15 @@ completedTx =
     ]
 
 -- -----------------------------------------------------------------------------
--- InitiateTransaction with a relation
+-- InitiateTransactionPosting with a relation
 -- -----------------------------------------------------------------------------
 
 initiateRelationSpec :: Spec
 initiateRelationSpec =
-  describe "InitiateTransaction with a relation" $ do
+  describe "InitiateTransactionPosting with a relation" $ do
     it "emits PostingInitiated then RelationAdded when relation is present" $ do
       let cmd = baseInitiate {relation = Just (RelationSpec purchaseId Refund)}
-      case handleTransactionCommand transactionDefault (InitiateTransactionTransactionCommand cmd) of
+      case handleTransactionCommand transactionDefault (InitiateTransactionPostingTransactionCommand cmd) of
         Right
           [ TransactionPostingInitiatedTransactionEvent _,
             TransactionRelationAddedTransactionEvent r
@@ -129,7 +129,7 @@ initiateRelationSpec =
 
     it "emits a single event when relation is Nothing (regression)" $ do
       let cmd = baseInitiate {relation = Nothing}
-      case handleTransactionCommand transactionDefault (InitiateTransactionTransactionCommand cmd) of
+      case handleTransactionCommand transactionDefault (InitiateTransactionPostingTransactionCommand cmd) of
         Right [TransactionPostingInitiatedTransactionEvent _] -> pure ()
         other -> expectationFailure ("unexpected: " <> show other)
 

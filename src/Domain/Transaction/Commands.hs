@@ -9,7 +9,7 @@
 -- on the current aggregate state and business rules.
 --
 -- Key Commands:
---   - InitiateTransaction: Request to start a money transfer between accounts
+--   - InitiateTransactionPosting: Request to start a money transfer between accounts
 --   - CompleteTransactionPosting: Internal command to mark transfer as completed
 --   - FailTransactionPosting: Internal command to mark transfer as failed
 --
@@ -24,20 +24,20 @@ module Domain.Transaction.Commands
     transactionCommands,
 
     -- * Transaction Commands
-    InitiateTransaction (..),
+    InitiateTransactionPosting (..),
     CompleteTransactionPosting (..),
     FailTransactionPosting (..),
     SetTransactionLabels (..),
     SetTransactionContact (..),
-    SetTransactionAllocations (..),
+    ChangeTransactionAllocations (..),
     ChangeTransactionDescription (..),
     ChangeTransactionDate (..),
-    AmendTransaction (..),
+    InitiateTransactionAmendment (..),
     CompleteTransactionAmendment (..),
     FailTransactionAmendment (..),
-    CancelTransaction (..),
+    InitiateTransactionCancellation (..),
     CompleteTransactionCancellation (..),
-    MergeTransaction (..),
+    InitiateTransactionMerge (..),
     CompleteTransactionMerge (..),
     FailTransactionMerge (..),
     AddTransactionRelation (..),
@@ -62,20 +62,20 @@ import Language.Haskell.TH (Name)
 -- the TransactionCommand sum type and related serialization code.
 transactionCommands :: [Name]
 transactionCommands =
-  [ ''InitiateTransaction,
+  [ ''InitiateTransactionPosting,
     ''CompleteTransactionPosting,
     ''FailTransactionPosting,
     ''SetTransactionLabels,
     ''SetTransactionContact,
-    ''SetTransactionAllocations,
+    ''ChangeTransactionAllocations,
     ''ChangeTransactionDescription,
     ''ChangeTransactionDate,
-    ''AmendTransaction,
+    ''InitiateTransactionAmendment,
     ''CompleteTransactionAmendment,
     ''FailTransactionAmendment,
-    ''CancelTransaction,
+    ''InitiateTransactionCancellation,
     ''CompleteTransactionCancellation,
-    ''MergeTransaction,
+    ''InitiateTransactionMerge,
     ''CompleteTransactionMerge,
     ''FailTransactionMerge,
     ''AddTransactionRelation,
@@ -107,8 +107,8 @@ transactionCommands =
 --   - Regular -> Regular: Internal transfer
 --
 -- Example:
--- >>> InitiateTransaction sourceId targetId (Money 500.0) "Rent payment" userId
-data InitiateTransaction = InitiateTransaction
+-- >>> InitiateTransactionPosting sourceId targetId (Money 500.0) "Rent payment" userId
+data InitiateTransactionPosting = InitiateTransactionPosting
   { -- | Account from which money will be debited
     sourceAccountId :: AccountId,
     -- | Account to which money will be credited
@@ -236,8 +236,8 @@ data SetTransactionContact = SetTransactionContact
 --    dictionary for the matching kind.
 --
 -- Example:
--- >>> SetTransactionAllocations txId (allocA :| [allocB])
-data SetTransactionAllocations = SetTransactionAllocations
+-- >>> ChangeTransactionAllocations txId (allocA :| [allocB])
+data ChangeTransactionAllocations = ChangeTransactionAllocations
   { -- | The transaction whose allocations are being replaced.
     transactionId :: TransactionId,
     -- | The new allocation list. Sum must equal the existing categorised
@@ -321,7 +321,7 @@ data ChangeTransactionDate = ChangeTransactionDate
 --   - For Income, sum of allocations equals @newTargetAmount@ and
 --     all allocation currencies match @newTargetAmount@'s currency.
 --   - For Expense, same against @newSourceAmount@.
-data AmendTransaction = AmendTransaction
+data InitiateTransactionAmendment = InitiateTransactionAmendment
   { transactionId :: TransactionId,
     newSourceAccountId :: AccountId,
     newTargetAccountId :: AccountId,
@@ -398,8 +398,8 @@ newtype FailTransactionAmendment = FailTransactionAmendment
 --  - No cancellation saga may already be in progress (@cancellationInProgress = False@).
 --
 -- Example:
--- >>> CancelTransaction txId userId
-data CancelTransaction = CancelTransaction
+-- >>> InitiateTransactionCancellation txId userId
+data InitiateTransactionCancellation = InitiateTransactionCancellation
   { -- | The transaction being cancelled.
     transactionId :: TransactionId,
     -- | User who initiated the cancellation (for audit trail).
@@ -412,7 +412,7 @@ data CancelTransaction = CancelTransaction
 -- Issued by the @TransactionCancellationManager@ once both reversal events
 -- have landed. Accepted iff @cancellationInProgress = True@ on the aggregate.
 -- The @by@ field is an audit echo — the saga carries it from the
--- initiating 'CancelTransaction' so the resulting event is self-contained
+-- initiating 'InitiateTransactionCancellation' so the resulting event is self-contained
 -- for read-model replay.
 --
 -- Example:
@@ -440,7 +440,7 @@ data CompleteTransactionCancellation = CompleteTransactionCancellation
 -- The whole downstream cascade (amend target → per-source Merge edge + cancel →
 -- 'CompleteTransactionMerge') runs synchronously in ONE transaction, so a
 -- failing leg leaves no partial state.
-data MergeTransaction = MergeTransaction
+data InitiateTransactionMerge = InitiateTransactionMerge
   { -- | Resolved new source account for the amended target.
     newSourceAccountId :: AccountId,
     -- | Resolved new target account for the amended target.
@@ -488,7 +488,7 @@ newtype FailTransactionMerge = FailTransactionMerge
 -- | Post-hoc command to record a typed relationship on an already-existing
 -- (Completed) transaction. Used by the merge/split domain operations to write
 -- 'Merge'/'Split' lineage; not exposed as a public "create arbitrary edge"
--- endpoint. At-creation edges (Refund) are recorded via 'InitiateTransaction.relation'
+-- endpoint. At-creation edges (Refund) are recorded via 'InitiateTransactionPosting.relation'
 -- instead. 'transactionId' is the owning ("from") aggregate the command routes to.
 data AddTransactionRelation = AddTransactionRelation
   { transactionId :: TransactionId,
@@ -514,20 +514,20 @@ data RemoveTransactionRelation = RemoveTransactionRelation
 -- -----------------------------------------------------------------------------
 
 -- Derive JSON instances for all commands (fields already unprefixed)
-deriveJSON defaultOptions ''InitiateTransaction
+deriveJSON defaultOptions ''InitiateTransactionPosting
 deriveJSON defaultOptions ''CompleteTransactionPosting
 deriveJSON defaultOptions ''FailTransactionPosting
 deriveJSON defaultOptions ''SetTransactionLabels
 deriveJSON defaultOptions ''SetTransactionContact
-deriveJSON defaultOptions ''SetTransactionAllocations
+deriveJSON defaultOptions ''ChangeTransactionAllocations
 deriveJSON defaultOptions ''ChangeTransactionDescription
 deriveJSON defaultOptions ''ChangeTransactionDate
-deriveJSON defaultOptions ''AmendTransaction
+deriveJSON defaultOptions ''InitiateTransactionAmendment
 deriveJSON defaultOptions ''CompleteTransactionAmendment
 deriveJSON defaultOptions ''FailTransactionAmendment
-deriveJSON defaultOptions ''CancelTransaction
+deriveJSON defaultOptions ''InitiateTransactionCancellation
 deriveJSON defaultOptions ''CompleteTransactionCancellation
-deriveJSON defaultOptions ''MergeTransaction
+deriveJSON defaultOptions ''InitiateTransactionMerge
 deriveJSON defaultOptions ''CompleteTransactionMerge
 deriveJSON defaultOptions ''FailTransactionMerge
 deriveJSON defaultOptions ''AddTransactionRelation

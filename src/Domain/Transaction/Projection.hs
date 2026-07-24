@@ -215,7 +215,7 @@ data Transaction = Transaction
     cancellationInProgress :: Bool,
     -- | Transient flag: True when a 'TransactionMergeInitiated' event has been
     -- applied but a corresponding 'TransactionMergeCompleted' / 'TransactionMergeFailed'
-    -- has not yet arrived. Used by the command handler to gate 'MergeTransaction'
+    -- has not yet arrived. Used by the command handler to gate 'InitiateTransactionMerge'
     -- (reject re-entry) and 'CompleteTransactionMerge' / 'FailTransactionMerge'.
     -- Because the whole merge cascade runs in one transaction, this flag is only
     -- ever True on uncommitted state and always False once committed.
@@ -459,7 +459,7 @@ handleTransactionEvent transaction (TransactionCancellationCompletedTransactionE
 handleTransactionEvent transaction (TransactionMergeInitiatedTransactionEvent _) =
   -- Flip the transient merge-in-progress flag on so the command handler can
   -- gate CompleteTransactionMerge / FailTransactionMerge and reject re-entrant
-  -- MergeTransaction. Canonical facts are moved by the saga's amend, not here.
+  -- InitiateTransactionMerge. Canonical facts are moved by the saga's amend, not here.
   transaction & #mergeInProgress .~ True
 handleTransactionEvent transaction (TransactionMergeCompletedTransactionEvent _) =
   -- Clear the transient flag. Canonical facts were already updated by the

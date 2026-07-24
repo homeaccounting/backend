@@ -1277,7 +1277,7 @@ instance ToJSON RelationKind
 
 instance FromJSON RelationKind
 
--- | An at-creation relationship request threaded through 'InitiateTransaction':
+-- | An at-creation relationship request threaded through 'InitiateTransactionPosting':
 -- the referenced (pre-existing) transaction and the kind of edge to record. The
 -- owning ("from") transaction is the one being created, so it is not named here.
 data RelationSpec = RelationSpec
@@ -1386,7 +1386,7 @@ instance FromJSON ExternalTransactionId where
       Left err -> fail (T.unpack err)
 
 -- | Provenance for an imported transaction, threaded through
--- 'Domain.Transaction.Commands.InitiateTransaction' and
+-- 'Domain.Transaction.Commands.InitiateTransactionPosting' and
 -- 'Domain.Transaction.Events.TransactionPostingInitiated' as
 -- @Maybe ImportInfo@: 'Nothing' is a manual entry, 'Just' is an import.
 --

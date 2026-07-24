@@ -144,7 +144,7 @@ deriveJSON (defaultOptions {constructorTagModifier = dropSuffix "Event"}) ''Acco
 --
 -- This sum type includes commands from:
 --   - Account aggregate (CreateAccount, ShareAccount, RevokeAccountAccess)
---   - Transaction aggregate (InitiateTransaction, CompleteTransactionPosting, FailTransactionPosting)
+--   - Transaction aggregate (InitiateTransactionPosting, CompleteTransactionPosting, FailTransactionPosting)
 --   - User aggregate (RegisterUser, RegisterViaTelegram, LinkOAuthAccount, etc.)
 --
 -- The unified type enables:
@@ -154,7 +154,7 @@ deriveJSON (defaultOptions {constructorTagModifier = dropSuffix "Event"}) ''Acco
 --
 -- The command names are suffixed with "Command" for clarity in the unified context:
 --   - CreateAccount becomes CreateAccountCommand
---   - InitiateTransaction becomes InitiateTransactionCommand
+--   - InitiateTransactionPosting becomes InitiateTransactionPostingCommand
 --   - RegisterUser becomes RegisterUserCommand
 --   - etc.
 --

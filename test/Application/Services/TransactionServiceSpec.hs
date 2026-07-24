@@ -26,7 +26,7 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
@@ -128,7 +128,7 @@ spec = describe "TransactionService" $ do
     it "creates a transfer and returns TransactionId and TransactionData" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let transferCmd =
-            InitiateTransaction
+            InitiateTransactionPosting
               { sourceAccountId = fromAccId,
                 targetAccountId = toAccId,
                 sourceAmount = mockMoney 100,
@@ -155,7 +155,7 @@ spec = describe "TransactionService" $ do
     it "retrieves a previously created transaction" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let transferCmd =
-            InitiateTransaction
+            InitiateTransactionPosting
               { sourceAccountId = fromAccId,
                 targetAccountId = toAccId,
                 sourceAmount = mockMoney 250,
@@ -192,7 +192,7 @@ spec = describe "TransactionService" $ do
     it "initiates multiple transfers and retrieves each" $ do
       (env, fromAccId, toAccId) <- setupTwoAccounts
       let mkTransferCmd amt rsn =
-            InitiateTransaction
+            InitiateTransactionPosting
               { sourceAccountId = fromAccId,
                 targetAccountId = toAccId,
                 sourceAmount = mockMoney amt,

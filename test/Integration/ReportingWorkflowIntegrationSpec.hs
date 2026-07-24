@@ -52,9 +52,9 @@ import Domain.Core.Types
   )
 import Domain.ExchangeRate.Events (ExchangeRateMap, Provider)
 import Domain.Transaction.CommandHandler
-  ( TransactionCommand (InitiateTransactionTransactionCommand),
+  ( TransactionCommand (InitiateTransactionPostingTransactionCommand),
   )
-import Domain.Transaction.Commands (InitiateTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
@@ -117,7 +117,7 @@ setupReportingEnv = do
 
   return (env, userUuid, extUuid, regUuid)
 
--- | Issue a single InitiateTransaction and rely on the saga to complete it.
+-- | Issue a single InitiateTransactionPosting and rely on the saga to complete it.
 postTransaction ::
   AppEnv ->
   UUID ->
@@ -134,8 +134,8 @@ postTransaction env fromUuid toUuid userUuid amt cur desc txType = do
   txUuid <- UUID.nextRandom
   _ <-
     applyTransactionCommand writer reader id txUuid
-      $ InitiateTransactionTransactionCommand
-        InitiateTransaction
+      $ InitiateTransactionPostingTransactionCommand
+        InitiateTransactionPosting
           { sourceAccountId = unsafeAccountId fromUuid,
             targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney cur amt,
@@ -152,7 +152,7 @@ postTransaction env fromUuid toUuid userUuid amt cur desc txType = do
           }
   return txUuid
 
--- | Issue a cross-currency InitiateTransaction with explicit, distinct legs.
+-- | Issue a cross-currency InitiateTransactionPosting with explicit, distinct legs.
 --
 -- Unlike 'postTransaction' (which posts equal same-currency legs), this lets
 -- the regular and external legs carry different currencies and amounts plus an
@@ -176,8 +176,8 @@ postCrossCurrencyTransaction env fromUuid toUuid userUuid (srcAmt, srcCur) (tgtA
   txUuid <- UUID.nextRandom
   _ <-
     applyTransactionCommand writer reader id txUuid
-      $ InitiateTransactionTransactionCommand
-        InitiateTransaction
+      $ InitiateTransactionPostingTransactionCommand
+        InitiateTransactionPosting
           { sourceAccountId = unsafeAccountId fromUuid,
             targetAccountId = unsafeAccountId toUuid,
             sourceAmount = unsafeMoney srcCur srcAmt,

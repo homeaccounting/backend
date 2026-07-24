@@ -4,12 +4,12 @@
 
 -- |
 -- Module      : Domain.Transaction.AmendmentCommandHandlerSpec
--- Description : Unit tests for AmendTransaction / CompleteTransactionAmendment / FailTransactionAmendment
+-- Description : Unit tests for InitiateTransactionAmendment / CompleteTransactionAmendment / FailTransactionAmendment
 --
 -- Covers the pure business-rule enforcement in the command handler for the
 -- three amendment-saga commands:
 --
---   * AmendTransaction    – user-facing command; accepted only on Completed
+--   * InitiateTransactionAmendment    – user-facing command; accepted only on Completed
 --   * CompleteTransactionAmendment – saga-internal; accepted only when an amendment is in progress
 --   * FailTransactionAmendment     – saga-internal; accepted only when an amendment is in progress
 module Domain.Transaction.AmendmentCommandHandlerSpec (spec) where
@@ -36,9 +36,9 @@ import Domain.Transaction.CommandHandler
   )
 import qualified Domain.Transaction.CommandHandler as TxCh
 import Domain.Transaction.Commands
-  ( AmendTransaction (..),
-    CompleteTransactionAmendment (..),
+  ( CompleteTransactionAmendment (..),
     FailTransactionAmendment (..),
+    InitiateTransactionAmendment (..),
   )
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
@@ -108,7 +108,7 @@ failedTx = transactionDefault & #status .~ Failed "reason"
 
 -- | A completed transaction with an amendment already in progress.
 --
--- Simulates the state after 'AmendTransaction' was accepted and a
+-- Simulates the state after 'InitiateTransactionAmendment' was accepted and a
 -- 'TransactionAmendmentInitiated' event was applied: 'amendmentInProgress = True'.
 completedTxWithAmendmentInProgress :: Transaction
 completedTxWithAmendmentInProgress =
@@ -118,11 +118,11 @@ completedTxWithAmendmentInProgress =
 -- Commands
 -- -----------------------------------------------------------------------------
 
--- | Minimal valid 'AmendTransaction' command payload.
+-- | Minimal valid 'InitiateTransactionAmendment' command payload.
 validAmendCmd :: TransactionCommand
 validAmendCmd =
-  AmendTransactionTransactionCommand
-    AmendTransaction
+  InitiateTransactionAmendmentTransactionCommand
+    InitiateTransactionAmendment
       { transactionId = txId,
         newSourceAccountId = altSrcId,
         newTargetAccountId = altTgtId,
@@ -165,7 +165,7 @@ validFailAmendCmd =
 
 spec :: Spec
 spec = do
-  describe "AmendTransaction" $ do
+  describe "InitiateTransactionAmendment" $ do
     it "accepted in Completed state and emits TransactionAmendmentInitiated" $ do
       let result = handleTransactionCommand completedTx validAmendCmd
       case result of
@@ -204,8 +204,8 @@ spec = do
 
     it "rejected when newSourceAccountId == newTargetAccountId with AmendTransferToSameAccountPair" $ do
       let sameAccountCmd =
-            AmendTransactionTransactionCommand
-              AmendTransaction
+            InitiateTransactionAmendmentTransactionCommand
+              InitiateTransactionAmendment
                 { transactionId = txId,
                   newSourceAccountId = altSrcId,
                   newTargetAccountId = altSrcId,
@@ -222,8 +222,8 @@ spec = do
 
     it "rejected when newSourceAmount is zero with AmendTransferToZeroAmount" $ do
       let zeroSrcCmd =
-            AmendTransactionTransactionCommand
-              AmendTransaction
+            InitiateTransactionAmendmentTransactionCommand
+              InitiateTransactionAmendment
                 { transactionId = txId,
                   newSourceAccountId = altSrcId,
                   newTargetAccountId = altTgtId,
@@ -240,8 +240,8 @@ spec = do
 
     it "rejected when newTargetAmount is zero with AmendTransferToZeroAmount" $ do
       let zeroTgtCmd =
-            AmendTransactionTransactionCommand
-              AmendTransaction
+            InitiateTransactionAmendmentTransactionCommand
+              InitiateTransactionAmendment
                 { transactionId = txId,
                   newSourceAccountId = altSrcId,
                   newTargetAccountId = altTgtId,
@@ -269,8 +269,8 @@ spec = do
               (Allocation incomeCat (unsafeMoney USD 40) Nothing :| [])
               (Allocation expenseCat (unsafeMoney USD 160) Nothing :| [])
           contraAmendCmd =
-            AmendTransactionTransactionCommand
-              AmendTransaction
+            InitiateTransactionAmendmentTransactionCommand
+              InitiateTransactionAmendment
                 { transactionId = txId,
                   newSourceAccountId = altSrcId,
                   newTargetAccountId = altTgtId,

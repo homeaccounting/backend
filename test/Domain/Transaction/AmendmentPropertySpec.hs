@@ -57,7 +57,7 @@ import Domain.Transaction.CommandHandler
   ( TransactionCommand (..),
     handleTransactionCommand,
   )
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
     TransactionAmendmentFailed (..),
@@ -321,11 +321,11 @@ spec = describe "Transaction amendment projection" $ do
           tx = projectAmendments (amendmentEvents setContact ++ amendmentEvents clearContact)
       (tx ^. #contactId) `shouldBe` Nothing
 
-  describe "AmendTransaction — cross-kind handler properties" $ do
+  describe "InitiateTransactionAmendment — cross-kind handler properties" $ do
     prop "(1) handler emits Initiated event with newTransactionType verbatim"
       $ forAll genCrossKindAmendInputs
       $ \(seed, cmd) ->
-        case handleTransactionCommand seed (AmendTransactionTransactionCommand cmd) of
+        case handleTransactionCommand seed (InitiateTransactionAmendmentTransactionCommand cmd) of
           Right [TransactionAmendmentInitiatedTransactionEvent evt] ->
             evt.newTransactionType === cmd.newTransactionType
           Right other ->
@@ -361,7 +361,7 @@ spec = describe "Transaction amendment projection" $ do
 -- Cross-kind generator (handler-level)
 -- -----------------------------------------------------------------------------
 
--- | Generate a '(Transaction, AmendTransaction)' pair the pure handler will
+-- | Generate a '(Transaction, InitiateTransactionAmendment)' pair the pure handler will
 -- accept. The 'Transaction' seed is a 'Completed' transaction projected from
 -- the fixed fixture events (same as 'projectAmendments []'). The command has:
 --
@@ -369,7 +369,7 @@ spec = describe "Transaction amendment projection" $ do
 --  * 'newSourceAmount > 0', 'newTargetAmount > 0'
 --  * 'newTransactionType' internally consistent: Income allocations sum to
 --    'newTargetAmount', Expense to 'newSourceAmount', Transfer is bare.
-genCrossKindAmendInputs :: Gen (Transaction, AmendTransaction)
+genCrossKindAmendInputs :: Gen (Transaction, InitiateTransactionAmendment)
 genCrossKindAmendInputs = do
   txId <- genTransactionId
   newSrc <- genAccountId `suchThat` (/= seedTgt)
@@ -381,7 +381,7 @@ genCrossKindAmendInputs = do
   newTT <- genConsistentTransactionType newSrcAmt newTgtAmt
   let seed = projectAmendments []
       cmd =
-        AmendTransaction
+        InitiateTransactionAmendment
           { transactionId = txId,
             newSourceAccountId = newSrc,
             newTargetAccountId = newTgt,

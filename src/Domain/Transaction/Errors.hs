@@ -140,7 +140,7 @@ instance FromJSON TransactionError
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransaction command references a non-existent source account
+--  - An InitiateTransactionPosting command references a non-existent source account
 --  - The process manager cannot find the source account
 --  - API validation discovers the source account doesn't exist
 mkSourceAccountNotFound ::
@@ -168,7 +168,7 @@ mkSourceAccountNotFound transactionId accountId =
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransaction command references a non-existent target account
+--  - An InitiateTransactionPosting command references a non-existent target account
 --  - The process manager cannot find the target account
 --  - API validation discovers the target account doesn't exist
 mkTargetAccountNotFound ::
@@ -226,8 +226,8 @@ mkTransactionPostingFailed transactionId reason =
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransaction command has zero amount
---  - An InitiateTransaction command has negative amount (shouldn't happen with Money type)
+--  - An InitiateTransactionPosting command has zero amount
+--  - An InitiateTransactionPosting command has negative amount (shouldn't happen with Money type)
 --  - API validation detects invalid amount
 --  - Amount exceeds system limits (if any)
 mkInvalidTransferAmount ::
@@ -258,7 +258,7 @@ mkInvalidTransferAmount transactionId amount reason =
 --
 -- Usage:
 -- This error should be created when:
---  - An InitiateTransaction command has the same account for source and target
+--  - An InitiateTransactionPosting command has the same account for source and target
 --  - API validation detects identical source and target
 --  - Pre-validation before sending command
 mkSameSourceAndTarget ::

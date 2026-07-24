@@ -59,7 +59,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
@@ -269,7 +269,7 @@ amendThenCancelSpec =
 
       -- Amend to 250 (different amount on both legs)
       let amendCmd =
-            AmendTransaction
+            InitiateTransactionAmendment
               { transactionId = txId,
                 newSourceAccountId = td.sourceAccountId,
                 newTargetAccountId = td.targetAccountId,

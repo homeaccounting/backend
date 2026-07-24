@@ -42,7 +42,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Domain.Transaction.Commands (AmendTransaction (..))
+import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec
@@ -79,9 +79,9 @@ amendCmd ::
   Rational ->
   Rational ->
   UserId ->
-  AmendTransaction
+  InitiateTransactionAmendment
 amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
-  AmendTransaction
+  InitiateTransactionAmendment
     { transactionId = error "amendCmd: tx id must be overwritten by caller",
       newSourceAccountId = newSrc,
       newTargetAccountId = newTgt,
