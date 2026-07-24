@@ -126,6 +126,12 @@ data TransactionError
     -- related endpoint (@transactionId == relatedTransactionId@). A transaction
     -- cannot be related to itself.
     RelationSelfLink
+  | -- | 'MergeTransaction' was issued while an amendment, cancellation, or
+    -- merge saga is already in flight on the target (@*InProgress = True@).
+    MergeAlreadyInProgress
+  | -- | 'CompleteTransactionMerge' / 'FailTransactionMerge' was issued when no
+    -- merge is in progress (@mergeInProgress = False@).
+    NoMergeInProgress
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -436,6 +442,61 @@ handleTransactionCommand transaction (CompleteTransactionCancellationTransaction
               { transactionId = transactionId,
                 by = by
               }
+        ]
+-- Handle MergeTransaction command
+--
+-- Initiating command for the merge saga (routed to the target/survivor).
+-- The service layer has already resolved amounts + synthesised
+-- @newTransactionType@; the handler only validates the target is Completed and
+-- no saga is already in flight, then emits 'TransactionMergeInitiated' (target
+-- is the stream key, so it is not a payload field). The @*InProgress@ flags are
+-- only ever True on uncommitted state, so this guard is effectively a defensive
+-- re-entrancy check.
+handleTransactionCommand transaction (MergeTransactionTransactionCommand MergeTransaction {..}) =
+  case transaction ^. #status of
+    Completed
+      | transaction ^. #amendmentInProgress
+          || transaction ^. #cancellationInProgress
+          || transaction ^. #mergeInProgress ->
+          Left MergeAlreadyInProgress
+      | otherwise ->
+          Right
+            [ TransactionMergeInitiatedTransactionEvent
+                TransactionMergeInitiated
+                  { newSourceAccountId = newSourceAccountId,
+                    newTargetAccountId = newTargetAccountId,
+                    newSourceAmount = newSourceAmount,
+                    newTargetAmount = newTargetAmount,
+                    newExchangeRate = newExchangeRate,
+                    newAllocations = newAllocations,
+                    newTransactionType = newTransactionType,
+                    contactId = contactId,
+                    sourceTransactionIds = sourceTransactionIds,
+                    by = by
+                  }
+            ]
+    _ -> Left CannotEditUncompletedTransaction
+-- Handle CompleteTransactionMerge command
+--
+-- Saga-internal. Accepted iff a merge is in progress.
+handleTransactionCommand transaction (CompleteTransactionMergeTransactionCommand CompleteTransactionMerge {..}) =
+  if not (transaction ^. #mergeInProgress)
+    then Left NoMergeInProgress
+    else
+      Right
+        [ TransactionMergeCompletedTransactionEvent
+            TransactionMergeCompleted {by = by}
+        ]
+-- Handle FailTransactionMerge command
+--
+-- Saga-internal. Accepted iff a merge is in progress.
+handleTransactionCommand transaction (FailTransactionMergeTransactionCommand FailTransactionMerge {..}) =
+  if not (transaction ^. #mergeInProgress)
+    then Left NoMergeInProgress
+    else
+      Right
+        [ TransactionMergeFailedTransactionEvent
+            TransactionMergeFailed {reason = reason}
         ]
 -- Handle AddTransactionRelation command
 --

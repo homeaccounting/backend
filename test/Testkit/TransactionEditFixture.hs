@@ -23,6 +23,8 @@ module Testkit.TransactionEditFixture
     seedToken,
     seedIncomeTransaction,
     seedTransfer,
+    seedExpense,
+    seedExpenseFull,
     addIncomeCategory,
     addExpenseCategory,
     addContact,
@@ -50,6 +52,7 @@ import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
+    ContactId,
     DictionaryEntryId,
     TransactionId,
     UserId,
@@ -65,8 +68,9 @@ import Network.Wai (Application)
 import qualified Network.Wai as Wai
 import Network.Wai.Test (SRequest (..), SResponse (..), defaultRequest, runSession, setPath, srequest)
 import RIO
+import RIO.Time (UTCTime)
 import Testkit.Fixtures (createDefaultAccount, firstDictionaryEntry, registerUser)
-import Testkit.Helpers (singletonAllocation)
+import Testkit.Helpers (expenseSingletonAllocation, singletonAllocation)
 import Web.Server (buildApplication)
 
 -- | Handles to the pre-seeded state a test needs to build requests.
@@ -204,6 +208,35 @@ seedTransfer seed = do
   case res of
     Left err -> fail $ "seedTransfer failed: " <> show err
     Right (txId, _) -> pure txId
+
+-- | Seed a Completed expense on the given account, at the given amount, with an
+-- optional contact and business date. Returns the new transaction id.
+seedExpenseFull ::
+  Seed ->
+  AccountId ->
+  Rational ->
+  Maybe ContactId ->
+  Maybe UTCTime ->
+  IO TransactionId
+seedExpenseFull seed account amt contact date = do
+  cat <- firstDictionaryEntry seed.seedEnv seed.seedUserId expenseCategoryDictKind
+  res <-
+    runAppM seed.seedEnv
+      $ TransactionService.initiateExpense
+        seed.seedUserId
+        account
+        (unsafeMoney Core.USD amt)
+        (expenseSingletonAllocation cat (unsafeMoney Core.USD amt))
+        Set.empty
+        "Groceries"
+        date
+        Nothing
+        contact
+  fst <$> unwrap "seedExpense" res
+
+-- | Seed a Completed expense on the seed account (no contact, today).
+seedExpense :: Seed -> Rational -> IO TransactionId
+seedExpense seed amt = seedExpenseFull seed seed.seedAccount amt Nothing Nothing
 
 -- | @Authorization: Bearer ...@ plus @Content-Type: application/json@.
 authHeaders :: Text -> [Header]

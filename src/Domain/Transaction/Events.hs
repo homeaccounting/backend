@@ -38,6 +38,9 @@ module Domain.Transaction.Events
     TransactionAmendmentFailed (..),
     TransactionCancellationInitiated (..),
     TransactionCancellationCompleted (..),
+    TransactionMergeInitiated (..),
+    TransactionMergeCompleted (..),
+    TransactionMergeFailed (..),
     TransactionRelationAdded (..),
     TransactionRelationRemoved (..),
   )
@@ -76,6 +79,9 @@ transactionEvents =
     ''TransactionAmendmentFailed,
     ''TransactionCancellationInitiated,
     ''TransactionCancellationCompleted,
+    ''TransactionMergeInitiated,
+    ''TransactionMergeCompleted,
+    ''TransactionMergeFailed,
     ''TransactionRelationAdded,
     ''TransactionRelationRemoved
   ]
@@ -327,6 +333,63 @@ data TransactionCancellationCompleted = TransactionCancellationCompleted
   }
   deriving (Show, Eq)
 
+-- | Saga-trigger event: the user submitted a 'MergeTransaction' command and
+-- the domain handler accepted it. The 'Application.ProcessManagers.TransactionMergeManager'
+-- process manager reacts by amending the target (this stream) to absorb the
+-- combined amount + allocations, then, per source in order, records a 'Merge'
+-- edge and cancels it, and finally issues 'CompleteTransactionMerge'.
+--
+-- The target is the stream key (no @transactionId@ payload field, mirroring
+-- 'TransactionPostingInitiated' / 'TransactionRelationAdded'). The payload
+-- carries the FULLY-RESOLVED amend command fields (currency/amount resolution
+-- and 'TransactionType' synthesis already done in the service layer, since the
+-- process manager cannot touch the read model or ECB rates) plus the ordered
+-- source id list.
+data TransactionMergeInitiated = TransactionMergeInitiated
+  { -- | New source account for the amended target.
+    newSourceAccountId :: AccountId,
+    -- | New target account for the amended target.
+    newTargetAccountId :: AccountId,
+    -- | Resolved new amount to debit from the source account.
+    newSourceAmount :: Money,
+    -- | Resolved new amount to credit to the target account.
+    newTargetAmount :: Money,
+    -- | Resolved new exchange rate (Nothing if same-currency).
+    newExchangeRate :: Maybe ExchangeRate,
+    -- | Combined allocation list (carried onto the amend command; the amend
+    -- handler validates 'newTransactionType' against the amounts).
+    newAllocations :: Maybe Allocations,
+    -- | Synthesised full new 'TransactionType' (kind ⊕ combined allocations).
+    newTransactionType :: TransactionType,
+    -- | Resolved merged contact ('Nothing' to clear).
+    contactId :: Maybe ContactId,
+    -- | Ordered list of source transactions to fold into the target.
+    sourceTransactionIds :: [TransactionId],
+    -- | User who requested the merge.
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-completion event: the target amend landed and every source recorded a
+-- 'Merge' edge and was cancelled. Clears the transient @mergeInProgress@ flag.
+-- Canonical posting facts are unchanged by this event — the amend already
+-- moved them.
+newtype TransactionMergeCompleted = TransactionMergeCompleted
+  { -- | User who requested the merge (audit echo).
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-failure event: a leg of the merge cascade was rejected (in practice
+-- the target amend's insufficient-funds debit). Because the whole cascade runs
+-- in one transaction and the amend is sequenced first, no canonical change or
+-- source edge/cancel has been applied when this fires. Clears @mergeInProgress@.
+newtype TransactionMergeFailed = TransactionMergeFailed
+  { -- | Description of why the merge failed.
+    reason :: Text
+  }
+  deriving (Show, Eq)
+
 -- | Event emitted when a typed relationship from this transaction to another is
 -- recorded. The owning ("from") endpoint is the stream key — it is NOT a payload
 -- field, mirroring 'TransactionPostingInitiated' which also carries no self-id
@@ -390,5 +453,8 @@ deriveJSON defaultOptions ''TransactionAmendmentCompleted
 deriveJSON defaultOptions ''TransactionAmendmentFailed
 deriveJSON defaultOptions ''TransactionCancellationInitiated
 deriveJSON defaultOptions ''TransactionCancellationCompleted
+deriveJSON defaultOptions ''TransactionMergeInitiated
+deriveJSON defaultOptions ''TransactionMergeCompleted
+deriveJSON defaultOptions ''TransactionMergeFailed
 deriveJSON defaultOptions ''TransactionRelationAdded
 deriveJSON defaultOptions ''TransactionRelationRemoved

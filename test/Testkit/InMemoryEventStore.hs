@@ -42,7 +42,7 @@ module Testkit.InMemoryEventStore
 where
 
 import Application.LinkCodeStore (newLinkCodeStore)
-import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
+import Application.ProcessManagers (transactionCancellationProcessManager, transactionMergeProcessManager, transferAmendmentProcessManager, transferProcessManager)
 import Application.ReadModels.Persist (persistentReadModels)
 import Application.ReadModels.User ()
 import Control.Monad.Logger (LoggingT, runNoLoggingT)
@@ -232,7 +232,8 @@ mkAppEnv withProcessManager = do
             wireProcessManagers
               [ wireProcessManager transferProcessManager,
                 wireProcessManager transferAmendmentProcessManager,
-                wireProcessManager transactionCancellationProcessManager
+                wireProcessManager transactionCancellationProcessManager,
+                wireProcessManager transactionMergeProcessManager
               ]
           else wireProcessManagers []
 

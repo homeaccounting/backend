@@ -29,46 +29,69 @@ module Testkit.Fixtures
     setupMetadataFixture,
     incomeAllocs,
     expenseAllocs,
+    postExpense,
+    postIncome,
+    unwrapTx,
+    seedContact,
+    statusOf,
+    allocAmounts,
   )
 where
 
 import qualified Application.ReadModels.Configuration as ConfigRM
 import Application.ReadModels.ExchangeRate (applyExchangeRateEvent)
+import Application.ReadModels.Transaction (TransactionData (..))
 import Application.ReadModels.User (UserData (..), applyUserEvent, getUser)
 import qualified Application.Services.AccountService as AccountService
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
-  ( expenseCategoryDictKind,
+  ( addDictionaryEntry,
+    contactsDictKind,
+    expenseCategoryDictKind,
     incomeCategoryDictKind,
     seedDefaultConfiguration,
+  )
+import Application.Services.TransactionService
+  ( getTransaction,
+    initiateExpense,
+    initiateIncome,
   )
 import qualified Data.Map.Strict as Map
 import Data.Time (getCurrentTime, utctDay)
 import qualified Data.UUID as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..), CreditAccount (..))
-import Domain.Configuration.Dictionary (DictionaryKind)
+import Domain.Configuration.Dictionary (DictionaryKind, EntryRole (ItemRole))
+import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
     AccountType (..),
     Allocation (..),
     Allocations,
+    ContactId,
     DictionaryEntryId,
     Money,
+    TransactionId,
     UserId,
+    allAllocations,
+    allocationsOf,
     defaultBankAccount,
     defaultCash,
     mkExpenseAllocations,
     mkIncomeAllocations,
     unAccountId,
+    unMoney,
+    unTransactionId,
     unUserId,
+    unsafeEntryName,
     unsafeMoney,
     unsafeTransactionId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
+import Domain.Transaction.Projection (TransactionStatus)
 import Domain.User.Events (UserRegistered (..))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
@@ -259,3 +282,73 @@ setupMetadataFixture env email = do
         incomeCategory = incomeCat,
         expenseCategory = expenseCat
       }
+
+-- -----------------------------------------------------------------------------
+-- Transaction posting + queries
+-- -----------------------------------------------------------------------------
+
+-- | Post an Expense of the given amount against the fixture wallet and
+-- (optionally) a contact; return the new transaction id.
+postExpense :: AppEnv -> MetadataFixture -> Rational -> Maybe ContactId -> IO TransactionId
+postExpense env fx amt contact = do
+  res <-
+    runAppM env
+      $ initiateExpense
+        fx.userId
+        fx.regularAccountId
+        (unsafeMoney Core.USD amt)
+        (expenseAllocs fx (unsafeMoney Core.USD amt))
+        mempty
+        "Expense"
+        Nothing
+        Nothing
+        contact
+  unwrapTx "initiateExpense" res
+
+-- | Post an Income of the given amount against the fixture wallet.
+postIncome :: AppEnv -> MetadataFixture -> Rational -> Maybe ContactId -> IO TransactionId
+postIncome env fx amt contact = do
+  res <-
+    runAppM env
+      $ initiateIncome
+        fx.userId
+        fx.regularAccountId
+        (unsafeMoney Core.USD amt)
+        (incomeAllocs fx (unsafeMoney Core.USD amt))
+        mempty
+        "Income"
+        Nothing
+        Nothing
+        contact
+  unwrapTx "initiateIncome" res
+
+-- | Extract the new transaction id from an @initiate*@ service result,
+-- failing the test (with context) on 'Left'. Handy when a spec posts a
+-- transaction directly (custom account / currency / date) instead of via
+-- 'postExpense' \/ 'postIncome'.
+unwrapTx :: String -> Either DomainError (TransactionId, TransactionData) -> IO TransactionId
+unwrapTx ctx res = case res of
+  Left err -> fail $ ctx <> " failed: " <> show err
+  Right (tid, _) -> pure tid
+
+-- | Add a contact-dictionary entry for the user and return its id.
+seedContact :: AppEnv -> UserId -> Text -> IO ContactId
+seedContact env uid name = do
+  res <- runAppM env $ addDictionaryEntry uid contactsDictKind (unsafeEntryName name) ItemRole Nothing
+  case res of
+    Left err -> fail $ "seedContact failed: " <> show err
+    Right eid -> pure eid
+
+-- | Resolve the current 'TransactionStatus' of a transaction via the read model.
+statusOf :: AppEnv -> TransactionId -> IO TransactionStatus
+statusOf env tid = do
+  res <- runAppM env (getTransaction (unTransactionId tid))
+  case res of
+    Left err -> fail $ "getTransaction failed: " <> show err
+    Right (_, td) -> pure td.status
+
+-- | Flat list of allocation amounts across both buckets of a transaction.
+allocAmounts :: TransactionData -> [Rational]
+allocAmounts td = case allocationsOf td.transactionType of
+  Just a -> [unMoney al.amount | al <- allAllocations a]
+  Nothing -> []

@@ -218,6 +218,23 @@ data DomainError
   | -- | A removal was requested for a 'Merge'/'Split' lineage edge. Lineage
     -- edges are structural provenance and are not user-removable.
     CannotRemoveLineageRelation
+  | -- | A merge was requested across transactions of incompatible kinds: the
+    -- inputs are not all the same kind, or the kind is not Income/Expense
+    -- (Transfer/Adjustment cannot be merged). See tracker#30.
+    CannotMergeIncompatibleKinds
+  | -- | A merge was requested across transactions whose categorised-side
+    -- currencies differ.
+    CannotMergeDifferentCurrencies
+  | -- | A merge was requested across transactions that do not share the same
+    -- source/target account pair.
+    CannotMergeDifferentAccounts
+  | -- | A merge was requested across transactions that carry two or more
+    -- different (non-empty) contacts. A contact present on only some inputs is
+    -- carried onto the survivor; two different contacts is a hard conflict.
+    CannotMergeConflictingContacts
+  | -- | A merge listed the target itself as a source, or listed the same source
+    -- id more than once.
+    CannotMergeTransactionWithItself
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -366,3 +383,13 @@ renderDomainError err = case err of
   RelationNotFound -> "The relation does not exist"
   CannotRemoveLineageRelation ->
     "Merge/Split lineage relations cannot be removed"
+  CannotMergeIncompatibleKinds ->
+    "Only Income or Expense transactions of the same kind can be merged"
+  CannotMergeDifferentCurrencies ->
+    "Cannot merge transactions with different currencies"
+  CannotMergeDifferentAccounts ->
+    "Cannot merge transactions that do not share the same accounts"
+  CannotMergeConflictingContacts ->
+    "Cannot merge transactions that carry different contacts"
+  CannotMergeTransactionWithItself ->
+    "A transaction cannot be merged with itself"

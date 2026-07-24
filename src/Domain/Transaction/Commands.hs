@@ -37,6 +37,9 @@ module Domain.Transaction.Commands
     FailTransactionAmendment (..),
     CancelTransaction (..),
     CompleteTransactionCancellation (..),
+    MergeTransaction (..),
+    CompleteTransactionMerge (..),
+    FailTransactionMerge (..),
     AddTransactionRelation (..),
     RemoveTransactionRelation (..),
   )
@@ -72,6 +75,9 @@ transactionCommands =
     ''FailTransactionAmendment,
     ''CancelTransaction,
     ''CompleteTransactionCancellation,
+    ''MergeTransaction,
+    ''CompleteTransactionMerge,
+    ''FailTransactionMerge,
     ''AddTransactionRelation,
     ''RemoveTransactionRelation
   ]
@@ -419,6 +425,66 @@ data CompleteTransactionCancellation = CompleteTransactionCancellation
   }
   deriving (Show, Eq)
 
+-- | User-facing command to merge two or more Completed transactions into one
+-- survivor (the target, this aggregate).
+--
+-- Triggers the 'Application.ProcessManagers.TransactionMergeManager' saga. The
+-- service layer performs ALL read-model-dependent work up front (compatibility
+-- guards, contact resolution, books-close gates, combined amount + allocations,
+-- currency/amount resolution and 'TransactionType' synthesis) and bakes the
+-- fully-resolved amend payload plus the ordered source id list into this
+-- command. The pure handler only checks the target is 'Completed' and no
+-- amendment/cancellation/merge saga is already in flight, then emits
+-- 'TransactionMergeInitiated'.
+--
+-- The whole downstream cascade (amend target → per-source Merge edge + cancel →
+-- 'CompleteTransactionMerge') runs synchronously in ONE transaction, so a
+-- failing leg leaves no partial state.
+data MergeTransaction = MergeTransaction
+  { -- | Resolved new source account for the amended target.
+    newSourceAccountId :: AccountId,
+    -- | Resolved new target account for the amended target.
+    newTargetAccountId :: AccountId,
+    -- | Resolved combined source-leg amount.
+    newSourceAmount :: Money,
+    -- | Resolved combined target-leg amount.
+    newTargetAmount :: Money,
+    -- | Resolved exchange rate (Nothing if same-currency).
+    newExchangeRate :: Maybe ExchangeRate,
+    -- | Combined allocation list.
+    newAllocations :: Maybe Allocations,
+    -- | Synthesised full new 'TransactionType' (kind ⊕ combined allocations).
+    newTransactionType :: TransactionType,
+    -- | Resolved merged contact ('Nothing' to clear).
+    contactId :: Maybe ContactId,
+    -- | Ordered list of source transactions to fold into the target.
+    sourceTransactionIds :: [TransactionId],
+    -- | User who requested the merge.
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-internal command to mark a merge as completed.
+--
+-- Issued by the @TransactionMergeManager@ once the target amend and every
+-- source edge/cancel have landed. Accepted iff @mergeInProgress = True@.
+newtype CompleteTransactionMerge = CompleteTransactionMerge
+  { -- | User who requested the merge (echoed from the saga state).
+    by :: UserId
+  }
+  deriving (Show, Eq)
+
+-- | Saga-internal command to mark a merge as failed.
+--
+-- Issued by the @TransactionMergeManager@ when a leg of the cascade is
+-- rejected (in practice the target amend's insufficient-funds debit). Accepted
+-- iff @mergeInProgress = True@.
+newtype FailTransactionMerge = FailTransactionMerge
+  { -- | Description of why the merge failed.
+    reason :: Text
+  }
+  deriving (Show, Eq)
+
 -- | Post-hoc command to record a typed relationship on an already-existing
 -- (Completed) transaction. Used by the merge/split domain operations to write
 -- 'Merge'/'Split' lineage; not exposed as a public "create arbitrary edge"
@@ -461,5 +527,8 @@ deriveJSON defaultOptions ''CompleteTransactionAmendment
 deriveJSON defaultOptions ''FailTransactionAmendment
 deriveJSON defaultOptions ''CancelTransaction
 deriveJSON defaultOptions ''CompleteTransactionCancellation
+deriveJSON defaultOptions ''MergeTransaction
+deriveJSON defaultOptions ''CompleteTransactionMerge
+deriveJSON defaultOptions ''FailTransactionMerge
 deriveJSON defaultOptions ''AddTransactionRelation
 deriveJSON defaultOptions ''RemoveTransactionRelation

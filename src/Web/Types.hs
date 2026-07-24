@@ -64,6 +64,7 @@ module Web.Types
     ChangeTransactionDescriptionRequest (..),
     ChangeTransactionDateRequest (..),
     AmendTransactionRequest (..),
+    MergeTransactionsRequest (..),
 
     -- * Transaction Response DTOs
     TransactionResponse (..),
@@ -525,6 +526,21 @@ newtype ChangeTransactionDateRequest = ChangeTransactionDateRequest
 instance ToJSON ChangeTransactionDateRequest
 
 instance FromJSON ChangeTransactionDateRequest
+
+-- | Body for @POST \/api\/transactions\/:id\/merge@ — the source
+-- transactions to consolidate into the target (the @:id@ path param).
+-- An empty list is rejected by the handler with a field-scoped 400.
+--
+-- Mirrored by the web client DTO in @web src\/api\/types.ts@
+-- (@MergeTransactionsRequest@); keep the two in lockstep.
+newtype MergeTransactionsRequest = MergeTransactionsRequest
+  { sourceTransactionIds :: [UUID]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON MergeTransactionsRequest
+
+instance FromJSON MergeTransactionsRequest
 
 -- | Body for @PUT \/api\/transactions\/:id\/amendment@ — replaces the
 -- posting facts on a Completed transaction. The client supplies the

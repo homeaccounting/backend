@@ -37,6 +37,7 @@ module Application.Services.TransactionService
     changeTransactionDate,
     amendTransaction,
     cancelTransaction,
+    mergeTransactions,
     addTransactionRelation,
     removeTransactionRelation,
     getOutboundRelations,
@@ -76,6 +77,7 @@ import Application.Services.Internal
     runTransactionCmd,
   )
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
@@ -109,6 +111,7 @@ import Domain.Core.Types
     mkExchangeRate,
     mkExpense,
     mkIncome,
+    mkMoney,
     mkTransactionId,
     moneyCurrency,
     unDictionaryEntryId,
@@ -119,7 +122,9 @@ import Domain.Models
   ( AccountingEvent
       ( TransactionAmendmentCompletedEvent,
         TransactionAmendmentFailedEvent,
-        TransactionCancellationCompletedEvent
+        TransactionCancellationCompletedEvent,
+        TransactionMergeCompletedEvent,
+        TransactionMergeFailedEvent
       ),
   )
 import Domain.Transaction.CommandHandler
@@ -130,6 +135,7 @@ import Domain.Transaction.CommandHandler
         ChangeTransactionDateTransactionCommand,
         ChangeTransactionDescriptionTransactionCommand,
         InitiateTransactionTransactionCommand,
+        MergeTransactionTransactionCommand,
         RemoveTransactionRelationTransactionCommand,
         SetTransactionAllocationsTransactionCommand,
         SetTransactionContactTransactionCommand,
@@ -145,6 +151,7 @@ import Domain.Transaction.Commands
     ChangeTransactionDate (..),
     ChangeTransactionDescription (..),
     InitiateTransaction (..),
+    MergeTransaction (..),
     RemoveTransactionRelation (..),
     SetTransactionAllocations (..),
     SetTransactionContact (..),
@@ -152,6 +159,7 @@ import Domain.Transaction.Commands
   )
 import Domain.Transaction.Events
   ( TransactionAmendmentFailed (..),
+    TransactionMergeFailed (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Eventium (CommandHandlerError (..), EventStoreReader (..), StreamEvent (..), allEvents)
@@ -652,6 +660,35 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
     <> displayShow userId
   transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   ExceptT (guardBooksClosed userId transaction.date)
+  dispatched <- ExceptT (resolveAmendment userId transaction amendCmd)
+  if isIdentityAmend transaction dispatched
+    then pure transaction
+    else
+      ExceptT
+        ( dispatchAndAwaitAmendment
+            transactionId
+            (AmendTransactionTransactionCommand dispatched)
+        )
+
+-- | Resolve an 'AmendTransaction' payload against the read model: validate
+-- Editor+ on the new accounts, derive the kind, validate/attach the contact,
+-- synthesise the full 'newTransactionType', and resolve the leg amounts +
+-- exchange rate against the actual account currencies (mirroring the create
+-- flow). Returns the command with @newTransactionType@ / @newSourceAmount@ /
+-- @newTargetAmount@ / @newExchangeRate@ overwritten with the resolved values.
+--
+-- Shared by 'amendTransaction' and 'mergeTransactions': the merge saga cannot
+-- touch the read model or ECB rates, so all resolution must happen here, in the
+-- service, before the merge command is emitted.
+--
+-- The anchor is the Regular leg the user entered: source for Expense/Transfer,
+-- target for Income. A client-supplied rate (if any) overrides the ECB lookup.
+resolveAmendment ::
+  UserId ->
+  TransactionData ->
+  AmendTransaction ->
+  AppM (Either DomainError AmendTransaction)
+resolveAmendment userId transaction amendCmd = runExceptT $ do
   (newSrcAcc, newTgtAcc) <-
     ExceptT
       ( ensureEditorOnNewAccounts
@@ -672,15 +709,6 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
           existingTT
           amendCmd
       )
-  -- Resolve the leg amounts against the *actual* account currencies, mirroring
-  -- the create flow (initiateIncome/Expense/Transfer). The client supplies one
-  -- meaningful amount on the Regular leg; the External (or cross-currency
-  -- counter-) leg is derived here via the ECB rate so each leg matches its
-  -- account's currency. Without this, a cross-kind amendment into a
-  -- non-base-currency account posts a leg in the wrong currency and the saga
-  -- rejects it with 'CurrencyMismatch' (surfaced as InsufficientFundsForAmendment).
-  -- The anchor is the Regular leg the user entered: source for Expense/Transfer,
-  -- target for Income. A client-supplied rate (if any) overrides the lookup.
   let srcCurrency = moneyCurrency newSrcAcc.balance
       tgtCurrency = moneyCurrency newTgtAcc.balance
       (anchorAmount, anchorIsSource) = case derivedKind of
@@ -698,21 +726,22 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
           maybeUserRate
           rateDay
       )
-  let dispatched =
-        amendCmd
-          { newTransactionType = newTT,
-            newSourceAmount = resolvedSrc,
-            newTargetAmount = resolvedTgt,
-            newExchangeRate = resolvedRate
-          }
-  if isIdentityAmend transaction dispatched
-    then pure transaction
-    else
-      ExceptT
-        ( dispatchAndAwaitAmendment
-            transactionId
-            (AmendTransactionTransactionCommand dispatched)
-        )
+  -- Explicit construction (not a record update): 'newTransactionType' etc. are
+  -- now shared field labels with 'MergeTransaction', so an anonymous update is
+  -- ambiguous under DuplicateRecordFields.
+  pure
+    AmendTransaction
+      { transactionId = amendCmd.transactionId,
+        newSourceAccountId = amendCmd.newSourceAccountId,
+        newTargetAccountId = amendCmd.newTargetAccountId,
+        newSourceAmount = resolvedSrc,
+        newTargetAmount = resolvedTgt,
+        newExchangeRate = resolvedRate,
+        newAllocations = amendCmd.newAllocations,
+        newTransactionType = newTT,
+        contactId = amendCmd.contactId,
+        by = amendCmd.by
+      }
 
 -- | Cancel a completed transaction by its 'TransactionId'.
 --
@@ -745,6 +774,184 @@ cancelTransaction userId transactionId = runExceptT $ do
             CancelTransaction {transactionId = transactionId, by = userId}
         )
     )
+
+-- | Merge two or more Completed transactions into one survivor (the target).
+--
+-- See @docs/specs/2026-07-24-transaction-merge-operation-design.md@. Modelled
+-- exactly like amend/cancel: the service does ALL read-model-dependent work up
+-- front, then emits a single 'MergeTransaction' command whose entire
+-- downstream cascade commits in ONE transaction via the
+-- 'Application.ProcessManagers.TransactionMergeManager' saga. A failing leg
+-- rolls back the whole merge — no partial state — so there is no
+-- @MergeIncomplete@ outcome.
+--
+-- Orchestration (all read-only validation runs before the emit):
+--
+--   1. Load the target; require Editor+ and 'Completed'.
+--   2. Reject a source equal to the target, and duplicate source ids.
+--   3. Load every source; require Editor+ and 'Completed' (same-owner = Editor+
+--      on all inputs).
+--   4. Pure compatibility guards: same kind (Income\/Expense only), same
+--      categorised currency, same account pair, and at most one distinct
+--      non-empty contact (the resolved merged contact).
+--   5. Books-close gate against the target date and every source date,
+--      fail-fast.
+--   6. Compose the combined categorised amount + allocations and fully resolve
+--      the target amend payload ('resolveAmendment' — currency/amount
+--      resolution + 'TransactionType' synthesis), because the saga process
+--      manager cannot touch the read model or ECB rates.
+--   7. Emit 'MergeTransaction' with the resolved payload + ordered source
+--      list; the saga amends the target, records a 'Merge' edge and cancels
+--      each source in order, then completes. Await the terminal
+--      'TransactionMergeCompleted' / 'TransactionMergeFailed' and return the
+--      refreshed target (or surface the failure).
+mergeTransactions ::
+  UserId ->
+  TransactionId ->
+  NonEmpty TransactionId ->
+  AppM (Either DomainError TransactionData)
+mergeTransactions userId targetId sourceIds = runExceptT $ do
+  lift
+    $ logInfo
+    $ "Merging into "
+    <> displayShow targetId
+    <> " for user "
+    <> displayShow userId
+  let sources = NE.toList sourceIds
+  -- 1. Target: Editor+ and Completed.
+  target <- ExceptT (ensureCanModifyTransaction userId targetId)
+  guardE (target.status == Completed) CannotEditUncompletedTransaction
+  -- 2. Self-merge / duplicate source ids.
+  when (targetId `elem` sources) (throwE CannotMergeTransactionWithItself)
+  when (hasDuplicateIds sources) (throwE CannotMergeTransactionWithItself)
+  -- 3. Sources: Editor+ and Completed on each.
+  sourceTxns <-
+    traverse
+      ( \sid -> do
+          td <- ExceptT (ensureCanModifyTransaction userId sid)
+          guardE (td.status == Completed) CannotEditUncompletedTransaction
+          pure td
+      )
+      sources
+  let allTxns = target : sourceTxns
+  -- 4. Pure compatibility guards + resolved contact.
+  ExceptT (pure (guardMergeCompatible allTxns))
+  resolvedContact <- ExceptT (pure (resolveMergeContact allTxns))
+  -- 5. Books-close gate on the target and every source date, fail-fast.
+  ExceptT (guardBooksClosed userId target.date)
+  traverse_ (\td -> ExceptT (guardBooksClosed userId td.date)) sourceTxns
+  -- 6. Compose the combined categorised amount + allocations, then fully
+  -- resolve the amend payload (the saga cannot touch the read model / ECB).
+  combined <- ExceptT (pure (combinedCategorisedAmount allTxns))
+  let combinedAllocs = combineAllocations allTxns
+      amendCmd =
+        AmendTransaction
+          { transactionId = targetId,
+            newSourceAccountId = target.sourceAccountId,
+            newTargetAccountId = target.targetAccountId,
+            -- The categorised leg carries the combined amount; the other leg is
+            -- re-resolved by 'resolveAmendment' against the account currency.
+            newSourceAmount = combined,
+            newTargetAmount = combined,
+            newExchangeRate = target.exchangeRate,
+            newAllocations = Just combinedAllocs,
+            -- Placeholder; 'resolveAmendment' synthesises the real kind from the
+            -- (unchanged) account pair.
+            newTransactionType = Transfer,
+            contactId = resolvedContact,
+            by = userId
+          }
+  resolved <- ExceptT (resolveAmendment userId target amendCmd)
+  -- 7. Emit the single atomic-merge command; the saga runs the whole cascade
+  -- synchronously in one transaction and returns the refreshed target.
+  let mergeCmd =
+        MergeTransaction
+          { newSourceAccountId = resolved.newSourceAccountId,
+            newTargetAccountId = resolved.newTargetAccountId,
+            newSourceAmount = resolved.newSourceAmount,
+            newTargetAmount = resolved.newTargetAmount,
+            newExchangeRate = resolved.newExchangeRate,
+            newAllocations = resolved.newAllocations,
+            newTransactionType = resolved.newTransactionType,
+            contactId = resolved.contactId,
+            sourceTransactionIds = sources,
+            by = userId
+          }
+  ExceptT
+    ( dispatchAndAwaitMerge
+        targetId
+        (MergeTransactionTransactionCommand mergeCmd)
+    )
+
+-- | True when the source id list contains a duplicate.
+hasDuplicateIds :: [TransactionId] -> Bool
+hasDuplicateIds ids =
+  Set.size (Set.fromList (map unTransactionId ids)) /= length ids
+
+-- | All elements of a list are equal (vacuously true for the empty list).
+allSame :: (Eq a) => [a] -> Bool
+allSame [] = True
+allSame (x : xs) = all (== x) xs
+
+-- | True for the categorisable kinds (Income \/ Expense) — the only kinds a
+-- merge accepts.
+isMergeableKind :: TransactionKind -> Bool
+isMergeableKind IncomeKind = True
+isMergeableKind ExpenseKind = True
+isMergeableKind _ = False
+
+-- | The categorised-side amount of a transaction: the target leg for an
+-- Income, the source leg for an Expense. Defined only for the mergeable kinds;
+-- callers guard the kind first.
+categorisedMoneyOf :: TransactionData -> Money
+categorisedMoneyOf td = case kindOf td.transactionType of
+  IncomeKind -> td.targetAmount
+  _ -> td.sourceAmount
+
+-- | Pure compatibility guards over target + sources, in the order that keeps
+-- every arm reachable (kind before currency before account: two inputs of
+-- different currency necessarily sit on different accounts, so currency is
+-- checked first to surface the more specific error).
+guardMergeCompatible :: [TransactionData] -> Either DomainError ()
+guardMergeCompatible txns = do
+  let kinds = map (kindOf . (.transactionType)) txns
+  unless (allSame kinds && all isMergeableKind kinds) (Left CannotMergeIncompatibleKinds)
+  let currencies = map (moneyCurrency . categorisedMoneyOf) txns
+  unless (allSame currencies) (Left CannotMergeDifferentCurrencies)
+  let pairs = map (\td -> (td.sourceAccountId, td.targetAccountId)) txns
+  unless (allSame pairs) (Left CannotMergeDifferentAccounts)
+
+-- | Resolve the merged contact: at most one distinct non-empty contact is
+-- allowed (carried onto the survivor); two or more is a conflict.
+resolveMergeContact :: [TransactionData] -> Either DomainError (Maybe ContactId)
+resolveMergeContact txns =
+  case Set.toList (Set.fromList (mapMaybe (.contactId) txns)) of
+    [] -> Right Nothing
+    [c] -> Right (Just c)
+    _ -> Left CannotMergeConflictingContacts
+
+-- | Sum of the categorised-side amounts across all inputs, in their shared
+-- currency. Guarded to be non-empty (the target is always present) and
+-- single-currency (by 'guardMergeCompatible') before this is called.
+combinedCategorisedAmount :: [TransactionData] -> Either DomainError Money
+combinedCategorisedAmount [] =
+  Left (TransactionError "merge: no transactions to combine")
+combinedCategorisedAmount txns@(t0 : _) =
+  let cur = moneyCurrency (categorisedMoneyOf t0)
+      total = sum (map (unMoney . categorisedMoneyOf) txns)
+   in either (Left . TransactionError) Right (mkMoney cur total)
+
+-- | Concatenate the income and expense allocation buckets across all inputs.
+-- The per-slice amounts are unchanged, so they still sum to the combined total
+-- and pass 'mkIncome' \/ 'mkExpense' validation inside the amendment.
+combineAllocations :: [TransactionData] -> Allocations
+combineAllocations txns =
+  Allocations
+    { incomes = concatMap (bucket (.incomes)) txns,
+      expenses = concatMap (bucket (.expenses)) txns
+    }
+  where
+    bucket sel td = maybe [] sel (allocationsOf td.transactionType)
 
 -- -----------------------------------------------------------------------------
 -- Internal Helpers
@@ -1182,6 +1389,64 @@ lastCancellationOutcome = foldl' step CancellationUnknown
     step _ (TransactionCancellationCompletedEvent _) = CancellationSucceeded
     step acc _ = acc
 
+-- | Dispatch 'MergeTransaction' and surface the saga's outcome.
+--
+-- Mirrors 'dispatchAndAwaitAmendment'. Eventium dispatches synchronously and
+-- depth-first, so by the time 'runTransactionCmd' returns the whole merge
+-- cascade (target amend + per-source edge/cancel + completion, or a failure)
+-- has committed in the one write transaction. We then read the target stream
+-- for the terminal 'TransactionMergeCompleted' / 'TransactionMergeFailed'.
+--
+-- A failure carries the amend rejection reason and is surfaced as
+-- 'InsufficientFundsForAmendment' (the only realistic merge failure is the
+-- target amend's insufficient-funds debit) — a 409, matching a standalone
+-- amend failure. Because the amend is sequenced first, a failure leaves the
+-- pre-merge ledger and read model fully intact.
+dispatchAndAwaitMerge ::
+  TransactionId ->
+  TransactionCommand ->
+  AppM (Either DomainError TransactionData)
+dispatchAndAwaitMerge txId cmd = runExceptT $ do
+  runTransactionCmd translateTransactionError id (unTransactionId txId) cmd
+  outcome <- ExceptT (readLastMergeOutcome txId)
+  case outcome of
+    MergeSucceeded -> do
+      (_, td) <- ExceptT (queryTransactionResult txId)
+      pure td
+    MergeFailed reason -> throwE (InsufficientFundsForAmendment reason)
+    MergeUnknown ->
+      throwE
+        ( TransactionError
+            "Merge saga did not produce a terminal event"
+        )
+
+-- | Outcome of the merge saga as observed on the target's stream.
+data MergeOutcome
+  = MergeSucceeded
+  | MergeFailed Text
+  | -- | Should not happen on a valid stream once the saga is wired.
+    MergeUnknown
+  deriving (Show, Eq)
+
+-- | Inspect the target aggregate's stream and report the most-recent
+-- merge-terminating event.
+readLastMergeOutcome ::
+  TransactionId ->
+  AppM (Either DomainError MergeOutcome)
+readLastMergeOutcome txId = runExceptT $ do
+  EventStoreReader readStream <- lift (view eventStoreReaderL)
+  events <- liftIO (readStream (allEvents (unTransactionId txId)))
+  pure (lastMergeOutcome (map (.payload) events))
+
+-- | Pure helper exposed for testability via the surrounding service code.
+lastMergeOutcome :: [AccountingEvent] -> MergeOutcome
+lastMergeOutcome = foldl' step MergeUnknown
+  where
+    step _ (TransactionMergeCompletedEvent _) = MergeSucceeded
+    step _ (TransactionMergeFailedEvent (TransactionMergeFailed r)) =
+      MergeFailed r
+    step acc _ = acc
+
 -- | Translate an aggregate-local 'TransactionError' (wrapped in
 -- 'CommandHandlerError') into the public 'DomainError' surface.
 translateTransactionError ::
@@ -1223,6 +1488,10 @@ translateTransactionError (CommandRejected TxCh.CannotAmendToAdjustmentKind) =
   CannotAmendToAdjustmentKind
 translateTransactionError (CommandRejected TxCh.RelationSelfLink) =
   CannotRelateTransactionToItself
+translateTransactionError (CommandRejected TxCh.MergeAlreadyInProgress) =
+  TransactionError "A merge is already in progress"
+translateTransactionError (CommandRejected TxCh.NoMergeInProgress) =
+  TransactionError "No merge in progress"
 translateTransactionError other =
   TransactionError (T.pack (show other))
 

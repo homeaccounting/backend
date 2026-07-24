@@ -90,4 +90,5 @@ where
 
 import Application.ProcessManagers.TransactionAmendmentManager as X
 import Application.ProcessManagers.TransactionCancellationManager as X
+import Application.ProcessManagers.TransactionMergeManager as X
 import Application.ProcessManagers.TransactionPostingManager as X

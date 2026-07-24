@@ -605,6 +605,56 @@ mapDomainError CannotRemoveLineageRelation =
               details = Nothing
             }
     }
+mapDomainError CannotMergeIncompatibleKinds =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Only Income or Expense transactions of the same kind can be merged",
+              code = "CANNOT_MERGE_INCOMPATIBLE_KINDS",
+              details = Nothing
+            }
+    }
+mapDomainError CannotMergeDifferentCurrencies =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot merge transactions with different currencies",
+              code = "CANNOT_MERGE_DIFFERENT_CURRENCIES",
+              details = Nothing
+            }
+    }
+mapDomainError CannotMergeDifferentAccounts =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot merge transactions that do not share the same accounts",
+              code = "CANNOT_MERGE_DIFFERENT_ACCOUNTS",
+              details = Nothing
+            }
+    }
+mapDomainError CannotMergeConflictingContacts =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot merge transactions that carry different contacts",
+              code = "CANNOT_MERGE_CONFLICTING_CONTACTS",
+              details = Nothing
+            }
+    }
+mapDomainError CannotMergeTransactionWithItself =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "A transaction cannot be merged with itself",
+              code = "CANNOT_MERGE_TRANSACTION_WITH_ITSELF",
+              details = Nothing
+            }
+    }
 mapDomainError (BankConnectionAccountInvalid field) =
   err400
     { errBody =

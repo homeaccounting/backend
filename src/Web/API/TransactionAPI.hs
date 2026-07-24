@@ -23,6 +23,7 @@
 --   PUT    /api/transactions/:id/description   - Replace description
 --   PUT    /api/transactions/:id/date          - Replace business date
 --   PUT    /api/transactions/:id/amendment     - Amend posting facts (saga)
+--   POST   /api/transactions/:id/merge         - Merge sources into :id (saga)
 --   GET    /api/transactions/:id/history       - Audit history
 --   GET    /api/transactions/:id               - Get transaction status
 --   DELETE /api/transactions/:id               - Cancel a transaction
@@ -53,6 +54,7 @@ module Web.API.TransactionAPI
     changeDescriptionHandler,
     changeDateHandler,
     amendTransactionHandler,
+    mergeTransactionsHandler,
     transactionHistoryHandler,
     cancelTransactionHandler,
     relationsHandler,
@@ -66,6 +68,7 @@ import Application.Services.TransactionHistoryService (TransactionHistory)
 import qualified Application.Services.TransactionHistoryService as TransactionHistoryService
 import qualified Application.Services.TransactionService as TransactionService
 import Data.Aeson (encode)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
@@ -89,6 +92,7 @@ import Web.Types
     ChangeTransactionDescriptionRequest (..),
     ExpenseRequest (..),
     IncomeRequest (..),
+    MergeTransactionsRequest (..),
     SetTransactionAllocationsRequest (..),
     SetTransactionContactRequest (..),
     SetTransactionLabelsRequest (..),
@@ -203,6 +207,16 @@ type TransactionAPI =
       :> "amendment"
       :> ReqBody '[JSON] AmendTransactionRequest
       :> Put '[JSON] TransactionResponse
+    -- POST /api/transactions/:id/merge - Consolidate the listed source
+    -- transactions into :id (the target/survivor), then return the refreshed
+    -- target. See docs/specs/2026-07-24-transaction-merge-operation-design.md.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "merge"
+      :> ReqBody '[JSON] MergeTransactionsRequest
+      :> Post '[JSON] TransactionResponse
     -- GET /api/transactions/:id/history - Audit history (TX-aggregate events).
     :<|> AuthProtect "jwt"
       :> "api"
@@ -272,6 +286,7 @@ transactionServer =
     :<|> changeDescriptionHandler
     :<|> changeDateHandler
     :<|> amendTransactionHandler
+    :<|> mergeTransactionsHandler
     :<|> transactionHistoryHandler
     :<|> relationsHandler
     :<|> addRelationHandler
@@ -482,6 +497,44 @@ amendTransactionHandler user rawId req = do
   case result of
     Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err
+
+-- | Handler for POST /api/transactions/:id/merge — consolidate the listed
+-- source transactions into @:id@ (the target/survivor), then re-fetch and
+-- return the updated target.
+--
+-- The @:id@ and each source id are validated as UUIDs; an empty
+-- @sourceTransactionIds@ list is a field-scoped 400 (rejected here, before the
+-- service is called). All merge rules (compatibility, contact, ordering) are
+-- enforced downstream by 'TransactionService.mergeTransactions', whose atomic
+-- single-transaction saga either fully applies the merge or fails it cleanly.
+-- Mirrors 'addRelationHandler' in returning the refreshed 'TransactionResponse'.
+mergeTransactionsHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  MergeTransactionsRequest ->
+  AppM TransactionResponse
+mergeTransactionsHandler user rawId req = do
+  targetId <- validateField "id" (mkTransactionId rawId)
+  sourceIds <-
+    traverse
+      (validateField "sourceTransactionIds" . mkTransactionId)
+      req.sourceTransactionIds
+  sources <- case NE.nonEmpty sourceIds of
+    Just ne -> pure ne
+    Nothing -> throwIO $ err400 {errBody = encode emptySourcesBody}
+  result <- TransactionService.mergeTransactions user.userId targetId sources
+  case result of
+    Right td -> pure (fromTransactionData targetId td)
+    Left err -> throwDomainError err
+  where
+    emptySourcesBody =
+      ValidationErrorResponse
+        { message = "Validation failed",
+          fieldErrors =
+            Map.singleton
+              "sourceTransactionIds"
+              "At least one source transaction id is required"
+        }
 
 -- | Handler for GET /api/transactions/:id/history — audit history.
 transactionHistoryHandler ::

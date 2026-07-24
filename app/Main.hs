@@ -79,7 +79,7 @@ module Main (main) where
 -- Application
 
 import Application.LinkCodeStore (newLinkCodeStore)
-import Application.ProcessManagers (transactionCancellationProcessManager, transferAmendmentProcessManager, transferProcessManager)
+import Application.ProcessManagers (transactionCancellationProcessManager, transactionMergeProcessManager, transferAmendmentProcessManager, transferProcessManager)
 import Application.ReadModels.Persist (initializePersistentReadModels, persistentReadModels)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
@@ -277,7 +277,8 @@ initializeEnvironment logFunc config versionInfo = do
           ( wireProcessManagers
               [ wireProcessManager transferProcessManager,
                 wireProcessManager transferAmendmentProcessManager,
-                wireProcessManager transactionCancellationProcessManager
+                wireProcessManager transactionCancellationProcessManager,
+                wireProcessManager transactionMergeProcessManager
               ]
           )
           -- Persistent (SQL) read models: applied + checkpointed in the write

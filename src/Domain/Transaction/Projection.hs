@@ -212,7 +212,14 @@ data Transaction = Transaction
     -- | Transient flag: True when a 'TransactionCancellationInitiated' event has
     -- been applied but a corresponding 'TransactionCancellationCompleted' has not
     -- yet arrived. Used by the command handler to gate 'CompleteTransactionCancellation'.
-    cancellationInProgress :: Bool
+    cancellationInProgress :: Bool,
+    -- | Transient flag: True when a 'TransactionMergeInitiated' event has been
+    -- applied but a corresponding 'TransactionMergeCompleted' / 'TransactionMergeFailed'
+    -- has not yet arrived. Used by the command handler to gate 'MergeTransaction'
+    -- (reject re-entry) and 'CompleteTransactionMerge' / 'FailTransactionMerge'.
+    -- Because the whole merge cascade runs in one transaction, this flag is only
+    -- ever True on uncommitted state and always False once committed.
+    mergeInProgress :: Bool
   }
   deriving (Show, Eq)
 
@@ -279,7 +286,8 @@ transactionDefault =
       contactId = Nothing,
       amendmentCount = 0,
       amendmentInProgress = False,
-      cancellationInProgress = False
+      cancellationInProgress = False,
+      mergeInProgress = False
     }
 
 -- -----------------------------------------------------------------------------
@@ -448,6 +456,19 @@ handleTransactionEvent transaction (TransactionCancellationCompletedTransactionE
     .~ Cancelled
     & #cancellationInProgress
     .~ False
+handleTransactionEvent transaction (TransactionMergeInitiatedTransactionEvent _) =
+  -- Flip the transient merge-in-progress flag on so the command handler can
+  -- gate CompleteTransactionMerge / FailTransactionMerge and reject re-entrant
+  -- MergeTransaction. Canonical facts are moved by the saga's amend, not here.
+  transaction & #mergeInProgress .~ True
+handleTransactionEvent transaction (TransactionMergeCompletedTransactionEvent _) =
+  -- Clear the transient flag. Canonical facts were already updated by the
+  -- saga's TransactionAmendmentCompleted; the merge adds no further change.
+  transaction & #mergeInProgress .~ False
+handleTransactionEvent transaction (TransactionMergeFailedTransactionEvent _) =
+  -- Clear the transient flag. No canonical change on failure (the amend was
+  -- sequenced first and its failure applied nothing).
+  transaction & #mergeInProgress .~ False
 handleTransactionEvent transaction (TransactionRelationAddedTransactionEvent _) =
   -- Relationships are a read-model concern; the aggregate never gates on them.
   transaction

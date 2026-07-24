@@ -40,6 +40,7 @@ library
       Application.ProcessManagers.Snapshots
       Application.ProcessManagers.TransactionAmendmentManager
       Application.ProcessManagers.TransactionCancellationManager
+      Application.ProcessManagers.TransactionMergeManager
       Application.ProcessManagers.TransactionPostingManager
       Application.ReadModels
       Application.ReadModels.Account
@@ -313,6 +314,7 @@ test-suite backend-test
       Application.ProcessManagers.TransactionAmendmentManagerSpec
       Application.ProcessManagers.TransactionCancellationManagerPropertySpec
       Application.ProcessManagers.TransactionCancellationManagerSpec
+      Application.ProcessManagers.TransactionMergeManagerSpec
       Application.ProcessManagers.TransactionPostingManagerPropertySpec
       Application.ProcessManagers.TransactionPostingManagerSpec
       Application.ReadModels.AccountPropertySpec
@@ -353,6 +355,7 @@ test-suite backend-test
       Application.Services.TransactionAllocationsIntegrationSpec
       Application.Services.TransactionAmendmentSpec
       Application.Services.TransactionHistoryServiceSpec
+      Application.Services.TransactionMergeSpec
       Application.Services.TransactionMetadataEditSpec
       Application.Services.TransactionServiceContactSpec
       Application.Services.TransactionServiceLabelsSpec
@@ -425,6 +428,7 @@ test-suite backend-test
       Integration.TransactionCategoryIntegrationSpec
       Integration.TransactionContactIntegrationSpec
       Integration.TransactionLabelsIntegrationSpec
+      Integration.TransactionMergeIntegrationSpec
       Integration.TransactionMetadataEditIntegrationSpec
       Integration.TransactionPromptIntegrationSpec
       Integration.TransactionRelationsIntegrationSpec
@@ -458,6 +462,7 @@ test-suite backend-test
       Web.API.TransactionAPISpec
       Web.API.TransactionContactAPISpec
       Web.API.TransactionLabelsAPISpec
+      Web.API.TransactionMergeAPISpec
       Web.API.TransactionRelationsAPISpec
       Web.QuerySpec
       Web.ReportingResponseSpec
