@@ -83,6 +83,16 @@ data DomainError
       { entryId :: Text,
         usageCount :: Int
       }
+  | -- | The referenced contact does not exist in the user's contacts dictionary.
+    ContactNotFound Text
+  | -- | Cannot delete a contact — still referenced by existing transactions.
+    ContactInUse
+      { entryId :: Text,
+        usageCount :: Int
+      }
+  | -- | A contact was supplied on a Transfer transaction. Transfers move money
+    -- between the user's own accounts and have no external counterparty.
+    ContactNotAllowedOnTransfer
   | -- | Cannot remove a dictionary entry that is a non-empty group (it still
     -- has child entries). The children must be moved or removed first. A
     -- conflict with the current tree state, surfaced as HTTP 409.
@@ -281,6 +291,11 @@ renderDomainError err = case err of
     "Cannot delete label " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
   CategoryInUse eid n ->
     "Cannot delete category " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
+  ContactNotFound eid -> "Contact not found: " <> eid
+  ContactInUse eid n ->
+    "Cannot delete contact " <> eid <> ": referenced by " <> T.pack (show n) <> " transaction(s)"
+  ContactNotAllowedOnTransfer ->
+    "A contact cannot be set on a transfer between your own accounts"
   DictionaryGroupNotEmpty ->
     "Cannot remove a dictionary group that still has entries; move or remove its children first"
   CannotEditUncompletedTransaction ->

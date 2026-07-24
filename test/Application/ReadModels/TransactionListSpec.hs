@@ -81,7 +81,7 @@ mkInitiatedEvent ::
   UTCTime -> -- persistedAt (createdAt)
   Eventium.SequenceNumber -> -- global sequence number
   Eventium.GlobalStreamEvent AccountingEvent
-mkInitiatedEvent txId src tgt = postingInitiatedGlobal txId src tgt Transfer Set.empty
+mkInitiatedEvent txId src tgt bAt pAt sq = postingInitiatedGlobal txId src tgt Transfer Set.empty bAt pAt sq Nothing
 
 -- | A single-payload edit/terminal GlobalStreamEvent for an existing
 -- transaction stream; see 'transactionEditGlobal'.

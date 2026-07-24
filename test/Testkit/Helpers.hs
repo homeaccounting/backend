@@ -242,6 +242,7 @@ mockTransactionData src tgt srcAmt tgtAmt rate tt =
       date = fixtureTime,
       mcc = Nothing,
       labels = mempty,
+      contactId = Nothing,
       relations = [],
       amendmentCount = 0
     }

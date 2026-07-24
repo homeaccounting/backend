@@ -147,6 +147,7 @@ postIncome h amt allocs = do
         "Test income"
         Nothing
         Nothing
+        Nothing
   unwrap "initiateIncome" res
 
 -- | Post an Expense via the service layer. Returns (txId, TransactionData).
@@ -165,6 +166,7 @@ postExpense h amt allocs = do
         allocs
         Set.empty
         "Test expense"
+        Nothing
         Nothing
         Nothing
   unwrap "initiateExpense" res

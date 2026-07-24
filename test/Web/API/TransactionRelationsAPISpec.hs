@@ -71,6 +71,7 @@ seedExpense seed = do
         "Groceries"
         Nothing
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "seedExpense failed: " <> show err
     Right (txId, _) -> pure txId
@@ -183,6 +184,7 @@ spec = describe "Transaction relations HTTP endpoints" $ do
             (singletonAllocation seed.seedCategory (unsafeMoney Core.USD 20))
             Set.empty
             "Salary"
+            Nothing
             Nothing
             Nothing
       incomeId <- case incomeRes of

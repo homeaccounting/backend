@@ -10,9 +10,10 @@
 -- delete a dictionary entry that any transaction still references —
 -- either via the labels set or via the categorised TransactionType.
 --
--- Also verifies the regression: cancelled transactions must NOT count as
--- "in use", so deletion succeeds when the only referencing transaction has
--- been cancelled (Task 9 / Task 16 of the cancel-transaction feature).
+-- Also verifies that a cancelled transaction still counts as "in use" —
+-- cancelled transactions remain retrievable via the API and must keep their
+-- referenced dictionary entries resolvable — while a failed transaction
+-- (which never posted) does not.
 module Application.Services.ConfigurationServiceInUseSpec (spec) where
 
 import Application.ReadModels.Configuration
@@ -24,6 +25,7 @@ import Application.ReadModels.User (UserData (..), getUser)
 import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
+    contactsDictKind,
     expenseCategoryDictKind,
     incomeCategoryDictKind,
     labelsDictKind,
@@ -96,15 +98,16 @@ firstEntryId env userId dictName = do
 
 -- | Write a TransactionPostingInitiated event through the in-memory event store.
 -- Uses fresh random UUIDs for source / target accounts — the in-use
--- check only needs the category / labels to be visible on the read
+-- check only needs the category / labels / contact to be visible on the read
 -- model, not for the accounts to be real.
 seedTransaction ::
   AppEnv ->
   UserId ->
   TransactionType ->
   Set DictionaryEntryId ->
+  Maybe DictionaryEntryId ->
   IO ()
-seedTransaction env userId tt labels = do
+seedTransaction env userId tt labels contact = do
   txUuid <- UUID.nextRandom
   srcUuid <- UUID.nextRandom
   tgtUuid <- UUID.nextRandom
@@ -122,6 +125,7 @@ seedTransaction env userId tt labels = do
               transactionType = tt,
               importInfo = Nothing,
               labels = labels,
+              contactId = contact,
               relation = Nothing
             }
   res <- applyTransactionCommand env.eventStoreWriter env.eventStoreReader id txUuid cmd
@@ -144,7 +148,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     _ <- runRIO env $ addDictionaryEntry userId incomeCategoryDictKind (unsafeEntryName "Spark") ItemRole Nothing
 
     categoryId <- firstEntryId env userId "income-category"
-    seedTransaction env userId (singletonIncome categoryId (unsafeMoney Core.USD 100)) Set.empty
+    seedTransaction env userId (singletonIncome categoryId (unsafeMoney Core.USD 100)) Set.empty Nothing
 
     result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind categoryId
     case result of
@@ -163,8 +167,8 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
 
     -- Two transactions using the same label.
     categoryId <- firstEntryId env userId "expense-category"
-    seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId)
-    seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId)
+    seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId) Nothing
+    seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) (Set.singleton labelId) Nothing
 
     result <- runRIO env $ removeDictionaryEntry userId labelsDictKind labelId
     case result of
@@ -184,6 +188,37 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     result <- runRIO env $ removeDictionaryEntry userId labelsDictKind labelId
     result `shouldSatisfy` isRight
 
+  it "refuses to delete a contact still referenced by an Expense transaction" $ do
+    env <- createTestAppEnv
+    runRIO env seedDefaultConfiguration
+    userId <- registerUser env "inuse-contact@test.com"
+
+    addContact <- runRIO env $ addDictionaryEntry userId contactsDictKind (unsafeEntryName "Landlord") ItemRole Nothing
+    contactId <- case addContact of
+      Left err -> fail $ "addDictionaryEntry failed: " <> show err
+      Right eid -> pure eid
+
+    categoryId <- firstEntryId env userId "expense-category"
+    seedTransaction env userId (singletonExpense categoryId (unsafeMoney Core.USD 100)) Set.empty (Just contactId)
+
+    result <- runRIO env $ removeDictionaryEntry userId contactsDictKind contactId
+    case result of
+      Left (ContactInUse _ n) -> n `shouldBe` 1
+      other -> expectationFailure $ "expected ContactInUse, got: " <> show other
+
+  it "allows deleting an unreferenced contact" $ do
+    env <- createTestAppEnv
+    runRIO env seedDefaultConfiguration
+    userId <- registerUser env "unused-contact@test.com"
+
+    addContact <- runRIO env $ addDictionaryEntry userId contactsDictKind (unsafeEntryName "Solo") ItemRole Nothing
+    contactId <- case addContact of
+      Left err -> fail $ "addDictionaryEntry failed: " <> show err
+      Right eid -> pure eid
+
+    result <- runRIO env $ removeDictionaryEntry userId contactsDictKind contactId
+    result `shouldSatisfy` isRight
+
   -- \| An Adjustment carries no category, so it must never contribute to the
   -- category in-use count. This locks the report-exclusion contract for
   -- 'TransactionType = Adjustment' end-to-end: the in-use guard powers
@@ -200,20 +235,20 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
     categoryId <- firstEntryId env userId "income-category"
     -- One real Income reference + several Adjustments that should be invisible
     -- to the category in-use scan.
-    seedTransaction env userId (singletonIncome categoryId (unsafeMoney Core.USD 100)) Set.empty
-    seedTransaction env userId Adjustment Set.empty
-    seedTransaction env userId Adjustment Set.empty
-    seedTransaction env userId Adjustment Set.empty
+    seedTransaction env userId (singletonIncome categoryId (unsafeMoney Core.USD 100)) Set.empty Nothing
+    seedTransaction env userId Adjustment Set.empty Nothing
+    seedTransaction env userId Adjustment Set.empty Nothing
+    seedTransaction env userId Adjustment Set.empty Nothing
 
     result <- runRIO env $ removeDictionaryEntry userId incomeCategoryDictKind categoryId
     case result of
       Left (CategoryInUse _ n) -> n `shouldBe` 1
       other -> expectationFailure $ "expected CategoryInUse with count 1, got: " <> show other
 
-  -- Regression: Task 9 added 'td.status /= Cancelled' to
-  -- 'findReferencingTransactions'. This test verifies that a label referenced
-  -- only by a cancelled transaction is treated as unused and can be deleted.
-  it "allows deleting a label referenced only by a cancelled transaction" $ do
+  -- Cancelled transactions remain retrievable via the API (and their labels /
+  -- categories / contacts still resolve on them), so a label referenced only
+  -- by a cancelled transaction must still count as in-use.
+  it "refuses to delete a label referenced only by a cancelled transaction" $ do
     -- Full saga pipeline required: TransactionPostingManager + TransactionCancellationManager
     -- must run synchronously so the Cancelled status is reflected in the read
     -- model before we attempt deletion.
@@ -253,7 +288,50 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
       Left err -> fail $ "cancelTransaction failed: " <> show err
       Right _ -> pure ()
 
-    -- The label must now be deletable because the only referencing transaction
-    -- has been cancelled.
+    -- The label must remain undeletable: the cancelled transaction is still
+    -- retrievable via the API and still resolves this label.
+    result <- runRIO env $ removeDictionaryEntry userId labelsDictKind labelId
+    case result of
+      Left (LabelInUse _ n) -> n `shouldBe` 1
+      other -> expectationFailure $ "expected LabelInUse, got: " <> show other
+
+  -- Failed transactions never posted, so a label referenced only by a failed
+  -- transaction must not count as in-use.
+  it "allows deleting a label referenced only by a failed transaction" $ do
+    -- Full saga pipeline required so the balance-guard rejection propagates
+    -- to a real Failed status in the read model before we attempt deletion.
+    env <- createTestAppEnvWithProcessManager
+    runRIO env seedDefaultConfiguration
+    userId <- registerUser env "failed-label-deletion@test.com"
+
+    addLabel <- runRIO env $ addDictionaryEntry userId labelsDictKind (unsafeEntryName "doomed") ItemRole Nothing
+    labelId <- case addLabel of
+      Left err -> fail $ "addDictionaryEntry failed: " <> show err
+      Right eid -> pure eid
+
+    -- The seed account has no overdraft configured, so a transfer larger than
+    -- its balance is rejected by the balance guard and the saga fails the
+    -- transaction.
+    src <- createDefaultAccount env userId "Source"
+    tgt <- createDefaultAccount env userId "Target"
+
+    txResult <-
+      runAppM env
+        $ initiateTransfer
+          userId
+          src
+          tgt
+          (unsafeMoney Core.USD 999999)
+          (Set.singleton labelId)
+          "doomed transfer"
+          Nothing
+          Nothing
+          Nothing
+    case txResult of
+      Left err -> fail $ "initiateTransfer failed: " <> show err
+      Right _ -> pure ()
+
+    -- The label must be deletable: the only referencing transaction failed to
+    -- post.
     result <- runRIO env $ removeDictionaryEntry userId labelsDictKind labelId
     result `shouldSatisfy` isRight

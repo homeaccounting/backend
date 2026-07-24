@@ -625,6 +625,7 @@ genIdentityAmendInputs = do
             newExchangeRate = td.exchangeRate,
             newAllocations = Nothing,
             newTransactionType = td.transactionType,
+            contactId = Nothing,
             by = uid
           }
   pure (td, cmd)

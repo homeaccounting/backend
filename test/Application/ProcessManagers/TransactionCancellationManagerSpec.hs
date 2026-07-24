@@ -126,7 +126,8 @@ seedInitiated =
             at = sampleAt,
             transactionType = Transfer,
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           }
     )
 
@@ -235,6 +236,7 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
                     newTargetAmount = m 140,
                     newExchangeRate = Nothing,
                     newTransactionType = Transfer,
+                    contactId = Nothing,
                     by = userId_
                   }
             )
@@ -430,7 +432,8 @@ spec = describe "TransactionCancellationManager (Saga)" $ do
                     at = sampleAt,
                     transactionType = Transfer,
                     importInfo = Nothing,
-                    labels = Set.empty
+                    labels = Set.empty,
+                    contactId = Nothing
                   }
             )
         cancellationInitiated2 =

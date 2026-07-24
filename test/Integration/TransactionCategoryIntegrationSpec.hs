@@ -101,6 +101,7 @@ seedIncome h categoryId = do
         "Paycheck"
         Nothing
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "initiateIncome failed: " <> show err
     Right (txId, _) -> pure txId

@@ -80,6 +80,7 @@ baseInitiate =
       transactionType = Transfer,
       importInfo = Nothing,
       labels = Set.empty,
+      contactId = Nothing,
       relation = Nothing
     }
 
@@ -102,7 +103,8 @@ completedTx =
             at = mockTime,
             transactionType = Transfer,
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           },
       TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
     ]

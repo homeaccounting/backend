@@ -31,6 +31,7 @@ module Application.Services.TransactionService
     getTransaction,
     listTransactions,
     setTransactionLabels,
+    setTransactionContact,
     setTransactionAllocations,
     changeTransactionDescription,
     changeTransactionDate,
@@ -47,6 +48,10 @@ module Application.Services.TransactionService
 
     -- * Pure predicates (exposed for testing)
     isIdentityAmend,
+
+    -- * Contact validation (exposed for testing)
+    validateContact,
+    guardNoContactOnTransfer,
   )
 where
 
@@ -84,6 +89,7 @@ import Domain.Core.Types
     AccountType (..),
     Allocation (..),
     Allocations (..),
+    ContactId,
     Currency,
     DictionaryEntryId,
     ExchangeRate,
@@ -126,6 +132,7 @@ import Domain.Transaction.CommandHandler
         InitiateTransactionTransactionCommand,
         RemoveTransactionRelationTransactionCommand,
         SetTransactionAllocationsTransactionCommand,
+        SetTransactionContactTransactionCommand,
         SetTransactionLabelsTransactionCommand
       ),
     TransactionError,
@@ -140,6 +147,7 @@ import Domain.Transaction.Commands
     InitiateTransaction (..),
     RemoveTransactionRelation (..),
     SetTransactionAllocations (..),
+    SetTransactionContact (..),
     SetTransactionLabels (..),
   )
 import Domain.Transaction.Events
@@ -250,12 +258,14 @@ initiateIncome ::
   Text ->
   Maybe UTCTime ->
   Maybe RelationSpec ->
+  Maybe ContactId ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateIncome userId targetAccountId amount allocations labels description maybeTransferDate maybeRelation =
+initiateIncome userId targetAccountId amount allocations labels description maybeTransferDate maybeRelation maybeContactId =
   runExceptT $ do
     lift $ logInfo "Initiating income transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
+    ExceptT (validateContact userId maybeContactId)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     externalAccId <- getUserExternalAccountId userId
     targetData <-
@@ -298,6 +308,7 @@ initiateIncome userId targetAccountId amount allocations labels description mayb
                   transactionType = tt,
                   importInfo = Nothing,
                   labels = labels,
+                  contactId = maybeContactId,
                   relation = rel
                 }
       )
@@ -316,12 +327,14 @@ initiateExpense ::
   Text ->
   Maybe UTCTime ->
   Maybe RelationSpec ->
+  Maybe ContactId ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateExpense userId sourceAccountId amount allocations labels description maybeTransferDate maybeRelation =
+initiateExpense userId sourceAccountId amount allocations labels description maybeTransferDate maybeRelation maybeContactId =
   runExceptT $ do
     lift $ logInfo "Initiating expense transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
+    ExceptT (validateContact userId maybeContactId)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     externalAccId <- getUserExternalAccountId userId
     sourceData <-
@@ -364,6 +377,7 @@ initiateExpense userId sourceAccountId amount allocations labels description may
                   transactionType = tt,
                   importInfo = Nothing,
                   labels = labels,
+                  contactId = maybeContactId,
                   relation = rel
                 }
       )
@@ -388,6 +402,12 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
     lift $ logInfo "Initiating internal transfer..."
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
+    -- Internal transfers never carry a contact; this call has no
+    -- observable effect today (the emitted contactId below is always
+    -- Nothing), but it keeps the guard in the flow so a future caller
+    -- that threads a contact into this path is rejected immediately
+    -- rather than silently accepted.
+    ExceptT (guardNoContactOnTransfer TransferKind Nothing)
     ExceptT (guardBooksClosed userId (fromMaybe now maybeTransferDate))
     sourceData <-
       liftMaybeM
@@ -431,6 +451,7 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
                   transactionType = Transfer,
                   importInfo = Nothing,
                   labels = labels,
+                  contactId = Nothing,
                   relation = rel
                 }
       )
@@ -461,6 +482,36 @@ setTransactionLabels userId transactionId labels = runExceptT $ do
           SetTransactionLabels
             { transactionId = transactionId,
               labels = labels
+            }
+  ExceptT (dispatchEdit transactionId cmd)
+
+-- | Replace (or clear) the contact on an existing completed transaction.
+--
+-- Requires Editor+ access to at least one of the transaction's accounts.
+-- Rejects the edit with 'ContactNotAllowedOnTransfer' when the existing
+-- transaction is a Transfer/Adjustment, and with 'ContactNotFound' when
+-- the given id is not in the user's contacts dictionary. 'Nothing' clears
+-- the contact. Mirrors 'setTransactionLabels'.
+setTransactionContact ::
+  UserId ->
+  TransactionId ->
+  Maybe ContactId ->
+  AppM (Either DomainError TransactionData)
+setTransactionContact userId transactionId maybeContactId = runExceptT $ do
+  lift
+    $ logInfo
+    $ "Setting contact on "
+    <> displayShow transactionId
+    <> " for user "
+    <> displayShow userId
+  transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
+  ExceptT (guardNoContactOnTransfer (kindOf transaction.transactionType) maybeContactId)
+  ExceptT (validateContact userId maybeContactId)
+  let cmd =
+        SetTransactionContactTransactionCommand
+          SetTransactionContact
+            { transactionId = transactionId,
+              contactId = maybeContactId
             }
   ExceptT (dispatchEdit transactionId cmd)
 
@@ -611,6 +662,8 @@ amendTransaction userId transactionId amendCmd = runExceptT $ do
   let derivedKind =
         deriveTransactionKind newSrcAcc.accountType newTgtAcc.accountType
       existingTT = transaction.transactionType
+  ExceptT (guardNoContactOnTransfer derivedKind amendCmd.contactId)
+  ExceptT (validateContact userId amendCmd.contactId)
   newTT <-
     ExceptT
       ( synthesiseAmendmentTransactionType
@@ -747,6 +800,29 @@ validateLabels userId labels
       case Set.toList missing of
         [] -> pure ()
         (eid : _) -> throwE (LabelNotFound (tshow (unDictionaryEntryId eid)))
+
+-- | Verify the given contact id, if any, exists in the user's contacts
+-- dictionary. Mirrors 'validateLabels' but for a single optional id
+-- rather than a set.
+validateContact ::
+  UserId ->
+  Maybe ContactId ->
+  AppM (Either DomainError ())
+validateContact _ Nothing = pure (Right ())
+validateContact userId (Just cid) = runExceptT $ do
+  cfg <- ExceptT (ConfigurationService.getConfigurationForUser userId)
+  let known = assignableEntryIds ConfigurationService.contactsDictKind cfg
+  unless (Set.member cid known) $ throwE (ContactNotFound (tshow (unDictionaryEntryId cid)))
+
+-- | Reject a contact attached to a Transfer or Adjustment transaction —
+-- only Income/Expense transactions may carry a counterparty contact.
+guardNoContactOnTransfer ::
+  TransactionKind ->
+  Maybe ContactId ->
+  AppM (Either DomainError ())
+guardNoContactOnTransfer kind (Just _)
+  | kind `elem` [TransferKind, AdjustmentKind] = pure (Left ContactNotAllowedOnTransfer)
+guardNoContactOnTransfer _ _ = pure (Right ())
 
 -- | Validate the target ("to") endpoint of a relation edge, per kind:
 --   * visible to the caller (else NotFound),
@@ -920,7 +996,9 @@ dispatchEdit transactionId cmd = runExceptT $ do
 
 -- | True when the amendment payload exactly matches the current
 -- canonical state (per spec §4.3). Compared fields: accounts, amounts,
--- exchange rate, and transactionType (deep equality, including allocations).
+-- exchange rate, transactionType (deep equality, including allocations), and
+-- contactId — an amendment that changes only the contact must NOT be
+-- short-circuited as a no-op.
 isIdentityAmend :: TransactionData -> AmendTransaction -> Bool
 isIdentityAmend td cmd =
   td.sourceAccountId
@@ -935,6 +1013,8 @@ isIdentityAmend td cmd =
     == cmd.newExchangeRate
     && td.transactionType
     == cmd.newTransactionType
+    && td.contactId
+    == cmd.contactId
 
 -- | Synthesise the full new 'TransactionType' for an 'AmendTransaction'
 -- from the derived kind and the caller-supplied 'newAllocations'.

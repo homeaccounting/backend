@@ -22,6 +22,7 @@ import Application.ReadModels.BankImportReadModel
   ( bankImportReadModel,
     isImported,
   )
+import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItems)
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.Services.AccountService (createAccount)
@@ -34,6 +35,7 @@ import Application.Services.BankImportService
     importTransaction,
   )
 import qualified Application.Services.ConfigurationService as ConfigurationService
+import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
@@ -48,10 +50,12 @@ import Domain.Configuration.Defaults
     expense,
     income,
   )
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     Currency (..),
+    DictionaryEntryId,
     ExternalTransactionId,
     ImportInfo (..),
     Money,
@@ -61,6 +65,7 @@ import Domain.Core.Types
     defaultBankAccount,
     mkMoney,
     unTransactionId,
+    unsafeEntryName,
     unsafeExternalTransactionId,
   )
 import Domain.Models (AccountingEvent (..))
@@ -132,6 +137,26 @@ mkTestTransactionWithMcc amount extId mcc =
 -- | Create a bank transaction with a specific account ID for testing.
 mkTestTransactionWithAccount :: Rational -> Text -> Text -> BankTransaction
 mkTestTransactionWithAccount amount extId acctId = mkTestTransactionWithAccount' acctId amount extId
+
+-- | Create a bank transaction for testing with a specific raw description.
+-- Built via full record construction (not update) to sidestep the
+-- 'description' field being ambiguous across 'BankTransaction',
+-- 'TransactionData' and 'TransactionPostingInitiated', all in scope here.
+mkTestTransactionWithDescription :: Rational -> Text -> Text -> BankTransaction
+mkTestTransactionWithDescription amount extId desc =
+  BankTransaction
+    { externalId = unsafeExternalTransactionId extId,
+      externalAccountId = unsafeExternalAccountId "mono-acc-1",
+      time = testTime,
+      amount = amount,
+      currencyCode = 840, -- USD, matching setupContactTestEnv's bank account currency
+      description = desc,
+      hold = False,
+      mcc = Nothing,
+      originalAmount = Nothing,
+      notes = Nothing,
+      categoryHint = Nothing
+    }
 
 mkTestTransactionWithAccount' :: Text -> Rational -> Text -> BankTransaction
 mkTestTransactionWithAccount' acctId amount extId =
@@ -226,6 +251,43 @@ setupTestEnvWithBankOverdraft bankOverdraft = do
   Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
 
   return (env, bankAccId)
+
+-- | Set up a test environment for contact-resolution tests: a fully
+-- REGISTERED user (via 'Fixtures.seedDefaultAndRegister', going through the
+-- real 'RegisterUser' + 'AssignConfiguration' commands) plus a bank account.
+--
+-- Unlike 'setupTestEnv' (which only seeds the User read model directly via
+-- 'Fixtures.seedRegisteredUser'), contact resolution needs
+-- 'ConfigurationService.addDictionaryEntry' to succeed, and that clones the
+-- user's configuration via a real domain command chain that requires the
+-- User aggregate to actually exist — hence the heavier, real registration
+-- flow here. The bank account is funded generously (rather than granted
+-- overdraft, which 'Testkit.Fixtures.createAccount' has no knob for) so
+-- imported expenses clear.
+setupContactTestEnv :: IO (AppEnv, UserId, AccountId)
+setupContactTestEnv = do
+  env <- createTestAppEnvWithProcessManager
+  userId <- Fixtures.seedDefaultAndRegister env "contact-test@example.com"
+  bankAccId <- Fixtures.createAccount env userId "Monobank USD" defaultBankAccount USD 100000
+  pure (env, userId, bankAccId)
+
+-- | Seed a single contact dictionary entry, mirroring how category entries
+-- are seeded elsewhere in these tests via 'ConfigurationService.addDictionaryEntry'.
+seedContact :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
+seedContact env userId name = do
+  result <- runAppM env $ ConfigurationService.addDictionaryEntry userId ConfigurationService.contactsDictKind (unsafeEntryName name) ItemRole Nothing
+  case result of
+    Right eid -> pure eid
+    Left err -> expectationFailure ("failed to seed contact: " <> show err) >> error "unreachable"
+
+-- | Number of entries currently in the user's contact dictionary — used to
+-- assert bank import never creates a new contact (MATCH-ONLY).
+contactDictionaryCount :: AppEnv -> UserId -> IO Int
+contactDictionaryCount env userId = do
+  result <- runAppM env $ ConfigurationService.getConfigurationForUser userId
+  case result of
+    Right cfg -> pure (length (maybe [] dictionaryItems (Map.lookup ConfigurationService.contactsDictKind cfg.dictionaries)))
+    Left err -> expectationFailure ("failed to load configuration: " <> show err) >> error "unreachable"
 
 -- -----------------------------------------------------------------------------
 -- Tests
@@ -566,6 +628,159 @@ spec = describe "BankImportService" $ do
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
       txData.transactionType `shouldBe` singletonIncome income.other.entryId (fromRight' (mkMoney UAH 200))
 
+  describe "contact resolution (match-only)" $ do
+    it "links an existing contact on an expense import when the description matches" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      contactId <- seedContact env userId "Landlord"
+      countBefore <- contactDictionaryCount env userId
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-expense" "Landlord"
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Just contactId
+
+      -- Match-only: importing never creates a new dictionary entry.
+      countAfter <- contactDictionaryCount env userId
+      countAfter `shouldBe` countBefore
+
+    it "links an existing contact on an income import when the description matches" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      contactId <- seedContact env userId "Employer"
+      countBefore <- contactDictionaryCount env userId
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription 200 "tx-contact-income" "Employer"
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Just contactId
+
+      countAfter <- contactDictionaryCount env userId
+      countAfter `shouldBe` countBefore
+
+    it "leaves contactId Nothing when the description matches no existing contact" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      _ <- seedContact env userId "Landlord"
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-nomatch" "Some Random Shop"
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Nothing
+
+    it "leaves contactId Nothing for a blank description" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      _ <- seedContact env userId "Landlord"
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-blank" "   "
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Nothing
+
+    it "matches case-insensitively and ignores surrounding/collapsed whitespace" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      contactId <- seedContact env userId "Netflix"
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-casefold" "  netflix "
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Just contactId
+
+    it "links an existing contact when its name appears as a substring of the description" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      contactId <- seedContact env userId "Netflix"
+      countBefore <- contactDictionaryCount env userId
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-substring" "payment to netflix europe"
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Just contactId
+
+      -- Match-only: substring resolution never creates a dictionary entry.
+      countAfter <- contactDictionaryCount env userId
+      countAfter `shouldBe` countBefore
+
+    it "prefers an exact match over a substring match" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      _netId <- seedContact env userId "Net"
+      netflixId <- seedContact env userId "Netflix"
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-exact-over-substring" "Netflix"
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Just netflixId
+
+    it "prefers the longest matching substring among several candidate contacts" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      _amazonId <- seedContact env userId "Amazon"
+      amazonPrimeId <- seedContact env userId "Amazon Prime"
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-longest-substring" "amazon prime video subscription"
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Just amazonPrimeId
+
+    it "leaves contactId Nothing when two equal-length substring matches tie" $ do
+      (env, userId, bankAccId) <- setupContactTestEnv
+      _uberId <- seedContact env userId "Uber"
+      _boltId <- seedContact env userId "Bolt"
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+          tx = mkTestTransactionWithDescription (-50) "tx-contact-ambiguous-substring" "uber and bolt ride"
+      result <- runAppM env $ importTransaction mockClassify userId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.contactId `shouldBe` Nothing
+
   -- Regression guard for the permanent-dedup fix. The BankImportReadModel
   -- records an externalTransactionId on TransactionPostingInitiated and must
   -- NEVER evict it, even when the posting subsequently fails. The previous
@@ -670,7 +885,8 @@ mkInitiatedEvent txId mExtId seqNo =
                   at = testTime,
                   transactionType = Transfer,
                   importInfo = fmap (\e -> ImportInfo {externalTransactionId = e, mcc = Nothing}) mExtId,
-                  labels = Set.empty
+                  labels = Set.empty,
+                  contactId = Nothing
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
@@ -693,7 +909,8 @@ storeInitiatedEvent env txId extId =
               at = testTime,
               transactionType = Transfer,
               importInfo = Just ImportInfo {externalTransactionId = extId, mcc = Nothing},
-              labels = Set.empty
+              labels = Set.empty,
+              contactId = Nothing
             }
    in runAppM env
         $ runDb

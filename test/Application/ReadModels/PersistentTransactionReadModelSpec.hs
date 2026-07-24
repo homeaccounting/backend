@@ -16,7 +16,8 @@
 --     and label set (insert-by-id + full label replacement), so startup
 --     catch-up / replay is safe.
 --   * __In-use guard__ — 'findReferencingTransactions' counts references via
---     labels and via allocation categories, excluding 'Cancelled'.
+--     labels and via allocation categories, including 'Cancelled' (still
+--     retrievable via the API) but excluding 'Failed' (never posted).
 module Application.ReadModels.PersistentTransactionReadModelSpec (spec) where
 
 import Application.ReadModels.Transaction
@@ -38,6 +39,7 @@ import Domain.Core.Types
   ( AccountId,
     Allocation (..),
     CategoryId,
+    ContactId,
     Currency (..),
     LabelId,
     TransactionId,
@@ -47,8 +49,11 @@ import Domain.Core.Types
   )
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
-  ( TransactionCancellationCompleted (..),
+  ( TransactionAmendmentCompleted (..),
+    TransactionCancellationCompleted (..),
+    TransactionContactSet (..),
     TransactionPostingCompleted (..),
+    TransactionPostingFailed (..),
   )
 import qualified Eventium
 import Infrastructure.App (AppEnv)
@@ -76,6 +81,9 @@ lbl n = mockDictionaryEntryId (UUID.fromWords n 0 0 0)
 cat :: Word32 -> CategoryId
 cat n = mockDictionaryEntryId (UUID.fromWords n 0 0 0)
 
+contact :: Word32 -> ContactId
+contact n = mockDictionaryEntryId (UUID.fromWords n 0 0 0)
+
 allPage :: Page
 allPage = Page defaultLimit 0
 
@@ -92,7 +100,7 @@ initiated ::
   Set LabelId ->
   Eventium.SequenceNumber ->
   Eventium.GlobalStreamEvent AccountingEvent
-initiated txId src tgt tt labelSet = postingInitiatedGlobal txId src tgt tt labelSet day day
+initiated txId src tgt tt labelSet sq = postingInitiatedGlobal txId src tgt tt labelSet day day sq Nothing
 
 completed :: TransactionId -> Eventium.SequenceNumber -> Eventium.GlobalStreamEvent AccountingEvent
 completed txId = transactionEditGlobal txId (TransactionPostingCompletedEvent TransactionPostingCompleted)
@@ -102,6 +110,12 @@ cancelled txId =
   transactionEditGlobal
     txId
     (TransactionCancellationCompletedEvent TransactionCancellationCompleted {transactionId = txId, by = mockUserId (UUID.fromWords 9 0 0 0)})
+
+failed :: TransactionId -> Eventium.SequenceNumber -> Eventium.GlobalStreamEvent AccountingEvent
+failed txId =
+  transactionEditGlobal
+    txId
+    (TransactionPostingFailedEvent (TransactionPostingFailed "boom"))
 
 -- | An expense transaction type with a single allocation against @c@.
 expenseOn :: CategoryId -> TransactionType
@@ -172,22 +186,104 @@ spec = describe "Persistent Transaction read model" $ do
       mTd <- runDbIn env (getTransaction (tx 1))
       (.labels) <$> mTd `shouldBe` Just (Set.fromList [lbl 7, lbl 8])
 
-  describe "findReferencingTransactions (in-use guard)" $ do
-    it "counts a label reference but not a cancelled one, and counts allocation categories" $ do
+  describe "contactId" $ do
+    it "TransactionPostingInitiated with a contact projects it onto the row" $ do
       env <-
         seedEnv
-          [ -- tx1: carries label 7 (live)
-            initiated (tx 1) acctA acctB Transfer (Set.singleton (lbl 7)) 0,
-            -- tx2: expense allocation against category 50 (live)
-            initiated (tx 2) acctA acctB (expenseOn (cat 50)) Set.empty 1,
-            completed (tx 2) 2,
-            -- tx3: carries label 7 but is cancelled → excluded
-            initiated (tx 3) acctA acctB Transfer (Set.singleton (lbl 7)) 3,
-            cancelled (tx 3) 4
+          [postingInitiatedGlobal (tx 1) acctA acctB Transfer Set.empty day day 0 (Just (contact 5))]
+      mTd <- runDbIn env (getTransaction (tx 1))
+      (.contactId) <$> mTd `shouldBe` Just (Just (contact 5))
+
+    it "TransactionPostingInitiated without a contact leaves the row's contact as Nothing" $ do
+      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      mTd <- runDbIn env (getTransaction (tx 1))
+      (.contactId) <$> mTd `shouldBe` Just Nothing
+
+    it "TransactionContactSet updates the contact, and a subsequent Nothing clears it" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+            transactionEditGlobal
+              (tx 1)
+              (TransactionContactSetEvent TransactionContactSet {transactionId = tx 1, contactId = Just (contact 5)})
+              1
           ]
-      -- Label 7 is referenced by tx1 (live) and tx3 (cancelled) → only tx1 counts.
+      mTdSet <- runDbIn env (getTransaction (tx 1))
+      (.contactId) <$> mTdSet `shouldBe` Just (Just (contact 5))
+
+      runDbIn
+        env
+        ( applyTransactionEvent
+            ( transactionEditGlobal
+                (tx 1)
+                (TransactionContactSetEvent TransactionContactSet {transactionId = tx 1, contactId = Nothing})
+                2
+            )
+        )
+      mTdCleared <- runDbIn env (getTransaction (tx 1))
+      (.contactId) <$> mTdCleared `shouldBe` Just Nothing
+
+    it "TransactionAmendmentCompleted replaces the contact" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+            transactionEditGlobal
+              (tx 1)
+              ( TransactionAmendmentCompletedEvent
+                  TransactionAmendmentCompleted
+                    { transactionId = tx 1,
+                      newSourceAccountId = acctA,
+                      newTargetAccountId = acctB,
+                      newSourceAmount = unsafeMoney USD 100,
+                      newTargetAmount = unsafeMoney USD 100,
+                      newExchangeRate = Nothing,
+                      newTransactionType = Transfer,
+                      contactId = Just (contact 9),
+                      by = mockUserId (UUID.fromWords 9 0 0 0)
+                    }
+              )
+              1
+          ]
+      mTd <- runDbIn env (getTransaction (tx 1))
+      (.contactId) <$> mTd `shouldBe` Just (Just (contact 9))
+
+  describe "findReferencingTransactions (in-use guard)" $ do
+    it "counts a label reference from a cancelled transaction, but not from a failed one, and counts allocation categories" $ do
+      env <-
+        seedEnv
+          [ -- tx1: carries label 7 and is cancelled → still counts (cancelled
+            -- transactions remain retrievable via the API)
+            initiated (tx 1) acctA acctB Transfer (Set.singleton (lbl 7)) 0,
+            cancelled (tx 1) 1,
+            -- tx2: carries label 8 but failed to post → excluded
+            initiated (tx 2) acctA acctB Transfer (Set.singleton (lbl 8)) 2,
+            failed (tx 2) 3,
+            -- tx3: expense allocation against category 50 (completed, live)
+            initiated (tx 3) acctA acctB (expenseOn (cat 50)) Set.empty 4,
+            completed (tx 3) 5
+          ]
+      -- Label 7 is referenced only by the cancelled tx1 → still counts.
       runDbIn env (findReferencingTransactions (lbl 7)) `shouldReturn` 1
-      -- Category 50 is referenced by tx2's allocation.
+      -- Label 8 is referenced only by the failed tx2 → excluded.
+      runDbIn env (findReferencingTransactions (lbl 8)) `shouldReturn` 0
+      -- Category 50 is referenced by tx3's allocation.
       runDbIn env (findReferencingTransactions (cat 50)) `shouldReturn` 1
       -- An unreferenced entry has no users.
       runDbIn env (findReferencingTransactions (cat 99)) `shouldReturn` 0
+
+    it "counts a contact reference from a cancelled transaction, but not from a failed one" $ do
+      env <-
+        seedEnv
+          [ -- tx1: carries contact 5 and is cancelled → still counts
+            postingInitiatedGlobal (tx 1) acctA acctB Transfer Set.empty day day 0 (Just (contact 5)),
+            cancelled (tx 1) 1,
+            -- tx2: carries contact 6 but failed to post → excluded
+            postingInitiatedGlobal (tx 2) acctA acctB Transfer Set.empty day day 2 (Just (contact 6)),
+            failed (tx 2) 3
+          ]
+      -- Contact 5 is referenced only by the cancelled tx1 → still counts.
+      runDbIn env (findReferencingTransactions (contact 5)) `shouldReturn` 1
+      -- Contact 6 is referenced only by the failed tx2 → excluded.
+      runDbIn env (findReferencingTransactions (contact 6)) `shouldReturn` 0
+      -- An unreferenced contact has no users.
+      runDbIn env (findReferencingTransactions (contact 99)) `shouldReturn` 0

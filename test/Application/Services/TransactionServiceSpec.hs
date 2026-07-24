@@ -140,6 +140,7 @@ spec = describe "TransactionService" $ do
                 transactionType = Transfer,
                 importInfo = Nothing,
                 labels = Set.empty,
+                contactId = Nothing,
                 relation = Nothing
               }
       result <- runAppM env $ initiateTransaction transferCmd
@@ -166,6 +167,7 @@ spec = describe "TransactionService" $ do
                 transactionType = Transfer,
                 importInfo = Nothing,
                 labels = Set.empty,
+                contactId = Nothing,
                 relation = Nothing
               }
       createResult <- runAppM env $ initiateTransaction transferCmd
@@ -202,6 +204,7 @@ spec = describe "TransactionService" $ do
                 transactionType = Transfer,
                 importInfo = Nothing,
                 labels = Set.empty,
+                contactId = Nothing,
                 relation = Nothing
               }
       result1 <- runAppM env $ initiateTransaction (mkTransferCmd 100 "First")

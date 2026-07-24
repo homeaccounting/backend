@@ -100,7 +100,8 @@ mkTransactionPostingInitiatedEventAt t =
             at = t,
             transactionType = Transfer,
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           }
     )
 
@@ -125,7 +126,8 @@ mkTransactionPostingInitiatedEventWithLabelsAndExternalId =
             at = sampleAt,
             transactionType = Transfer,
             importInfo = Just ImportInfo {externalTransactionId = unsafeExternalTransactionId "mono:stmt-42", mcc = Nothing},
-            labels = Set.fromList [unsafeDictionaryEntryId (UUID.fromWords 10 0 0 1), unsafeDictionaryEntryId (UUID.fromWords 10 0 0 2)]
+            labels = Set.fromList [unsafeDictionaryEntryId (UUID.fromWords 10 0 0 1), unsafeDictionaryEntryId (UUID.fromWords 10 0 0 2)],
+            contactId = Nothing
           }
     )
 
@@ -266,7 +268,8 @@ spec = describe "TransactionPostingManager (Saga)" $ do
                       at = sampleAt,
                       transactionType = Transfer,
                       importInfo = Nothing,
-                      labels = Set.empty
+                      labels = Set.empty,
+                      contactId = Nothing
                     }
               )
           state = handleTransactionPostingEvent emptyTransferManager badEvent

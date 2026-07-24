@@ -18,6 +18,7 @@
 --   POST   /api/transactions/expense           - Record an expense transaction
 --   POST   /api/transactions/transfer          - Initiate an internal transfer
 --   PUT    /api/transactions/:id/labels        - Replace label set
+--   PUT    /api/transactions/:id/contact       - Replace (or clear) contact
 --   PATCH  /api/transactions/:id/allocations   - Replace allocations
 --   PUT    /api/transactions/:id/description   - Replace description
 --   PUT    /api/transactions/:id/date          - Replace business date
@@ -47,6 +48,7 @@ module Web.API.TransactionAPI
     listTransactionsHandler,
     getTransactionHandler,
     setLabelsHandler,
+    setContactHandler,
     setAllocationsHandler,
     changeDescriptionHandler,
     changeDateHandler,
@@ -88,6 +90,7 @@ import Web.Types
     ExpenseRequest (..),
     IncomeRequest (..),
     SetTransactionAllocationsRequest (..),
+    SetTransactionContactRequest (..),
     SetTransactionLabelsRequest (..),
     TransactionListResponse (..),
     TransactionRelation (..),
@@ -96,6 +99,7 @@ import Web.Types
     TransferRequest (..),
     ValidationErrorResponse (..),
     fromTransactionData,
+    parseContactId,
     parseLabelIds,
     parseOptionalExchangeRate,
     toDomainMoney,
@@ -158,6 +162,14 @@ type TransactionAPI =
       :> Capture "id" UUID
       :> "labels"
       :> ReqBody '[JSON] SetTransactionLabelsRequest
+      :> Put '[JSON] TransactionResponse
+    -- PUT /api/transactions/:id/contact - Replace (or clear) the contact on a Completed transaction.
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "transactions"
+      :> Capture "id" UUID
+      :> "contact"
+      :> ReqBody '[JSON] SetTransactionContactRequest
       :> Put '[JSON] TransactionResponse
     -- PATCH /api/transactions/:id/allocations - Replace the allocations on a Completed Income/Expense.
     :<|> AuthProtect "jwt"
@@ -255,6 +267,7 @@ transactionServer =
     :<|> transferHandler
     :<|> listTransactionsHandler
     :<|> setLabelsHandler
+    :<|> setContactHandler
     :<|> setAllocationsHandler
     :<|> changeDescriptionHandler
     :<|> changeDateHandler
@@ -292,7 +305,8 @@ incomeHandler user request = do
   (total, allocations) <- either throwDomainError pure (buildAllocations cur request.allocations)
   labelSet <- validateField "labels" $ parseLabelIds request.labels
   mRelation <- traverse parseRelation request.relation
-  result <- TransactionService.initiateIncome userId accountId total allocations labelSet request.description request.date mRelation
+  contact <- validateField "contactId" $ parseContactId request.contactId
+  result <- TransactionService.initiateIncome userId accountId total allocations labelSet request.description request.date mRelation contact
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -318,8 +332,9 @@ expenseHandler user request = do
   cur <- validateField "currency" $ parseCurrency request.currency
   (total, allocations) <- either throwDomainError pure (buildAllocations cur request.allocations)
   labelSet <- validateField "labels" $ parseLabelIds request.labels
+  contact <- validateField "contactId" $ parseContactId request.contactId
   -- The public expense endpoint does not expose relation edges (yet).
-  result <- TransactionService.initiateExpense userId accountId total allocations labelSet request.description request.date Nothing
+  result <- TransactionService.initiateExpense userId accountId total allocations labelSet request.description request.date Nothing contact
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err
@@ -351,6 +366,21 @@ setLabelsHandler user rawId req = do
   transactionId <- validateField "id" $ mkTransactionId rawId
   labelSet <- validateField "labels" $ parseLabelIds (Just req.labels)
   result <- TransactionService.setTransactionLabels user.userId transactionId labelSet
+  case result of
+    Right td -> pure $ fromTransactionData transactionId td
+    Left err -> throwDomainError err
+
+-- | Handler for PUT /api/transactions/:id/contact — replace (or clear,
+-- via @null@) the contact on an existing Completed transaction.
+setContactHandler ::
+  AuthenticatedUser ->
+  UUID ->
+  SetTransactionContactRequest ->
+  AppM TransactionResponse
+setContactHandler user rawId req = do
+  transactionId <- validateField "id" $ mkTransactionId rawId
+  contact <- validateField "contactId" $ parseContactId req.contactId
+  result <- TransactionService.setTransactionContact user.userId transactionId contact
   case result of
     Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err
@@ -425,6 +455,7 @@ amendTransactionHandler user rawId req = do
       tgtMoney = toDomainMoney tgtCur req.targetAmount
   maybeRate <-
     validateField "exchangeRate" $ parseOptionalExchangeRate srcCur tgtCur req.exchangeRate
+  contact <- validateField "contactId" $ parseContactId req.contactId
   let cmd =
         AmendTransaction
           { transactionId = transactionId,
@@ -438,6 +469,13 @@ amendTransactionHandler user rawId req = do
             -- in TransactionService.amendTransaction before dispatch. The
             -- DTO does not expose this field; it's service-internal.
             newTransactionType = Transfer,
+            -- AmendTransaction.contactId is full-replacement (Nothing =
+            -- clear), so the request must always carry the client's full
+            -- desired contact state — resend the current value to preserve
+            -- it, omit/null to clear it. Mirrors how the other amendment
+            -- fields (accounts, amounts, allocations) carry full desired
+            -- state rather than a partial diff.
+            contactId = contact,
             by = user.userId
           }
   result <- TransactionService.amendTransaction user.userId transactionId cmd

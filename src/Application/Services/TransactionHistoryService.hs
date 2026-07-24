@@ -46,6 +46,7 @@ import Domain.Models
         TransactionAmendmentInitiatedEvent,
         TransactionCancellationCompletedEvent,
         TransactionCancellationInitiatedEvent,
+        TransactionContactSetEvent,
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
@@ -61,6 +62,7 @@ import Domain.Transaction.Events
     TransactionAmendmentInitiated,
     TransactionCancellationCompleted,
     TransactionCancellationInitiated,
+    TransactionContactSet,
     TransactionDateChanged,
     TransactionDescriptionChanged,
     TransactionLabelsSet,
@@ -103,6 +105,7 @@ data TransactionHistoryEntry
   | HistoryPostingCompleted
   | HistoryPostingFailed TransactionPostingFailed
   | HistoryLabelsSet TransactionLabelsSet
+  | HistoryContactSet TransactionContactSet
   | HistoryAllocationsChanged TransactionAllocationsChanged
   | HistoryDescriptionChanged TransactionDescriptionChanged
   | HistoryDateChanged TransactionDateChanged
@@ -162,6 +165,7 @@ toHistoryEntry (StreamEvent _ _ _ payload) = case payload of
   TransactionPostingCompletedEvent _ -> Just HistoryPostingCompleted
   TransactionPostingFailedEvent e -> Just (HistoryPostingFailed e)
   TransactionLabelsSetEvent e -> Just (HistoryLabelsSet e)
+  TransactionContactSetEvent e -> Just (HistoryContactSet e)
   TransactionAllocationsChangedEvent e -> Just (HistoryAllocationsChanged e)
   TransactionDescriptionChangedEvent e -> Just (HistoryDescriptionChanged e)
   TransactionDateChangedEvent e -> Just (HistoryDateChanged e)

@@ -186,6 +186,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
           "Initial grocery + restaurant split"
           Nothing
           Nothing
+          Nothing
     (txId, _seedTd) <- unwrap "initiateExpense" initResult
 
     -- Step 2: GET reflects the two-allocation Expense.
@@ -240,6 +241,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
               newExchangeRate = Nothing,
               newAllocations = Just newAllocs,
               newTransactionType = Transfer,
+              contactId = Nothing,
               by = h.harnessUser
             }
     amendResult <-

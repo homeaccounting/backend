@@ -90,6 +90,7 @@ seedIncome seed accId amount = do
         "Seed"
         Nothing
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "seedIncome failed: " <> show err
     Right (txId, _) -> pure (txId, ())
@@ -123,6 +124,7 @@ seedIncomeWithExtId seed accId amount extId = do
             transactionType = tt,
             importInfo = Just ImportInfo {externalTransactionId = unsafeExternalTransactionId extId, mcc = Nothing},
             labels = Set.empty,
+            contactId = Nothing,
             relation = Nothing
           }
   res <- runAppM seed.seedEnv $ TransactionService.initiateTransaction cmd

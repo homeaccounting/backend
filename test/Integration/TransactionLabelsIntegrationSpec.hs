@@ -122,6 +122,7 @@ seedExpense h labels = do
         "Groceries"
         Nothing
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "initiateExpense failed: " <> show err
     Right (txId, _) -> pure txId

@@ -59,6 +59,7 @@ module Web.Types
     AdjustBalanceRequest (..),
     TransferRequest (..),
     SetTransactionLabelsRequest (..),
+    SetTransactionContactRequest (..),
     SetTransactionAllocationsRequest (..),
     ChangeTransactionDescriptionRequest (..),
     ChangeTransactionDateRequest (..),
@@ -97,9 +98,10 @@ module Web.Types
     fromTransactionData,
     fromTransactionStatus,
 
-    -- * Category / Label Parsing
+    -- * Category / Label / Contact Parsing
     parseCategoryId,
     parseLabelIds,
+    parseContactId,
     parseOptionalExchangeRate,
 
     -- * Serialization Helpers
@@ -126,7 +128,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
@@ -387,7 +389,10 @@ data IncomeRequest
     -- | Optional typed relation from the new income to a pre-existing
     -- transaction (e.g. a 'refund' of an expense, or a generic 'associated'
     -- link). Absent in JSON decodes to 'Nothing' (generic instance).
-    relation :: Maybe TransactionRelation
+    relation :: Maybe TransactionRelation,
+    -- | Optional contact dictionary entry to associate with the new
+    -- transaction. Absent in JSON decodes to 'Nothing' (generic instance).
+    contactId :: Maybe UUID
   }
   deriving (Show, Eq, Generic)
 
@@ -406,7 +411,10 @@ data ExpenseRequest
     allocations :: AllocationsRequest,
     description :: Text,
     date :: Maybe UTCTime,
-    labels :: Maybe [UUID]
+    labels :: Maybe [UUID],
+    -- | Optional contact dictionary entry to associate with the new
+    -- transaction. Absent in JSON decodes to 'Nothing' (generic instance).
+    contactId :: Maybe UUID
   }
   deriving (Show, Eq, Generic)
 
@@ -469,6 +477,17 @@ instance ToJSON SetTransactionLabelsRequest
 
 instance FromJSON SetTransactionLabelsRequest
 
+-- | Body for @PUT \/api\/transactions\/:id\/contact@ — replaces (or
+-- clears, via @null@) the contact on a Completed transaction.
+data SetTransactionContactRequest = SetTransactionContactRequest
+  { contactId :: Maybe UUID
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SetTransactionContactRequest
+
+instance FromJSON SetTransactionContactRequest
+
 -- | Body for @PATCH \/api\/transactions\/:id\/allocations@ — replaces the
 -- allocation set on a Completed Income\/Expense transaction.
 --
@@ -519,6 +538,13 @@ instance FromJSON ChangeTransactionDateRequest
 -- @newAllocations@ is required when the new kind is Income or Expense
 -- AND that kind differs from the current kind. Omit (@null@) for
 -- within-kind amount edits and for Transfer-kind amendments.
+--
+-- @contactId@ carries the transaction's full desired contact state, same
+-- as the other amendment fields carry the full desired posting facts:
+-- @null@\/absent means "no contact" (clears an existing one), and a
+-- present value that equals the current contact is a no-op. There is no
+-- separate "leave unchanged" sentinel — resend the current value to
+-- preserve it.
 data AmendTransactionRequest = AmendTransactionRequest
   { sourceAccountId :: UUID,
     targetAccountId :: UUID,
@@ -527,7 +553,8 @@ data AmendTransactionRequest = AmendTransactionRequest
     targetAmount :: Double,
     targetCurrency :: Text,
     exchangeRate :: Maybe Double,
-    newAllocations :: Maybe Allocations
+    newAllocations :: Maybe Allocations,
+    contactId :: Maybe UUID
   }
   deriving (Show, Eq, Generic)
 
@@ -625,6 +652,9 @@ data TransactionResponse
     allocations :: AllocationsResponse,
     date :: Text,
     labels :: [UUID],
+    -- | The transaction's single associated contact, if any. Surfaces the
+    -- dictionary-entry id only — no resolved name.
+    contactId :: Maybe UUID,
     -- | Count of completed amendments on this transaction. Always @0@
     -- on a transaction that has never been amended.
     amendmentCount :: Word,
@@ -1100,6 +1130,7 @@ fromTransactionData txId TransactionData {..} =
       allocations = allocationsResponseOf transactionType,
       date = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" date,
       labels = sort [unDictionaryEntryId eid | eid <- Set.toList labels],
+      contactId = unDictionaryEntryId <$> contactId,
       amendmentCount = amendmentCount,
       relations =
         [ TransactionRelation (unTransactionId rel) (renderRelationKind k)
@@ -1137,6 +1168,7 @@ fromTransaction txId tx =
       allocations = allocationsResponseOf tx.transactionType,
       date = "",
       labels = sort [unDictionaryEntryId eid | eid <- Set.toList tx.labels],
+      contactId = unDictionaryEntryId <$> tx.contactId,
       amendmentCount = tx.amendmentCount,
       relations = [],
       mcc = Nothing
@@ -1214,6 +1246,14 @@ parseLabelIds Nothing = Right Set.empty
 parseLabelIds (Just us) =
   Set.fromList
     <$> traverse (first ("Invalid label id: " <>) . mkDictionaryEntryId) us
+
+-- | Parse an optional contact UUID into a 'ContactId'. 'Nothing' yields
+-- 'Nothing' (no contact); a present UUID is validated the same way as
+-- 'parseCategoryId'.
+parseContactId :: Maybe UUID -> Either Text (Maybe ContactId)
+parseContactId Nothing = Right Nothing
+parseContactId (Just u) =
+  Just <$> first ("Invalid contact id: " <>) (mkDictionaryEntryId u)
 
 -- | Parse an optional exchange-rate Double into a domain 'ExchangeRate'
 -- for the (src, tgt) currency pair. 'Nothing' yields 'Nothing'.

@@ -56,6 +56,7 @@ import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Domain.Core.Types
   ( AccountId,
+    ContactId,
     ExchangeRate,
     Money,
     TransactionId,
@@ -148,6 +149,9 @@ data TransactionAmendmentData = TransactionAmendmentData
     newExchangeRate :: Maybe ExchangeRate,
     -- | Synthesised full new 'TransactionType' (kind ⊕ allocations).
     newTransactionType :: TransactionType,
+    -- | New contact for the transaction ('Nothing' to clear). Echoed
+    -- onto 'CompleteTransactionAmendment' at finalize.
+    contactId :: Maybe ContactId,
     by :: UserId,
     -- | Snapshot of the @at@ business timestamp used on every reversal leg.
     at :: UTCTime,
@@ -280,6 +284,7 @@ handleTransactionAmendmentEvent manager (StreamEvent _ _ _ (TransactionAmendment
                 newTargetAmount = evt.newTargetAmount,
                 newExchangeRate = evt.newExchangeRate,
                 newTransactionType = evt.newTransactionType,
+                contactId = evt.contactId,
                 by = evt.by,
                 at = postings.at,
                 phase = initialPhase mDebit rest
@@ -390,6 +395,7 @@ completeEffect amend =
                 newTargetAmount = amend.newTargetAmount,
                 newExchangeRate = amend.newExchangeRate,
                 newTransactionType = amend.newTransactionType,
+                contactId = amend.contactId,
                 by = amend.by
               }
         )

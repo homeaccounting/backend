@@ -20,6 +20,7 @@ import Data.Time (UTCTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
+    ContactId,
     Currency (..),
     LabelId,
     TransactionId,
@@ -34,8 +35,9 @@ import RIO
 import Testkit.Helpers (globalEvent, mockUserId)
 
 -- | A 'TransactionPostingInitiated' wrapped as a 'GlobalStreamEvent', with the
--- given type and labels. @businessAt@ is the payload's @at@; @persistedAt@ is
--- the metadata @createdAt@ (they differ for backdated-transaction tests).
+-- given type, labels, and optional contact. @businessAt@ is the payload's
+-- @at@; @persistedAt@ is the metadata @createdAt@ (they differ for
+-- backdated-transaction tests).
 postingInitiatedGlobal ::
   TransactionId ->
   AccountId ->
@@ -45,8 +47,9 @@ postingInitiatedGlobal ::
   UTCTime -> -- business at (payload)
   UTCTime -> -- persisted at (metadata createdAt)
   SequenceNumber ->
+  Maybe ContactId ->
   GlobalStreamEvent AccountingEvent
-postingInitiatedGlobal txId src tgt tt labelSet businessAt persistedAt seqNo =
+postingInitiatedGlobal txId src tgt tt labelSet businessAt persistedAt seqNo contact =
   let inner =
         StreamEvent
           (unTransactionId txId)
@@ -64,7 +67,8 @@ postingInitiatedGlobal txId src tgt tt labelSet businessAt persistedAt seqNo =
                   at = businessAt,
                   transactionType = tt,
                   importInfo = Nothing,
-                  labels = labelSet
+                  labels = labelSet,
+                  contactId = contact
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner

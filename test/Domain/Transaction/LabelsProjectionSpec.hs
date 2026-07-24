@@ -65,7 +65,8 @@ mkInitiated =
       at = anyTime,
       transactionType = Income seedIncomeAllocs,
       importInfo = Nothing,
-      labels = Set.empty
+      labels = Set.empty,
+      contactId = Nothing
     }
 
 -- | Placeholder business date for projection-fold tests. The labels /

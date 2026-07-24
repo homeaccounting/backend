@@ -28,6 +28,7 @@ import Domain.Transaction.CommandHandler
   )
 import Domain.Transaction.Commands
   ( SetTransactionAllocations (..),
+    SetTransactionContact (..),
     SetTransactionLabels (..),
   )
 import Domain.Transaction.Projection
@@ -110,6 +111,35 @@ spec = do
               SetTransactionLabels
                 { transactionId = txId,
                   labels = Set.empty
+                }
+      handleTransactionCommand failed cmd `shouldBe` Left CannotEditUncompletedTransaction
+
+  describe "SetTransactionContact" $ do
+    it "accepted in Completed state and emits TransactionContactSet" $ do
+      let cmd =
+            SetTransactionContactTransactionCommand
+              SetTransactionContact
+                { transactionId = txId,
+                  contactId = Just (unsafeDictionaryEntryId (UUID.fromWords 3 0 0 0))
+                }
+      handleTransactionCommand completedTransfer cmd `shouldSatisfy` isRight
+
+    it "rejected on Pending with CannotEditUncompletedTransaction" $ do
+      let cmd =
+            SetTransactionContactTransactionCommand
+              SetTransactionContact
+                { transactionId = txId,
+                  contactId = Nothing
+                }
+      handleTransactionCommand pendingIncome cmd `shouldBe` Left CannotEditUncompletedTransaction
+
+    it "rejected on Failed with CannotEditUncompletedTransaction" $ do
+      let failed = completedIncome & #status .~ Failed "nope"
+          cmd =
+            SetTransactionContactTransactionCommand
+              SetTransactionContact
+                { transactionId = txId,
+                  contactId = Nothing
                 }
       handleTransactionCommand failed cmd `shouldBe` Left CannotEditUncompletedTransaction
 

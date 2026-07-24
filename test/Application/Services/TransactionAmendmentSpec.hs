@@ -90,6 +90,7 @@ amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
       newExchangeRate = Nothing,
       newAllocations = Nothing,
       newTransactionType = Transfer,
+      contactId = Nothing,
       by = uid
     }
 
@@ -113,6 +114,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             (incomeAllocs fx (unsafeMoney Core.USD 100))
             Set.empty
             "Seed"
+            Nothing
             Nothing
             Nothing
       (txId, original) <- case create of
@@ -145,6 +147,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             (incomeAllocs fx (unsafeMoney Core.USD 100))
             Set.empty
             "Seed"
+            Nothing
             Nothing
             Nothing
       (txId, original) <- case create of
@@ -217,6 +220,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             "Coffee"
             Nothing
             Nothing
+            Nothing
       (txId, original) <- case create of
         Right r -> pure r
         Left err -> fail $ "initiateExpense failed: " <> show err
@@ -252,6 +256,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             Set.empty
             "Backdated seed"
             (Just originalAt)
+            Nothing
             Nothing
       (txId, original) <- case create of
         Right r -> pure r
@@ -335,6 +340,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             (expenseAllocs fx (unsafeMoney Core.UAH 200))
             Set.empty
             "Groceries"
+            Nothing
             Nothing
             Nothing
       txId <- case create of

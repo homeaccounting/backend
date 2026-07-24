@@ -162,6 +162,7 @@ validAmendCmd =
         newExchangeRate = Nothing,
         newAllocations = Nothing,
         newTransactionType = Transfer,
+        contactId = Nothing,
         by = amendedBy
       }
 
@@ -178,6 +179,7 @@ sameAccountAmendCmd =
         newExchangeRate = Nothing,
         newAllocations = Nothing,
         newTransactionType = Transfer,
+        contactId = Nothing,
         by = amendedBy
       }
 
@@ -194,6 +196,7 @@ zeroSourceAmendCmd =
         newExchangeRate = Nothing,
         newAllocations = Nothing,
         newTransactionType = Transfer,
+        contactId = Nothing,
         by = amendedBy
       }
 

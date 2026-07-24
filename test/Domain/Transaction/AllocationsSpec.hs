@@ -225,6 +225,7 @@ spec = describe "Allocations / worked examples" $ do
                   transactionType = Expense contraBadAllocs,
                   importInfo = Nothing,
                   labels = Set.empty,
+                  contactId = Nothing,
                   relation = Nothing
                 }
       -- transactionDefault has sourceAmount = 0 (uninitialised) so the

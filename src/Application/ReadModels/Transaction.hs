@@ -95,6 +95,7 @@ import Domain.Core.Range (Range (..))
 import Domain.Core.Types
   ( AccountId,
     Allocation (..),
+    ContactId,
     DictionaryEntryId,
     ExchangeRate,
     LabelId,
@@ -116,6 +117,7 @@ import Domain.Models
   ( AccountingEvent (..),
     TransactionAllocationsChanged (..),
     TransactionAmendmentCompleted (..),
+    TransactionContactSet (..),
     TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
     TransactionLabelsSet (..),
@@ -157,6 +159,9 @@ data TransactionData = TransactionData
     -- entries and providers that supply no MCC.
     mcc :: Maybe MCC,
     labels :: Set LabelId,
+    -- | Optional contact (payee/payer) associated with this transaction.
+    -- 'Nothing' when no contact is set.
+    contactId :: Maybe ContactId,
     -- | Outbound typed relationship edges declared by this transaction as
     -- @(relatedTransactionId, kind)@ — e.g. a 'Refund' edge to the expense it
     -- refunds. Assembled from the @transaction_relations@ rows (batch-loaded on
@@ -226,6 +231,7 @@ TransactionEntity sql=transactions
     transactionType TransactionType
     date UTCTime
     mcc Text Maybe
+    contactId DictionaryEntryId Maybe
     amendmentCount Int
     version EventVersion
     UniqueTransactionId transactionId
@@ -315,6 +321,7 @@ applyTransactionEvent globalEvent =
                     transactionEntityTransactionType = evt.transactionType,
                     transactionEntityDate = evt.at,
                     transactionEntityMcc = evt.importInfo >>= importInfoMcc,
+                    transactionEntityContactId = evt.contactId,
                     transactionEntityAmendmentCount = 0,
                     transactionEntityVersion = ver
                   }
@@ -328,6 +335,8 @@ applyTransactionEvent globalEvent =
           TransactionLabelsSetEvent evt -> do
             setLabels txId (Set.toList evt.labels)
             modifyTx txId (\e -> e {transactionEntityVersion = ver})
+          TransactionContactSetEvent evt ->
+            modifyTx txId (\e -> e {transactionEntityContactId = evt.contactId, transactionEntityVersion = ver})
           TransactionAllocationsChangedEvent evt ->
             modifyTx txId (\e -> e {transactionEntityTransactionType = replaceAllocations evt.newAllocations e.transactionEntityTransactionType, transactionEntityVersion = ver})
           TransactionDescriptionChangedEvent evt ->
@@ -345,6 +354,7 @@ applyTransactionEvent globalEvent =
                       transactionEntityTargetAmount = evt.newTargetAmount,
                       transactionEntityExchangeRate = evt.newExchangeRate,
                       transactionEntityTransactionType = evt.newTransactionType,
+                      transactionEntityContactId = evt.contactId,
                       transactionEntityAmendmentCount = e.transactionEntityAmendmentCount + 1,
                       transactionEntityVersion = ver
                     }
@@ -397,6 +407,7 @@ entToData e ls rels =
       date = e.transactionEntityDate,
       mcc = e.transactionEntityMcc,
       labels = Set.fromList ls,
+      contactId = e.transactionEntityContactId,
       relations = rels,
       amendmentCount = fromIntegral (max 0 e.transactionEntityAmendmentCount)
     }
@@ -527,33 +538,45 @@ transactionDatesForAccount accId = do
   pure $ Map.fromList [(e.transactionEntityTransactionId, e.transactionEntityDate) | Entity _ e <- rows]
 
 -- | Count transactions that reference the given dictionary entry id — as a label
--- (indexed @transaction_labels@ lookup) or as an allocation category — and are
--- not 'Cancelled'. Powers the in-use check that blocks deleting a dictionary
--- entry.
+-- (indexed @transaction_labels@ lookup), as an allocation category, or as the
+-- transaction's contact (the @transactions.contact_id@ scalar column) — and
+-- are not 'Failed'. Powers the in-use check that blocks deleting a
+-- dictionary entry.
+--
+-- 'Cancelled' transactions DO count: they remain retrievable via the API, so a
+-- dictionary entry they still reference must stay resolvable — deleting it
+-- would break that lookup. 'Failed' transactions never posted, so their
+-- references never blocked anything and don't count here either.
 --
 -- This is intentionally account-agnostic: the guard must catch a reference from
 -- /any/ transaction, and a transaction's accounts are unrelated to which
 -- configuration owns the entry (the entry id is a globally-unique UUID, so only
 -- the genuinely-referencing transactions match). The label path is the indexed
 -- @transaction_labels.label_id@ lookup; the allocation path deserializes the
--- non-cancelled rows' @transactionType@ — a bounded scan acceptable for this
+-- eligible rows' @transactionType@ — a bounded scan acceptable for this
 -- rare deletion-time guard. A fully-indexed allocation path would require a
 -- normalized @transaction_categories@ table (spec out-of-scope follow-up).
 findReferencingTransactions :: (MonadIO m) => DictionaryEntryId -> SqlPersistT m Int
 findReferencingTransactions entryId = do
-  nonCancelled <- selectList [TransactionEntityStatusKind !=. CancelledKind] []
-  let nonCancelledIds = Set.fromList [e.transactionEntityTransactionId | Entity _ e <- nonCancelled]
+  eligible <- selectList [TransactionEntityStatusKind !=. FailedKind] []
+  let eligibleIds = Set.fromList [e.transactionEntityTransactionId | Entity _ e <- eligible]
       allocRefs =
         Set.fromList
           [ e.transactionEntityTransactionId
-          | Entity _ e <- nonCancelled,
+          | Entity _ e <- eligible,
             referencesEntry entryId e.transactionEntityTransactionType
+          ]
+      contactRefs =
+        Set.fromList
+          [ e.transactionEntityTransactionId
+          | Entity _ e <- eligible,
+            e.transactionEntityContactId == Just entryId
           ]
   labelRows <- selectList [TransactionLabelEntityLabelId ==. entryId] []
   let labelRefs =
-        Set.intersection nonCancelledIds $
+        Set.intersection eligibleIds $
           Set.fromList [r.transactionLabelEntityTransactionId | Entity _ r <- labelRows]
-  pure (Set.size (Set.union allocRefs labelRefs))
+  pure (Set.size (Set.unions [allocRefs, labelRefs, contactRefs]))
   where
     referencesEntry eid tt = case allocationsOf tt of
       Nothing -> False

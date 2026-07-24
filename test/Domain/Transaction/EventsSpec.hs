@@ -23,12 +23,16 @@ import Domain.Core.Types
   ( ImportInfo (..),
     RelationKind (..),
     TransactionId,
+    TransactionType (Transfer),
     unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
     unsafeTransactionId,
   )
 import Domain.Transaction.Events
-  ( TransactionPostingInitiated (..),
+  ( TransactionAmendmentCompleted (..),
+    TransactionAmendmentInitiated (..),
+    TransactionContactSet (..),
+    TransactionPostingInitiated (..),
     TransactionRelationAdded (..),
   )
 import RIO
@@ -39,6 +43,9 @@ spec :: Spec
 spec = do
   postingInitiatedSpec
   relationAddedSpec
+  contactSetSpec
+  amendmentInitiatedSpec
+  amendmentCompletedSpec
 
 postingInitiatedSpec :: Spec
 postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
@@ -67,11 +74,105 @@ postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
       Left err -> expectationFailure $ "legacy decode failed: " <> err
       Right decoded -> decoded.labels `shouldBe` Set.empty
 
+  it "decodes legacy payloads without contactId as Nothing" $ do
+    let legacy = stripKey "contactId" (encode sampleEvent)
+    case eitherDecode legacy :: Either String TransactionPostingInitiated of
+      Left err -> expectationFailure $ "legacy decode failed: " <> err
+      Right decoded -> decoded.contactId `shouldBe` Nothing
+
+  it "round-trips TransactionPostingInitiated with Just contactId" $ do
+    let evt :: TransactionPostingInitiated
+        evt = sampleEvent {contactId = Just (unsafeDictionaryEntryId (UUID.fromWords64 0 5))}
+    (eitherDecode (encode evt) :: Either String TransactionPostingInitiated)
+      `shouldBe` Right evt
+
 relationAddedSpec :: Spec
 relationAddedSpec = describe "TransactionRelationAdded JSON" $ do
   it "TransactionRelationAdded round-trips through JSON" $ do
     let evt = TransactionRelationAdded sampleRelatedTxId Refund
     (decode (encode evt) :: Maybe TransactionRelationAdded) `shouldBe` Just evt
+
+contactSetSpec :: Spec
+contactSetSpec = describe "TransactionContactSet JSON" $ do
+  it "round-trips with Just contactId" $ do
+    let evt =
+          TransactionContactSet
+            { transactionId = sampleRelatedTxId,
+              contactId = Just (unsafeDictionaryEntryId (UUID.fromWords64 0 7))
+            }
+    (decode (encode evt) :: Maybe TransactionContactSet) `shouldBe` Just evt
+
+  it "round-trips with Nothing contactId" $ do
+    let evt =
+          TransactionContactSet
+            { transactionId = sampleRelatedTxId,
+              contactId = Nothing
+            }
+    (decode (encode evt) :: Maybe TransactionContactSet) `shouldBe` Just evt
+
+amendmentInitiatedSpec :: Spec
+amendmentInitiatedSpec = describe "TransactionAmendmentInitiated JSON" $ do
+  it "decodes legacy payloads without contactId as Nothing" $ do
+    let legacy = stripKey "contactId" (encode sampleAmendmentInitiated)
+    case eitherDecode legacy :: Either String TransactionAmendmentInitiated of
+      Left err -> expectationFailure $ "legacy decode failed: " <> err
+      Right decoded -> decoded.contactId `shouldBe` Nothing
+
+  it "round-trips with Just contactId" $ do
+    let evt :: TransactionAmendmentInitiated
+        evt =
+          sampleAmendmentInitiated
+            { contactId = Just (unsafeDictionaryEntryId (UUID.fromWords64 0 8))
+            }
+    (eitherDecode (encode evt) :: Either String TransactionAmendmentInitiated)
+      `shouldBe` Right evt
+
+amendmentCompletedSpec :: Spec
+amendmentCompletedSpec = describe "TransactionAmendmentCompleted JSON" $ do
+  it "decodes legacy payloads without contactId as Nothing" $ do
+    let legacy = stripKey "contactId" (encode sampleAmendmentCompleted)
+    case eitherDecode legacy :: Either String TransactionAmendmentCompleted of
+      Left err -> expectationFailure $ "legacy decode failed: " <> err
+      Right decoded -> decoded.contactId `shouldBe` Nothing
+
+  it "round-trips with Just contactId" $ do
+    let evt :: TransactionAmendmentCompleted
+        evt =
+          sampleAmendmentCompleted
+            { contactId = Just (unsafeDictionaryEntryId (UUID.fromWords64 0 9))
+            }
+    (eitherDecode (encode evt) :: Either String TransactionAmendmentCompleted)
+      `shouldBe` Right evt
+
+-- | A minimal valid 'TransactionAmendmentInitiated' for serialisation tests.
+sampleAmendmentInitiated :: TransactionAmendmentInitiated
+sampleAmendmentInitiated =
+  TransactionAmendmentInitiated
+    { transactionId = sampleRelatedTxId,
+      newSourceAccountId = mockAccountId (UUID.fromWords64 0 1),
+      newTargetAccountId = mockAccountId (UUID.fromWords64 0 2),
+      newSourceAmount = mockMoney 10,
+      newTargetAmount = mockMoney 10,
+      newExchangeRate = Nothing,
+      newTransactionType = Transfer,
+      contactId = Nothing,
+      by = mockUserId (UUID.fromWords64 0 3)
+    }
+
+-- | A minimal valid 'TransactionAmendmentCompleted' for serialisation tests.
+sampleAmendmentCompleted :: TransactionAmendmentCompleted
+sampleAmendmentCompleted =
+  TransactionAmendmentCompleted
+    { transactionId = sampleRelatedTxId,
+      newSourceAccountId = mockAccountId (UUID.fromWords64 0 1),
+      newTargetAccountId = mockAccountId (UUID.fromWords64 0 2),
+      newSourceAmount = mockMoney 10,
+      newTargetAmount = mockMoney 10,
+      newExchangeRate = Nothing,
+      newTransactionType = Transfer,
+      contactId = Nothing,
+      by = mockUserId (UUID.fromWords64 0 3)
+    }
 
 -- | A fixed related transaction id for the relation round-trip test.
 sampleRelatedTxId :: TransactionId
@@ -91,7 +192,8 @@ sampleEvent =
       at = UTCTime (fromGregorian 2026 4 1) 0,
       transactionType = singletonIncome (unsafeDictionaryEntryId (uuidFromInt 4)) (mockMoney 10),
       importInfo = Nothing,
-      labels = Set.empty
+      labels = Set.empty,
+      contactId = Nothing
     }
   where
     uuidFromInt :: Word64 -> UUID

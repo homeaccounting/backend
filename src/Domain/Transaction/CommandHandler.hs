@@ -217,7 +217,8 @@ handleTransactionCommand transaction (InitiateTransactionTransactionCommand Init
                               at = at,
                               transactionType = transactionType,
                               importInfo = importInfo,
-                              labels = labels
+                              labels = labels,
+                              contactId = contactId
                             }
                   -- No self-link check here: the freshly-generated aggregate id
                   -- is unknown to the pure handler (a fresh UUID can never equal
@@ -261,6 +262,18 @@ handleTransactionCommand transaction (SetTransactionLabelsTransactionCommand Set
             TransactionLabelsSet
               { transactionId = transactionId,
                 labels = labels
+              }
+        ]
+    _ -> Left CannotEditUncompletedTransaction
+-- Handle SetTransactionContact command
+handleTransactionCommand transaction (SetTransactionContactTransactionCommand SetTransactionContact {..}) =
+  case transaction ^. #status of
+    Completed ->
+      Right
+        [ TransactionContactSetTransactionEvent
+            TransactionContactSet
+              { transactionId = transactionId,
+                contactId = contactId
               }
         ]
     _ -> Left CannotEditUncompletedTransaction
@@ -357,6 +370,7 @@ handleTransactionCommand transaction (AmendTransactionTransactionCommand AmendTr
                     newTargetAmount = newTargetAmount,
                     newExchangeRate = newExchangeRate,
                     newTransactionType = newTransactionType,
+                    contactId = contactId,
                     by = by
                   }
             ]
@@ -380,6 +394,7 @@ handleTransactionCommand transaction (CompleteTransactionAmendmentTransactionCom
                 newTargetAmount = newTargetAmount,
                 newExchangeRate = newExchangeRate,
                 newTransactionType = newTransactionType,
+                contactId = contactId,
                 by = by
               }
         ]

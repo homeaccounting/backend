@@ -110,6 +110,14 @@ type AppM = RIO AppEnv
 - No exceptions for expected error flows
 - Validation logic must be pure; push effects to boundaries
 
+## Commands & Events
+
+- **Actor field naming:** the actor (who performed the action) is always named `by :: UserId` — never `amendedBy`/`closedBy`/etc. (Some legacy Account fields still use the old style; match `by` for anything new.)
+- **When to include `by`:** carry `by` **only** on commands/events that are a user-accountable *lifecycle action on the whole aggregate* — creating it (initiate), rewriting its posted financial facts (amend), or voiding it (cancel). Both legs of a two-phase saga carry it (Initiated + Completed) so the audit record is self-contained.
+  - **Omit `by`** on in-place field/metadata edits that leave the money movement intact (labels, contact, allocations re-split, description, date, relations), and on pure system/saga success signals (posting completed/failed).
+  - If per-edit accountability ever becomes a requirement, add `by` uniformly across all field edits — not ad hoc to one.
+- **Audit history parity:** a new user-visible transaction event must be mapped in `TransactionHistoryService.toHistoryEntry` (with a matching `TransactionHistoryEntry` constructor) if its label/allocation siblings are — the mapping is `mapMaybe`, so a missing case silently drops the event from the audit trail.
+
 ## Testing
 
 Tests live in `test/` and use Hspec with hspec-discover. Three categories:

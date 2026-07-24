@@ -112,7 +112,8 @@ seedInitiated =
             at = sampleAt,
             transactionType = Transfer,
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           }
     )
 
@@ -140,7 +141,8 @@ seedIncomeInitiated =
             at = sampleAt,
             transactionType = singletonIncome (mockDictionaryEntryId incomeCatUuid) (m 100),
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           }
     )
 
@@ -159,6 +161,7 @@ mkAmendInitiated newSrcA newTgtA newSrcAmt newTgtAmt =
             newTargetAmount = newTgtAmt,
             newExchangeRate = Nothing,
             newTransactionType = Transfer,
+            contactId = Nothing,
             by = userId_
           }
     )
@@ -180,6 +183,7 @@ mkAmendInitiatedKind newSrcA newTgtA newSrcAmt newTgtAmt kind =
             newTargetAmount = newTgtAmt,
             newExchangeRate = Nothing,
             newTransactionType = kind,
+            contactId = Nothing,
             by = userId_
           }
     )

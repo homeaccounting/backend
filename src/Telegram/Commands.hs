@@ -649,7 +649,7 @@ handleIncomeDescription botState telegramId chatId cat money description = do
                 sendMsg chatId $ "Income recording failed: " <> tshow allocErr
               Right alloc -> do
                 let allocations = mkIncomeAllocations (alloc :| [])
-                result <- initiateIncome userId accountId money allocations Set.empty description Nothing Nothing
+                result <- initiateIncome userId accountId money allocations Set.empty description Nothing Nothing Nothing
                 case result of
                   Left err -> do
                     logError $ "Income failed: " <> displayShow err
@@ -721,7 +721,7 @@ handleExpenseDescription botState telegramId chatId cat money description = do
                 sendMsg chatId $ "Expense recording failed: " <> tshow allocErr
               Right alloc -> do
                 let allocations = mkExpenseAllocations (alloc :| [])
-                result <- initiateExpense userId accountId money allocations Set.empty description Nothing Nothing
+                result <- initiateExpense userId accountId money allocations Set.empty description Nothing Nothing Nothing
                 case result of
                   Left err -> do
                     logError $ "Expense failed: " <> displayShow err

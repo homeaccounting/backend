@@ -48,6 +48,7 @@ sampleTxn tt =
       date = UTCTime (fromGregorian 2026 4 18) (secondsToDiffTime (14 * 3600 + 30 * 60)),
       mcc = Nothing,
       labels = Set.empty,
+      contactId = Nothing,
       relations = [],
       amendmentCount = 0
     }

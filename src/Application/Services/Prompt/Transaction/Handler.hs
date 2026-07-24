@@ -160,8 +160,8 @@ runRecordTransactions uid rctx userText rows = do
               pure (Right (RecordedTransaction {index = idx, interpretation = interp, txId = tid, tx = tdata}))
     dispatch = \case
       ResolvedIncome target total allocs labels desc date ->
-        TransactionService.initiateIncome uid target total allocs labels desc date Nothing
+        TransactionService.initiateIncome uid target total allocs labels desc date Nothing Nothing
       ResolvedExpense source total allocs labels desc date ->
-        TransactionService.initiateExpense uid source total allocs labels desc date Nothing
+        TransactionService.initiateExpense uid source total allocs labels desc date Nothing Nothing
       ResolvedTransfer source dest amount labels desc date ->
         TransactionService.initiateTransfer uid source dest amount labels desc Nothing date Nothing

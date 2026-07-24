@@ -99,6 +99,7 @@ postExpense env fx = do
         "Purchase"
         Nothing
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "initiateExpense failed: " <> show err
     Right (tid, _) -> pure tid
@@ -115,6 +116,7 @@ postIncome env fx = do
         (singletonAllocation fx.incomeCategory (unsafeMoney Core.USD 100))
         Set.empty
         "Salary"
+        Nothing
         Nothing
         Nothing
   case res of
@@ -143,6 +145,7 @@ spec = describe "TransactionService refund + relation hooks" $ do
             "Refund"
             Nothing
             (Just (RelationSpec expenseId Refund))
+            Nothing
       case res of
         Left err -> expectationFailure ("expected success, got: " <> show err)
         Right (refundId, _) -> do
@@ -166,6 +169,7 @@ spec = describe "TransactionService refund + relation hooks" $ do
             "Split origin"
             Nothing
             (Just (RelationSpec originId Split))
+            Nothing
       case res of
         Left err -> expectationFailure ("expected success, got: " <> show err)
         Right (newTxId, _) -> do
@@ -187,6 +191,7 @@ spec = describe "TransactionService refund + relation hooks" $ do
             "Refund"
             Nothing
             (Just (RelationSpec incomeId Refund))
+            Nothing
       res `shouldBe` Left RefundTargetMustBeExpense
 
     it "rejects a refund whose target is Cancelled" $ do
@@ -208,6 +213,7 @@ spec = describe "TransactionService refund + relation hooks" $ do
             "Refund"
             Nothing
             (Just (RelationSpec expenseId Refund))
+            Nothing
       res `shouldBe` Left CannotRefundCancelledTransaction
 
     it "rejects a refund whose target is invisible to the caller" $ do
@@ -228,6 +234,7 @@ spec = describe "TransactionService refund + relation hooks" $ do
             "Refund"
             Nothing
             (Just (RelationSpec foreignExpense Refund))
+            Nothing
       case res of
         Left (NotFound "Transaction" _) -> pure ()
         other -> expectationFailure ("expected NotFound Transaction, got: " <> show other)

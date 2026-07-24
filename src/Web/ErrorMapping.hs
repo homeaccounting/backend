@@ -220,6 +220,41 @@ mapDomainError (CategoryInUse eid n) =
                     ]
             }
     }
+mapDomainError (ContactNotFound eid) =
+  err404
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Contact not found",
+              code = "CONTACT_NOT_FOUND",
+              details = Just $ Map.singleton "entryId" eid
+            }
+    }
+mapDomainError (ContactInUse eid n) =
+  err409
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Contact is referenced by existing transactions",
+              code = "CONTACT_IN_USE",
+              details =
+                Just $
+                  Map.fromList
+                    [ ("entryId", eid),
+                      ("usageCount", tshow n)
+                    ]
+            }
+    }
+mapDomainError ContactNotAllowedOnTransfer =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "A contact cannot be set on a transfer between your own accounts",
+              code = "CONTACT_NOT_ALLOWED_ON_TRANSFER",
+              details = Nothing
+            }
+    }
 mapDomainError DictionaryGroupNotEmpty =
   err409
     { errBody =

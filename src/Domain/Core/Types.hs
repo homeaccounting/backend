@@ -65,6 +65,7 @@ module Domain.Core.Types
     unDictionaryEntryId,
     LabelId,
     CategoryId,
+    ContactId,
     MCC,
     EntryName,
     mkEntryName,
@@ -648,6 +649,10 @@ type LabelId = DictionaryEntryId
 -- dictionary entries; treating them as aliases avoids a parallel type
 -- hierarchy while keeping spec language ("categories") intact at call sites.
 type CategoryId = DictionaryEntryId
+
+-- | A contact (counterparty) reference: the source of an income or the
+-- beneficiary of an expense. An entry in the shared @contact@ dictionary.
+type ContactId = DictionaryEntryId
 
 -- | ISO 18245 Merchant Category Code, rendered as text.
 --

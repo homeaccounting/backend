@@ -86,6 +86,7 @@ amendment s t sa ta =
       newTargetAmount = ta,
       newExchangeRate = Nothing,
       newTransactionType = Transfer,
+      contactId = Nothing,
       by = userId_
     }
 

@@ -135,7 +135,8 @@ completedViaProjection =
             at = transactionDefault ^. #at,
             transactionType = seedTransactionType,
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           },
       TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
     ]
@@ -242,6 +243,7 @@ genAmendmentInitiatedEvt = do
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
           newTransactionType = Transfer,
+          contactId = Nothing,
           by = uid
         }
 
@@ -265,6 +267,7 @@ genAmendmentCompletedEvt = do
           newTargetAmount = newTgtAmt,
           newExchangeRate = newRate,
           newTransactionType = seedTransactionType,
+          contactId = Nothing,
           by = uid
         }
 

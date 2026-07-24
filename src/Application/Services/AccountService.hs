@@ -571,6 +571,7 @@ adjustAccountBalance userId accountId targetBalance asOf reason = runExceptT $ d
                 transactionType = Adjustment,
                 importInfo = Nothing,
                 labels = mempty,
+                contactId = Nothing,
                 relation = Nothing
               }
     )

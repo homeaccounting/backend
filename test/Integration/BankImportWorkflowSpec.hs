@@ -17,9 +17,11 @@ module Integration.BankImportWorkflowSpec (spec) where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
+import qualified Application.ReadModels.Configuration as ConfigRM
 import qualified Application.ReadModels.ExchangeRate as ExchangeRateRM
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
+import Application.ReadModels.User (UserData (..), getUser)
 import Application.Services.AccountService (createAccount)
 import Application.Services.BankImportService
   ( AccountImportResult (..),
@@ -31,8 +33,11 @@ import Data.List (nubBy)
 import Data.Time (Day, UTCTime (..), fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUIDv4
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
+import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
+import Domain.Configuration.Commands (AddDictionaryEntry (..))
 import Domain.Configuration.Defaults
   ( DefaultEntry (..),
     ExpenseDefaults (..),
@@ -40,16 +45,22 @@ import Domain.Configuration.Defaults
     expense,
     income,
   )
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
     Currency (..),
+    DictionaryEntryId,
     ExternalTransactionId,
     Money,
     UserId,
     defaultBankAccount,
+    defaultConfigurationId,
     mkMoney,
     moneyCurrency,
+    unConfigurationId,
+    unsafeDictionaryEntryId,
+    unsafeEntryName,
     unsafeExternalTransactionId,
   )
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
@@ -63,6 +74,7 @@ import Infrastructure.Banking.Provider
     TransactionClassification (..),
   )
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
+import Infrastructure.Eventium (applyConfigurationCommand)
 import RIO
 import qualified RIO.Map as Map
 import qualified RIO.Text as T
@@ -147,6 +159,11 @@ mkTestTransaction amount extId =
       notes = Nothing,
       categoryHint = Nothing
     }
+
+-- | Create a bank transaction with a caller-chosen description, for testing
+-- contact resolution (which matches on the statement's @description@).
+mkDescribedTransaction :: Rational -> Text -> Text -> BankTransaction
+mkDescribedTransaction amount extId desc = (mkTestTransaction amount extId) {description = desc}
 
 -- | Create a hold bank transaction for testing. Amount is in major units.
 mkHoldTransaction :: Rational -> Text -> BankTransaction
@@ -284,6 +301,54 @@ accountBalanceOf env accId = do
   mData <- runDbIn env (AccountRM.getAccount accId)
   d <- fromJustIO "account" mData
   pure d.balance
+
+-- | Add a contact-dictionary entry directly to the shared default
+-- configuration (dispatched straight to its aggregate stream, bypassing the
+-- per-user clone-on-write). The test user is seeded via
+-- 'Fixtures.seedRegisteredUser', which writes only the read model and never
+-- the User aggregate's event stream, so 'ConfigurationService.addDictionaryEntry'
+-- (which clone-on-writes via a User command) is not usable here; this
+-- mirrors the direct-dispatch idiom in 'Application.Services.ConfigurationServiceSpec'.
+addContact :: AppEnv -> Text -> IO DictionaryEntryId
+addContact env name = do
+  entryUuid <- UUIDv4.nextRandom
+  let entryId = unsafeDictionaryEntryId entryUuid
+      cmd =
+        AddDictionaryEntryConfigurationCommand
+          AddDictionaryEntry
+            { dictionaryKind = ConfigurationService.contactsDictKind,
+              entryId = entryId,
+              name = unsafeEntryName name,
+              role = ItemRole,
+              parentId = Nothing
+            }
+  result <-
+    applyConfigurationCommand
+      env.eventStoreWriter
+      env.eventStoreReader
+      id
+      (unConfigurationId defaultConfigurationId)
+      cmd
+  case result of
+    Left err -> fail $ "addDictionaryEntry " <> show name <> " failed: " <> show err
+    Right _ -> pure entryId
+
+-- | Every entry id currently in the test user's contacts dictionary.
+userContactDictionaryEntryIds :: AppEnv -> IO [DictionaryEntryId]
+userContactDictionaryEntryIds env = do
+  mUser <- runDbIn env (getUser testUserId)
+  case mUser of
+    Nothing -> fail "user not found"
+    Just ud -> do
+      mCfg <- runDbIn env (ConfigRM.getConfiguration ud.configurationId)
+      case mCfg of
+        Nothing -> fail "configuration not found"
+        Just cfg ->
+          pure
+            $ maybe
+              []
+              (map fst . ConfigRM.dictionaryItems)
+              (Map.lookup ConfigurationService.contactsDictKind cfg.dictionaries)
 
 -- -----------------------------------------------------------------------------
 -- Tests
@@ -545,3 +610,40 @@ spec = describe "Bank Import Workflow" $ do
       txData.status `shouldBe` Completed
       bankBalance <- accountBalanceOf env bankAccId
       bankBalance `shouldBe` fromRight' (mkMoney UAH 100)
+
+  describe "contact resolution on import" $ do
+    it "links a pre-seeded contact when the statement description matches" $ do
+      (env, _externalAccId, _bankAccId, accountLink) <- setupTestEnv
+      contactId <- addContact env "Acme Corp"
+
+      let incomeTx = mkDescribedTransaction 100 "contact-match" "Acme Corp"
+          provider = mockProvider [incomeTx]
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      concatMap (.failed) result.accounts `shouldBe` []
+      txId <- case concatMap (.succeeded) result.accounts of
+        [i] -> pure i
+        other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
+
+      txData <- fromJustIO "matched-contact tx" =<< runDbIn env (TransactionRM.getTransaction txId)
+      txData.contactId `shouldBe` Just contactId
+
+    it "leaves the transaction without a contact and the dictionary unchanged when the description does not match" $ do
+      (env, _externalAccId, _bankAccId, accountLink) <- setupTestEnv
+      contactId <- addContact env "Acme Corp"
+
+      let incomeTx = mkDescribedTransaction 100 "contact-no-match" "Some Other Merchant"
+          provider = mockProvider [incomeTx]
+      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      concatMap (.failed) result.accounts `shouldBe` []
+      txId <- case concatMap (.succeeded) result.accounts of
+        [i] -> pure i
+        other -> expectationFailure ("expected one imported id, got " <> show (length other)) >> error "unreachable"
+
+      txData <- fromJustIO "unmatched-contact tx" =<< runDbIn env (TransactionRM.getTransaction txId)
+      txData.contactId `shouldBe` Nothing
+
+      -- The contacts dictionary is unchanged: still exactly the one
+      -- pre-seeded entry, no entry auto-created for the unmatched
+      -- description.
+      contactIds <- userContactDictionaryEntryIds env
+      contactIds `shouldBe` [contactId]

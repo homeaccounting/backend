@@ -118,6 +118,7 @@ postExpense env fx amt = do
         "Purchase"
         Nothing
         Nothing
+        Nothing
   case res of
     Left err -> fail $ "initiateExpense failed: " <> show err
     Right (tid, _) -> pure tid
@@ -136,6 +137,7 @@ postRefund env fx amt targetId = do
         "Refund"
         Nothing
         (Just (RelationSpec targetId Refund))
+        Nothing
   case res of
     Left err -> fail $ "initiateIncome (refund) failed: " <> show err
     Right (tid, _) -> pure tid
@@ -158,6 +160,7 @@ postContraRefund env fx amt targetId = do
         "Refund"
         Nothing
         (Just (RelationSpec targetId Refund))
+        Nothing
   case res of
     Left err -> fail $ "initiateIncome (contra refund) failed: " <> show err
     Right (tid, _) -> pure tid
@@ -176,6 +179,7 @@ postContraRefundNoRelation env fx amt = do
         (expenseSingletonAllocation fx.expenseCategory (unsafeMoney Core.USD amt))
         Set.empty
         "Refund"
+        Nothing
         Nothing
         Nothing
   case res of

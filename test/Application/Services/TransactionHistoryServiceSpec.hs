@@ -12,7 +12,11 @@
 -- wired into the test event bus.
 module Application.Services.TransactionHistoryServiceSpec (spec) where
 
-import Application.Services.ConfigurationService (seedDefaultConfiguration)
+import Application.Services.ConfigurationService
+  ( addDictionaryEntry,
+    contactsDictKind,
+    seedDefaultConfiguration,
+  )
 import Application.Services.TransactionHistoryService
   ( TransactionHistory (..),
     TransactionHistoryEntry (..),
@@ -20,12 +24,14 @@ import Application.Services.TransactionHistoryService
   )
 import Application.Services.TransactionService
   ( initiateIncome,
+    setTransactionContact,
     setTransactionLabels,
   )
 import qualified Data.Set as Set
 import qualified Data.UUID as UUID
+import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (TransactionId, unsafeMoney, unsafeTransactionId)
+import Domain.Core.Types (TransactionId, unsafeEntryName, unsafeMoney, unsafeTransactionId)
 import qualified Domain.Core.Types as Core (Currency (..))
 import Infrastructure.App (runAppM)
 import RIO
@@ -67,6 +73,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           "Audit-base"
           Nothing
           Nothing
+          Nothing
     (txId, _) <- case create of
       Right r -> pure r
       Left err -> fail $ "initiateIncome failed: " <> show err
@@ -98,6 +105,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           "With labels"
           Nothing
           Nothing
+          Nothing
     (txId, _) <- case create of
       Right r -> pure r
       Left err -> fail $ "initiateIncome failed: " <> show err
@@ -109,6 +117,40 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
         let isLabels HistoryLabelsSet {} = True
             isLabels _ = False
         any isLabels hist.entries `shouldBe` True
+      Right Nothing -> expectationFailure "Expected Just"
+      Left err -> expectationFailure $ "Expected Right, got: " <> show err
+
+  it "includes a TransactionContactSet entry after setting a contact" $ do
+    env <- createTestAppEnvWithProcessManager
+    fx <- setupMetadataFixture env "audit-contact@test.com"
+    addedContact <-
+      runAppM env (addDictionaryEntry fx.userId contactsDictKind (unsafeEntryName "Alice") ItemRole Nothing)
+    contact <- case addedContact of
+      Right eid -> pure eid
+      Left err -> fail $ "addDictionaryEntry failed: " <> show err
+    create <-
+      runAppM env
+        $ initiateIncome
+          fx.userId
+          fx.regularAccountId
+          (unsafeMoney Core.USD 25)
+          (incomeAllocs fx (unsafeMoney Core.USD 25))
+          Set.empty
+          "With contact"
+          Nothing
+          Nothing
+          Nothing
+    (txId, _) <- case create of
+      Right r -> pure r
+      Left err -> fail $ "initiateIncome failed: " <> show err
+
+    _ <- runAppM env (setTransactionContact fx.userId txId (Just contact))
+    result <- runAppM env (getTransactionHistory fx.userId txId)
+    case result of
+      Right (Just hist) -> do
+        let isContactSet HistoryContactSet {} = True
+            isContactSet _ = False
+        any isContactSet hist.entries `shouldBe` True
       Right Nothing -> expectationFailure "Expected Just"
       Left err -> expectationFailure $ "Expected Right, got: " <> show err
 
@@ -126,6 +168,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
           (incomeAllocs owner (unsafeMoney Core.USD 10))
           Set.empty
           "Owner only"
+          Nothing
           Nothing
           Nothing
     (txId, _) <- case create of

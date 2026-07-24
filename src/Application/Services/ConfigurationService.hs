@@ -50,6 +50,7 @@ module Application.Services.ConfigurationService
     incomeCategoryDictKind,
     expenseCategoryDictKind,
     labelsDictKind,
+    contactsDictKind,
   )
 where
 
@@ -186,6 +187,10 @@ import qualified RIO.Text as T
 labelsDictKind :: DictionaryKind
 labelsDictKind = LabelKind
 
+-- | Dictionary kind for transaction contacts (counterparties).
+contactsDictKind :: DictionaryKind
+contactsDictKind = ContactKind
+
 -- -----------------------------------------------------------------------------
 -- Service Functions
 -- -----------------------------------------------------------------------------
@@ -272,19 +277,25 @@ renameDictionaryEntry userId dictKind entryId newName = runExceptT $ do
 
 -- | Remove an entry from a dictionary in the user's configuration.
 --
--- Refuses with 'LabelInUse' or 'CategoryInUse' when any transaction still
--- references the entry (either via its labels set or via the categorised
--- 'TransactionType'). The check is performed at the service layer because it
--- depends on the transaction read model; the pure configuration command
--- handler enforces only the aggregate-local "last-entry" rule.
+-- Refuses with 'LabelInUse', 'CategoryInUse', or 'ContactInUse' when any
+-- transaction still references the entry (via its labels set, its
+-- categorised 'TransactionType', or its contact). The check is performed at
+-- the service layer because it depends on the transaction read model; the
+-- pure configuration command handler enforces only the aggregate-local
+-- "last-entry" rule.
 removeDictionaryEntry :: UserId -> DictionaryKind -> DictionaryEntryId -> AppM (Either DomainError ())
 removeDictionaryEntry userId dictKind entryId = runExceptT $ do
   lift $ logInfo $ "Removing dictionary entry from " <> displayShow dictKind <> " for user " <> displayShow userId
   usageCount <- lift (runDb (findReferencingTransactions entryId))
-  let inUse =
-        if dictKind == labelsDictKind
-          then LabelInUse {entryId = T.pack (show (unDictionaryEntryId entryId)), usageCount = usageCount}
-          else CategoryInUse {entryId = T.pack (show (unDictionaryEntryId entryId)), usageCount = usageCount}
+  let eidText = T.pack (show (unDictionaryEntryId entryId))
+      -- Exhaustive over 'DictionaryKind' (not an if/else on 'labelsDictKind')
+      -- so a future kind fails to compile here rather than silently falling
+      -- through to 'CategoryInUse'.
+      inUse = case dictKind of
+        LabelKind -> LabelInUse {entryId = eidText, usageCount = usageCount}
+        ContactKind -> ContactInUse {entryId = eidText, usageCount = usageCount}
+        IncomeKind -> CategoryInUse {entryId = eidText, usageCount = usageCount}
+        ExpenseKind -> CategoryInUse {entryId = eidText, usageCount = usageCount}
   guardE (usageCount == 0) inUse
   configId <- ExceptT (ensureClonedConfiguration userId)
   let cmd =

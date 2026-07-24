@@ -85,6 +85,7 @@ genTransactionPostingInitiatedEvent = do
                 transactionType = Transfer,
                 importInfo = Nothing,
                 labels = Set.empty,
+                contactId = Nothing,
                 at = UTCTime (fromGregorian 2026 1 1) 0
               }
         )

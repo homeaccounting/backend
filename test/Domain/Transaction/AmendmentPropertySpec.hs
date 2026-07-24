@@ -33,6 +33,7 @@ import Domain.Core.Types
   ( AccountId,
     Allocation (..),
     Allocations,
+    ContactId,
     Currency (..),
     ExchangeRate,
     Money,
@@ -137,7 +138,8 @@ projectAmendments extra =
             at = transactionDefault ^. #at,
             transactionType = seedTransactionType,
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           }
         : TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
         : extra
@@ -160,6 +162,7 @@ genCompleted = do
   newSrcAmt <- arbitrary :: Gen Money
   newTgtAmt <- arbitrary :: Gen Money
   newRate <- oneof [pure Nothing, Just <$> (arbitrary :: Gen ExchangeRate)]
+  newContact <- oneof [pure Nothing, Just <$> (arbitrary :: Gen ContactId)]
   pure
     TransactionAmendmentCompleted
       { transactionId = txId,
@@ -169,6 +172,7 @@ genCompleted = do
         newTargetAmount = newTgtAmt,
         newExchangeRate = newRate,
         newTransactionType = seedTransactionType,
+        contactId = newContact,
         by = amendedByU
       }
 
@@ -192,6 +196,7 @@ toInitiated c =
       newTargetAmount = c.newTargetAmount,
       newExchangeRate = c.newExchangeRate,
       newTransactionType = c.newTransactionType,
+      contactId = c.contactId,
       by = c.by
     }
 
@@ -225,6 +230,7 @@ spec = describe "Transaction amendment projection" $ do
               (tx ^. #sourceAmount) === c.newSourceAmount,
               (tx ^. #targetAmount) === c.newTargetAmount,
               (tx ^. #exchangeRate) === c.newExchangeRate,
+              (tx ^. #contactId) === c.contactId,
               -- 'transactionType' kind is preserved across amendments; for
               -- categorised seeds the caller supplies explicit allocations
               -- so the sum matches the new categorised total.
@@ -267,6 +273,53 @@ spec = describe "Transaction amendment projection" $ do
               (tx ^. #amendmentInProgress) === False,
               (tx ^. #amendmentCount) === 0
             ]
+
+  describe "TransactionAmendmentCompleted contact fold" $ do
+    it "sets the contact when the completed event carries Just contactId" $ do
+      let cid = unsafeDictionaryEntryId (UUID.fromWords 77 0 0 0)
+          completed =
+            TransactionAmendmentCompleted
+              { transactionId = txId,
+                newSourceAccountId = seedSrc,
+                newTargetAccountId = seedTgt,
+                newSourceAmount = seedSrcAmt,
+                newTargetAmount = seedTgtAmt,
+                newExchangeRate = Nothing,
+                newTransactionType = seedTransactionType,
+                contactId = Just cid,
+                by = amendedByU
+              }
+          tx = projectAmendments (amendmentEvents completed)
+      (tx ^. #contactId) `shouldBe` Just cid
+
+    it "clears a previously-set contact when a later completed event carries Nothing" $ do
+      let cid = unsafeDictionaryEntryId (UUID.fromWords 78 0 0 0)
+          setContact =
+            TransactionAmendmentCompleted
+              { transactionId = txId,
+                newSourceAccountId = seedSrc,
+                newTargetAccountId = seedTgt,
+                newSourceAmount = seedSrcAmt,
+                newTargetAmount = seedTgtAmt,
+                newExchangeRate = Nothing,
+                newTransactionType = seedTransactionType,
+                contactId = Just cid,
+                by = amendedByU
+              }
+          clearContact =
+            TransactionAmendmentCompleted
+              { transactionId = txId,
+                newSourceAccountId = seedSrc,
+                newTargetAccountId = seedTgt,
+                newSourceAmount = seedSrcAmt,
+                newTargetAmount = seedTgtAmt,
+                newExchangeRate = Nothing,
+                newTransactionType = seedTransactionType,
+                contactId = Nothing,
+                by = amendedByU
+              }
+          tx = projectAmendments (amendmentEvents setContact ++ amendmentEvents clearContact)
+      (tx ^. #contactId) `shouldBe` Nothing
 
   describe "AmendTransaction — cross-kind handler properties" $ do
     prop "(1) handler emits Initiated event with newTransactionType verbatim"
@@ -337,6 +390,7 @@ genCrossKindAmendInputs = do
             newExchangeRate = Nothing,
             newAllocations = Nothing,
             newTransactionType = newTT,
+            contactId = Nothing,
             by = uid
           }
   pure (seed, cmd)

@@ -69,6 +69,7 @@ spec = describe "listTransactions / date bounds (property)"
                     d
                     d
                     (fromIntegral i)
+                    Nothing
                 | (i, d) <- zip [(1 :: Word32) ..] dates
                 ]
           runDbIn env resetTransaction

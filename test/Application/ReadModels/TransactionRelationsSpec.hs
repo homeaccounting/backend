@@ -61,7 +61,7 @@ day = UTCTime (fromGregorian 2026 1 15) (secondsToDiffTime 0)
 -- | A @TransactionPostingInitiated@ global event (fixed type/labels/date). The
 -- read-model row must exist for the cancelled-"from" filter to observe status.
 initiated :: TransactionId -> Eventium.SequenceNumber -> Eventium.GlobalStreamEvent AccountingEvent
-initiated txId = postingInitiatedGlobal txId acctA acctB Transfer Set.empty day day
+initiated txId sq = postingInitiatedGlobal txId acctA acctB Transfer Set.empty day day sq Nothing
 
 -- | A relation edge @from -> to@ of @kind@, keyed on the "from" stream.
 relation ::

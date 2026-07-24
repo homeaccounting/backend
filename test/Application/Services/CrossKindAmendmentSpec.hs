@@ -97,6 +97,7 @@ buildAmend txId src tgt srcAmt tgtAmt mAllocs uid =
       newExchangeRate = Nothing,
       newAllocations = mAllocs,
       newTransactionType = Transfer, -- placeholder; overwritten by service
+      contactId = Nothing,
       by = uid
     }
 
@@ -142,6 +143,7 @@ seedIncome ck amt = do
         (incomeAllocs fx (unsafeMoney Core.USD amt))
         Set.empty
         "Seed"
+        Nothing
         Nothing
         Nothing
   case res of

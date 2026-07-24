@@ -204,6 +204,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             transactionType = Transfer,
             importInfo = Nothing,
             labels = Set.empty,
+            contactId = Nothing,
             relation = Nothing
           }
 
@@ -245,6 +246,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             transactionType = Transfer,
             importInfo = Nothing,
             labels = Set.empty,
+            contactId = Nothing,
             relation = Nothing
           }
 
@@ -690,6 +692,7 @@ categorizedTransferSpec =
                 transactionType = singletonIncome testSalaryCatId (unsafeMoney USD 3000),
                 importInfo = Nothing,
                 labels = Set.empty,
+                contactId = Nothing,
                 relation = Nothing
               }
 
@@ -764,6 +767,7 @@ categorizedTransferSpec =
                 transactionType = singletonExpense testFoodCatId (unsafeMoney USD 150),
                 importInfo = Nothing,
                 labels = Set.empty,
+                contactId = Nothing,
                 relation = Nothing
               }
 
@@ -810,6 +814,7 @@ categorizedTransferSpec =
                 transactionType = Transfer,
                 importInfo = Nothing,
                 labels = Set.empty,
+                contactId = Nothing,
                 relation = Nothing
               }
 
@@ -846,6 +851,7 @@ categorizedTransferSpec =
                 transactionType = Transfer,
                 importInfo = Just ImportInfo {externalTransactionId = extTxId, mcc = Nothing},
                 labels = expectedLabels,
+                contactId = Nothing,
                 relation = Nothing
               }
 

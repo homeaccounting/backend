@@ -449,6 +449,7 @@ creditAccountAt env accountId atTime amt = do
             transactionType = Transfer,
             importInfo = Nothing,
             labels = mempty,
+            contactId = Nothing,
             relation = Nothing
           }
   _ <-

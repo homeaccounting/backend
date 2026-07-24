@@ -62,7 +62,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ExchangeRate, LabelId, Money, TransactionType, UserId, mkAccountId, mkAllocation, mkAllocations, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
+import Domain.Core.Types (AccountId, ContactId, ExchangeRate, LabelId, Money, TransactionType, UserId, mkAccountId, mkAllocation, mkAllocations, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -196,6 +196,9 @@ data Transaction = Transaction
     transactionType :: TransactionType,
     -- | Labels attached to this transaction (may be empty).
     labels :: Set LabelId,
+    -- | Optional contact (counterparty) attached to this transaction.
+    -- Nothing for transfers/adjustments and when unset.
+    contactId :: Maybe ContactId,
     -- | Count of 'TransactionAmendmentCompleted' events folded so far.
     -- Exposed on the API surface so clients can detect amendments and
     -- fetch the audit history if interested. Always @0@ on a transaction
@@ -273,6 +276,7 @@ transactionDefault =
       initiatedBy = unsafeUserId nil,
       transactionType = defaultTransactionType,
       labels = Set.empty,
+      contactId = Nothing,
       amendmentCount = 0,
       amendmentInProgress = False,
       cancellationInProgress = False
@@ -358,6 +362,8 @@ handleTransactionEvent transaction (TransactionPostingInitiatedTransactionEvent 
     .~ evt.transactionType
     & #labels
     .~ evt.labels
+    & #contactId
+    .~ evt.contactId
 handleTransactionEvent transaction (TransactionPostingCompletedTransactionEvent TransactionPostingCompleted) =
   -- Mark transaction as completed
   -- Only update if currently Pending (idempotent for other states)
@@ -376,6 +382,13 @@ handleTransactionEvent transaction (TransactionLabelsSetTransactionEvent evt) =
   -- is authoritative on well-formed streams.
   case transaction ^. #status of
     Completed -> transaction & #labels .~ evt.labels
+    _ -> transaction
+handleTransactionEvent transaction (TransactionContactSetTransactionEvent evt) =
+  -- Replace the contact. Valid only against Completed; treated as a
+  -- no-op in other states for defensive robustness — the command handler
+  -- is authoritative on well-formed streams.
+  case transaction ^. #status of
+    Completed -> transaction & #contactId .~ evt.contactId
     _ -> transaction
 handleTransactionEvent transaction (TransactionAllocationsChangedTransactionEvent evt) =
   -- The event carries only the new allocations; the kind (Income /
@@ -398,8 +411,8 @@ handleTransactionEvent transaction (TransactionAmendmentInitiatedTransactionEven
   transaction & #amendmentInProgress .~ True
 handleTransactionEvent transaction (TransactionAmendmentCompletedTransactionEvent evt) =
   -- Replace canonical posting facts with the amended values; write the
-  -- synthesised 'newTransactionType' verbatim; bump the amendment count;
-  -- clear the saga-in-progress flag.
+  -- synthesised 'newTransactionType' and 'contactId' verbatim; bump the
+  -- amendment count; clear the saga-in-progress flag.
   transaction
     & #sourceAccountId
     .~ evt.newSourceAccountId
@@ -413,6 +426,8 @@ handleTransactionEvent transaction (TransactionAmendmentCompletedTransactionEven
     .~ evt.newExchangeRate
     & #transactionType
     .~ evt.newTransactionType
+    & #contactId
+    .~ evt.contactId
     & #amendmentCount
     %~ (+ 1)
     & #amendmentInProgress

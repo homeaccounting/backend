@@ -25,6 +25,7 @@ module Testkit.TransactionEditFixture
     seedTransfer,
     addIncomeCategory,
     addExpenseCategory,
+    addContact,
     authHeaders,
     httpRequest,
     uuidText,
@@ -33,6 +34,7 @@ where
 
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
+    contactsDictKind,
     expenseCategoryDictKind,
     incomeCategoryDictKind,
     labelsDictKind,
@@ -76,7 +78,9 @@ data Seed = Seed
     seedAccount :: !AccountId,
     seedLabelA :: !DictionaryEntryId,
     seedLabelB :: !DictionaryEntryId,
-    seedCategory :: !DictionaryEntryId
+    seedCategory :: !DictionaryEntryId,
+    seedContactA :: !DictionaryEntryId,
+    seedContactB :: !DictionaryEntryId
   }
 
 -- | Seed an env (with or without the transfer process manager), register
@@ -91,6 +95,8 @@ mkSeed mkEnv email = do
   labelB <- addLabel env uid "school"
   categoryId <- firstDictionaryEntry env uid incomeCategoryDictKind
   accId <- createDefaultAccount env uid "Wallet"
+  contactA <- addContactEntry env uid "Alice"
+  contactB <- addContactEntry env uid "Bob"
   pure
     Seed
       { seedApp = buildApplication env,
@@ -100,13 +106,26 @@ mkSeed mkEnv email = do
         seedAccount = accId,
         seedLabelA = labelA,
         seedLabelB = labelB,
-        seedCategory = categoryId
+        seedCategory = categoryId,
+        seedContactA = contactA,
+        seedContactB = contactB
       }
 
 addLabel :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
 addLabel env uid name = do
   res <- runAppM env $ addDictionaryEntry uid labelsDictKind (unsafeEntryName name) ItemRole Nothing
   unwrap ("addDictionaryEntry " <> show name) res
+
+addContactEntry :: AppEnv -> UserId -> Text -> IO DictionaryEntryId
+addContactEntry env uid name = do
+  res <- runAppM env $ addDictionaryEntry uid contactsDictKind (unsafeEntryName name) ItemRole Nothing
+  unwrap ("addContact " <> show name) res
+
+-- | Add a fresh contact-dictionary entry to the seed user's contacts and
+-- return its id. Used by specs that need more contacts than the two
+-- pre-seeded on 'Seed' ('seedContactA' \/ 'seedContactB').
+addContact :: Seed -> Text -> IO DictionaryEntryId
+addContact seed = addContactEntry seed.seedEnv seed.seedUserId
 
 -- | Add a fresh income-category entry to the seed user's dictionary and
 -- return its id. Used by specs that need to construct multi-allocation
@@ -158,6 +177,7 @@ seedIncomeTransaction seed labels = do
         (singletonAllocation seed.seedCategory (unsafeMoney Core.USD 25))
         labels
         "Seed"
+        Nothing
         Nothing
         Nothing
   case res of

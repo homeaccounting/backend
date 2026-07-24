@@ -147,6 +147,7 @@ postTransaction env fromUuid toUuid userUuid amt cur desc txType = do
             transactionType = txType,
             importInfo = Nothing,
             labels = Set.empty,
+            contactId = Nothing,
             relation = Nothing
           }
   return txUuid
@@ -188,6 +189,7 @@ postCrossCurrencyTransaction env fromUuid toUuid userUuid (srcAmt, srcCur) (tgtA
             transactionType = txType,
             importInfo = Nothing,
             labels = Set.empty,
+            contactId = Nothing,
             relation = Nothing
           }
   return txUuid

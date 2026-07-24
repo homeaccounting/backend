@@ -54,6 +54,7 @@ import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import Data.Aeson (ToJSON)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Data.Text.Match (normalizeName)
 import Data.Time (UTCTime, utctDay)
 import Domain.Banking.Types (ExternalAccountId, unExternalAccountId)
 import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
@@ -62,13 +63,16 @@ import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
     CategoryId,
+    ContactId,
     ImportInfo (..),
     MCC,
     Money,
     TransactionId,
+    TransactionKind (..),
     TransactionType (..),
     UserId,
     currencyFromNumericCode,
+    kindOf,
     mkAllocation,
     mkExpenseAllocations,
     mkIncomeAllocations,
@@ -88,6 +92,8 @@ import Infrastructure.Banking.Provider
     TransactionClassification (..),
   )
 import RIO
+import RIO.List (sortOn)
+import qualified RIO.Text as T
 
 -- -----------------------------------------------------------------------------
 -- Result Types
@@ -386,6 +392,98 @@ resolveCategory banking cfg direction maybeMcc =
     directionName ClassifiedIncome = "income"
     directionName ClassifiedExpense = "expense"
 
+-- | How the resolver arrived at its 'ContactId' (or lack thereof).
+--
+-- Exposed alongside the resolved value so the caller can log the provenance
+-- without re-deriving it. There is no "created" case: contact resolution is
+-- MATCH-ONLY — an unmatched description never creates a dictionary entry, it
+-- simply leaves the transaction without a contact (the raw description
+-- remains available as the transaction's memo).
+data ContactResolution
+  = -- | The normalized description matched an existing contact entry.
+    MatchedExisting !ContactId
+  | -- | No existing contact entry matched (or contact resolution does not
+    --   apply to this transaction's kind).
+    NoContactMatch
+  deriving (Show, Eq)
+
+-- | Resolve an existing contact for a transaction from the user's contact
+-- dictionary, by a two-tier (normalized, case-insensitive) match on the bank
+-- statement description: exact match first, substring match as a fallback
+-- (see 'matchContact'). MATCH-ONLY: never creates a dictionary entry — a
+-- non-matching description simply resolves to 'NoContactMatch' and the
+-- transaction is left without a contact.
+--
+-- Contact resolution only applies to 'IncomeKind' and 'ExpenseKind'
+-- transactions; transfers and adjustments never get a contact.
+resolveContact :: ConfigurationData -> TransactionKind -> Text -> ContactResolution
+resolveContact cfg kind description = case kind of
+  TransferKind -> NoContactMatch
+  AdjustmentKind -> NoContactMatch
+  IncomeKind -> matchContact cfg description
+  ExpenseKind -> matchContact cfg description
+
+-- | Two-tier, normalized (trimmed, whitespace-collapsed, case-folded) match
+-- of @description@ against the names in the user's contact dictionary:
+--
+--   1. __Exact match (top priority)__: a contact name equal to the whole
+--      normalized description. The first such entry wins.
+--   2. __Substring match (fallback, low priority)__: only tried when there is
+--      no exact match. A contact name is a candidate when it is non-empty and
+--      appears /within/ the normalized description (contact name is the
+--      needle, description is the haystack — not the other way around).
+--      Among candidates, the /longest/ matching name wins, since a longer
+--      name is more specific and less likely to be a false positive. If two
+--      or more candidates tie for the longest length, the match is ambiguous
+--      and resolves to 'NoContactMatch' rather than guessing.
+--
+-- An empty normalized description never matches anything.
+matchContact :: ConfigurationData -> Text -> ContactResolution
+matchContact cfg description
+  | T.null normalized = NoContactMatch
+  | otherwise = case exactMatches of
+      (eid : _) -> MatchedExisting eid
+      [] -> case longestSubstringRanked of
+        (eid, topLen) : rest
+          | not (any ((== topLen) . snd) rest) -> MatchedExisting eid
+        _ -> NoContactMatch
+  where
+    normalized = normalizeName description
+    items =
+      maybe [] dictionaryItems (Map.lookup ConfigurationService.contactsDictKind cfg.dictionaries)
+    normalizedItems = [(eid, normalizeName (unEntryName name)) | (eid, name) <- items]
+    exactMatches = [eid | (eid, n) <- normalizedItems, n == normalized]
+    substringMatches =
+      [ (eid, T.length n)
+      | (eid, n) <- normalizedItems,
+        not (T.null n),
+        n `T.isInfixOf` normalized
+      ]
+    longestSubstringRanked = sortOn (Down . snd) substringMatches
+
+-- | Emit a grep-friendly structured log line recording how (or whether) a
+--   bank transaction was linked to an existing contact: the resolution
+--   outcome (matched vs none) and the transaction's raw description, so an
+--   operator can grep for @contact=NoContactMatch@ to spot merchants worth
+--   adding as contacts.
+logContactResolution ::
+  BankTransaction ->
+  ContactResolution ->
+  AppM ()
+logContactResolution tx resolution =
+  logInfo
+    $ "Contact resolved tx="
+    <> display tx.externalId
+    <> " resolution="
+    <> display resolutionTag
+    <> " merchant="
+    <> display tx.description
+  where
+    resolutionTag :: Text
+    resolutionTag = case resolution of
+      MatchedExisting _ -> "MatchedExisting"
+      NoContactMatch -> "NoContactMatch"
+
 -- | Emit a grep-friendly structured log line recording how a bank transaction
 --   was categorised: its MCC, the resolution path (MCC hit vs default
 --   fallback), the resolved category id and its dictionary name.
@@ -588,6 +686,13 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
         ClassifiedExpense -> mkExpenseAllocations (allocation :| [])
       (sourceAccId, targetAccId, transactionType) =
         classifyEndpoints localAccId externalAccId direction allocations
+      -- Contact resolution runs on the same 'ConfigurationData' already loaded
+      -- above (no second config fetch), keyed off the resolved
+      -- 'TransactionKind' rather than 'direction' so it stays restricted to
+      -- Income/Expense even if a future call site here ever produces a
+      -- Transfer/Adjustment 'TransactionType'.
+      contactResolution = resolveContact cfg (kindOf transactionType) tx.description
+  lift $ logContactResolution tx contactResolution
   -- Resolve per-leg amounts and the historical exchange rate exactly like the
   -- manual income/expense flow ('TransactionService.resolveAmounts'). The
   -- External account is created in the user's BASE currency, which can differ
@@ -613,7 +718,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
       rateDay = utctDay tx.time
   (srcAmt, tgtAmt, rate) <-
     ExceptT (TransactionService.resolveAmounts money srcCurrency tgtCurrency userAmountIsSource Nothing rateDay)
-  let cmd = buildTransferCmd userId tx sourceAccId targetAccId srcAmt tgtAmt rate transactionType
+  let cmd = buildTransferCmd userId tx sourceAccId targetAccId srcAmt tgtAmt rate transactionType contactResolution
   (txId, _) <- ExceptT (TransactionService.initiateTransaction cmd)
   lift $ logInfo $ "Imported transaction " <> display tx.externalId <> " as " <> displayShow txId
   pure (Imported txId)
@@ -625,7 +730,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
         ClassifiedIncome ->
           (externalAcc, localAcc, Income allocs)
 
-    buildTransferCmd uid bankTx sourceAccId targetAccId srcAmt tgtAmt rate transactionType =
+    buildTransferCmd uid bankTx sourceAccId targetAccId srcAmt tgtAmt rate transactionType contactResolution =
       InitiateTransaction
         { sourceAccountId = sourceAccId,
           targetAccountId = targetAccId,
@@ -643,5 +748,8 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
                   mcc = bankTx.mcc
                 },
           labels = Set.empty,
+          contactId = case contactResolution of
+            MatchedExisting cid -> Just cid
+            NoContactMatch -> Nothing,
           relation = Nothing
         }

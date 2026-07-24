@@ -28,6 +28,7 @@ module Domain.Transaction.Commands
     CompleteTransactionPosting (..),
     FailTransactionPosting (..),
     SetTransactionLabels (..),
+    SetTransactionContact (..),
     SetTransactionAllocations (..),
     ChangeTransactionDescription (..),
     ChangeTransactionDate (..),
@@ -45,7 +46,7 @@ import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -62,6 +63,7 @@ transactionCommands =
     ''CompleteTransactionPosting,
     ''FailTransactionPosting,
     ''SetTransactionLabels,
+    ''SetTransactionContact,
     ''SetTransactionAllocations,
     ''ChangeTransactionDescription,
     ''ChangeTransactionDate,
@@ -124,6 +126,8 @@ data InitiateTransaction = InitiateTransaction
     importInfo :: Maybe ImportInfo,
     -- | Labels to attach to the transfer (may be empty).
     labels :: Set LabelId,
+    -- | Optional contact associated with this transfer (e.g., a payee/payer).
+    contactId :: Maybe ContactId,
     -- | Optional at-creation typed relationship to a pre-existing transaction
     -- (e.g., a 'Refund' edge to the refunded expense). When 'Just', the handler
     -- emits a 'TransactionRelationAdded' event alongside the posting event; the
@@ -183,6 +187,23 @@ data SetTransactionLabels = SetTransactionLabels
     transactionId :: TransactionId,
     -- | The new complete label set (may be empty).
     labels :: Set LabelId
+  }
+  deriving (Show, Eq)
+
+-- | Command to set (or clear) the contact associated with a completed transaction.
+--
+-- Business Rules:
+--  - Transaction must be in the Completed state.
+--  - The contact id must exist in the owning user's contacts dictionary
+--    (validated at the service layer, not in the pure handler).
+--
+-- Example:
+-- >>> SetTransactionContact txId (Just contact1)
+data SetTransactionContact = SetTransactionContact
+  { -- | The transaction whose contact is being replaced.
+    transactionId :: TransactionId,
+    -- | The new contact ('Nothing' clears the contact).
+    contactId :: Maybe ContactId
   }
   deriving (Show, Eq)
 
@@ -308,6 +329,9 @@ data AmendTransaction = AmendTransaction
     -- allocations). Web handler initialises to 'Transfer'; the
     -- service layer always overwrites before dispatch.
     newTransactionType :: TransactionType,
+    -- | New contact for the transaction ('Nothing' to clear). Full
+    -- replacement, mirroring 'newTransactionType' — not a delta.
+    contactId :: Maybe ContactId,
     by :: UserId
   }
   deriving (Show, Eq)
@@ -334,6 +358,9 @@ data CompleteTransactionAmendment = CompleteTransactionAmendment
     newExchangeRate :: Maybe ExchangeRate,
     -- | Full new 'TransactionType' synthesised by the service layer.
     newTransactionType :: TransactionType,
+    -- | New contact for the transaction ('Nothing' to clear). Echoed
+    -- from 'TransactionAmendmentInitiated' by the saga.
+    contactId :: Maybe ContactId,
     -- | User who amended the transfer.
     by :: UserId
   }
@@ -425,6 +452,7 @@ deriveJSON defaultOptions ''InitiateTransaction
 deriveJSON defaultOptions ''CompleteTransactionPosting
 deriveJSON defaultOptions ''FailTransactionPosting
 deriveJSON defaultOptions ''SetTransactionLabels
+deriveJSON defaultOptions ''SetTransactionContact
 deriveJSON defaultOptions ''SetTransactionAllocations
 deriveJSON defaultOptions ''ChangeTransactionDescription
 deriveJSON defaultOptions ''ChangeTransactionDate

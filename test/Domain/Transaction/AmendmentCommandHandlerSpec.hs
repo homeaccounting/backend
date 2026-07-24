@@ -131,6 +131,7 @@ validAmendCmd =
         newExchangeRate = Nothing,
         newAllocations = Nothing,
         newTransactionType = Transfer,
+        contactId = Nothing,
         by = amendedBy
       }
 
@@ -146,6 +147,7 @@ validCompleteAmendCmd =
         newTargetAmount = mockMoney 200,
         newExchangeRate = Nothing,
         newTransactionType = Transfer,
+        contactId = Nothing,
         by = amendedBy
       }
 
@@ -212,6 +214,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
+                  contactId = Nothing,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx sameAccountCmd
@@ -229,6 +232,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
+                  contactId = Nothing,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx zeroSrcCmd
@@ -246,6 +250,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
+                  contactId = Nothing,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx zeroTgtCmd
@@ -274,6 +279,7 @@ spec = do
                   newExchangeRate = Nothing,
                   newAllocations = Nothing,
                   newTransactionType = Expense contraAllocs,
+                  contactId = Nothing,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx contraAmendCmd

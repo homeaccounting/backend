@@ -58,7 +58,8 @@ seedTransaction tt =
             at = UTCTime (fromGregorian 2026 3 15) (secondsToDiffTime 0),
             transactionType = tt,
             importInfo = Nothing,
-            labels = Set.empty
+            labels = Set.empty,
+            contactId = Nothing
           }
     ]
 

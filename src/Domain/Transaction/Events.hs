@@ -13,6 +13,7 @@
 --   - TransactionPostingCompleted: A money transfer completed successfully
 --   - TransactionPostingFailed: A money transfer failed (e.g., insufficient funds)
 --   - TransactionLabelsSet: The label set on a completed transaction was replaced
+--   - TransactionContactSet: The contact on a completed transaction was set or cleared
 --   - TransactionAllocationsChanged: The allocation list on a completed Income/Expense transaction was replaced
 --   - TransactionDescriptionChanged: The free-text description on a completed transaction was edited
 --   - TransactionDateChanged: The business date on a completed transaction was edited
@@ -28,6 +29,7 @@ module Domain.Transaction.Events
     TransactionPostingCompleted (..),
     TransactionPostingFailed (..),
     TransactionLabelsSet (..),
+    TransactionContactSet (..),
     TransactionAllocationsChanged (..),
     TransactionDescriptionChanged (..),
     TransactionDateChanged (..),
@@ -48,7 +50,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -65,6 +67,7 @@ transactionEvents =
     ''TransactionPostingCompleted,
     ''TransactionPostingFailed,
     ''TransactionLabelsSet,
+    ''TransactionContactSet,
     ''TransactionAllocationsChanged,
     ''TransactionDescriptionChanged,
     ''TransactionDateChanged,
@@ -116,7 +119,9 @@ data TransactionPostingInitiated = TransactionPostingInitiated
     -- (external id + optional MCC). 'Nothing' for manual entries.
     importInfo :: Maybe ImportInfo,
     -- | Labels attached to this transfer (may be empty).
-    labels :: Set LabelId
+    labels :: Set LabelId,
+    -- | Optional contact associated with this transfer (e.g., a payee/payer).
+    contactId :: Maybe ContactId
   }
   deriving (Show, Eq)
 
@@ -156,6 +161,20 @@ data TransactionLabelsSet = TransactionLabelsSet
     transactionId :: TransactionId,
     -- | The new complete label set (may be empty).
     labels :: Set LabelId
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the contact of a completed transaction is set (or cleared).
+--
+-- Replace-semantics — the event carries the new contact as it should be
+-- after applying the event ('Nothing' clears it).
+data TransactionContactSet = TransactionContactSet
+  { -- | The transaction whose contact changed. Carried in the payload for
+    -- symmetry with 'TransactionLabelsSet'; the stream key (the aggregate id)
+    -- is authoritative.
+    transactionId :: TransactionId,
+    -- | The new contact ('Nothing' clears the contact).
+    contactId :: Maybe ContactId
   }
   deriving (Show, Eq)
 
@@ -229,6 +248,9 @@ data TransactionAmendmentInitiated = TransactionAmendmentInitiated
     newExchangeRate :: Maybe ExchangeRate,
     -- | Synthesised full new 'TransactionType' (kind ⊕ allocations).
     newTransactionType :: TransactionType,
+    -- | New contact for the transaction ('Nothing' to clear). Full
+    -- replacement, mirroring 'newTransactionType'.
+    contactId :: Maybe ContactId,
     -- | User who amended the transfer.
     by :: UserId
   }
@@ -259,6 +281,9 @@ data TransactionAmendmentCompleted = TransactionAmendmentCompleted
     newExchangeRate :: Maybe ExchangeRate,
     -- | Full new 'TransactionType' synthesised by the service layer.
     newTransactionType :: TransactionType,
+    -- | New contact for the transaction ('Nothing' to clear). Replaces
+    -- the aggregate's 'contactId' verbatim on fold.
+    contactId :: Maybe ContactId,
     -- | User who amended the transfer.
     by :: UserId
   }
@@ -351,10 +376,12 @@ instance FromJSON TransactionPostingInitiated where
       <*> o .: "transactionType"
       <*> o .:? "importInfo" .!= Nothing
       <*> (fromMaybe Set.empty <$> o .:? "labels")
+      <*> o .:? "contactId" .!= Nothing
 
 deriveJSON defaultOptions ''TransactionPostingCompleted
 deriveJSON defaultOptions ''TransactionPostingFailed
 deriveJSON defaultOptions ''TransactionLabelsSet
+deriveJSON defaultOptions ''TransactionContactSet
 deriveJSON defaultOptions ''TransactionAllocationsChanged
 deriveJSON defaultOptions ''TransactionDescriptionChanged
 deriveJSON defaultOptions ''TransactionDateChanged
