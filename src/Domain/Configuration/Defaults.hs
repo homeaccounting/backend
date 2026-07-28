@@ -307,7 +307,8 @@ defaultCategoryMccs =
         "7929", -- Bands, orchestras
         "7994", -- Video game arcades
         "7996", -- Amusement parks
-        "7998" -- Aquariums, zoos
+        "7998", -- Aquariums, zoos
+        "7999" -- Recreation Services
       ]
     ),
     ( expense.fitness,
