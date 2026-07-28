@@ -11,7 +11,7 @@
 -- so tests assert only on read-model side-effects, not reply text.
 module Telegram.CommandsSpec (spec) where
 
-import Application.ReadModels.Account (RegularAccountData (..), getUserRegularAccounts)
+import Application.ReadModels.Account (RegularAccountData (..), getRegularAccounts)
 import Application.ReadModels.User (getUserByTelegramId)
 import Application.Services.AuthService
   ( TelegramLinkCodeResult (..),
@@ -167,7 +167,7 @@ spec = do
           env = withLlmClient (constLlmClient json) baseEnv
       runAppM env (handleMessage botState freshTgIdent.id testChatId "snack 42")
 
-      accounts <- runDbIn env (getUserRegularAccounts uid)
+      accounts <- runDbIn env (getRegularAccounts uid)
       let balanceOf nm =
             listToMaybe [unMoney bal | (_, RegularAccountData {name = n, balance = bal}) <- accounts, n == nm]
       -- The selected account (Card) is debited; the other (Cash) is untouched.

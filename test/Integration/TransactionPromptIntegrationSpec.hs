@@ -17,6 +17,7 @@
 module Integration.TransactionPromptIntegrationSpec (spec) where
 
 import Application.ReadModels.Transaction (TransactionData (..))
+import Application.Services.AccountService (shareAccount)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.Prompt.Types
   ( FailedTransaction (..),
@@ -39,7 +40,9 @@ import Domain.Core.Types
     UserId,
     allocationsOf,
     defaultCash,
+    unAccountId,
     unMoney,
+    unUserId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Infrastructure.App (AppEnv, runAppM)
@@ -139,6 +142,30 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
         expenseCategoryOf td `shouldBe` Just groceriesCategoryId
         ("Cash" `T.isInfixOf` r.interpretation) `shouldBe` True
       other -> expectationFailure ("expected one recorded transaction, got: " <> show other)
+
+  it "resolves and commits against an account shared to the user" $ do
+    h <- setupHarness "prompt-shared-grantee@example.com"
+    -- A second user owns "Joint" (UAH, so the seeded rates cover the
+    -- cross-currency counter-leg) and shares it to the harness user as Editor.
+    owner <- registerUser h.env "prompt-shared-owner@example.com"
+    joint <- createAccount h.env owner "Joint" defaultCash Core.UAH 0
+    shareRes <-
+      runAppM h.env
+        $ shareAccount owner (unAccountId joint) (unUserId h.user) "editor"
+    shareRes `shouldBe` Right ()
+
+    -- The prompt names the shared account by name; it resolves only because the
+    -- prompt context now lists owner+shared accounts, not owner-only.
+    let json =
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Joint\",\"allocations\":[{\"amount\":\"75\",\"category\":\"Groceries\",\"comment\":\"joint 75 food\"}]}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user Nothing "joint 75 food")
+    case soleRecorded result of
+      Right td -> do
+        td.sourceAccountId `shouldBe` joint
+        unMoney td.sourceAmount `shouldBe` 75
+        expenseCategoryOf td `shouldBe` Just groceriesCategoryId
+      Left msg -> expectationFailure msg
 
   it "falls back to the default category when the named category is unknown" $ do
     h <- setupHarness "prompt-default-cat@example.com"

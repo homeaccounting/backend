@@ -49,7 +49,7 @@ module Web.API.BankingAPI
   )
 where
 
-import Application.ReadModels.Account (getAccessibleAccounts)
+import Application.ReadModels.Account (getAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..))
 import Application.Services.BankImportService (ImportResult (..))
 import qualified Application.Services.BankImportService as BankImportService
@@ -357,7 +357,7 @@ importConnectionHandler user connUuid request = do
   -- Owner/Editor (writable) targets so an import never writes to a read-only
   -- share. accountMap :: Map ExternalAccountId AccountId, so each entry is
   -- already an (ExternalAccountId, AccountId) pair.
-  localAccounts <- runDb (getAccessibleAccounts userId)
+  localAccounts <- runDb (getAccounts userId)
   let writable =
         Set.fromList
           [ accId
@@ -437,7 +437,7 @@ importStatementFileHandler user connUuid format bytes = do
   -- 6. Build the import link from the connection's accountMap, keeping only
   -- Owner/Editor (writable) targets — identical filter to
   -- 'importConnectionHandler'\'s step 6.
-  localAccounts <- runDb (getAccessibleAccounts userId)
+  localAccounts <- runDb (getAccounts userId)
   let writable =
         Set.fromList
           [ accId

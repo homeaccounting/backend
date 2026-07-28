@@ -54,7 +54,7 @@ module Application.Services.ConfigurationService
   )
 where
 
-import Application.ReadModels.Account (AccountData (..), getAccessibleAccounts)
+import Application.ReadModels.Account (AccountData (..), getAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), dictionaryEntriesParentFirst, getConfiguration)
 import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..))
@@ -361,7 +361,7 @@ setDefaultExpenseCategory userId categoryId = runExceptT $ do
 -- the whole request is rejected with a @ValidationErr@.
 validateOwnedRegularAccounts :: UserId -> Text -> [AccountId] -> ExceptT DomainError AppM ()
 validateOwnedRegularAccounts userId field targets = do
-  accessible <- lift (runDb (getAccessibleAccounts userId))
+  accessible <- lift (runDb (getAccounts userId))
   let writable =
         Set.fromList
           [ accId
@@ -587,7 +587,7 @@ setBankConnectionAccountMap userId connId accountMap = runExceptT $ do
   lift $ logInfo $ "Setting bank connection account map for user " <> displayShow userId
   -- Cross-aggregate validation against the account read model BEFORE issuing the
   -- command. The user must own/edit every target account.
-  accessible <- lift (runDb (getAccessibleAccounts userId))
+  accessible <- lift (runDb (getAccounts userId))
   let writable =
         [ accId
         | (accId, _accData, role) <- accessible,

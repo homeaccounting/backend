@@ -245,7 +245,7 @@ listTransactions ::
   AppM (Int, [(TransactionId, TransactionData)])
 listTransactions userId filt page = do
   logDebug $ "Listing transactions for user " <> displayShow userId
-  visible <- runDb (AccountRM.getAccessibleAccountIds userId)
+  visible <- runDb (AccountRM.getAccountIds userId)
   if Set.null visible
     then do
       logDebug "User has no accessible accounts; returning empty list"

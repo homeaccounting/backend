@@ -43,7 +43,7 @@ module Application.Services.ReportingService
   )
 where
 
-import Application.ReadModels.Account (AccountData (..), getAccessibleAccountIds, getMyAccounts)
+import Application.ReadModels.Account (AccountData (..), getAccountIds, getOwnedAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..))
 import Application.ReadModels.ExchangeRate (lookupHistoricalRate)
 import Application.ReadModels.Transaction (TransactionData (..), reportableTransactions, touchesVisible)
@@ -178,7 +178,7 @@ resolveBaseCurrency userId = do
 
 -- | The set of accounts the user can see (any role grants visibility).
 visibleAccounts :: UserId -> AppM (Set AccountId)
-visibleAccounts userId = runDb (getAccessibleAccountIds userId)
+visibleAccounts userId = runDb (getAccountIds userId)
 
 -- | Spending grouped by category for the user's visible accounts within the
 -- optional inclusive date window. Returns the base-currency grand total plus
@@ -228,7 +228,7 @@ ownedRegularOpened userId =
 netWorth :: UserId -> AppM (Either DomainError (Money, [(AccountId, Money, Money)]))
 netWorth userId = do
   base <- resolveBaseCurrency userId
-  myAccts <- runDb (getMyAccounts userId)
+  myAccts <- runDb (getOwnedAccounts userId)
   let owned = ownedRegularOpened userId (Map.toList myAccts)
   cfg <- view appConfigL
   now <- liftIO getCurrentTime

@@ -41,10 +41,10 @@ module Application.ReadModels.Account
 
     -- * Queries (run via 'runDb')
     getAccount,
-    getMyAccounts,
-    getAccessibleAccounts,
-    getAccessibleAccountIds,
-    getUserRegularAccounts,
+    getOwnedAccounts,
+    getAccounts,
+    getAccountIds,
+    getRegularAccounts,
     accountExists,
 
     -- * Temporal balance (event-store fold)
@@ -330,9 +330,10 @@ getAccount accId = do
 
 -- | The caller's own accounts (those they created), keyed by id, each with its
 -- access list. Scoped to the owner via an indexed @created_by@ lookup — never a
--- full-table scan over every user's accounts.
-getMyAccounts :: (MonadIO m) => UserId -> SqlPersistT m (Map AccountId AccountData)
-getMyAccounts userId = do
+-- full-table scan over every user's accounts. Accounts merely shared /to/ the
+-- caller are excluded; use 'getAccounts' for the owner+shared scope.
+getOwnedAccounts :: (MonadIO m) => UserId -> SqlPersistT m (Map AccountId AccountData)
+getOwnedAccounts userId = do
   rows <- selectList [AccountEntityCreatedBy ==. userId] []
   aclByAcc <- loadAccessLists [e.accountEntityAccountId | Entity _ e <- rows]
   pure $
@@ -341,15 +342,26 @@ getMyAccounts userId = do
       | Entity _ e <- rows
       ]
 
--- | Accounts the user can access (any role), with the user's role on each.
-getAccessibleAccounts ::
+-- | The owner+shared access scope, in one place: the (account id, role) pairs
+-- from the @account_access@ table for a user. An indexed @WHERE user_id = ?@
+-- lookup covering both accounts the user created (role 'Owner') and accounts
+-- shared to them (the granted role). Every accessible-scope query below is
+-- built on this, so the scope predicate lives in exactly one place.
+accessScopeFor :: (MonadIO m) => UserId -> SqlPersistT m [(AccountId, AccountRole)]
+accessScopeFor userId = do
+  rows <- selectList [AccountAccessEntityUserId ==. userId] []
+  pure [(r.accountAccessEntityAccountId, r.accountAccessEntityRole) | Entity _ r <- rows]
+
+-- | Accounts the user can access (owner + shared, any role), with the user's
+-- role on each. Includes the user's own External bookkeeping account; callers
+-- that want only spendable accounts use 'getRegularAccounts'.
+getAccounts ::
   (MonadIO m) =>
   UserId ->
   SqlPersistT m [(AccountId, AccountData, AccountRole)]
-getAccessibleAccounts userId = do
-  accessRows <- selectList [AccountAccessEntityUserId ==. userId] []
-  let roleByAcc = Map.fromList [(r.accountAccessEntityAccountId, r.accountAccessEntityRole) | Entity _ r <- accessRows]
-      accIds = Map.keys roleByAcc
+getAccounts userId = do
+  roleByAcc <- Map.fromList <$> accessScopeFor userId
+  let accIds = Map.keys roleByAcc
   accountRows <- selectList [AccountEntityAccountId <-. accIds] []
   aclByAcc <- loadAccessLists accIds
   pure
@@ -358,26 +370,29 @@ getAccessibleAccounts userId = do
       Just role <- [Map.lookup e.accountEntityAccountId roleByAcc]
     ]
 
--- | The set of account ids a user can see.
-getAccessibleAccountIds :: (MonadIO m) => UserId -> SqlPersistT m (Set AccountId)
-getAccessibleAccountIds userId = do
-  accessRows <- selectList [AccountAccessEntityUserId ==. userId] []
-  pure $ Set.fromList [r.accountAccessEntityAccountId | Entity _ r <- accessRows]
+-- | The set of account ids a user can access (owner + shared). Kept as its own
+-- lean id-only query — it drives transaction/report visibility filtering, so it
+-- must not pay to load full account rows the way 'getAccounts' does.
+getAccountIds :: (MonadIO m) => UserId -> SqlPersistT m (Set AccountId)
+getAccountIds userId = Set.fromList . map fst <$> accessScopeFor userId
 
--- | A user's own regular (non-External) accounts as (id, name, balance).
-getUserRegularAccounts :: (MonadIO m) => UserId -> SqlPersistT m [(AccountId, RegularAccountData)]
-getUserRegularAccounts userId = do
-  rows <- selectList [AccountEntityCreatedBy ==. userId] []
+-- | A user's accessible (owner + shared) regular accounts as
+-- (id, 'RegularAccountData'). A projection of 'getAccounts' that drops the
+-- role, keeps only 'Regular' accounts (the External bookkeeping account has no
+-- subtype and so falls out), and carries just name\/balance\/subtype.
+getRegularAccounts :: (MonadIO m) => UserId -> SqlPersistT m [(AccountId, RegularAccountData)]
+getRegularAccounts userId = do
+  accounts <- getAccounts userId
   pure
-    [ ( e.accountEntityAccountId,
+    [ ( aid,
         RegularAccountData
-          { name = e.accountEntityName,
-            balance = e.accountEntityBalance,
+          { name = ad.name,
+            balance = ad.balance,
             subtype = kind
           }
       )
-    | Entity _ e <- rows,
-      Just kind <- [accountTypeSubtypeKind e.accountEntityAccountType]
+    | (aid, ad, _role) <- accounts,
+      Just kind <- [accountTypeSubtypeKind ad.accountType]
     ]
 
 -- | Whether an account exists.

@@ -20,7 +20,7 @@ module Application.Services.Prompt.Transaction.Handler
   )
 where
 
-import Application.ReadModels.Account (RegularAccountData (..), getUserRegularAccounts)
+import Application.ReadModels.Account (RegularAccountData (..), getRegularAccounts)
 import Application.ReadModels.Configuration
   ( ConfigurationData (..),
     dictionaryGroupFallbacks,
@@ -74,7 +74,7 @@ import RIO
 -- over inference for the primary account slot.
 gatherContext :: UserId -> Maybe AccountId -> AppM (Either DomainError (PromptContext, ResolveContext))
 gatherContext uid selected = do
-  accts <- runDb (getUserRegularAccounts uid)
+  accts <- runDb (getRegularAccounts uid)
   getConfigurationForUser uid >>= \case
     Left e -> pure (Left e)
     Right cfg -> pure (Right (buildContexts accts cfg selected))

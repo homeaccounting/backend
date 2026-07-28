@@ -227,7 +227,7 @@ listAccountsForUser :: UserId -> AppM [AccessibleAccount]
 listAccountsForUser userId = do
   logInfo $ "Listing accounts for user " <> displayShow userId
 
-  accountsList <- runDb (ReadModel.getAccessibleAccounts userId)
+  accountsList <- runDb (ReadModel.getAccounts userId)
 
   let result =
         [ AccessibleAccount {accountId = aid, role = role, account = account}

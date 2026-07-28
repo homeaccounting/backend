@@ -43,7 +43,7 @@ module Telegram.Commands
     sendMsgWithKeyboard,
     toTgKeyboard,
     getUserIdForTelegram,
-    getUserRegularAccounts,
+    accessibleAccountsForTelegram,
     findAccountByShortId,
     parseCallbackData,
   )
@@ -338,7 +338,7 @@ handleLogin _botState _telegramId chatId _args = do
 -- offered when something is selected.
 handleAccounts :: TVar BotState -> TelegramId -> Int64 -> AppM ()
 handleAccounts botState telegramId chatId = do
-  maybeAccounts <- getUserRegularAccounts telegramId
+  maybeAccounts <- accessibleAccountsForTelegram telegramId
   selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
   case maybeAccounts of
     Nothing -> sendMsg chatId "You don't have an account yet. Use /start to create one."
@@ -372,7 +372,7 @@ handleCreateAccountName botState telegramId chatId name = do
 -- | Handle /transfer command.
 handleTransfer :: TVar BotState -> TelegramId -> Int64 -> AppM ()
 handleTransfer botState telegramId chatId = do
-  maybeAccounts <- getUserRegularAccounts telegramId
+  maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
     Nothing -> sendMsg chatId "You don't have an account yet. Use /start to create one."
     Just accounts
@@ -544,7 +544,7 @@ handleClearSelection botState telegramId chatId = do
 -- | Handle account selection callback from /accounts.
 handleSelectCallback :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
 handleSelectCallback botState telegramId chatId shortId = do
-  maybeAccounts <- getUserRegularAccounts telegramId
+  maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
     Nothing -> sendMsg chatId "Could not find your accounts."
     Just accounts ->
@@ -740,7 +740,7 @@ handleExpenseDescription botState telegramId chatId cat money description = do
 -- | Handle transfer source account selection.
 handleTransferSourceSelected :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
 handleTransferSourceSelected botState telegramId chatId shortId = do
-  maybeAccounts <- getUserRegularAccounts telegramId
+  maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
     Nothing -> sendMsg chatId "Could not find your accounts."
     Just accounts ->
@@ -755,7 +755,7 @@ handleTransferSourceSelected botState telegramId chatId shortId = do
 -- | Handle transfer target account selection.
 handleTransferTargetSelected :: TVar BotState -> TelegramId -> Int64 -> AccountId -> Text -> AppM ()
 handleTransferTargetSelected botState telegramId chatId srcId shortId = do
-  maybeAccounts <- getUserRegularAccounts telegramId
+  maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
     Nothing -> sendMsg chatId "Could not find your accounts."
     Just accounts ->
@@ -882,14 +882,14 @@ getDictionaryEntryNames telegramId = do
 -- | Send the shared, structured confirmation for a just-recorded
 -- transaction. Resolves category/label names and the user's own account
 -- names from existing read-model helpers, then delegates rendering to the
--- pure 'formatRecordedTransaction'. The displayed account is always the
--- user's own regular account (source for expense, target for income, both
--- for transfer), so 'getUserRegularAccounts' suffices — no External-account
--- lookup is needed.
+-- pure 'formatRecordedTransaction'. The displayed account is always a regular
+-- account the user can access (source for expense, target for income, both
+-- for transfer), so 'accessibleAccountsForTelegram' suffices — no
+-- External-account lookup is needed.
 replyRecordedTransaction :: TelegramId -> Int64 -> TransactionData -> AppM ()
 replyRecordedTransaction telegramId chatId td = do
   entryNames <- getDictionaryEntryNames telegramId
-  maybeAccounts <- getUserRegularAccounts telegramId
+  maybeAccounts <- accessibleAccountsForTelegram telegramId
   let accountNames =
         Map.fromList [(aid, n) | (aid, n, _) <- fromMaybe [] maybeAccounts]
   sendMsg chatId (formatRecordedTransaction entryNames accountNames td)
@@ -904,15 +904,16 @@ getUserIdForTelegram telegramId = do
   maybeUser <- runDb (getUserByTelegramId telegramId)
   return $ fmap fst maybeUser
 
--- | Get a user's regular (non-External) accounts as (AccountId, name, balance) triples.
+-- | Get the regular (non-External) accounts a Telegram user can access — those
+-- they own plus any shared to them — as (AccountId, name, balance) triples.
 -- Returns Nothing if the Telegram user is not found, Just accounts otherwise.
-getUserRegularAccounts :: TelegramId -> AppM (Maybe [(AccountId, Text, Money)])
-getUserRegularAccounts telegramId = do
+accessibleAccountsForTelegram :: TelegramId -> AppM (Maybe [(AccountId, Text, Money)])
+accessibleAccountsForTelegram telegramId = do
   maybeUserId <- getUserIdForTelegram telegramId
   case maybeUserId of
     Nothing -> return Nothing
     Just userId -> do
-      accounts <- runDb (AccountRM.getUserRegularAccounts userId)
+      accounts <- runDb (AccountRM.getRegularAccounts userId)
       return $ Just [(aid, a.name, a.balance) | (aid, a) <- accounts]
 
 -- | Find an account by short ID prefix (first 8 chars of UUID).
