@@ -26,6 +26,7 @@ import Application.ReadModels.Configuration
     dictionaryGroupFallbacks,
     dictionaryItemPaths,
   )
+import Application.ReadModels.Transaction (TransactionData (..))
 import Application.Services.ConfigurationService
   ( getConfigurationForUser,
     labelsDictKind,
@@ -59,6 +60,7 @@ import Domain.Core.Types
     DictionaryEntryId,
     UserId,
   )
+import Domain.Transaction.Projection (TransactionStatus (..))
 import Infrastructure.App (AppM, runDb)
 import RIO
 
@@ -156,6 +158,13 @@ runRecordTransactions uid rctx userText rows = do
           committed <- dispatch resolved
           case committed of
             Left e -> pure (Left (FailedTransaction {index = idx, reason = renderDomainError e}))
+            -- A successful *initiation* is not a successful *posting*. The posting
+            -- saga runs synchronously in the write path, so an accepted command can
+            -- still leave the transaction Failed (e.g. insufficient funds). Report
+            -- that as a failed row — never as a recorded transaction — mirroring the
+            -- status check the /income, /expense and /transfer flows already do.
+            Right (_tid, TransactionData {status = Failed reason}) ->
+              pure (Left (FailedTransaction {index = idx, reason = reason}))
             Right (tid, tdata) ->
               pure (Right (RecordedTransaction {index = idx, interpretation = interp, txId = tid, tx = tdata}))
     dispatch = \case

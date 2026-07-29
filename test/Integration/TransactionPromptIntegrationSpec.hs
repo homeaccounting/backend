@@ -73,7 +73,11 @@ setupHarness email = do
   -- Default base currency is USD, so the auto-created External account is USD.
   -- A UAH Cash account makes the expense cross-currency; seed both rate legs.
   seedExchangeRates e [(Core.UAH, Core.USD, 1 % 40), (Core.USD, Core.UAH, 40 % 1)]
-  cash <- createAccount e uid "Cash" defaultCash Core.UAH 0
+  -- Fund Cash well above every test amount: a Regular account defaults to a
+  -- zero overdraft limit, so an unfunded source would make the posting saga
+  -- reject every expense/transfer debit (InsufficientFunds) and no happy-path
+  -- transaction would actually post.
+  cash <- createAccount e uid "Cash" defaultCash Core.UAH 1000000
   pure Harness {env = e, user = uid, cashAccount = cash}
 
 -- | The deterministic id of the default "Groceries" expense category.
@@ -148,7 +152,7 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     -- A second user owns "Joint" (UAH, so the seeded rates cover the
     -- cross-currency counter-leg) and shares it to the harness user as Editor.
     owner <- registerUser h.env "prompt-shared-owner@example.com"
-    joint <- createAccount h.env owner "Joint" defaultCash Core.UAH 0
+    joint <- createAccount h.env owner "Joint" defaultCash Core.UAH 1000000
     shareRes <-
       runAppM h.env
         $ shareAccount owner (unAccountId joint) (unUserId h.user) "editor"
@@ -231,6 +235,24 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
       Right (TransactionsRecorded [] [f]) -> f.index `shouldBe` 0
       other -> expectationFailure ("expected one failed transaction, got: " <> show other)
 
+  it "reports an expense that fails to post (insufficient funds) as a failed row, committing nothing" $ do
+    h <- setupHarness "prompt-insufficient@example.com"
+    -- A fresh regular account starts at a zero balance with the default zero
+    -- overdraft limit, so the synchronous posting saga rejects any expense debit
+    -- against it (InsufficientFunds) instead of completing it. Such a row must
+    -- surface as a failure — never as a recorded transaction carrying a Failed
+    -- status.
+    _empty <- createAccount h.env h.user "Empty" defaultCash Core.UAH 0
+    let json =
+          "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"sourceAccount\":\"Empty\",\"allocations\":[{\"amount\":\"50\",\"category\":\"Groceries\",\"comment\":\"empty 50 food\"}]}]}"
+        e = withLlmClient (constLlmClient json) h.env
+    result <- runAppM e (handlePrompt h.user Nothing "empty 50 food")
+    case result of
+      Right (TransactionsRecorded [] [f]) -> do
+        f.index `shouldBe` 0
+        f.reason `shouldBe` "Insufficient funds"
+      other -> expectationFailure ("expected one failed (insufficient funds) transaction, got: " <> show other)
+
   it "yields PromptFeatureDisabled when the LLM feature is disabled (no client injected)" $ do
     h <- setupHarness "prompt-disabled@example.com"
     -- env.llmClient is Nothing on the base test env.
@@ -308,7 +330,8 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     h <- setupHarness "prompt-selected-acct@example.com"
     -- A second account so the selection is distinguishable from any inference
     -- default. The LLM returns no sourceAccount; the selection must fill it.
-    card <- createAccount h.env h.user "Card" defaultCash Core.UAH 0
+    -- Funded because the selection makes it the debited source.
+    card <- createAccount h.env h.user "Card" defaultCash Core.UAH 1000000
     let json =
           "{\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"allocations\":[{\"amount\":\"42\",\"category\":\"Groceries\",\"comment\":\"snack\"}]}]}"
         e = withLlmClient (constLlmClient json) h.env
