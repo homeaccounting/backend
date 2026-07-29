@@ -53,6 +53,7 @@ import Domain.Core.Types
     DictionaryEntryId,
     ExternalTransactionId,
     Money,
+    TransactionType (Transfer),
     UserId,
     defaultBankAccount,
     defaultConfigurationId,
@@ -72,6 +73,9 @@ import Infrastructure.Banking.Provider
   ( BankTransaction (..),
     PullCapability (..),
     TransactionClassification (..),
+    TransactionInterpretation (..),
+    defaultTransferMatcher,
+    defaultTransferPairingWindow,
   )
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import Infrastructure.Eventium (applyConfigurationCommand)
@@ -135,6 +139,17 @@ mockProvider statements =
       registerWebhook = \_ -> return $ Right ()
     }
 
+-- | A mock pull capability that returns per-external-account statements, so a
+-- connection spanning several accounts can be exercised. Accounts absent from
+-- the map fetch an empty statement list.
+mockProviderPerAccount :: [(ExternalAccountId, [BankTransaction])] -> PullCapability
+mockProviderPerAccount perAccount =
+  PullCapability
+    { fetchAccounts = return $ Right [],
+      fetchStatements = \extAccId _ _ -> return $ Right (fromMaybe [] (lookup extAccId perAccount)),
+      registerWebhook = \_ -> return $ Right ()
+    }
+
 -- | The classifier the mock provider pairs with: income for non-negative
 -- amounts, expense otherwise (the Monobank sign rule).
 mockClassify :: BankTransaction -> TransactionClassification
@@ -142,6 +157,11 @@ mockClassify tx =
   if tx.amount >= 0
     then ClassifiedIncome
     else ClassifiedExpense
+
+-- | The interpretation the mock provider pairs with: 'mockClassify' plus the
+-- generic (default) transfer matcher over the default pairing window.
+interp :: TransactionInterpretation
+interp = TransactionInterpretation mockClassify (defaultTransferMatcher defaultTransferPairingWindow)
 
 -- | Create a bank transaction for testing. Amount is in major units.
 mkTestTransaction :: Rational -> Text -> BankTransaction
@@ -232,6 +252,55 @@ setupTestEnv = do
       accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
 
   return (env, externalAccId, bankAccId, accountLink)
+
+-- | Set up an environment with TWO linked bank accounts (A and B) plus the
+-- per-user External account, so an internal transfer between A and B can be
+-- detected and paired at import time. Both bank accounts carry overdraft
+-- headroom so the debit leg posts. Returns (env, bankAccIdA, bankAccIdB, link)
+-- with the link in [A, B] order.
+setupTwoBankAccountEnv :: IO (AppEnv, AccountId, AccountId, [(ExternalAccountId, AccountId)])
+setupTwoBankAccountEnv = do
+  env <- createTestAppEnvWithProcessManager
+  runAppM env ConfigurationService.seedDefaultConfiguration
+  (externalAccId, bankAccIdA, bankAccIdB) <- runAppM env $ do
+    extResult <-
+      createAccount
+        CreateAccount
+          { name = "External",
+            initialBalance = mockMoneyWith UAH 0,
+            createdBy = testUserId,
+            accountType = External,
+            overdraftLimit = Nothing
+          }
+    let (extId, _) = fromRight' extResult
+    aResult <-
+      createAccount
+        CreateAccount
+          { name = "Monobank A",
+            initialBalance = mockMoneyWith UAH 0,
+            createdBy = testUserId,
+            accountType = Regular defaultBankAccount,
+            overdraftLimit = Just (Just (mockMoneyWith UAH 1000000))
+          }
+    let (aId, _) = fromRight' aResult
+    bResult <-
+      createAccount
+        CreateAccount
+          { name = "Monobank B",
+            initialBalance = mockMoneyWith UAH 0,
+            createdBy = testUserId,
+            accountType = Regular defaultBankAccount,
+            overdraftLimit = Just (Just (mockMoneyWith UAH 1000000))
+          }
+    let (bId, _) = fromRight' bResult
+    return (extId, aId, bId)
+  Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
+  let accountLink :: [(ExternalAccountId, AccountId)]
+      accountLink =
+        [ (unsafeExternalAccountId "mono-acc-A", bankAccIdA),
+          (unsafeExternalAccountId "mono-acc-B", bankAccIdB)
+        ]
+  return (env, bankAccIdA, bankAccIdB, accountLink)
 
 -- | Set up a CROSS-CURRENCY test environment: the per-user External account
 -- is in USD (the user's base currency) while the linked bank account is in
@@ -368,7 +437,7 @@ spec = describe "Bank Import Workflow" $ do
         provider = mockProvider statements
 
     -- First resync: should import all 3 transactions (hold no longer filtered)
-    result1 <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+    result1 <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
     let importedIds = concatMap (.succeeded) result1.accounts
     length importedIds `shouldBe` 3
 
@@ -403,7 +472,7 @@ spec = describe "Bank Import Workflow" $ do
         holdData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 30))
 
         -- Second resync (dedup): same statements should produce no new imports
-        result2 <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+        result2 <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
         concatMap (.succeeded) result2.accounts `shouldBe` []
         concatMap (.failed) result2.accounts `shouldBe` []
       _ -> expectationFailure $ "Expected exactly 3 imported IDs, got " <> show (length importedIds)
@@ -421,9 +490,57 @@ spec = describe "Bank Import Workflow" $ do
           ]
         provider = mockProvider statements
 
-    result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+    result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
     length (concatMap (.succeeded) result.accounts) `shouldBe` 3
     concatMap (.failed) result.accounts `shouldBe` []
+
+  it "pairs opposite legs across two of the connection's own accounts into a single transfer" $ do
+    (env, bankAccIdA, bankAccIdB, accountLink) <- setupTwoBankAccountEnv
+
+    -- A debit leg on account A and the matching credit leg on account B:
+    -- equal magnitude, same currency, same timestamp (within the window).
+    -- Each is fetched under its own external account, yet a single import
+    -- over the union must collapse them into ONE internal Transfer.
+    let debitLeg =
+          mkSameCurrencyBankTx
+            (unsafeExternalTransactionId "transfer-debit")
+            (unsafeExternalAccountId "mono-acc-A")
+            (-100)
+        creditLeg =
+          mkSameCurrencyBankTx
+            (unsafeExternalTransactionId "transfer-credit")
+            (unsafeExternalAccountId "mono-acc-B")
+            100
+        provider =
+          mockProviderPerAccount
+            [ (unsafeExternalAccountId "mono-acc-A", [debitLeg]),
+              (unsafeExternalAccountId "mono-acc-B", [creditLeg])
+            ]
+
+    result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
+
+    -- Still one row per link entry, in link order [A, B].
+    length result.accounts `shouldBe` 2
+    -- Exactly one transaction was created (a transfer, not two legs).
+    allTxCount <- runDbIn env TransactionRM.countTransactions
+    allTxCount `shouldBe` 1
+
+    -- The transfer's id appears under BOTH accounts (same id on each row).
+    case map (.succeeded) result.accounts of
+      [[idA], [idB]] -> do
+        idA `shouldBe` idB
+        txData <- fromJustIO "transfer tx" =<< runDbIn env (TransactionRM.getTransaction idA)
+        txData.transactionType `shouldBe` Transfer
+        -- Debit leg (A) is the source, credit leg (B) is the target.
+        txData.sourceAccountId `shouldBe` bankAccIdA
+        txData.targetAccountId `shouldBe` bankAccIdB
+        txData.status `shouldBe` Completed
+        -- A decreased by 100, B increased by 100 (no External double count).
+        balA <- accountBalanceOf env bankAccIdA
+        balB <- accountBalanceOf env bankAccIdB
+        balA `shouldBe` fromRight' (mkMoney UAH (-100))
+        balB `shouldBe` fromRight' (mkMoney UAH 100)
+      other -> expectationFailure $ "expected one tx id under each of the two link rows, got " <> show other
 
   prop "concurrent resyncs of the same statement produce one transfer per external id"
     $ \(txSeeds :: NonEmptyList (Positive Int)) -> ioProperty $ do
@@ -441,7 +558,7 @@ spec = describe "Bank Import Workflow" $ do
           provider = mockProvider txs
           runOnce =
             runAppM env
-              $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+              $ importConnection interp provider testUserId accountLink testFromTime testToTime
           extIdOf :: BankTransaction -> ExternalTransactionId
           extIdOf t = t.externalId
           expected = length (nubBy ((==) `on` extIdOf) txs)
@@ -464,7 +581,7 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkTestTransaction 100 "xc-income" -- +100 UAH income
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       concatMap (.failed) result.accounts `shouldBe` []
       txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i
@@ -494,7 +611,7 @@ spec = describe "Bank Import Workflow" $ do
       let incomeTx = mkTestTransaction 500 "xc-fund"
           expenseTx = mkTestTransaction (-200) "xc-expense"
           provider = mockProvider [incomeTx, expenseTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       concatMap (.failed) result.accounts `shouldBe` []
       expenseId <- case concatMap (.succeeded) result.accounts of
         [_fundId, eId] -> pure eId
@@ -522,7 +639,7 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkTestTransaction 100 "xc-nearest"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       concatMap (.failed) result.accounts `shouldBe` []
       txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i
@@ -541,7 +658,7 @@ spec = describe "Bank Import Workflow" $ do
       -- intentionally seed nothing
       let incomeTx = mkTestTransaction 100 "xc-no-rate"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       concatMap (.succeeded) result.accounts `shouldBe` []
       length (concatMap (.failed) result.accounts) `shouldBe` 1
 
@@ -581,7 +698,7 @@ spec = describe "Bank Import Workflow" $ do
       -- A UAH transaction (currencyCode 980) mapped to a USD account.
       let incomeTx = mkTestTransaction 100 "xc-mismatch"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       -- Skipped, not imported, not failed.
       concatMap (.succeeded) result.accounts `shouldBe` []
       concatMap (.failed) result.accounts `shouldBe` []
@@ -598,7 +715,7 @@ spec = describe "Bank Import Workflow" $ do
       (env, _externalAccId, bankAccId, accountLink) <- setupTestEnv
       let incomeTx = mkTestTransaction 100 "xc-same"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       concatMap (.failed) result.accounts `shouldBe` []
       txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i
@@ -618,7 +735,7 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkDescribedTransaction 100 "contact-match" "Acme Corp"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       concatMap (.failed) result.accounts `shouldBe` []
       txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i
@@ -633,7 +750,7 @@ spec = describe "Bank Import Workflow" $ do
 
       let incomeTx = mkDescribedTransaction 100 "contact-no-match" "Some Other Merchant"
           provider = mockProvider [incomeTx]
-      result <- runAppM env $ importConnection mockClassify provider testUserId accountLink testFromTime testToTime
+      result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
       concatMap (.failed) result.accounts `shouldBe` []
       txId <- case concatMap (.succeeded) result.accounts of
         [i] -> pure i

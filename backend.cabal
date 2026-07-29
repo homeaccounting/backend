@@ -54,6 +54,7 @@ library
       Application.Services.AccountService
       Application.Services.AuthorizationService
       Application.Services.AuthService
+      Application.Services.BankImport.TransferPairing
       Application.Services.BankImportService
       Application.Services.ConfigurationService
       Application.Services.ExchangeRatePublisher
@@ -335,6 +336,8 @@ test-suite backend-test
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
       Application.Services.AuthServiceSpec
+      Application.Services.BankImport.TransferPairingPropertySpec
+      Application.Services.BankImport.TransferPairingSpec
       Application.Services.BankImportServiceSpec
       Application.Services.BooksCloseServiceSpec
       Application.Services.ConfigurationDictionaryTreeIntegrationSpec
@@ -405,9 +408,11 @@ test-suite backend-test
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.PrivatBankSpec
+      Infrastructure.Banking.PrivatBankTransferSpec
       Infrastructure.Banking.ProviderSpec
       Infrastructure.Banking.ProvidersSpec
       Infrastructure.Banking.RegistrySpec
+      Infrastructure.Banking.TransferMatcherSpec
       Infrastructure.ConfigLlmSpec
       Infrastructure.ConfigSpec
       Infrastructure.Crypto.SecretBoxSpec

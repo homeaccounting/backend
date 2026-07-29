@@ -43,7 +43,7 @@ module Application.ReadModels.BankImportReadModel
   )
 where
 
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Maybe (isJust)
 import Database.Persist (Filter, deleteWhere, getBy, insertUnique)
@@ -55,7 +55,7 @@ import Database.Persist.TH
     share,
     sqlSettings,
   )
-import Domain.Core.Types (ExternalTransactionId, TransactionId, importInfoExternalTransactionId, mkTransactionIdSafe)
+import Domain.Core.Types (ExternalTransactionId, TransactionId, importInfoExternalTransactionIds, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransactionPostingInitiated (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, ReadModel (..))
@@ -108,18 +108,21 @@ isImported extId = isJust <$> getBy (UniqueExternalTransactionId extId)
 -- Read model
 -- -----------------------------------------------------------------------------
 
--- | Idempotent projection apply for a single global event: records the
--- external-id -> internal-tx-id mapping for every 'TransactionPostingInitiated'
--- carrying an external id. 'insertUnique' (keyed by the external id) makes
--- re-application a no-op.
+-- | Idempotent projection apply for a single global event: for every
+-- 'TransactionPostingInitiated' carrying import info, records one
+-- external-id -> internal-tx-id row per external id (a normal import has one; a
+-- detected internal transfer has both legs' ids, all mapping to the same
+-- transaction). 'insertUnique' (keyed by the external id) makes re-application a
+-- no-op.
 applyBankImportEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
 applyBankImportEvent globalEvent =
   let (streamUuid, payload) = unpackGlobalEvent globalEvent
    in case payload of
         TransactionPostingInitiatedEvent evt ->
-          case (importInfoExternalTransactionId <$> evt.importInfo, mkTransactionIdSafe streamUuid) of
-            (Just extId, Just txId) ->
-              void $ insertUnique (ImportedTransactionEntity extId txId)
+          case (importInfoExternalTransactionIds <$> evt.importInfo, mkTransactionIdSafe streamUuid) of
+            (Just extIds, Just txId) ->
+              forM_ extIds $ \extId ->
+                void $ insertUnique (ImportedTransactionEntity extId txId)
             _ -> pure ()
         _ -> pure ()
 

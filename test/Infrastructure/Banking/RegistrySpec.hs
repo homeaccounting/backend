@@ -10,6 +10,7 @@ import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),
     TransactionClassification (..),
     defaultClassify,
+    defaultInterpretation,
   )
 import Infrastructure.Banking.Registry
   ( assembleRegistry,
@@ -29,7 +30,7 @@ mkDescriptor slug =
   BankProviderDescriptor
     { providerId = unsafeBankProviderId slug,
       displayName = slug,
-      classify = defaultClassify,
+      interpretation = defaultInterpretation,
       pull = Nothing,
       fileImport = Nothing
     }
@@ -54,7 +55,7 @@ spec = do
         BankProviderDescriptor
           { providerId = unsafeBankProviderId "monobank",
             displayName = "Monobank",
-            classify = defaultClassify,
+            interpretation = defaultInterpretation,
             pull = Nothing,
             fileImport = Nothing
           }

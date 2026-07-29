@@ -167,10 +167,9 @@ import Infrastructure.App
   )
 import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),
-    BankTransaction,
     FileImportCapability,
     PullCapability,
-    TransactionClassification,
+    TransactionInterpretation,
     providerSupportsPull,
   )
 import Infrastructure.Banking.Registry (lookupProvider)
@@ -639,8 +638,8 @@ getDecryptedConnectionCredential userId connId = runExceptT $ do
     Right cred -> pure cred
 
 -- | Resolve a user's stored bank connection into a ready-to-use pull pair:
--- the provider's transaction classifier and a 'PullCapability' built from the
--- decrypted token.
+-- the provider's 'TransactionInterpretation' (classify direction + transfer
+-- matcher) and a 'PullCapability' built from the decrypted token.
 --
 -- Loads the connection by id ('BankConnectionNotFound' when absent), decrypts
 -- its stored token, looks the connection's provider descriptor up in the
@@ -652,7 +651,7 @@ getDecryptedConnectionCredential userId connId = runExceptT $ do
 getConnectionProvider ::
   UserId ->
   BankConnectionId ->
-  AppM (Either DomainError (BankTransaction -> TransactionClassification, PullCapability))
+  AppM (Either DomainError (TransactionInterpretation, PullCapability))
 getConnectionProvider userId connId = runExceptT $ do
   configData <- ExceptT (getConfigurationForUser userId)
   conn <-
@@ -675,11 +674,12 @@ getConnectionProvider userId connId = runExceptT $ do
       pure
       desc.pull
   cred <- ExceptT (getDecryptedConnectionCredential userId connId)
-  pure (desc.classify, mkPull cred)
+  pure (desc.interpretation, mkPull cred)
 
 -- | Resolve a user's stored bank connection into a ready-to-use file-import
--- pair: the provider's transaction classifier and its 'FileImportCapability'
--- (the format-keyed statement parsers).
+-- pair: the provider's 'TransactionInterpretation' (classify direction +
+-- transfer matcher) and its 'FileImportCapability' (the format-keyed statement
+-- parsers).
 --
 -- Loads the connection by id ('BankConnectionNotFound' when absent), looks
 -- the connection's provider descriptor up in the injected
@@ -691,7 +691,7 @@ getConnectionProvider userId connId = runExceptT $ do
 getConnectionFileImport ::
   UserId ->
   BankConnectionId ->
-  AppM (Either DomainError (BankTransaction -> TransactionClassification, FileImportCapability))
+  AppM (Either DomainError (TransactionInterpretation, FileImportCapability))
 getConnectionFileImport userId connId = runExceptT $ do
   configData <- ExceptT (getConfigurationForUser userId)
   conn <-
@@ -710,7 +710,7 @@ getConnectionFileImport userId connId = runExceptT $ do
       (throwE (BankingError ("Bank provider has no file-import transport: " <> unBankProviderId conn.provider)))
       pure
       desc.fileImport
-  pure (desc.classify, cap)
+  pure (desc.interpretation, cap)
 
 -- | Advance the user's books-close cutoff. Both layers (service edge + aggregate)
 -- enforce the strict-advance rule:

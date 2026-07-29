@@ -183,7 +183,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    importInfo = Just ImportInfo {externalTransactionId = extTxId, mcc = Nothing},
+                    importInfo = Just ImportInfo {externalTransactionIds = extTxId :| [], mcc = Nothing},
                     labels = labels,
                     contactId = Nothing,
                     relation = Nothing
@@ -191,7 +191,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
         case handleTransactionCommand transaction command of
           Right events -> case head events of
             TransactionPostingInitiatedTransactionEvent initiated -> do
-              (importInfoExternalTransactionId <$> initiated.importInfo) `shouldBe` Just extTxId
+              (importInfoExternalTransactionIds <$> initiated.importInfo) `shouldBe` Just (extTxId :| [])
               initiated.labels `shouldBe` labels
             _ -> expectationFailure "Expected TransactionPostingInitiated event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err

@@ -11,15 +11,20 @@
 --
 -- This module implements the core orchestration logic for importing bank
 -- transactions into the accounting system. It is transport-neutral: it consumes
--- a list of 'BankTransaction's (pulled by the caller via a 'PullCapability')
--- plus a @classify@ function, and creates 'InitiateTransactionPosting' commands.
+-- a list of 'BankTransaction's plus a provider 'TransactionInterpretation'
+-- (a @classify@ direction function + a 'TransferMatcher'), and creates
+-- 'InitiateTransactionPosting' commands.
 --
 -- Key Functions:
---   - importConnection: Fetch statements for a date range and import each transaction
---   - importMany: Shared import sink — route a flat list of transactions by
---     externalAccountId and delegate to importTransaction; transport-neutral,
---     used by both the pull path (importConnection) and file import
+--   - importConnection: Fetch every linked account's statements, then import
+--     the union in one pass (so an internal transfer between two of the
+--     connection's accounts is paired into a single 'Transfer')
+--   - importMany: Shared import sink — detect internal transfers via the
+--     pairing pre-pass, then route the remaining transactions by
+--     externalAccountId to importTransaction; transport-neutral, used by both
+--     the pull path (importConnection) and the file-import path
 --   - importTransaction: Core import logic for a single bank transaction
+--   - importTransferPair: Post one 'Transfer' for a detected internal-transfer pair
 --
 -- The service handles:
 --   - Deduplication via BankImportReadModel
@@ -48,6 +53,14 @@ import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.BankImportReadModel (isImported)
 import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItemIds, dictionaryItems)
 import qualified Application.ReadModels.User as UserRM
+import Application.Services.BankImport.TransferPairing
+  ( InternalTransfer,
+    creditLeg,
+    creditLocalAccount,
+    debitLeg,
+    debitLocalAccount,
+    pairInternalTransfers,
+  )
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
@@ -90,6 +103,7 @@ import Infrastructure.Banking.Provider
   ( BankTransaction (..),
     PullCapability (..),
     TransactionClassification (..),
+    TransactionInterpretation (..),
   )
 import RIO
 import RIO.List (sortOn)
@@ -182,80 +196,82 @@ instance ToJSON ImportResult
 
 -- | Fetch statements for a date range and import each transaction.
 --
--- For each account mapping supplied by the caller, fetches statements from
--- the provider and delegates the fetched transactions to 'importMany'. Returns
--- a structured per-account breakdown. A fetch failure for one account does not
--- abort processing of the other accounts; per-tx import failures are
--- collected into 'failures' rather than aborting the fetch's remaining
--- transactions.
+-- Runs in two phases so that internal transfers between two of the
+-- connection's OWN accounts are detected and paired:
 --
--- Each account's link is scoped to just that @(externalAccountId,
--- localAccountId)@ pair when calling 'importMany', mirroring how a real
--- provider's @fetchStatements@ is itself scoped to one external account: every
--- returned transaction is expected to belong to it. This keeps
--- 'importConnection'\'s per-account breakdown (one row per link entry, even
--- when a fetch returns zero transactions) and guarantees 'unresolved' stays
--- @[]@ for a well-behaved provider.
+--   1. __Fetch__ every link entry's statements from the provider, keeping each
+--      @(externalAccountId, localAccountId, Either err [BankTransaction])@.
+--      A fetch failure for one account does not abort the others.
+--   2. __Import__ the union of all successfully fetched transactions through a
+--      SINGLE 'importMany' call over the full @accountLink@, so its pairing
+--      pre-pass can see both legs of a transfer at once (per-account fetches
+--      each only cover one side, so the earlier per-account 'importMany' could
+--      never pair across accounts).
+--
+-- Because each account's fetch is scoped to it, every returned transaction
+-- belongs to a linked account, so 'importMany' resolves them all and
+-- 'unresolved' stays @[]@ for a well-behaved provider.
+--
+-- Results are then re-grouped back into the caller-facing contract: exactly
+-- one 'AccountImportResult' per link entry, in @accountLink@ order (even when a
+-- fetch returned zero transactions or failed). A detected transfer between two
+-- accounts appears — carrying the same 'TransactionId' — under BOTH link rows.
+-- A fetch failure folds its error text into that account's @failed@.
 importConnection ::
-  (BankTransaction -> TransactionClassification) ->
+  TransactionInterpretation ->
   PullCapability ->
   UserId ->
   [(ExternalAccountId, AccountId)] ->
   UTCTime ->
   UTCTime ->
   AppM ImportResult
-importConnection classify pull userId accountLink fromTime toTime =
+importConnection interpretation pull userId accountLink fromTime toTime =
   withUserLock userId $ do
     logInfo $ "Importing bank transactions for user " <> displayShow userId
-    perAccount <- forM accountLink processAccount
-    let accountResults = map fst perAccount
-        allUnresolved = Set.toList (Set.fromList (concatMap snd perAccount))
-    pure (ImportResult {accounts = accountResults, unresolved = allUnresolved})
+    fetched <- forM accountLink fetchOne
+    let allTxns = concat [txns | (_, _, Right txns) <- fetched]
+    result <- importMany interpretation userId accountLink allTxns
+    let byExtId =
+          Map.fromList
+            [(eid, a) | a@(AccountImportResult {externalAccountId = eid}) <- result.accounts]
+        accountResults = map (regroup byExtId) fetched
+    pure (ImportResult {accounts = accountResults, unresolved = result.unresolved})
   where
-    processAccount (extAccId, localAccId) = do
+    fetchOne (extAccId, localAccId) = do
       fetchResult <- liftIO $ pull.fetchStatements extAccId fromTime toTime
       case fetchResult of
-        Left err -> fetchFailed extAccId localAccId err
-        Right txns -> fetchSucceeded extAccId localAccId txns
+        Left err ->
+          logWarn
+            $ "Failed to fetch statements for account "
+            <> display extAccId
+            <> ": "
+            <> display err
+        Right txns ->
+          logInfo
+            $ "Fetched "
+            <> displayShow (length txns)
+            <> " transactions for account "
+            <> display extAccId
+      pure (extAccId, localAccId, fetchResult)
 
-    fetchFailed extAccId localAccId err = do
-      logWarn
-        $ "Failed to fetch statements for account "
-        <> display extAccId
-        <> ": "
-        <> display err
-      pure
-        ( AccountImportResult
-            { externalAccountId = extAccId,
-              localAccountId = localAccId,
-              succeeded = [],
-              skipped = [],
-              failed = [err]
-            },
-          []
-        )
+    -- Take the imported row for this link entry (a transfer puts a row under
+    -- both its accounts), or a zero row when the fetch returned nothing that
+    -- resolved to it; then fold any fetch failure into that row's 'failed'.
+    regroup byExtId (extAccId, localAccId, fetchResult) =
+      let base@(AccountImportResult {failed = existing}) =
+            fromMaybe (zeroRow extAccId localAccId) (Map.lookup extAccId byExtId)
+       in case fetchResult of
+            Left err -> base {failed = existing ++ [err]}
+            Right _ -> base
 
-    fetchSucceeded extAccId localAccId txns = do
-      logInfo
-        $ "Fetched "
-        <> displayShow (length txns)
-        <> " transactions for account "
-        <> display extAccId
-      result <- importMany classify userId [(extAccId, localAccId)] txns
-      -- The scoped link above has exactly one entry, so 'accounts' holds at
-      -- most one row; default to a zero-value row when the fetch returned no
-      -- (or no matching) transactions, to preserve one row per link entry.
-      let accountResult = case result.accounts of
-            (a : _) -> a
-            [] ->
-              AccountImportResult
-                { externalAccountId = extAccId,
-                  localAccountId = localAccId,
-                  succeeded = [],
-                  skipped = [],
-                  failed = []
-                }
-      pure (accountResult, result.unresolved)
+    zeroRow extAccId localAccId =
+      AccountImportResult
+        { externalAccountId = extAccId,
+          localAccountId = localAccId,
+          succeeded = [],
+          skipped = [],
+          failed = []
+        }
 
 -- | Shared import sink: route each transaction to its mapped local account
 -- via the caller-supplied link and delegate to 'importTransaction'.
@@ -271,24 +287,172 @@ importConnection classify pull userId accountLink fromTime toTime =
 -- 'AccountImportResult' per external account id that had at least one
 -- matched transaction, carrying the local account it was routed to.
 importMany ::
-  (BankTransaction -> TransactionClassification) ->
+  TransactionInterpretation ->
   UserId ->
   [(ExternalAccountId, AccountId)] ->
   [BankTransaction] ->
   AppM ImportResult
-importMany classify userId accountLink txns = do
-  routed <- forM txns $ \tx ->
-    case lookup tx.externalAccountId accountLink of
-      Nothing -> pure (Left tx.externalAccountId)
-      Just localAccId -> do
-        outcome <- importTransaction classify userId accountLink tx
-        pure (Right (tx.externalAccountId, localAccId, outcome))
-  let (unmatched, matched) = partitionEithers routed
+importMany interpretation userId accountLink txns = do
+  let classify = interpretation.classify
+      routed =
+        [ (tx.externalAccountId, localAccId, tx)
+        | tx <- txns,
+          Just localAccId <- [lookup tx.externalAccountId accountLink]
+        ]
+      unmatched = [tx.externalAccountId | tx <- txns, isNothing (lookup tx.externalAccountId accountLink)]
+      (pairs, unorderedLeftovers) = pairInternalTransfers interpretation.transferMatcher routed
+      -- 'pairInternalTransfers' sorts its input internally for deterministic
+      -- pairing; restore the caller's original transaction order for the
+      -- unpaired remainder so 'ImportResult' stays input-ordered (exactly as it
+      -- was before pairing was introduced) — the per-account breakdown and its
+      -- consumers rely on that order.
+      leftoverIds = Set.fromList [tx.externalId | (_, _, tx) <- unorderedLeftovers]
+      leftovers = [entry | entry@(_, _, tx) <- routed, tx.externalId `Set.member` leftoverIds]
+  pairEntries <- concat <$> forM pairs (importTransferPair classify userId accountLink)
+  leftoverEntries <- forM leftovers $ \(extAccId, localAccId, tx) -> do
+    outcome <- importTransaction classify userId accountLink tx
+    pure (extAccId, localAccId, outcome)
   pure
     ImportResult
-      { accounts = groupAccountResults matched,
+      { accounts = groupAccountResults (pairEntries <> leftoverEntries),
         unresolved = nubOrd (map unExternalAccountId unmatched)
       }
+
+-- | Import a detected internal-transfer pair.
+--
+-- If EITHER leg is already imported (dedup hit), the pair is unwound and each
+-- leg is imported individually via 'importTransaction' — the already-imported
+-- leg falls through to 'Skipped AlreadyImported' and its partner is booked as a
+-- plain income/expense, preserving the pre-pairing behaviour when one side was
+-- synced earlier. Otherwise both fresh legs are collapsed into a single
+-- 'Transfer' via 'postInternalTransfer', with the SAME 'ImportOutcome' reported
+-- against both external account ids so the caller's per-account breakdown shows
+-- the transfer on both sides.
+importTransferPair ::
+  (BankTransaction -> TransactionClassification) ->
+  UserId ->
+  [(ExternalAccountId, AccountId)] ->
+  InternalTransfer ->
+  AppM [(ExternalAccountId, AccountId, ImportOutcome)]
+importTransferPair classify userId accountLink transfer = do
+  let dLeg = debitLeg transfer
+      cLeg = creditLeg transfer
+      dLocal = debitLocalAccount transfer
+      cLocal = creditLocalAccount transfer
+  dImported <- runDb (isImported dLeg.externalId)
+  cImported <- runDb (isImported cLeg.externalId)
+  if dImported || cImported
+    then do
+      dOut <- importTransaction classify userId accountLink dLeg
+      cOut <- importTransaction classify userId accountLink cLeg
+      pure [(dLeg.externalAccountId, dLocal, dOut), (cLeg.externalAccountId, cLocal, cOut)]
+    else do
+      outcome <- postInternalTransfer userId dLocal cLocal dLeg cLeg
+      pure [(dLeg.externalAccountId, dLocal, outcome), (cLeg.externalAccountId, cLocal, outcome)]
+
+-- | Post a fresh internal transfer between two of the user's own local accounts
+-- as a single 'Transfer' (rather than double-booking an income + expense).
+--
+-- Both legs share a currency and magnitude (the matcher guaranteed it), so a
+-- single 'Money' derived from the debit leg drives both sides of the command.
+-- Mirrors the skip/failure vocabulary of the single-transaction path:
+-- unsupported currency code → 'Skipped UnsupportedCurrency'; money construction
+-- failure → 'Skipped InvalidAmount'; a missing local account → 'Failed NotFound';
+-- either local account's currency differing from the leg currency → 'Skipped
+-- CurrencyMismatch'. The command carries 'importInfo' with BOTH legs' external
+-- ids, which both bypasses the overdraft guard and records the two-leg dedup
+-- mapping, so a well-funded transfer between two real accounts posts.
+--
+-- Note: a currency mismatch on either account skips both legs (not just the
+-- mismatched one); skips are not dedup-recorded, so fixing the account mapping
+-- and re-importing recovers.
+postInternalTransfer ::
+  UserId ->
+  AccountId ->
+  AccountId ->
+  BankTransaction ->
+  BankTransaction ->
+  AppM ImportOutcome
+postInternalTransfer userId dLocal cLocal dLeg cLeg =
+  either id id <$> runExceptT go
+  where
+    go :: ExceptT ImportOutcome AppM ImportOutcome
+    go = do
+      currency <- case currencyFromNumericCode dLeg.currencyCode of
+        Left err -> do
+          lift $ logWarn $ "Unsupported currency code " <> displayShow dLeg.currencyCode <> ": " <> display err
+          throwE (Skipped (UnsupportedCurrency err))
+        Right c -> pure c
+      money <- case mkMoney currency (abs dLeg.amount) of
+        Left err -> do
+          lift $ logWarn $ "Failed to create money for internal transfer: " <> display err
+          throwE (Skipped (InvalidAmount err))
+        Right m -> pure m
+      dData <- loadAccount dLocal
+      cData <- loadAccount cLocal
+      guardCurrency dData money
+      guardCurrency cData money
+      let cmd =
+            InitiateTransactionPosting
+              { sourceAccountId = dLocal,
+                targetAccountId = cLocal,
+                sourceAmount = money,
+                targetAmount = money,
+                exchangeRate = Nothing,
+                description = dLeg.description,
+                initiatedBy = userId,
+                at = dLeg.time,
+                transactionType = Transfer,
+                importInfo =
+                  Just
+                    ImportInfo
+                      { externalTransactionIds = dLeg.externalId :| [cLeg.externalId],
+                        mcc = Nothing
+                      },
+                labels = Set.empty,
+                contactId = Nothing,
+                relation = Nothing
+              }
+      result <- lift (TransactionService.initiateTransaction cmd)
+      case result of
+        Left err -> do
+          lift $ logWarn $ "Internal transfer posting failed: " <> displayShow err
+          pure (Failed err)
+        Right (txId, _) -> do
+          lift $ logInfo $ "Imported internal transfer " <> display dLeg.externalId <> "/" <> display cLeg.externalId <> " as " <> displayShow txId
+          pure (Imported txId)
+
+    loadAccount accId =
+      ExceptT $ do
+        maybeData <- runDb (AccountRM.getAccount accId)
+        case maybeData of
+          Nothing -> pure (Left (Failed (NotFound "Account" (tshow accId))))
+          Just d -> pure (Right d)
+
+    guardCurrency accData money =
+      let accCurrency = moneyCurrency accData.balance
+          txCurrency = moneyCurrency money
+       in when (accCurrency /= txCurrency) $ do
+            lift
+              $ logWarn
+              $ "Skipping internal transfer: account '"
+              <> display accData.name
+              <> "' is "
+              <> displayShow accCurrency
+              <> " but the transfer is "
+              <> displayShow txCurrency
+            throwE
+              ( Skipped
+                  ( CurrencyMismatch
+                      ( "account '"
+                          <> accData.name
+                          <> "' is "
+                          <> tshow accCurrency
+                          <> " but the transaction is "
+                          <> tshow txCurrency
+                      )
+                  )
+              )
 
 -- | Fold per-transaction outcomes into one 'AccountImportResult' per external
 -- account id that had at least one matched transaction, in first-appearance
@@ -744,7 +908,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
           importInfo =
             Just
               ImportInfo
-                { externalTransactionId = bankTx.externalId,
+                { externalTransactionIds = bankTx.externalId :| [],
                   mcc = bankTx.mcc
                 },
           labels = Set.empty,

@@ -4,6 +4,8 @@
 module Infrastructure.Banking.Provider
   ( -- * Provider
     TransactionClassification (..),
+    TransactionInterpretation (..),
+    TransferMatcher (..),
 
     -- * Types
     BankAccount (..),
@@ -20,6 +22,9 @@ module Infrastructure.Banking.Provider
     providerSupportsPull,
     providerSupportsFile,
     defaultClassify,
+    defaultInterpretation,
+    defaultTransferMatcher,
+    defaultTransferPairingWindow,
   )
 where
 
@@ -27,10 +32,10 @@ import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
-import Data.Time (UTCTime)
+import Data.Time (NominalDiffTime, UTCTime, diffUTCTime)
 import Domain.Banking.Types (BankProviderId, ExternalAccountId, ProviderCredential)
 import Domain.Core.Types (ExternalTransactionId, MCC)
-import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, isJust, otherwise, (<))
+import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, abs, isJust, otherwise, signum, ($), (&&), (/=), (<), (<=), (==))
 
 -- | Provider-contributed classification hint — direction only.
 -- BankImportService owns the final category decision.
@@ -81,7 +86,7 @@ data BankTransaction = BankTransaction
 data BankProviderDescriptor = BankProviderDescriptor
   { providerId :: !BankProviderId,
     displayName :: !Text,
-    classify :: BankTransaction -> TransactionClassification,
+    interpretation :: TransactionInterpretation,
     pull :: !(Maybe (ProviderCredential -> PullCapability)),
     fileImport :: !(Maybe FileImportCapability)
   }
@@ -137,3 +142,44 @@ defaultClassify :: BankTransaction -> TransactionClassification
 defaultClassify tx
   | tx.amount < 0 = ClassifiedExpense
   | otherwise = ClassifiedIncome
+
+-- | Decides whether two provider transactions are the two legs of one
+-- internal transfer between the user's own accounts. Wrapped in a newtype for
+-- a named 'matchesTransfer' accessor and nominal typing at call sites, rather
+-- than a bare function.
+newtype TransferMatcher = TransferMatcher
+  { matchesTransfer :: BankTransaction -> BankTransaction -> Bool
+  }
+
+-- | Provider-contributed interpretation of raw bank transactions: the
+-- direction 'classify' hint plus the internal-transfer 'transferMatcher'.
+data TransactionInterpretation = TransactionInterpretation
+  { classify :: BankTransaction -> TransactionClassification,
+    transferMatcher :: TransferMatcher
+  }
+
+-- | Default window within which two opposite legs may be paired as a single
+-- transfer: 5 minutes.
+defaultTransferPairingWindow :: NominalDiffTime
+defaultTransferPairingWindow = 300
+
+-- | Generic transfer matcher: two legs pair when they share a currency, carry
+-- opposite signs, have equal magnitude, and fall within @window@ of each
+-- other.
+defaultTransferMatcher :: NominalDiffTime -> TransferMatcher
+defaultTransferMatcher window =
+  TransferMatcher $ \a b ->
+    a.currencyCode
+      == b.currencyCode
+      && signum a.amount
+      /= signum b.amount
+      && abs a.amount
+      == abs b.amount
+      && abs (diffUTCTime a.time b.time)
+      <= window
+
+-- | Default interpretation for providers that need no bespoke logic:
+-- 'defaultClassify' plus 'defaultTransferMatcher' over 'defaultTransferPairingWindow'.
+defaultInterpretation :: TransactionInterpretation
+defaultInterpretation =
+  TransactionInterpretation defaultClassify (defaultTransferMatcher defaultTransferPairingWindow)

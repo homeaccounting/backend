@@ -63,7 +63,7 @@ descriptor apiBaseUrl manager =
       -- amounts as expense, which is exactly Monobank's sign convention:
       -- outgoing transactions have negative amounts, incoming positive. Category
       -- resolution via MCC happens in BankImportService using UserConfiguration.
-      classify = defaultClassify,
+      interpretation = defaultInterpretation,
       pull = Just $ \(Domain.StaticSecret token) ->
         PullCapability
           { fetchAccounts = monoFetchAccounts apiBaseUrl token manager,

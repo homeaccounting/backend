@@ -380,7 +380,7 @@ getConnectionFileImportSpec =
               result <- runRIO env $ getConnectionFileImport userId connId
               case result of
                 Left err -> expectationFailure $ "getConnectionFileImport failed: " <> show err
-                Right (_classify, cap) ->
+                Right (_interp, cap) ->
                   Map.member StatementCsv cap.parsers `shouldBe` True
 
     it "rejects a pull-only provider's connection with a no-file-transport BankingError" $ do

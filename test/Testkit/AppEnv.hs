@@ -39,7 +39,7 @@ import Infrastructure.Banking.Provider
     FileImportCapability (..),
     PullCapability (..),
     StatementFormat (..),
-    TransactionClassification (..),
+    defaultInterpretation,
   )
 import Infrastructure.Banking.Registry (BankProviderRegistry, registryFromList)
 import Infrastructure.Config
@@ -149,8 +149,7 @@ stubPullDescriptor controls =
   BankProviderDescriptor
     { providerId = unsafeBankProviderId "monobank",
       displayName = "Stub",
-      classify = \tx ->
-        if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense,
+      interpretation = defaultInterpretation,
       pull = Just $ \_token ->
         PullCapability
           { fetchAccounts = readIORef controls.stubAccounts,
@@ -174,8 +173,7 @@ stubFileOnlyDescriptor =
   BankProviderDescriptor
     { providerId = unsafeBankProviderId "privatbank",
       displayName = "Stub File-Only",
-      classify = \tx ->
-        if tx.amount >= 0 then ClassifiedIncome else ClassifiedExpense,
+      interpretation = defaultInterpretation,
       pull = Nothing,
       fileImport =
         Just

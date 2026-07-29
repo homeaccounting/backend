@@ -78,7 +78,7 @@ spec = describe "Monobank Provider" $ do
             Right tx -> tx.notes `shouldBe` Nothing
 
   describe "classify" $ do
-    let classify = d.classify
+    let classify = d.interpretation.classify
 
     it "classifies MCC 4829 with negative amount as Expense"
       $ classify (mkTx (Just "4829") (-10))

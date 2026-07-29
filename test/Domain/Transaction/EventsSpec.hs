@@ -61,7 +61,7 @@ postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
             { importInfo =
                 Just
                   ImportInfo
-                    { externalTransactionId = unsafeExternalTransactionId "mono-tx-123",
+                    { externalTransactionIds = unsafeExternalTransactionId "mono-tx-123" :| [],
                       mcc = Just "5411"
                     }
             }

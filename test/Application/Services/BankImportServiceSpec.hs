@@ -37,7 +37,7 @@ import Application.Services.BankImportService
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import Data.Time (UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Database.Persist (insert_)
@@ -78,13 +78,18 @@ import Eventium (Codec (..), EventHandler (..), GlobalStreamEvent, ReadModel (..
 import Eventium.Store.Postgresql (jsonStringCodec)
 import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)
 import Infrastructure.App (AppEnv (..), runAppM, runDb)
+import Infrastructure.Banking.PrivatBank (privatBankInterpretation)
 import Infrastructure.Banking.Provider
   ( BankTransaction (..),
     TransactionClassification (..),
+    TransactionInterpretation (..),
+    defaultTransferMatcher,
+    defaultTransferPairingWindow,
   )
 import Infrastructure.Database (runDbDirect)
 import Infrastructure.Eventium (accountingGlobalEventStoreReader)
 import RIO
+import RIO.List (find)
 import Test.Hspec
 import qualified Testkit.Fixtures as Fixtures
 import Testkit.Helpers
@@ -119,6 +124,11 @@ mockClassify tx =
   if tx.amount >= 0
     then ClassifiedIncome
     else ClassifiedExpense
+
+-- | The interpretation passed to 'importMany': 'mockClassify' plus the generic
+-- (default) transfer matcher over the default pairing window.
+testInterp :: TransactionInterpretation
+testInterp = TransactionInterpretation mockClassify (defaultTransferMatcher defaultTransferPairingWindow)
 
 -- | Assert an outcome imported a transaction and return its id; fail otherwise.
 expectImported :: ImportOutcome -> IO TransactionId
@@ -251,6 +261,76 @@ setupTestEnvWithBankOverdraft bankOverdraft = do
   Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
 
   return (env, bankAccId)
+
+-- | Set up a test environment with an External account plus TWO regular UAH
+-- accounts (both generously overdrawable) for internal-transfer tests. Returns
+-- @(env, accountA, accountB)@.
+setupTransferTestEnv :: IO (AppEnv, AccountId, AccountId)
+setupTransferTestEnv = do
+  env <- createTestAppEnvWithProcessManager
+  (externalAccId, accA, accB) <- runAppM env $ do
+    ConfigurationService.seedDefaultConfiguration
+    extResult <-
+      createAccount
+        CreateAccount
+          { name = "External",
+            initialBalance = mockMoneyWith UAH 0,
+            createdBy = testUserId,
+            accountType = External,
+            overdraftLimit = Nothing
+          }
+    let (extId, _) = fromRight' extResult
+    aResult <-
+      createAccount
+        CreateAccount
+          { name = "Account A",
+            initialBalance = mockMoneyWith UAH 0,
+            createdBy = testUserId,
+            accountType = Regular defaultBankAccount,
+            overdraftLimit = Just (Just (mockMoneyWith UAH 1000000))
+          }
+    let (aId, _) = fromRight' aResult
+    bResult <-
+      createAccount
+        CreateAccount
+          { name = "Account B",
+            initialBalance = mockMoneyWith UAH 0,
+            createdBy = testUserId,
+            accountType = Regular defaultBankAccount,
+            overdraftLimit = Just (Just (mockMoneyWith UAH 1000000))
+          }
+    let (bId, _) = fromRight' bResult
+    return (extId, aId, bId)
+  Fixtures.seedRegisteredUser env testUserId externalAccId "test@example.com"
+  return (env, accA, accB)
+
+-- | Build a UAH bank transaction with a chosen account, amount, external id,
+-- description, and time — flexible enough for internal-transfer legs.
+mkLeg :: Text -> Rational -> Text -> Text -> UTCTime -> BankTransaction
+mkLeg acctId amount extId desc t =
+  BankTransaction
+    { externalId = unsafeExternalTransactionId extId,
+      externalAccountId = unsafeExternalAccountId acctId,
+      time = t,
+      amount = amount,
+      currencyCode = 980,
+      description = desc,
+      hold = False,
+      mcc = Nothing,
+      originalAmount = Nothing,
+      notes = Nothing,
+      categoryHint = Nothing
+    }
+
+-- | External account id of an 'AccountImportResult'. Extracted via constructor
+-- destructuring because @externalAccountId@ is shared across several records in
+-- scope, which defeats plain dot-access.
+resultExternalAccountId :: AccountImportResult -> ExternalAccountId
+resultExternalAccountId (AccountImportResult {externalAccountId = e}) = e
+
+-- | Find the per-account result for a given external account id.
+accountResultFor :: ExternalAccountId -> ImportResult -> Maybe AccountImportResult
+accountResultFor eid r = find ((== eid) . resultExternalAccountId) r.accounts
 
 -- | Set up a test environment for contact-resolution tests: a fully
 -- REGISTERED user (via 'Fixtures.seedDefaultAndRegister', going through the
@@ -414,7 +494,7 @@ spec = describe "BankImportService" $ do
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
           tx1 = mkTestTransaction (-50) "tx-many-1"
           tx2 = mkTestTransaction 100 "tx-many-2"
-      result <- runAppM env $ importMany mockClassify testUserId accountLink [tx1, tx2]
+      result <- runAppM env $ importMany testInterp testUserId accountLink [tx1, tx2]
       result.unresolved `shouldBe` []
       length (concatMap (.succeeded) result.accounts) `shouldBe` 2
 
@@ -423,7 +503,7 @@ spec = describe "BankImportService" $ do
       let accountLink :: [(ExternalAccountId, AccountId)]
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
           tx = mkTestTransactionWithAccount (-50) "tx-unresolved-1" "unknown-acc"
-      result <- runAppM env $ importMany mockClassify testUserId accountLink [tx]
+      result <- runAppM env $ importMany testInterp testUserId accountLink [tx]
       result.unresolved `shouldBe` ["unknown-acc"]
       concatMap (.succeeded) result.accounts `shouldBe` []
       allTxCount <- runDbIn env TransactionRM.countTransactions
@@ -438,9 +518,123 @@ spec = describe "BankImportService" $ do
             ]
           tx1 = mkTestTransactionWithAccount (-50) "tx-card-1" "card-1"
           tx2 = mkTestTransactionWithAccount 100 "tx-card-2" "card-2"
-      result <- runAppM env $ importMany mockClassify testUserId accountLink [tx1, tx2]
+      result <- runAppM env $ importMany testInterp testUserId accountLink [tx1, tx2]
       result.unresolved `shouldBe` []
       length (concatMap (.succeeded) result.accounts) `shouldBe` 2
+
+    it "collapses a two-leg internal transfer into a single Transfer on both accounts" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink =
+            [ (unsafeExternalAccountId "card-a", accA),
+              (unsafeExternalAccountId "card-b", accB)
+            ]
+          debitA = mkLeg "card-a" (-500) "tx-transfer-out" "Transfer out" testTime
+          creditB = mkLeg "card-b" 500 "tx-transfer-in" "Transfer in" testTime
+      result <- runAppM env $ importMany testInterp testUserId accountLink [debitA, creditB]
+      result.unresolved `shouldBe` []
+      -- The same transaction id is reported against both touched accounts.
+      let allSucceeded = concatMap (.succeeded) result.accounts
+      length allSucceeded `shouldBe` 2
+      txId <- case allSucceeded of
+        (i : _) -> pure i
+        [] -> expectationFailure "expected a transfer transaction" >> error "unreachable"
+      nubOrd allSucceeded `shouldBe` [txId]
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transfer transaction not found" >> error "unreachable"
+      txData.transactionType `shouldBe` Transfer
+      txData.sourceAccountId `shouldBe` accA
+      txData.targetAccountId `shouldBe` accB
+
+      -- Both legs are recorded for dedup.
+      runDbIn env (isImported (unsafeExternalTransactionId "tx-transfer-out")) `shouldReturn` True
+      runDbIn env (isImported (unsafeExternalTransactionId "tx-transfer-in")) `shouldReturn` True
+
+    it "pairs a PrivatBank self-transfer within a merged multi-account batch" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink =
+            [ (unsafeExternalAccountId "card-1440", accA),
+              (unsafeExternalAccountId "card-9713", accB),
+              (unsafeExternalAccountId "card-9959", accB)
+            ]
+          legOut = mkLeg "card-1440" (-20000) "pb-out" "На свою картку *9713" testTime
+          legIn = mkLeg "card-9713" 20000 "pb-in" "Зі своєї картки *1440" (addUTCTime 1 testTime)
+      result <- runAppM env $ importMany privatBankInterpretation testUserId accountLink [legOut, legIn]
+      let allSucceeded = concatMap (.succeeded) result.accounts
+      length allSucceeded `shouldBe` 2
+      txId <- case allSucceeded of
+        (i : _) -> pure i
+        [] -> expectationFailure "expected a transfer transaction" >> error "unreachable"
+      nubOrd allSucceeded `shouldBe` [txId]
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transfer transaction not found" >> error "unreachable"
+      txData.transactionType `shouldBe` Transfer
+      txData.sourceAccountId `shouldBe` accA
+      txData.targetAccountId `shouldBe` accB
+
+    it "falls through to per-leg import when one leg is already imported" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink =
+            [ (unsafeExternalAccountId "card-a", accA),
+              (unsafeExternalAccountId "card-b", accB)
+            ]
+          debitA = mkLeg "card-a" (-500) "tx-dedup-out" "Transfer out" testTime
+          creditB = mkLeg "card-b" 500 "tx-dedup-in" "Transfer in" testTime
+      -- Pre-seed account A's leg on its own so it is already imported.
+      _ <- runAppM env $ importMany testInterp testUserId accountLink [debitA]
+      runDbIn env (isImported (unsafeExternalTransactionId "tx-dedup-out")) `shouldReturn` True
+
+      -- Re-importing both legs must NOT create a transfer: A's leg dedups and B's
+      -- leg posts as a plain income.
+      result <- runAppM env $ importMany testInterp testUserId accountLink [debitA, creditB]
+      case accountResultFor (unsafeExternalAccountId "card-a") result of
+        Just aRes -> do
+          aRes.succeeded `shouldBe` []
+          aRes.skipped `shouldBe` ["already imported"]
+        Nothing -> expectationFailure "no per-account result for card-a"
+      bTxId <- case accountResultFor (unsafeExternalAccountId "card-b") result of
+        Just bRes -> case bRes.succeeded of
+          (i : _) -> pure i
+          [] -> expectationFailure "expected an income for card-b" >> error "unreachable"
+        Nothing -> expectationFailure "no per-account result for card-b" >> error "unreachable"
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction bTxId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "income transaction not found" >> error "unreachable"
+      txData.targetAccountId `shouldBe` accB
+      case txData.transactionType of
+        Income _ -> pure ()
+        other -> expectationFailure ("expected an income for card-b, got " <> show other)
+
+    it "imports a lone credit leg as income (no transfer)" $ do
+      (env, _accA, accB) <- setupTransferTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "card-b", accB)]
+          creditB = mkLeg "card-b" 500 "tx-single-in" "Income" testTime
+      result <- runAppM env $ importMany testInterp testUserId accountLink [creditB]
+      let allSucceeded = concatMap (.succeeded) result.accounts
+      length allSucceeded `shouldBe` 1
+      txId <- case allSucceeded of
+        (i : _) -> pure i
+        [] -> expectationFailure "expected an income transaction" >> error "unreachable"
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "income transaction not found" >> error "unreachable"
+      txData.targetAccountId `shouldBe` accB
+      case txData.transactionType of
+        Income _ -> pure ()
+        other -> expectationFailure ("expected an income, got " <> show other)
 
   describe "importTransaction cross-currency" $ do
     it "same currency: exchangeRate is Nothing" $ do
@@ -807,6 +1001,19 @@ spec = describe "BankImportService" $ do
       imported2 <- runDbIn env $ isImported extId
       imported2 `shouldBe` True
 
+    it "records every external id when an import carries more than one (both legs of a detected transfer)" $ do
+      let txId = mockTransactionId (UUID.fromWords 8 0 0 0)
+          id1 = unsafeExternalTransactionId "leg-out"
+          id2 = unsafeExternalTransactionId "leg-in"
+
+      env <- createTestAppEnvWithProcessManager
+
+      -- One TransactionPostingInitiated carrying BOTH external ids must map each
+      -- of them to the single transaction stream.
+      feedBankImportEvents env [mkInitiatedEventWithIds txId (Just (id1 :| [id2])) 0]
+      runDbIn env (isImported id1) `shouldReturn` True
+      runDbIn env (isImported id2) `shouldReturn` True
+
   -- Foundation: the reusable backfill/rebuild path replays the event log into
   -- the persistent table. We insert events straight into the store (bypassing
   -- the live in-transaction handler), simulating pre-existing history before the
@@ -865,7 +1072,17 @@ mkInitiatedEvent ::
   Maybe ExternalTransactionId ->
   SequenceNumber ->
   GlobalStreamEvent AccountingEvent
-mkInitiatedEvent txId mExtId seqNo =
+mkInitiatedEvent txId mExtId = mkInitiatedEventWithIds txId (fmap (:| []) mExtId)
+
+-- | Like 'mkInitiatedEvent' but the import may carry more than one external id
+-- (a detected internal transfer records both legs), so the read-model fan-out
+-- can be exercised directly.
+mkInitiatedEventWithIds ::
+  TransactionId ->
+  Maybe (NonEmpty ExternalTransactionId) ->
+  SequenceNumber ->
+  GlobalStreamEvent AccountingEvent
+mkInitiatedEventWithIds txId mExtIds seqNo =
   let acctSrc = mockAccountId (UUID.fromWords 1 0 0 0)
       acctTgt = mockAccountId (UUID.fromWords 2 0 0 0)
       inner =
@@ -884,7 +1101,7 @@ mkInitiatedEvent txId mExtId seqNo =
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = testTime,
                   transactionType = Transfer,
-                  importInfo = fmap (\e -> ImportInfo {externalTransactionId = e, mcc = Nothing}) mExtId,
+                  importInfo = fmap (\es -> ImportInfo {externalTransactionIds = es, mcc = Nothing}) mExtIds,
                   labels = Set.empty,
                   contactId = Nothing
                 }
@@ -908,7 +1125,7 @@ storeInitiatedEvent env txId extId =
               by = mockUserId (UUID.fromWords 9 0 0 0),
               at = testTime,
               transactionType = Transfer,
-              importInfo = Just ImportInfo {externalTransactionId = extId, mcc = Nothing},
+              importInfo = Just ImportInfo {externalTransactionIds = extId :| [], mcc = Nothing},
               labels = Set.empty,
               contactId = Nothing
             }

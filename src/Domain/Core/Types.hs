@@ -147,7 +147,7 @@ module Domain.Core.Types
 
     -- * Import provenance
     ImportInfo (..),
-    importInfoExternalTransactionId,
+    importInfoExternalTransactionIds,
     importInfoMcc,
 
     -- * Password Types
@@ -1390,13 +1390,15 @@ instance FromJSON ExternalTransactionId where
 -- 'Domain.Transaction.Events.TransactionPostingInitiated' as
 -- @Maybe ImportInfo@: 'Nothing' is a manual entry, 'Just' is an import.
 --
--- 'externalTransactionId' is required (every import has one; it drives the
+-- 'externalTransactionIds' carries one or more external ids: a normal import
+-- carries one, a detected internal transfer carries both legs' ids (so both can
+-- be deduplicated). It is required (every import has at least one; it drives the
 -- overdraft-bypass guard and import dedup), while 'mcc' is optional because only
 -- some providers supply a merchant category code (monobank does; PrivatBank does
 -- not). Grouping the import-only fields keeps future provider metadata in one
 -- place. Mirrors 'RelationSpec' in shape and role.
 data ImportInfo = ImportInfo
-  { externalTransactionId :: ExternalTransactionId,
+  { externalTransactionIds :: NonEmpty ExternalTransactionId,
     mcc :: Maybe MCC
   }
   deriving (Show, Eq, Generic)
@@ -1405,12 +1407,12 @@ instance ToJSON ImportInfo
 
 instance FromJSON ImportInfo
 
--- | The external identifier carried by an import. Accessor function provided
--- because dot-access on the shared @externalTransactionId@\/@mcc@ field names is
--- ambiguous under @DuplicateRecordFields@ at call sites that also see other
--- records with those field names.
-importInfoExternalTransactionId :: ImportInfo -> ExternalTransactionId
-importInfoExternalTransactionId ImportInfo {externalTransactionId = e} = e
+-- | The external identifiers carried by an import (one or more). Accessor
+-- function provided for API consistency with 'importInfoMcc', whose shared
+-- @mcc@ field name is ambiguous under @DuplicateRecordFields@ at call sites
+-- that also see other records with that field name.
+importInfoExternalTransactionIds :: ImportInfo -> NonEmpty ExternalTransactionId
+importInfoExternalTransactionIds ImportInfo {externalTransactionIds = e} = e
 
 -- | The merchant category code carried by an import, if the provider supplied
 -- one.

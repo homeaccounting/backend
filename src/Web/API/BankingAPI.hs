@@ -349,7 +349,7 @@ importConnectionHandler user connUuid request = do
   -- connection's provider up in the registry, so the handler stays
   -- provider-agnostic and never touches app config.
   providerResult <- ConfigService.getConnectionProvider userId connId
-  (classify, pull) <- case providerResult of
+  (interpretation, pull) <- case providerResult of
     Left err -> throwDomainError err
     Right p -> pure p
 
@@ -371,7 +371,7 @@ importConnectionHandler user connUuid request = do
         ]
 
   -- 7. Call BankImportService.importConnection and project to the HTTP response.
-  result <- BankImportService.importConnection classify pull userId accountLink request.from request.to
+  result <- BankImportService.importConnection interpretation pull userId accountLink request.from request.to
   return $ toImportResponse result
 
 -- | Handler for POST /api/banking/connections/:id/import/file
@@ -418,7 +418,7 @@ importStatementFileHandler user connUuid format bytes = do
 
   -- 3. Resolve the connection's classifier + file-import capability.
   fileImportResult <- ConfigService.getConnectionFileImport userId connId
-  (classify, cap) <- case fileImportResult of
+  (interpretation, cap) <- case fileImportResult of
     Left err -> throwDomainError err
     Right p -> pure p
 
@@ -456,7 +456,7 @@ importStatementFileHandler user connUuid format bytes = do
         _ -> writableMap
 
   -- 7. Import the parsed transactions.
-  result <- BankImportService.importMany classify userId accountLink goods
+  result <- BankImportService.importMany interpretation userId accountLink goods
 
   -- 8. Merge per-row parse failures into 'unresolved' alongside any
   -- account-routing misses 'importMany' already collected. Built via a fresh
@@ -500,7 +500,7 @@ externalAccountsHandler user connUuid = do
   -- 'BankConnectionNotFound' (404) and a decryption failure as a
   -- 'BankingError'; the handler stays provider-agnostic.
   providerResult <- ConfigService.getConnectionProvider user.userId connId
-  (_classify, pull) <- case providerResult of
+  (_interpretation, pull) <- case providerResult of
     Left err -> throwDomainError err
     Right p -> pure p
 
