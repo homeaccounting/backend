@@ -133,8 +133,10 @@ import Network.Wai.Middleware.Cors
   )
 import Network.Wai.Middleware.Gzip (defaultGzipSettings, gzip)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
+import Network.Wai.Parse (setMaxRequestNumFiles)
 import RIO
 import qualified Servant as S
+import Servant.Multipart (Mem, MultipartOptions (..), defaultMultipartOptions)
 import Servant.Server (err500, errBody)
 import Servant.Server.Experimental.Auth (AuthHandler)
 import Web.API (API, api, server)
@@ -267,9 +269,10 @@ buildApplication env =
       servantApp -- CORS support
       -- Core application (innermost)
   where
-    -- Create authentication context with JWT handler
+    -- Create authentication context with JWT handler, plus the multipart
+    -- upload options (see 'multipartOptions').
     jwtConfig = env.jwtConfig
-    authContext = authHandler jwtConfig S.:. S.EmptyContext
+    authContext = authHandler jwtConfig S.:. multipartOptions S.:. S.EmptyContext
 
     servantApp =
       S.serveWithContext
@@ -280,11 +283,30 @@ buildApplication env =
     infoServer :: S.ServerT InfoAPI S.Handler
     infoServer = S.hoistServer infoAPI (appMToHandler env) infoHandler
 
+-- | Multipart upload options placed in the Servant 'S.Context'.
+--
+-- servant-multipart's default (inherited from wai-extra's
+-- 'Network.Wai.Parse.defaultParseRequestBodyOptions') caps a single request at
+-- __10 file parts__. The statement-file import endpoint accepts one file per
+-- bank card, so a user with more than ~10 cards uploading them in one batch
+-- would be rejected. We raise the cap to 100 (all other defaults — notably the
+-- unlimited per-file/total size — are left as-is). If absent from the context,
+-- servant-multipart silently falls back to its 10-file default, so this entry
+-- must stay wired into 'authContext' and 'AuthContext'.
+maxImportStatementFiles :: Int
+maxImportStatementFiles = 100
+
+multipartOptions :: MultipartOptions Mem
+multipartOptions =
+  base {generalOptions = setMaxRequestNumFiles maxImportStatementFiles base.generalOptions}
+  where
+    base = defaultMultipartOptions (Proxy :: Proxy Mem)
+
 -- | Type alias for the authentication context.
 --
--- This context contains the JWT authentication handler that Servant uses
--- to authenticate requests to protected endpoints.
-type AuthContext = '[AuthHandler Request AuthenticatedUser]
+-- Holds the JWT authentication handler Servant uses to authenticate requests
+-- to protected endpoints, plus the 'MultipartOptions' for file uploads.
+type AuthContext = '[AuthHandler Request AuthenticatedUser, MultipartOptions Mem]
 
 -- | Convert AppM handlers to Servant's Handler monad.
 --

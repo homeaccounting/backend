@@ -22,9 +22,10 @@
 --
 -- API Endpoints:
 --
---   GET    /api/banking/connections/:id/external-accounts - Live account list
---   POST   /api/banking/connections/:id/import            - Manual import (pull)
---   POST   /api/banking/connections/:id/import/file        - Statement-file import
+--   GET    /api/banking/connections/:id/external-accounts           - Live account list (pull)
+--   POST   /api/banking/connections/:id/external-accounts/from-file  - Account discovery from an uploaded statement
+--   POST   /api/banking/connections/:id/import                       - Manual import (pull)
+--   POST   /api/banking/connections/:id/import/file                  - Statement-file import
 module Web.API.BankingAPI
   ( -- * API Type
     BankingAPI,
@@ -43,6 +44,7 @@ module Web.API.BankingAPI
     importConnectionHandler,
     importStatementFileHandler,
     externalAccountsHandler,
+    externalAccountsFromFileHandler,
 
     -- * Feature gate
     requireBankingEnabled,
@@ -60,7 +62,7 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime, diffUTCTime)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import Domain.Banking.Types (BankConnectionId, mkBankConnectionId, unExternalAccountId)
+import Domain.Banking.Types (BankConnectionId, ExternalAccountId, mkBankConnectionId, unExternalAccountId)
 import Domain.Configuration.Projection (BankConnection (..), BankingConfiguration (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
@@ -76,7 +78,14 @@ import Infrastructure.App
   )
 import qualified Infrastructure.Banking.Provider as Banking
 import RIO
+import qualified RIO.ByteString.Lazy as BL
 import Servant
+import Servant.Multipart
+  ( FileData (..),
+    Mem,
+    MultipartData (..),
+    MultipartForm,
+  )
 import Web.ErrorMapping (throwDomainError)
 import Web.Middleware.Auth (AuthenticatedUser (..))
 import Web.Types (ErrorResponse (..))
@@ -113,6 +122,21 @@ type BankingAPI =
       :> "external-accounts"
       :> Get '[JSON] [ExternalAccountDTO]
   )
+    -- POST /api/banking/connections/:id/external-accounts/from-file
+    -- Parse an uploaded statement and list the DISTINCT external accounts it
+    -- mentions (the file analog of the pull external-accounts listing), so a
+    -- client can map them to local accounts before importing.
+    :<|> ( AuthProtect "jwt"
+             :> "api"
+             :> "banking"
+             :> "connections"
+             :> Capture "connId" UUID
+             :> "external-accounts"
+             :> "from-file"
+             :> QueryParam' '[Required, Strict] "format" Banking.StatementFormat
+             :> MultipartForm Mem (MultipartData Mem)
+             :> Post '[JSON] [ExternalAccountDTO]
+         )
     -- POST /api/banking/connections/:id/import
     -- Trigger a manual pull import for a stored connection, routed by its
     -- persisted externalId -> local account map.
@@ -136,7 +160,7 @@ type BankingAPI =
              :> "import"
              :> "file"
              :> QueryParam' '[Required, Strict] "format" Banking.StatementFormat
-             :> ReqBody '[OctetStream] ByteString
+             :> MultipartForm Mem (MultipartData Mem)
              :> Post '[JSON] ImportResponse
          )
 
@@ -238,7 +262,11 @@ instance ToJSON ExternalAccountDTO
 
 -- | Banking API server implementation.
 bankingServer :: ServerT BankingAPI AppM
-bankingServer = externalAccountsHandler :<|> importConnectionHandler :<|> importStatementFileHandler
+bankingServer =
+  externalAccountsHandler
+    :<|> externalAccountsFromFileHandler
+    :<|> importConnectionHandler
+    :<|> importStatementFileHandler
 
 -- -----------------------------------------------------------------------------
 -- Wire parsing
@@ -374,42 +402,38 @@ importConnectionHandler user connUuid request = do
   result <- BankImportService.importConnection interpretation pull userId accountLink request.from request.to
   return $ toImportResponse result
 
--- | Handler for POST /api/banking/connections/:id/import/file
+-- | Shared preamble for both statement-file transports (import and discovery).
 --
--- Uploads a statement file for a stored connection; the file is parsed by
--- the connection's provider (via its 'Banking.FileImportCapability') and the
--- resulting transactions are routed the same way a pull import routes them —
--- by the connection's persisted @externalId -> local account@ map.
+-- Feature-gate the request, collect every uploaded file part (empty upload ->
+-- 422 @STATEMENT_PARSE_ERROR@), resolve the caller's owned + enabled connection
+-- and its classifier + file-import capability, look up the parser for the
+-- requested format (unsupported -> 422 @UNSUPPORTED_STATEMENT_FORMAT@), and
+-- parse every file into one concatenated batch (a whole-file
+-- 'Banking.ParseError' on ANY file -> 422 @STATEMENT_PARSE_ERROR@).
+-- Concatenating the files into one batch lets a transfer whose two legs live in
+-- different files pair into a single 'Transfer'.
 --
--- Flow:
---   0. Feature-flag gate: 404 when banking is disabled.
---   1-2a. 'resolveOwnedEnabledConnection': validate the captured connection
---      id, load the caller's connection (404 'BankConnectionNotFound' if
---      absent), and reject a disabled connection with 422
---      'BankConnectionDisabled' — identical check to
---      'importConnectionHandler'.
---   3. Resolve the connection's classifier + file-import capability via the
---      configuration service ('ConfigService.getConnectionFileImport'); no
---      token is required for this transport.
---   4. Look up the parser for the requested 'Banking.StatementFormat'; 422
---      @UNSUPPORTED_STATEMENT_FORMAT@ when the provider has no parser for it.
---   5. Parse the uploaded bytes; a whole-file 'Banking.ParseError' surfaces as
---      422 @STATEMENT_PARSE_ERROR@. Otherwise split the per-row results into
---      successfully-parsed transactions and per-row 'Banking.RowError's.
---   6. Build the import link from @connection.accountMap@, filtered to
---      Owner/Editor (writable) targets exactly like 'importConnectionHandler'.
---      When exactly one writable target remains, every distinct card seen in
---      the file is routed to it (the common single-account statement case);
---      otherwise the filtered map is used as-is.
---   7. Delegate to 'BankImportService.importMany'.
---   8. Merge the per-row parse failures into the response's 'unresolved'
---      list alongside any account-routing misses.
-importStatementFileHandler :: AuthenticatedUser -> UUID -> Banking.StatementFormat -> ByteString -> AppM ImportResponse
-importStatementFileHandler user connUuid format bytes = do
+-- Returns the resolved connection and interpretation alongside the per-row
+-- parse failures and successfully-parsed transactions; each caller uses the
+-- slice of the tuple it needs.
+parseConnectionStatement ::
+  AuthenticatedUser ->
+  UUID ->
+  Banking.StatementFormat ->
+  MultipartData Mem ->
+  AppM (BankConnection, Banking.TransactionInterpretation, [Banking.RowError], [Banking.BankTransaction])
+parseConnectionStatement user connUuid format payload = do
   -- 0. Feature-flag gate.
   requireBankingEnabled
 
   let userId = user.userId
+
+  -- 0a. Collect every uploaded file part of the multipart payload. A payload
+  -- with no file part surfaces as a STATEMENT_PARSE_ERROR (422), reusing the
+  -- existing parse-error path.
+  uploadedFiles <- case payload.files of
+    [] -> throwStatementParseError "No file part in multipart upload"
+    fs -> pure fs
 
   -- 1-2a. Validate the connection id, load the caller's connection (404 if
   -- absent), and reject it if disabled (422 CONNECTION_DISABLED) — identical
@@ -427,12 +451,47 @@ importStatementFileHandler user connUuid format bytes = do
     Nothing -> throwUnsupportedFormat format
     Just p -> pure p
 
-  -- 5. Parse the uploaded bytes; split per-row results into successes and
-  -- row-level failures.
-  rows <- case parser bytes of
-    Left (Banking.ParseError msg) -> throwStatementParseError msg
-    Right rs -> pure rs
-  let (rowErrors, goods) = partitionEithers rows
+  -- 5. Parse every uploaded file's bytes ('fdPayload' is a lazy 'LByteString'
+  -- for 'Mem'; convert to the strict 'ByteString' the parser expects) and
+  -- concatenate all per-row results across files. A wholesale
+  -- 'Banking.ParseError' on ANY file fails the whole request fast with 422
+  -- STATEMENT_PARSE_ERROR rather than silently dropping that file. The
+  -- concatenated per-row results are then split into successes and row-level
+  -- failures across all files.
+  perFileRows <- forM uploadedFiles $ \file ->
+    case parser (BL.toStrict file.fdPayload) of
+      Left (Banking.ParseError msg) -> throwStatementParseError msg
+      Right rs -> pure rs
+  let (rowErrors, goods) = partitionEithers (concat perFileRows)
+  pure (connection, interpretation, rowErrors, goods)
+
+-- | Handler for POST /api/banking/connections/:id/import/file
+--
+-- Uploads one or more statement files for a stored connection; every file is
+-- parsed by the connection's provider (via its 'Banking.FileImportCapability')
+-- and all their transactions are concatenated into a single import batch,
+-- routed the same way a pull import routes them — by the connection's
+-- persisted @externalId -> local account@ map.
+--
+-- Flow:
+--   0-5. 'parseConnectionStatement': feature-gate, collect + parse every
+--      uploaded file, and resolve the owned + enabled connection and its
+--      interpretation (see that helper for the shared error paths).
+--   6. Build the import link from @connection.accountMap@, filtered to
+--      Owner/Editor (writable) targets exactly like 'importConnectionHandler'.
+--      Every card is routed by its real @externalAccountId@; a card with no
+--      writable mapping falls through to 'unresolved'. A one-account
+--      connection is just a single-entry map — no route-everything special case.
+--   7. Delegate to 'BankImportService.importMany'.
+--   8. Merge the per-row parse failures into the response's 'unresolved'
+--      list alongside any account-routing misses.
+importStatementFileHandler :: AuthenticatedUser -> UUID -> Banking.StatementFormat -> MultipartData Mem -> AppM ImportResponse
+importStatementFileHandler user connUuid format payload = do
+  -- 0-5. Feature-gate, resolve the connection + interpretation, parse files.
+  (connection, interpretation, rowErrors, goods) <-
+    parseConnectionStatement user connUuid format payload
+
+  let userId = user.userId
 
   -- 6. Build the import link from the connection's accountMap, keeping only
   -- Owner/Editor (writable) targets — identical filter to
@@ -444,16 +503,15 @@ importStatementFileHandler user connUuid format bytes = do
           | (accId, _accData, role) <- localAccounts,
             role == Owner || role == Editor
           ]
-      writableMap =
+      -- Every card is routed by its real @externalAccountId@ via the
+      -- connection's map; a card with no writable mapping falls through to the
+      -- import's 'unresolved' list. A one-account connection is just a
+      -- single-entry map — there is no route-everything-to-one special case.
+      accountLink =
         [ (extId, accId)
         | (extId, accId) <- Map.toList connection.accountMap,
           Set.member accId writable
         ]
-      -- Single-account statements route every distinct card seen in the file
-      -- to the one writable target; a multi-account map is used as-is.
-      accountLink = case writableMap of
-        [(_, target)] -> [(cardId, target) | cardId <- nubOrd (map (.externalAccountId) goods)]
-        _ -> writableMap
 
   -- 7. Import the parsed transactions.
   result <- BankImportService.importMany interpretation userId accountLink goods
@@ -524,11 +582,74 @@ toExternalAccountDTO acc =
     { externalId = unExternalAccountId acc.externalAccountId,
       iban = acc.accountNumber,
       maskedPan = listToMaybe acc.cardMasks,
-      currency = case currencyFromNumericCode acc.currencyCode of
-        Right c -> tshow c
-        Left _ -> tshow acc.currencyCode,
+      currency = renderCurrencyCode acc.currencyCode,
       balance = fromIntegral acc.balance
     }
+
+-- | Handler for POST /api/banking/connections/:id/external-accounts/from-file
+--
+-- The file analog of 'externalAccountsHandler': instead of asking the provider
+-- API for its accounts, it parses one or more uploaded statement files and
+-- lists the DISTINCT external accounts the parsed rows mention, so a client
+-- (e.g. the web LinkAccountsDialog) can map them to local accounts before
+-- importing. No local write happens; this is discovery only.
+--
+-- Flow (mirrors 'importStatementFileHandler' through the parse step):
+--   0-5. 'parseConnectionStatement': feature-gate, resolve the owned + enabled
+--       connection, and parse every uploaded file (shared error paths). Per-row
+--       'Banking.RowError's are ignored here — a row that failed to parse
+--       contributes no account, and discovery never reports failures.
+--   6.  Group the successfully-parsed transactions by 'externalAccountId',
+--       preserving first-appearance order (all rows of one card share a
+--       currency code), and project each to an 'ExternalAccountDTO'.
+externalAccountsFromFileHandler :: AuthenticatedUser -> UUID -> Banking.StatementFormat -> MultipartData Mem -> AppM [ExternalAccountDTO]
+externalAccountsFromFileHandler user connUuid format payload = do
+  -- 0-5. Feature-gate, resolve the connection, parse files. Discovery needs
+  -- only the successfully-parsed rows: the connection/interpretation/row-errors
+  -- do not participate in an account listing.
+  (_connection, _interpretation, _rowErrors, goods) <-
+    parseConnectionStatement user connUuid format payload
+
+  -- 6. Distinct external accounts (first-appearance order), projected to DTOs.
+  pure $ map (uncurry toFileExternalAccountDTO) (distinctExternalAccounts goods)
+
+-- | Distinct @(externalAccountId, currencyCode)@ pairs across the parsed
+-- transactions, keeping the FIRST occurrence of each account and preserving
+-- first-appearance order. All rows of one card share a currency code, so the
+-- first row's code is representative.
+distinctExternalAccounts :: [Banking.BankTransaction] -> [(ExternalAccountId, Int)]
+distinctExternalAccounts = go Set.empty
+  where
+    go _ [] = []
+    go seen (t : rest)
+      | Set.member t.externalAccountId seen = go seen rest
+      | otherwise = (t.externalAccountId, t.currencyCode) : go (Set.insert t.externalAccountId seen) rest
+
+-- | Project a file-discovered external account onto the wire
+-- 'ExternalAccountDTO'. Unlike 'toExternalAccountDTO' (pull), a parsed
+-- statement carries no IBAN or balance, so those default to @""@/@0@; the
+-- account id doubles as the card mask. Currency is mapped from the numeric
+-- code exactly as 'toExternalAccountDTO' does — an unsupported code falls back
+-- to the numeric code rendered as text rather than failing the listing.
+toFileExternalAccountDTO :: ExternalAccountId -> Int -> ExternalAccountDTO
+toFileExternalAccountDTO extId currencyCode =
+  ExternalAccountDTO
+    { externalId = unExternalAccountId extId,
+      iban = "",
+      maskedPan = Just (unExternalAccountId extId),
+      currency = renderCurrencyCode currencyCode,
+      balance = 0
+    }
+
+-- | Render an ISO-4217 numeric currency code as its alphabetic form
+-- ('currencyFromNumericCode'); an unsupported code falls back to the numeric
+-- code rendered as text so the account is still listed rather than failing the
+-- whole request. Shared by the pull ('toExternalAccountDTO') and file-discovery
+-- ('toFileExternalAccountDTO') projections.
+renderCurrencyCode :: Int -> Text
+renderCurrencyCode code = case currencyFromNumericCode code of
+  Right c -> tshow c
+  Left _ -> tshow code
 
 -- -----------------------------------------------------------------------------
 -- Helpers

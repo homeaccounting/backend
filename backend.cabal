@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.9.0
+version:        0.10.0
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -201,6 +201,7 @@ library
     , scientific ==0.3.*
     , servant >=0.19 && <0.21
     , servant-client >=0.19 && <0.21
+    , servant-multipart ==0.12.*
     , servant-server >=0.19 && <0.21
     , stm ==2.5.*
     , telegram-bot-api ==7.4.*
@@ -285,6 +286,7 @@ executable backend
     , scientific ==0.3.*
     , servant >=0.19 && <0.21
     , servant-client >=0.19 && <0.21
+    , servant-multipart ==0.12.*
     , servant-server >=0.19 && <0.21
     , stm ==2.5.*
     , telegram-bot-api ==7.4.*
@@ -531,6 +533,7 @@ test-suite backend-test
     , scientific ==0.3.*
     , servant >=0.19 && <0.21
     , servant-client >=0.19 && <0.21
+    , servant-multipart ==0.12.*
     , servant-server >=0.19 && <0.21
     , stm ==2.5.*
     , telegram-bot-api ==7.4.*

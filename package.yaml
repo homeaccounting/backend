@@ -1,5 +1,5 @@
 name: backend
-version: 0.9.0
+version: 0.10.0
 synopsis: Accounting system backend with CQRS and Event Sourcing
 description: |
   A REST API for an accounting system built with CQRS and Event Sourcing patterns
@@ -24,6 +24,7 @@ dependencies:
   # Servant web framework
   - servant >= 0.19 && < 0.21
   - servant-server >= 0.19 && < 0.21
+  - servant-multipart >= 0.12 && < 0.13
   - warp >= 3.3 && < 3.5
   - http-types >= 0.12 && < 0.13
 
