@@ -655,6 +655,26 @@ mapDomainError CannotMergeTransactionWithItself =
               details = Nothing
             }
     }
+mapDomainError TransferMergeSameAccount =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot merge into a transfer: both transactions are on the same account",
+              code = "TRANSFER_MERGE_SAME_ACCOUNT",
+              details = Nothing
+            }
+    }
+mapDomainError TransferMergeLegsDoNotMatch =
+  err422
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Cannot merge into a transfer: the transactions are not a matching income/expense pair",
+              code = "TRANSFER_MERGE_LEGS_DO_NOT_MATCH",
+              details = Nothing
+            }
+    }
 mapDomainError (BankConnectionAccountInvalid field) =
   err400
     { errBody =

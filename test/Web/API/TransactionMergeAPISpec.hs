@@ -8,9 +8,10 @@
 --
 -- Exercises the merge endpoint: the request DTO ('MergeTransactionRequest'),
 -- the 200 happy path (the response is the refreshed target with the combined
--- amount), and the validation / conflict status mapping (400 empty list, 404
--- missing target, 422 incompatibility, 409 non-Completed / closed period /
--- insufficient funds).
+-- amount) — including when the amend transiently overdraws the account, a
+-- guard the merge-originated amend is designed to bypass — and the
+-- validation / conflict status mapping (400 empty list, 404 missing target,
+-- 422 incompatibility, 409 non-Completed / closed period).
 --
 -- Uses the shared in-memory HTTP fixture ('Testkit.TransactionEditFixture');
 -- like the sibling relations spec it runs entirely on the STM/SQLite in-memory
@@ -168,11 +169,14 @@ spec = describe "POST /api/transactions/:id/merge" $ do
     resp <- postMerge seed token targetId (mergeBody [sourceId])
     simpleStatus resp `shouldBe` status409
 
-  it "returns 409 when the amend overdraws the account (insufficient funds)" $ do
+  it "returns 200 when the amend transiently overdraws the account (guard bypassed)" $ do
+    -- The merge-originated amend sets allowOverdraft = True specifically so
+    -- this transient double-debit (target amended up before the source's
+    -- own debit is reversed by its cancel) doesn't fail the merge.
     seed <- mkSeed createTestAppEnvWithProcessManager "merge-http-funds@test.com"
     token <- seedToken seed
     low <- lowAccount seed.seedEnv seed 100
     targetId <- seedExpenseFull seed low 40 Nothing Nothing
     sourceId <- seedExpenseFull seed low 40 Nothing Nothing
     resp <- postMerge seed token targetId (mergeBody [sourceId])
-    simpleStatus resp `shouldBe` status409
+    simpleStatus resp `shouldBe` status200

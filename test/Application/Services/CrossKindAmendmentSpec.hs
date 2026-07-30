@@ -98,6 +98,7 @@ buildAmend txId src tgt srcAmt tgtAmt mAllocs uid =
       newAllocations = mAllocs,
       newTransactionType = Transfer, -- placeholder; overwritten by service
       contactId = Nothing,
+      allowOverdraft = False,
       by = uid
     }
 

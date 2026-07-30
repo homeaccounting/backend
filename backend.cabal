@@ -101,6 +101,7 @@ library
       Domain.Transaction.Errors
       Domain.Transaction.Events
       Domain.Transaction.Projection
+      Domain.Transaction.TransferMatch
       Domain.User
       Domain.User.CommandHandler
       Domain.User.Commands
@@ -405,6 +406,7 @@ test-suite backend-test
       Domain.Transaction.RelationsCommandHandlerSpec
       Domain.Transaction.RelationsProjectionPropertySpec
       Domain.Transaction.StatusKindSpec
+      Domain.Transaction.TransferMatchPropertySpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec

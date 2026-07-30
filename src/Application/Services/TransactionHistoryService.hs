@@ -50,9 +50,14 @@ import Domain.Models
         TransactionDateChangedEvent,
         TransactionDescriptionChangedEvent,
         TransactionLabelsSetEvent,
+        TransactionMergeCompletedEvent,
+        TransactionMergeFailedEvent,
+        TransactionMergeInitiatedEvent,
         TransactionPostingCompletedEvent,
         TransactionPostingFailedEvent,
-        TransactionPostingInitiatedEvent
+        TransactionPostingInitiatedEvent,
+        TransactionRelationAddedEvent,
+        TransactionRelationRemovedEvent
       ),
   )
 import Domain.Transaction.Events
@@ -66,8 +71,13 @@ import Domain.Transaction.Events
     TransactionDateChanged,
     TransactionDescriptionChanged,
     TransactionLabelsSet,
+    TransactionMergeCompleted,
+    TransactionMergeFailed,
+    TransactionMergeInitiated,
     TransactionPostingFailed,
     TransactionPostingInitiated,
+    TransactionRelationAdded,
+    TransactionRelationRemoved,
   )
 import Eventium (EventStoreReader (..), StreamEvent (..), VersionedStreamEvent, allEvents)
 import Infrastructure.App
@@ -114,6 +124,11 @@ data TransactionHistoryEntry
   | HistoryAmendmentFailed TransactionAmendmentFailed
   | HistoryCancellationInitiated TransactionCancellationInitiated
   | HistoryCancellationCompleted TransactionCancellationCompleted
+  | HistoryMergeInitiated TransactionMergeInitiated
+  | HistoryMergeCompleted TransactionMergeCompleted
+  | HistoryMergeFailed TransactionMergeFailed
+  | HistoryRelationAdded TransactionRelationAdded
+  | HistoryRelationRemoved TransactionRelationRemoved
   deriving (Show, Eq, Generic)
 
 instance ToJSON TransactionHistoryEntry
@@ -174,4 +189,9 @@ toHistoryEntry (StreamEvent _ _ _ payload) = case payload of
   TransactionAmendmentFailedEvent e -> Just (HistoryAmendmentFailed e)
   TransactionCancellationInitiatedEvent e -> Just (HistoryCancellationInitiated e)
   TransactionCancellationCompletedEvent e -> Just (HistoryCancellationCompleted e)
+  TransactionMergeInitiatedEvent e -> Just (HistoryMergeInitiated e)
+  TransactionMergeCompletedEvent e -> Just (HistoryMergeCompleted e)
+  TransactionMergeFailedEvent e -> Just (HistoryMergeFailed e)
+  TransactionRelationAddedEvent e -> Just (HistoryRelationAdded e)
+  TransactionRelationRemovedEvent e -> Just (HistoryRelationRemoved e)
   _ -> Nothing

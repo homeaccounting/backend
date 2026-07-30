@@ -91,6 +91,7 @@ amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
       newAllocations = Nothing,
       newTransactionType = Transfer,
       contactId = Nothing,
+      allowOverdraft = False,
       by = uid
     }
 
@@ -370,3 +371,42 @@ spec = describe "TransactionService.amendTransaction" $ do
           moneyCurrency td.sourceAmount `shouldBe` Core.USD
           moneyCurrency td.targetAmount `shouldBe` Core.UAH
           td.exchangeRate `shouldSatisfy` isJust
+
+  describe "Overdraft guard (ordinary, user-initiated amendment)"
+    $ it "rejects a source-account swap whose debit exceeds the new source's balance"
+    $ do
+      -- Regression guard: 'allowOverdraft' on 'InitiateTransactionAmendment'
+      -- defaults to False for every user-initiated amend (only the merge
+      -- saga sets it True). Confirms the balance guard was NOT flipped
+      -- globally when the saga started honouring the flag.
+      env <- createTestAppEnvWithProcessManager
+      fx <- setupMetadataFixture env "amend-overdraft-guard@test.com"
+      walletB <- createDefaultAccount env fx.userId "WalletB"
+      lowAcc <- createAccount env fx.userId "Low" defaultCash Core.USD 10
+      transfer <-
+        runAppM env
+          $ initiateTransfer
+            fx.userId
+            fx.regularAccountId
+            walletB
+            (unsafeMoney Core.USD 50)
+            Set.empty
+            "A→B"
+            Nothing
+            Nothing
+            Nothing
+      (txId, _original) <- case transfer of
+        Right r -> pure r
+        Left err -> fail $ "initiateTransfer failed: " <> show err
+
+      -- Swap the source to the 10-balance account while keeping the amount at
+      -- 50: the debit exceeds the new source's balance and allowOverdraft is
+      -- False, so the guard must still reject it.
+      let cmd =
+            (amendCmd lowAcc walletB 50 50 fx.userId)
+              { transactionId = txId
+              }
+      result <- runAppM env (amendTransaction fx.userId txId cmd)
+      case result of
+        Left (InsufficientFundsForAmendment _) -> pure ()
+        other -> expectationFailure $ "expected InsufficientFundsForAmendment, got: " <> show other

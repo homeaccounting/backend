@@ -338,6 +338,10 @@ data InitiateTransactionAmendment = InitiateTransactionAmendment
     -- | New contact for the transaction ('Nothing' to clear). Full
     -- replacement, mirroring 'newTransactionType' — not a delta.
     contactId :: Maybe ContactId,
+    -- | Skip the source-account balance guard on the amend's debit. Default
+    -- 'False' for user-initiated amendments; the merge saga sets 'True' because
+    -- a merge only reshapes already-settled transactions.
+    allowOverdraft :: Bool,
     by :: UserId
   }
   deriving (Show, Eq)

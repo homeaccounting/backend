@@ -153,6 +153,14 @@ data TransactionAmendmentData = TransactionAmendmentData
     -- onto 'CompleteTransactionAmendment' at finalize.
     contactId :: Maybe ContactId,
     by :: UserId,
+    -- | Whether the fallible new-source debit should bypass the
+    -- overdraft/insufficient-funds guard. Echoed from
+    -- 'TransactionAmendmentInitiated.allowOverdraft': 'False' for
+    -- user-initiated amendments (guard stays on), 'True' for
+    -- merge-originated amendments (the transient double-debit against the
+    -- not-yet-reversed source must not trip the guard on an otherwise-valid
+    -- merge).
+    allowOverdraft :: Bool,
     -- | Snapshot of the @at@ business timestamp used on every reversal leg.
     at :: UTCTime,
     -- | Saga lifecycle state.
@@ -286,6 +294,7 @@ handleTransactionAmendmentEvent manager (StreamEvent _ _ _ (TransactionAmendment
                 newTransactionType = evt.newTransactionType,
                 contactId = evt.contactId,
                 by = evt.by,
+                allowOverdraft = evt.allowOverdraft,
                 at = postings.at,
                 phase = initialPhase mDebit rest
               }
@@ -321,15 +330,14 @@ handleTransactionAmendmentEvent manager _ = manager
 -- | Translate the fallible new-source debit into the effect that
 -- issues it with compensation. The type guarantees this is the only
 -- leg ever wired to 'IssueCommandWithCompensation'.
-fallibleLegToEffect :: FallibleLeg -> ProcessManagerEffect AccountingCommand
-fallibleLegToEffect (DebitNewSource (acct, amt, txId)) =
+fallibleLegToEffect :: Bool -> FallibleLeg -> ProcessManagerEffect AccountingCommand
+fallibleLegToEffect allowOverdraft (DebitNewSource (acct, amt, txId)) =
   IssueCommandWithCompensation
     (unAccountId acct)
     ( embedWith
         accountCommandEmbedding
         ( DebitAccountAccountCommand
-            -- User-initiated amendment: keep the balance guard (allowOverdraft = False).
-            DebitAccount {amount = amt, transactionId = txId, allowOverdraft = False}
+            DebitAccount {amount = amt, transactionId = txId, allowOverdraft = allowOverdraft}
         )
     )
     id
@@ -413,7 +421,7 @@ reactToTransactionAmendmentEvent manager (StreamEvent _ _ _ (TransactionAmendmen
       AwaitingDebit debit _ ->
         -- Fallible debit first. Tail legs + completion fire on the
         -- resulting AccountDebited event.
-        [fallibleLegToEffect debit]
+        [fallibleLegToEffect amend.allowOverdraft debit]
       ReadyToFinalize legs ->
         -- No fallible step needed. Issue everything (including the
         -- completion command) immediately. The amendments-map entry is

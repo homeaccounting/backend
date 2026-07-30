@@ -197,6 +197,7 @@ toInitiated c =
       newExchangeRate = c.newExchangeRate,
       newTransactionType = c.newTransactionType,
       contactId = c.contactId,
+      allowOverdraft = False,
       by = c.by
     }
 
@@ -391,6 +392,7 @@ genCrossKindAmendInputs = do
             newAllocations = Nothing,
             newTransactionType = newTT,
             contactId = Nothing,
+            allowOverdraft = False,
             by = uid
           }
   pure (seed, cmd)

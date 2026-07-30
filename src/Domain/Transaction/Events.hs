@@ -46,11 +46,8 @@ module Domain.Transaction.Events
   )
 where
 
-import Data.Aeson (FromJSON (..), withObject, (.!=), (.:), (.:?))
-import Data.Aeson.TH (defaultOptions, deriveJSON, deriveToJSON)
-import Data.Maybe (fromMaybe)
+import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
@@ -257,6 +254,10 @@ data TransactionAmendmentInitiated = TransactionAmendmentInitiated
     -- | New contact for the transaction ('Nothing' to clear). Full
     -- replacement, mirroring 'newTransactionType'.
     contactId :: Maybe ContactId,
+    -- | Skip the source-account balance guard on the amend's debit. Default
+    -- 'False' for user-initiated amendments; the merge saga sets 'True' because
+    -- a merge only reshapes already-settled transactions.
+    allowOverdraft :: Bool,
     -- | User who amended the transfer.
     by :: UserId
   }
@@ -420,27 +421,7 @@ data TransactionRelationRemoved = TransactionRelationRemoved
 -- -----------------------------------------------------------------------------
 
 -- Derive JSON instances for all events (fields already unprefixed).
--- TransactionPostingInitiated uses a hand-written FromJSON so that previously
--- serialised events without a "labels" field still deserialise, defaulting
--- to an empty set.
-deriveToJSON defaultOptions ''TransactionPostingInitiated
-
-instance FromJSON TransactionPostingInitiated where
-  parseJSON = withObject "TransactionPostingInitiated" $ \o ->
-    TransactionPostingInitiated
-      <$> o .: "sourceAccountId"
-      <*> o .: "targetAccountId"
-      <*> o .: "sourceAmount"
-      <*> o .: "targetAmount"
-      <*> o .:? "exchangeRate" .!= Nothing
-      <*> o .: "description"
-      <*> o .: "by"
-      <*> o .: "at"
-      <*> o .: "transactionType"
-      <*> o .:? "importInfo" .!= Nothing
-      <*> (fromMaybe Set.empty <$> o .:? "labels")
-      <*> o .:? "contactId" .!= Nothing
-
+deriveJSON defaultOptions ''TransactionPostingInitiated
 deriveJSON defaultOptions ''TransactionPostingCompleted
 deriveJSON defaultOptions ''TransactionPostingFailed
 deriveJSON defaultOptions ''TransactionLabelsSet

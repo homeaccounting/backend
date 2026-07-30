@@ -19,6 +19,10 @@
 --   2. Balances net: total money moved is conserved by the merge.
 --   3. The produced Merge edge is lineage and cannot be removed
 --      ('removeTransactionRelation' → 'CannotRemoveLineageRelation').
+--   4. A transient double-debit during the amend (source not yet reversed)
+--      no longer fails the merge: 'TransactionMergeManager.amendEffect' sets
+--      @allowOverdraft = True@ specifically to bypass that spurious guard
+--      firing; the ledger nets back to its pre-merge balance.
 module Integration.TransactionMergeIntegrationSpec (spec) where
 
 import qualified Application.ReadModels.Account as AccountRM
@@ -35,7 +39,7 @@ import Application.Services.TransactionService
     removeTransactionRelation,
   )
 import qualified Data.Set as Set
-import Domain.Core.Errors (DomainError (CannotRemoveLineageRelation, InsufficientFundsForAmendment))
+import Domain.Core.Errors (DomainError (CannotRemoveLineageRelation))
 import Domain.Core.Types
   ( AccountId,
     Allocation (..),
@@ -168,11 +172,18 @@ spec = describe "Integration / TransactionMerge" $ do
     removed <- runAppM env (removeTransactionRelation fx.userId sourceId targetId Merge)
     removed `shouldBe` Left CannotRemoveLineageRelation
 
-  it "leaves the pre-merge ledger fully intact when a leg fails (atomic rollback)" $ do
+  it "completes a merge despite a transient debit that briefly overdraws the account" $ do
+    -- Regression for the fix threading 'allowOverdraft' through the amend
+    -- saga: this exact scenario used to produce 'InsufficientFundsForAmendment'
+    -- because the saga hard-coded 'allowOverdraft = False' on its
+    -- 'DebitAccount' regardless of the flag on the amendment event. The
+    -- guard firing here was itself the bug — the target amend's debit is
+    -- only ever transiently double-counted against the not-yet-reversed
+    -- source, and a merge only ever consolidates already-settled amounts.
     env <- createTestAppEnvWithProcessManager
-    fx0 <- setupFixture env "merge-int-rollback@test.com"
+    fx0 <- setupFixture env "merge-int-overdraft@test.com"
     -- Low-balance account: two 40 expenses fit (100 → 60 → 20) but the combined
-    -- 80 overdraws it when the target is amended up.
+    -- 80 transiently overdraws it when the target is amended up.
     lowAcc <- createAccount env fx0.userId "Low" defaultCash Core.USD 100
     let fx = fx0 {regularAccountId = lowAcc}
     targetId <- postExpense env fx 40
@@ -182,22 +193,24 @@ spec = describe "Integration / TransactionMerge" $ do
     beforeBalance `shouldBe` 20 -- 100 - 40 - 40
     result <- runAppM env (mergeTransactions fx.userId targetId (sourceId :| []))
     case result of
-      Left (InsufficientFundsForAmendment _) -> pure ()
-      other -> expectationFailure $ "expected InsufficientFundsForAmendment, got: " <> show other
+      Left err -> expectationFailure $ "expected Right, got: " <> show err
+      Right td -> do
+        td.sourceAmount `shouldBe` unsafeMoney Core.USD 80
+        td.status `shouldBe` Completed
 
-    -- Ledger unchanged: balance still 20, both transactions still Completed,
-    -- target amount still 40, no Merge edges written.
+    -- Balance nets back to the pre-merge value: the transient dip was
+    -- harmless (a merge only consolidates already-settled amounts).
     afterBalance <- balance env lowAcc
     afterBalance `shouldBe` 20
 
     Just persisted <- runDbIn env (ReadModel.getTransaction targetId)
-    persisted.sourceAmount `shouldBe` unsafeMoney Core.USD 40
+    persisted.sourceAmount `shouldBe` unsafeMoney Core.USD 80
     persisted.status `shouldBe` Completed
-    persisted.amendmentCount `shouldBe` 0
+    persisted.amendmentCount `shouldBe` 1
 
     srcStatus <- statusOf env sourceId
-    srcStatus `shouldBe` Completed
+    srcStatus `shouldBe` Cancelled
     rev <- runDbIn env (ReadModel.reverseRelations targetId Merge)
-    rev `shouldBe` []
+    rev `shouldBe` [sourceId]
     fwd <- runAppM env (getOutboundRelations sourceId)
-    fwd `shouldBe` []
+    fwd `shouldBe` [(targetId, Merge)]

@@ -87,6 +87,7 @@ amendment s t sa ta =
       newExchangeRate = Nothing,
       newTransactionType = Transfer,
       contactId = Nothing,
+      allowOverdraft = False,
       by = userId_
     }
 

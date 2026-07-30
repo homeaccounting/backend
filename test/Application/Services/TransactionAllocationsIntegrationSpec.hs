@@ -242,6 +242,7 @@ spec = describe "Application.Services / allocations round-trip" $ do
               newAllocations = Just newAllocs,
               newTransactionType = Transfer,
               contactId = Nothing,
+              allowOverdraft = False,
               by = h.harnessUser
             }
     amendResult <-

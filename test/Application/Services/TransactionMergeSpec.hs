@@ -25,29 +25,38 @@
 --   * Rejections: different currency / different account / mixed kinds /
 --     transfer source / self-merge or duplicate / non-Completed source /
 --     closed period.
---   * Amend-fails-first: insufficient funds → sources stay Completed, no
---     edges, error surfaced.
 --   * Ordering invariant: the Merge edge exists on a now-Cancelled source.
+--   * Overdraft bypass: the merge-originated amend intentionally bypasses
+--     the balance guard (allowOverdraft = True on
+--     'TransactionMergeManager.amendEffect'), so a transient double-debit
+--     against a since-reversed source no longer fails the merge. (Prior to
+--     that fix, the same scenario below produced
+--     'InsufficientFundsForAmendment'; the guard firing was itself the bug.)
 module Application.Services.TransactionMergeSpec (spec) where
 
+import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as ReadModel
 import Application.Services.ConfigurationService (closeBooksThrough)
 import Application.Services.TransactionService
   ( getOutboundRelations,
-    getTransaction,
     initiateExpense,
+    initiateIncome,
     initiateTransfer,
     mergeTransactions,
   )
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
-  ( RelationKind (..),
+  ( AccountId,
+    Money,
+    RelationKind (..),
     TransactionId,
+    TransactionKind (..),
     UserId,
     defaultCash,
-    unTransactionId,
+    kindOf,
+    unMoney,
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
@@ -60,6 +69,7 @@ import Testkit.Fixtures
     allocAmounts,
     createAccount,
     expenseAllocs,
+    incomeAllocs,
     postExpense,
     postIncome,
     seedContact,
@@ -85,6 +95,16 @@ runMerge ::
   IO (Either DomainError TransactionData)
 runMerge env uid target sources = runAppM env (mergeTransactions uid target sources)
 
+-- | Read an account's current balance from the (in-memory) read model,
+-- failing the test if the account is missing. Merge-spec glue for asserting
+-- balance conservation across a transfer-merge.
+getBalance :: AppEnv -> AccountId -> IO Money
+getBalance env accId = do
+  mAcc <- runDbIn env (AccountRM.getAccount accId)
+  case mAcc of
+    Just acc -> pure acc.balance
+    Nothing -> fail $ "getBalance: account not found: " <> show accId
+
 -- -----------------------------------------------------------------------------
 -- Spec
 -- -----------------------------------------------------------------------------
@@ -96,6 +116,8 @@ spec = describe "TransactionService.mergeTransactions" $ do
   contactRuleSpec
   rejectionSpec
   amendFailsFirstSpec
+  overdraftBypassSpec
+  transferMergeSpec
 
 -- -----------------------------------------------------------------------------
 -- Happy: two expenses
@@ -246,11 +268,16 @@ rejectionSpec = describe "rejections" $ do
     result <- runMerge env fx.userId targetId (sourceId :| [])
     result `shouldBe` Left CannotMergeDifferentAccounts
 
-  it "rejects mixed kinds (income target + expense source)" $ do
+  -- tracker#44: Income target + Expense source is now the recognised
+  -- transfer-merge shape (see 'transferMergeSpec'), so this case is
+  -- expressed the other way round — Expense target + Income source is
+  -- NOT auto-oriented into a transfer-merge and still falls through to
+  -- the same-kind path.
+  it "rejects mixed kinds (expense target + income source)" $ do
     env <- createTestAppEnvWithProcessManager
     fx <- setupMetadataFixture env "merge-mixed@test.com"
-    targetId <- postIncome env fx 25 Nothing
-    sourceId <- postExpense env fx 25 Nothing
+    targetId <- postExpense env fx 25 Nothing
+    sourceId <- postIncome env fx 25 Nothing
     result <- runMerge env fx.userId targetId (sourceId :| [])
     result `shouldBe` Left CannotMergeIncompatibleKinds
 
@@ -326,43 +353,208 @@ rejectionSpec = describe "rejections" $ do
       other -> expectationFailure $ "expected CannotEditClosedPeriod, got: " <> show other
 
 -- -----------------------------------------------------------------------------
--- Amend fails first (clean abort)
+-- Transient overdraft during amend (guard bypass)
 -- -----------------------------------------------------------------------------
 
+-- | Prior to the fix threading 'TransactionAmendmentInitiated.allowOverdraft'
+-- through the saga (the saga hard-coded @allowOverdraft = False@ on its
+-- 'DebitAccount' regardless of the flag on the event), this exact scenario
+-- produced 'InsufficientFundsForAmendment' and rolled the whole merge back.
+-- That guard firing was itself the bug: the target amend's debit is only
+-- ever transiently double-counted against the not-yet-reversed source, and
+-- the merge amend now sets @allowOverdraft = True@ specifically to bypass
+-- it. The merge completes and — since a merge only ever consolidates
+-- already-settled amounts — the final balance nets back to what it was
+-- before the merge.
 amendFailsFirstSpec :: Spec
 amendFailsFirstSpec =
-  describe "atomicity — a failing leg rolls the whole merge back"
-    $ it "forces the target amend to fail and asserts nothing changed (target unamended, source Completed, no edge)"
+  describe "transient overdraft during amend"
+    $ it "completes the merge despite a transient debit that briefly overdraws the account"
     $ do
       env <- createTestAppEnvWithProcessManager
-      fx0 <- setupMetadataFixture env "merge-amend-fail@test.com"
-      -- A low-balance account so the combined amount overdraws it.
+      fx0 <- setupMetadataFixture env "merge-amend-overdraft@test.com"
+      -- A low-balance account so the combined amount transiently overdraws it.
       lowAcc <- createAccount env fx0.userId "Low" defaultCash Core.USD 100
       let fx = fx0 {regularAccountId = lowAcc}
       -- Two expenses that fit individually (100 → 60 → 20) but whose combined
-      -- amount (80) overdraws the account when the target is amended up.
+      -- amount (80) transiently overdraws the account when the target is
+      -- amended up (before the source's debit is reversed by its cancel).
       targetId <- postExpense env fx 40 Nothing
       sourceId <- postExpense env fx 40 Nothing
 
       result <- runMerge env fx.userId targetId (sourceId :| [])
       case result of
-        Left (InsufficientFundsForAmendment _) -> pure ()
-        other -> expectationFailure $ "expected InsufficientFundsForAmendment, got: " <> show other
-
-      -- Target is NOT amended: still 40, amendmentCount still 0, still Completed.
-      targetTd <- runAppM env (getTransaction (unTransactionId targetId))
-      case targetTd of
-        Left err -> expectationFailure $ "getTransaction target failed: " <> show err
-        Right (_, td) -> do
+        Left err -> expectationFailure $ "expected Right, got: " <> show err
+        Right td -> do
           td.status `shouldBe` Completed
-          td.sourceAmount `shouldBe` unsafeMoney Core.USD 40
-          td.amendmentCount `shouldBe` 0
-          allocAmounts td `shouldBe` [40]
+          td.sourceAmount `shouldBe` unsafeMoney Core.USD 80
+          td.amendmentCount `shouldBe` 1
+          allocAmounts td `shouldBe` [40, 40]
 
-      -- Nothing was consumed on the source: still Completed, no Merge edge.
+      -- The source was consumed into the merge as usual.
       srcStatus <- statusOf env sourceId
-      srcStatus `shouldBe` Completed
+      srcStatus `shouldBe` Cancelled
       fwd <- runAppM env (getOutboundRelations sourceId)
-      fwd `shouldBe` []
+      fwd `shouldBe` [(targetId, Merge)]
       rev <- runDbIn env (ReadModel.reverseRelations targetId Merge)
-      rev `shouldBe` []
+      rev `shouldBe` [sourceId]
+
+      -- Balance nets back to the pre-merge value: the transient dip was
+      -- harmless (a merge only consolidates already-settled amounts).
+      balAfter <- runDbIn env (AccountRM.getAccount lowAcc)
+      case balAfter of
+        Just acc -> unMoney acc.balance `shouldBe` 20 -- 100 - 40 - 40
+        Nothing -> expectationFailure "getAccount lowAcc: not found"
+
+-- -----------------------------------------------------------------------------
+-- Overdraft bypass (tracker#30 follow-up): merge-originated amend bypasses
+-- the transient balance guard.
+-- -----------------------------------------------------------------------------
+
+-- | A Regular account allows no overdraft by default (overdraftLimit = Just
+-- 0). The merge saga amends the target UP to the combined amount before the
+-- source's own debit is reversed by its cancel, so the target account
+-- transiently sees an extra debit on top of both settled expenses. That
+-- transient dip must not block an otherwise-valid merge (see
+-- 'TransactionMergeManager.amendEffect' — allowOverdraft = True).
+overdraftBypassSpec :: Spec
+overdraftBypassSpec =
+  describe "overdraft bypass"
+    $ it "completes a merge even when the combined amend debit exceeds the source balance"
+    $ do
+      env <- createTestAppEnvWithProcessManager
+      fx0 <- setupMetadataFixture env "merge-overdraft-bypass@test.com"
+      -- A zero-balance account so we control the exact arithmetic (the
+      -- fixture's default wallet starts pre-funded at 5000).
+      zeroAcc <- createAccount env fx0.userId "Empty" defaultCash Core.USD 0
+      let fx = fx0 {regularAccountId = zeroAcc}
+      -- Fund the account to exactly 65, then spend it all: 65 -> 40 -> 0.
+      _ <- postIncome env fx 65 Nothing
+      targetId <- postExpense env fx 25 Nothing
+      sourceId <- postExpense env fx 40 Nothing
+
+      -- Merge raises the target from 25 to 65 (25 + 40): a transient +40
+      -- debit on an account that is currently at 0.
+      result <- runMerge env fx.userId targetId (sourceId :| [])
+      case result of
+        Left err -> expectationFailure $ "expected Right, got: " <> show err
+        Right td -> do
+          td.status `shouldBe` Completed
+          td.sourceAmount `shouldBe` unsafeMoney Core.USD 65
+
+      srcStatus <- statusOf env sourceId
+      srcStatus `shouldBe` Cancelled
+
+-- -----------------------------------------------------------------------------
+-- Transfer-merge (tracker#44): income target + expense source -> Transfer
+-- -----------------------------------------------------------------------------
+
+transferMergeSpec :: Spec
+transferMergeSpec = describe "transfer-merge (income target + expense source)" $ do
+  it "amends the income into a Transfer, cancels the expense, and links a Merge edge" $ do
+    env <- createTestAppEnvWithProcessManager
+    fx <- setupMetadataFixture env "merge-transfer-happy@test.com"
+    -- Account A (fx's default wallet) is debited by the expense; account B is
+    -- credited by the income. Equal amount, same currency.
+    accB <- createAccount env fx.userId "Wallet B" defaultCash Core.USD 5000
+    expenseId <- postExpense env fx 50 Nothing
+    incomeRes <-
+      runAppM env
+        $ initiateIncome
+          fx.userId
+          accB
+          (unsafeMoney Core.USD 50)
+          (incomeAllocs fx (unsafeMoney Core.USD 50))
+          Set.empty
+          "Income"
+          Nothing
+          Nothing
+          Nothing
+    incomeId <- unwrapTx "initiateIncome" incomeRes
+
+    result2 <- runMerge env fx.userId incomeId (expenseId :| [])
+    case result2 of
+      Left err -> expectationFailure $ "expected Right, got: " <> show err
+      Right td -> do
+        kindOf td.transactionType `shouldBe` TransferKind
+        td.status `shouldBe` Completed
+
+    srcStatus <- statusOf env expenseId
+    srcStatus `shouldBe` Cancelled
+    fwd <- runAppM env (getOutboundRelations expenseId)
+    fwd `shouldBe` [(incomeId, Merge)]
+
+  it "merges a cross-account income+expense into one transfer with balances conserved" $ do
+    env <- createTestAppEnvWithProcessManager
+    fx <- setupMetadataFixture env "merge-transfer-balances@test.com"
+    -- Account A (fx's default wallet, funded at 5000) is debited by the
+    -- expense; account B (also funded at 5000) is credited by the income.
+    accB <- createAccount env fx.userId "Wallet B" defaultCash Core.USD 5000
+    expenseId <- postExpense env fx 50 Nothing
+    incomeRes <-
+      runAppM env
+        $ initiateIncome
+          fx.userId
+          accB
+          (unsafeMoney Core.USD 50)
+          (incomeAllocs fx (unsafeMoney Core.USD 50))
+          Set.empty
+          "Income"
+          Nothing
+          Nothing
+          Nothing
+    incomeId <- unwrapTx "initiateIncome" incomeRes
+
+    -- Balances after posting but before the merge: A already debited once by
+    -- the expense (5000 - 50 = 4950), B already credited once by the income
+    -- (5000 + 50 = 5050).
+    balABefore <- getBalance env fx.regularAccountId
+    balBBefore <- getBalance env accB
+    balABefore `shouldBe` unsafeMoney Core.USD 4950
+    balBBefore `shouldBe` unsafeMoney Core.USD 5050
+
+    result <- runMerge env fx.userId incomeId (expenseId :| [])
+    case result of
+      Left err -> expectationFailure $ "expected Right, got: " <> show err
+      Right td -> do
+        kindOf td.transactionType `shouldBe` TransferKind
+        td.status `shouldBe` Completed
+
+    -- The merge converts the two separate bookings into a single Transfer
+    -- A -> B for the same amount: neither account's net balance may move,
+    -- despite the saga's transient double-debit on A mid-cascade.
+    balAAfter <- getBalance env fx.regularAccountId
+    balBAfter <- getBalance env accB
+    balAAfter `shouldBe` balABefore
+    balBAfter `shouldBe` balBBefore
+
+  it "rejects when the two legs are on the same account" $ do
+    env <- createTestAppEnvWithProcessManager
+    fx <- setupMetadataFixture env "merge-transfer-sameacct@test.com"
+    -- Both posted against the fixture's single wallet: the income's real
+    -- (target) account and the expense's real (source) account coincide.
+    targetId <- postIncome env fx 50 Nothing
+    sourceId <- postExpense env fx 50 Nothing
+    result <- runMerge env fx.userId targetId (sourceId :| [])
+    result `shouldBe` Left TransferMergeSameAccount
+
+  it "rejects when the amounts differ" $ do
+    env <- createTestAppEnvWithProcessManager
+    fx <- setupMetadataFixture env "merge-transfer-mismatch@test.com"
+    accB <- createAccount env fx.userId "Wallet B" defaultCash Core.USD 5000
+    expenseId <- postExpense env fx 400 Nothing
+    incomeRes <-
+      runAppM env
+        $ initiateIncome
+          fx.userId
+          accB
+          (unsafeMoney Core.USD 500)
+          (incomeAllocs fx (unsafeMoney Core.USD 500))
+          Set.empty
+          "Income"
+          Nothing
+          Nothing
+          Nothing
+    incomeId <- unwrapTx "initiateIncome" incomeRes
+    result <- runMerge env fx.userId incomeId (expenseId :| [])
+    result `shouldBe` Left TransferMergeLegsDoNotMatch

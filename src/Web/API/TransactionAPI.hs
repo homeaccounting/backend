@@ -491,6 +491,7 @@ amendTransactionHandler user rawId req = do
             -- fields (accounts, amounts, allocations) carry full desired
             -- state rather than a partial diff.
             contactId = contact,
+            allowOverdraft = False,
             by = user.userId
           }
   result <- TransactionService.amendTransaction user.userId transactionId cmd

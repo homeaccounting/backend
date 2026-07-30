@@ -377,6 +377,7 @@ handleTransactionCommand transaction (InitiateTransactionAmendmentTransactionCom
                     newExchangeRate = newExchangeRate,
                     newTransactionType = newTransactionType,
                     contactId = contactId,
+                    allowOverdraft = allowOverdraft,
                     by = by
                   }
             ]

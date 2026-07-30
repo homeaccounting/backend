@@ -163,6 +163,7 @@ validAmendCmd =
         newAllocations = Nothing,
         newTransactionType = Transfer,
         contactId = Nothing,
+        allowOverdraft = False,
         by = amendedBy
       }
 
@@ -180,6 +181,7 @@ sameAccountAmendCmd =
         newAllocations = Nothing,
         newTransactionType = Transfer,
         contactId = Nothing,
+        allowOverdraft = False,
         by = amendedBy
       }
 
@@ -197,6 +199,7 @@ zeroSourceAmendCmd =
         newAllocations = Nothing,
         newTransactionType = Transfer,
         contactId = Nothing,
+        allowOverdraft = False,
         by = amendedBy
       }
 

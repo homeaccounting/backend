@@ -626,6 +626,7 @@ genIdentityAmendInputs = do
             newAllocations = Nothing,
             newTransactionType = td.transactionType,
             contactId = Nothing,
+            allowOverdraft = False,
             by = uid
           }
   pure (td, cmd)

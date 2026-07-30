@@ -80,7 +80,7 @@ import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Time (Day, UTCTime, getCurrentTime, utctDay)
+import Data.Time (Day, NominalDiffTime, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Configuration.Dictionary (DictionaryKind)
@@ -162,6 +162,7 @@ import Domain.Transaction.Events
     TransactionMergeFailed (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.TransferMatch (TransferDirection (..), TransferLeg (..), isTransferMatch)
 import Eventium (CommandHandlerError (..), EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App
   ( AppM,
@@ -740,6 +741,7 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
         newAllocations = amendCmd.newAllocations,
         newTransactionType = newTT,
         contactId = amendCmd.contactId,
+        allowOverdraft = amendCmd.allowOverdraft,
         by = amendCmd.by
       }
 
@@ -791,16 +793,26 @@ cancelTransaction userId transactionId = runExceptT $ do
 --   2. Reject a source equal to the target, and duplicate source ids.
 --   3. Load every source; require Editor+ and 'Completed' (same-owner = Editor+
 --      on all inputs).
---   4. Pure compatibility guards: same kind (Income\/Expense only), same
---      categorised currency, same account pair, and at most one distinct
---      non-empty contact (the resolved merged contact).
---   5. Books-close gate against the target date and every source date,
---      fail-fast.
---   6. Compose the combined categorised amount + allocations and fully resolve
---      the target amend payload ('resolveAmendment' — currency/amount
---      resolution + 'TransactionType' synthesis), because the saga process
---      manager cannot touch the read model or ECB rates.
---   7. Emit 'InitiateTransactionMerge' with the resolved payload + ordered source
+--   4. Books-close gate against the target date and every source date,
+--      fail-fast — runs before the kind branch so both paths below honour it
+--      identically.
+--   5. Branch on shape (tracker#44): a single Expense source against an
+--      Income target is a transfer-merge — 'asTransferMerge' /
+--      'transferMerge' reshape the pair into a single Transfer (source
+--      account = the expense's account, target = the income's account,
+--      keeping the income's date\/description), guarded by same-account
+--      ('TransferMergeSameAccount') and matching-legs
+--      ('TransferMergeLegsDoNotMatch') checks. Anything else takes the
+--      same-kind path:
+--        a. Pure compatibility guards: same kind (Income\/Expense only),
+--           same categorised currency, same account pair, and at most one
+--           distinct non-empty contact (the resolved merged contact).
+--        b. Compose the combined categorised amount + allocations and fully
+--           resolve the target amend payload ('resolveAmendment' —
+--           currency/amount resolution + 'TransactionType' synthesis),
+--           because the saga process manager cannot touch the read model or
+--           ECB rates.
+--   6. Emit 'InitiateTransactionMerge' with the resolved payload + ordered source
 --      list; the saga amends the target, records a 'Merge' edge and cancels
 --      each source in order, then completes. Await the terminal
 --      'TransactionMergeCompleted' / 'TransactionMergeFailed' and return the
@@ -834,54 +846,63 @@ mergeTransactions userId targetId sourceIds = runExceptT $ do
       )
       sources
   let allTxns = target : sourceTxns
-  -- 4. Pure compatibility guards + resolved contact.
-  ExceptT (pure (guardMergeCompatible allTxns))
-  resolvedContact <- ExceptT (pure (resolveMergeContact allTxns))
-  -- 5. Books-close gate on the target and every source date, fail-fast.
+  -- 4. Books-close gate on the target and every source date, fail-fast. Runs
+  -- BEFORE the kind branch so both the transfer-merge and same-kind paths
+  -- honour it identically.
   ExceptT (guardBooksClosed userId target.date)
   traverse_ (\td -> ExceptT (guardBooksClosed userId td.date)) sourceTxns
-  -- 6. Compose the combined categorised amount + allocations, then fully
-  -- resolve the amend payload (the saga cannot touch the read model / ECB).
-  combined <- ExceptT (pure (combinedCategorisedAmount allTxns))
-  let combinedAllocs = combineAllocations allTxns
-      amendCmd =
-        InitiateTransactionAmendment
-          { transactionId = targetId,
-            newSourceAccountId = target.sourceAccountId,
-            newTargetAccountId = target.targetAccountId,
-            -- The categorised leg carries the combined amount; the other leg is
-            -- re-resolved by 'resolveAmendment' against the account currency.
-            newSourceAmount = combined,
-            newTargetAmount = combined,
-            newExchangeRate = target.exchangeRate,
-            newAllocations = Just combinedAllocs,
-            -- Placeholder; 'resolveAmendment' synthesises the real kind from the
-            -- (unchanged) account pair.
-            newTransactionType = Transfer,
-            contactId = resolvedContact,
-            by = userId
-          }
-  resolved <- ExceptT (resolveAmendment userId target amendCmd)
-  -- 7. Emit the single atomic-merge command; the saga runs the whole cascade
-  -- synchronously in one transaction and returns the refreshed target.
-  let mergeCmd =
-        InitiateTransactionMerge
-          { newSourceAccountId = resolved.newSourceAccountId,
-            newTargetAccountId = resolved.newTargetAccountId,
-            newSourceAmount = resolved.newSourceAmount,
-            newTargetAmount = resolved.newTargetAmount,
-            newExchangeRate = resolved.newExchangeRate,
-            newAllocations = resolved.newAllocations,
-            newTransactionType = resolved.newTransactionType,
-            contactId = resolved.contactId,
-            sourceTransactionIds = sources,
-            by = userId
-          }
-  ExceptT
-    ( dispatchAndAwaitMerge
-        targetId
-        (InitiateTransactionMergeTransactionCommand mergeCmd)
-    )
+  -- 5. Branch: a single Expense source against an Income target is a
+  -- transfer-merge (tracker#44); anything else takes the existing same-kind
+  -- (Income+Income / Expense+Expense fan-in) path.
+  case asTransferMerge target (zip sources sourceTxns) of
+    Just (expenseId, expense) -> ExceptT (transferMerge userId targetId target expenseId expense)
+    Nothing -> do
+      -- Pure compatibility guards + resolved contact.
+      ExceptT (pure (guardMergeCompatible allTxns))
+      resolvedContact <- ExceptT (pure (resolveMergeContact allTxns))
+      -- Compose the combined categorised amount + allocations, then fully
+      -- resolve the amend payload (the saga cannot touch the read model / ECB).
+      combined <- ExceptT (pure (combinedCategorisedAmount allTxns))
+      let combinedAllocs = combineAllocations allTxns
+          amendCmd =
+            InitiateTransactionAmendment
+              { transactionId = targetId,
+                newSourceAccountId = target.sourceAccountId,
+                newTargetAccountId = target.targetAccountId,
+                -- The categorised leg carries the combined amount; the other leg is
+                -- re-resolved by 'resolveAmendment' against the account currency.
+                newSourceAmount = combined,
+                newTargetAmount = combined,
+                newExchangeRate = target.exchangeRate,
+                newAllocations = Just combinedAllocs,
+                -- Placeholder; 'resolveAmendment' synthesises the real kind from the
+                -- (unchanged) account pair.
+                newTransactionType = Transfer,
+                contactId = resolvedContact,
+                allowOverdraft = False,
+                by = userId
+              }
+      resolved <- ExceptT (resolveAmendment userId target amendCmd)
+      -- Emit the single atomic-merge command; the saga runs the whole cascade
+      -- synchronously in one transaction and returns the refreshed target.
+      let mergeCmd =
+            InitiateTransactionMerge
+              { newSourceAccountId = resolved.newSourceAccountId,
+                newTargetAccountId = resolved.newTargetAccountId,
+                newSourceAmount = resolved.newSourceAmount,
+                newTargetAmount = resolved.newTargetAmount,
+                newExchangeRate = resolved.newExchangeRate,
+                newAllocations = resolved.newAllocations,
+                newTransactionType = resolved.newTransactionType,
+                contactId = resolved.contactId,
+                sourceTransactionIds = sources,
+                by = userId
+              }
+      ExceptT
+        ( dispatchAndAwaitMerge
+            targetId
+            (InitiateTransactionMergeTransactionCommand mergeCmd)
+        )
 
 -- | True when the source id list contains a duplicate.
 hasDuplicateIds :: [TransactionId] -> Bool
@@ -952,6 +973,80 @@ combineAllocations txns =
     }
   where
     bucket sel td = maybe [] sel (allocationsOf td.transactionType)
+
+-- | Time tolerance for a manual income/expense → transfer merge. More relaxed
+-- than import's 5-minute pairing window: a manually-reconciled transfer may have
+-- legs dated further apart (settlement lag, hand-entered dates). Tunable.
+mergeTransferWindow :: NominalDiffTime
+mergeTransferWindow = 24 * 60 * 60 -- 24h
+
+-- | When the target is an Income and its single source is an Expense, this is a
+-- transfer-merge; returns that expense's id + read-model row. Otherwise
+-- 'Nothing' (same-kind path). Read-model rows don't carry their own id
+-- (it's the read model's key, not a stored field), so the id is paired in
+-- alongside each row by the caller.
+asTransferMerge :: TransactionData -> [(TransactionId, TransactionData)] -> Maybe (TransactionId, TransactionData)
+asTransferMerge target [(sid, src)]
+  | kindOf target.transactionType == IncomeKind,
+    kindOf src.transactionType == ExpenseKind =
+      Just (sid, src)
+asTransferMerge _ _ = Nothing
+
+-- | Project a leg for 'isTransferMatch'.
+transferLegOf :: TransferDirection -> Money -> UTCTime -> TransferLeg Currency
+transferLegOf dir m t =
+  TransferLeg {direction = dir, magnitude = unMoney m, currency = moneyCurrency m, time = t}
+
+-- | Reshape an Income + Expense into a single Transfer via the merge saga.
+--
+-- The transfer moves money FROM the expense's (Regular) account TO the
+-- income's (Regular) account, keeping the income's date/description as the
+-- survivor. Reuses 'resolveAmendment' for kind derivation / amount
+-- resolution and 'dispatchAndAwaitMerge' for the same atomic saga cascade as
+-- the same-kind path.
+transferMerge ::
+  UserId ->
+  TransactionId ->
+  TransactionData ->
+  TransactionId ->
+  TransactionData ->
+  AppM (Either DomainError TransactionData)
+transferMerge userId incomeId income expenseId expense = runExceptT $ do
+  let incomeAcc = income.targetAccountId
+      expenseAcc = expense.sourceAccountId
+      incomeLeg = transferLegOf CreditLeg income.targetAmount income.date
+      expenseLeg = transferLegOf DebitLeg expense.sourceAmount expense.date
+  guardE (incomeAcc /= expenseAcc) TransferMergeSameAccount
+  guardE (isTransferMatch mergeTransferWindow incomeLeg expenseLeg) TransferMergeLegsDoNotMatch
+  let amendCmd =
+        InitiateTransactionAmendment
+          { transactionId = incomeId,
+            newSourceAccountId = expenseAcc,
+            newTargetAccountId = incomeAcc,
+            newSourceAmount = income.targetAmount,
+            newTargetAmount = income.targetAmount,
+            newExchangeRate = Nothing,
+            newAllocations = Nothing,
+            newTransactionType = Transfer,
+            contactId = Nothing,
+            allowOverdraft = False, -- discarded; the saga's amendEffect sets True
+            by = userId
+          }
+  resolved <- ExceptT (resolveAmendment userId income amendCmd)
+  let mergeCmd =
+        InitiateTransactionMerge
+          { newSourceAccountId = resolved.newSourceAccountId,
+            newTargetAccountId = resolved.newTargetAccountId,
+            newSourceAmount = resolved.newSourceAmount,
+            newTargetAmount = resolved.newTargetAmount,
+            newExchangeRate = resolved.newExchangeRate,
+            newAllocations = resolved.newAllocations,
+            newTransactionType = resolved.newTransactionType,
+            contactId = resolved.contactId,
+            sourceTransactionIds = [expenseId],
+            by = userId
+          }
+  ExceptT (dispatchAndAwaitMerge incomeId (InitiateTransactionMergeTransactionCommand mergeCmd))
 
 -- -----------------------------------------------------------------------------
 -- Internal Helpers

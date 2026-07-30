@@ -244,6 +244,7 @@ genAmendmentInitiatedEvt = do
           newExchangeRate = newRate,
           newTransactionType = Transfer,
           contactId = Nothing,
+          allowOverdraft = False,
           by = uid
         }
 

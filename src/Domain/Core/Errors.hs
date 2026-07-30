@@ -235,6 +235,11 @@ data DomainError
   | -- | A merge listed the target itself as a source, or listed the same source
     -- id more than once.
     CannotMergeTransactionWithItself
+  | -- tracker#44: the two legs are on the same account, so they are not a transfer
+    TransferMergeSameAccount
+  | -- tracker#44: the selected legs are not an equal-magnitude, same-currency,
+    -- opposite-direction pair within the merge time window
+    TransferMergeLegsDoNotMatch
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainError
@@ -393,3 +398,7 @@ renderDomainError err = case err of
     "Cannot merge transactions that carry different contacts"
   CannotMergeTransactionWithItself ->
     "A transaction cannot be merged with itself"
+  TransferMergeSameAccount ->
+    "Cannot merge into a transfer: both transactions are on the same account"
+  TransferMergeLegsDoNotMatch ->
+    "Cannot merge into a transfer: the transactions are not a matching income/expense pair"

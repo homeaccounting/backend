@@ -132,6 +132,7 @@ validAmendCmd =
         newAllocations = Nothing,
         newTransactionType = Transfer,
         contactId = Nothing,
+        allowOverdraft = False,
         by = amendedBy
       }
 
@@ -194,6 +195,26 @@ spec = do
             <> " events"
         Left err -> expectationFailure $ "Expected Right, got Left: " <> show err
 
+    it "carries allowOverdraft from the amend command into the emitted event" $ do
+      let cmd =
+            InitiateTransactionAmendment
+              { transactionId = txId,
+                newSourceAccountId = altSrcId,
+                newTargetAccountId = altTgtId,
+                newSourceAmount = mockMoney 200,
+                newTargetAmount = mockMoney 200,
+                newExchangeRate = Nothing,
+                newAllocations = Nothing,
+                newTransactionType = Transfer,
+                contactId = Nothing,
+                allowOverdraft = True,
+                by = amendedBy
+              }
+      case handleTransactionCommand completedTx (InitiateTransactionAmendmentTransactionCommand cmd) of
+        Right [TransactionAmendmentInitiatedTransactionEvent evt] ->
+          evt.allowOverdraft `shouldBe` True
+        other -> expectationFailure ("unexpected: " <> show other)
+
     it "rejected in Pending state with CannotEditUncompletedTransaction"
       $ handleTransactionCommand pendingTx validAmendCmd
       `shouldBe` Left CannotEditUncompletedTransaction
@@ -215,6 +236,7 @@ spec = do
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
                   contactId = Nothing,
+                  allowOverdraft = False,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx sameAccountCmd
@@ -233,6 +255,7 @@ spec = do
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
                   contactId = Nothing,
+                  allowOverdraft = False,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx zeroSrcCmd
@@ -251,6 +274,7 @@ spec = do
                   newAllocations = Nothing,
                   newTransactionType = Transfer,
                   contactId = Nothing,
+                  allowOverdraft = False,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx zeroTgtCmd
@@ -280,6 +304,7 @@ spec = do
                   newAllocations = Nothing,
                   newTransactionType = Expense contraAllocs,
                   contactId = Nothing,
+                  allowOverdraft = False,
                   by = amendedBy
                 }
       handleTransactionCommand completedTx contraAmendCmd

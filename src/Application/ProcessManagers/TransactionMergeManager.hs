@@ -229,6 +229,10 @@ amendEffect md =
                 newAllocations = md.newAllocations,
                 newTransactionType = md.newTransactionType,
                 contactId = md.contactId,
+                -- A merge only reshapes already-settled transactions: the
+                -- source's debit is transiently double-counted against the
+                -- target's amend, so the balance guard must be bypassed.
+                allowOverdraft = True,
                 by = md.by
               }
         )

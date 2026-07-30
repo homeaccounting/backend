@@ -32,10 +32,11 @@ import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
-import Data.Time (NominalDiffTime, UTCTime, diffUTCTime)
+import Data.Time (NominalDiffTime, UTCTime)
 import Domain.Banking.Types (BankProviderId, ExternalAccountId, ProviderCredential)
 import Domain.Core.Types (ExternalTransactionId, MCC)
-import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, abs, isJust, otherwise, signum, ($), (&&), (/=), (<), (<=), (==))
+import Domain.Transaction.TransferMatch (TransferDirection (..), TransferLeg (..), isTransferMatch)
+import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, abs, isJust, otherwise, ($), (<))
 
 -- | Provider-contributed classification hint — direction only.
 -- BankImportService owns the final category decision.
@@ -163,20 +164,24 @@ data TransactionInterpretation = TransactionInterpretation
 defaultTransferPairingWindow :: NominalDiffTime
 defaultTransferPairingWindow = 300
 
+-- | Project a bank transaction onto a normalised transfer leg. Sign gives
+-- direction; the ISO numeric currency code is the match token.
+bankTransactionLeg :: BankTransaction -> TransferLeg Int
+bankTransactionLeg tx =
+  TransferLeg
+    { direction = if tx.amount < 0 then DebitLeg else CreditLeg,
+      magnitude = abs tx.amount,
+      currency = tx.currencyCode,
+      time = tx.time
+    }
+
 -- | Generic transfer matcher: two legs pair when they share a currency, carry
 -- opposite signs, have equal magnitude, and fall within @window@ of each
 -- other.
 defaultTransferMatcher :: NominalDiffTime -> TransferMatcher
 defaultTransferMatcher window =
   TransferMatcher $ \a b ->
-    a.currencyCode
-      == b.currencyCode
-      && signum a.amount
-      /= signum b.amount
-      && abs a.amount
-      == abs b.amount
-      && abs (diffUTCTime a.time b.time)
-      <= window
+    isTransferMatch window (bankTransactionLeg a) (bankTransactionLeg b)
 
 -- | Default interpretation for providers that need no bespoke logic:
 -- 'defaultClassify' plus 'defaultTransferMatcher' over 'defaultTransferPairingWindow'.

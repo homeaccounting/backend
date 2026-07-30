@@ -403,6 +403,7 @@ spec = describe "TransactionService / contacts" $ do
                 newAllocations = Just (incomeAllocs fx.base (unsafeMoney Core.USD 30)),
                 newTransactionType = seedTd.transactionType, -- placeholder; overwritten by service
                 contactId = Just fx.contactA,
+                allowOverdraft = False,
                 by = fx.base.userId
               }
       result <- runAppM env $ amendTransaction fx.base.userId txId amend
@@ -444,6 +445,7 @@ spec = describe "TransactionService / contacts" $ do
                 newAllocations = Just (incomeAllocs fx.base (unsafeMoney Core.USD 25)),
                 newTransactionType = seedTd.transactionType,
                 contactId = Just alien,
+                allowOverdraft = False,
                 by = fx.base.userId
               }
       result <- runAppM env $ amendTransaction fx.base.userId txId amend
@@ -485,6 +487,7 @@ spec = describe "TransactionService / contacts" $ do
                 newAllocations = Just (incomeAllocs fx.base (unsafeMoney Core.USD 25)),
                 newTransactionType = seedTd.transactionType,
                 contactId = Just fx.contactA,
+                allowOverdraft = False,
                 by = fx.base.userId
               }
       result <- runAppM env $ amendTransaction fx.base.userId txId amend
@@ -526,6 +529,7 @@ spec = describe "TransactionService / contacts" $ do
                 newAllocations = Nothing,
                 newTransactionType = seedTd.transactionType,
                 contactId = Just fx.contactA,
+                allowOverdraft = False,
                 by = fx.base.userId
               }
       result <- runAppM env $ amendTransaction fx.base.userId txId amend

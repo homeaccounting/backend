@@ -164,6 +164,7 @@ amendContact h txId contact = do
             newAllocations = Just (singletonAllocation h.harnessIncomeCategory td.targetAmount),
             newTransactionType = td.transactionType,
             contactId = contact,
+            allowOverdraft = False,
             by = h.harnessUser
           }
   res <- runAppM h.harnessEnv $ TransactionService.amendTransaction h.harnessUser txId amend

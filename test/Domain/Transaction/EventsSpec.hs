@@ -68,16 +68,10 @@ postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
     (eitherDecode (encode evt) :: Either String TransactionPostingInitiated)
       `shouldBe` Right evt
 
-  it "decodes legacy payloads without labels as empty set" $ do
-    let legacy = stripKey "labels" (encode sampleEvent)
-    case eitherDecode legacy :: Either String TransactionPostingInitiated of
-      Left err -> expectationFailure $ "legacy decode failed: " <> err
-      Right decoded -> decoded.labels `shouldBe` Set.empty
-
-  it "decodes legacy payloads without contactId as Nothing" $ do
+  it "decodes payloads without contactId as Nothing" $ do
     let legacy = stripKey "contactId" (encode sampleEvent)
     case eitherDecode legacy :: Either String TransactionPostingInitiated of
-      Left err -> expectationFailure $ "legacy decode failed: " <> err
+      Left err -> expectationFailure $ "decode failed: " <> err
       Right decoded -> decoded.contactId `shouldBe` Nothing
 
   it "round-trips TransactionPostingInitiated with Just contactId" $ do
@@ -156,6 +150,7 @@ sampleAmendmentInitiated =
       newExchangeRate = Nothing,
       newTransactionType = Transfer,
       contactId = Nothing,
+      allowOverdraft = False,
       by = mockUserId (UUID.fromWords64 0 3)
     }
 

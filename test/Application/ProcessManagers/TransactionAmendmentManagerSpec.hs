@@ -162,6 +162,7 @@ mkAmendInitiated newSrcA newTgtA newSrcAmt newTgtAmt =
             newExchangeRate = Nothing,
             newTransactionType = Transfer,
             contactId = Nothing,
+            allowOverdraft = False,
             by = userId_
           }
     )
@@ -184,6 +185,7 @@ mkAmendInitiatedKind newSrcA newTgtA newSrcAmt newTgtAmt kind =
             newExchangeRate = Nothing,
             newTransactionType = kind,
             contactId = Nothing,
+            allowOverdraft = False,
             by = userId_
           }
     )

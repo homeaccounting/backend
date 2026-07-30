@@ -279,6 +279,7 @@ amendThenCancelSpec =
                 newAllocations = Nothing,
                 newTransactionType = Transfer,
                 contactId = Nothing,
+                allowOverdraft = False,
                 by = uid
               }
       amendResult <- runAppM env (amendTransaction uid txId amendCmd)

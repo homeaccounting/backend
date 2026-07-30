@@ -24,6 +24,7 @@ import Application.Services.TransactionHistoryService
   )
 import Application.Services.TransactionService
   ( initiateIncome,
+    mergeTransactions,
     setTransactionContact,
     setTransactionLabels,
   )
@@ -31,14 +32,22 @@ import qualified Data.Set as Set
 import qualified Data.UUID as UUID
 import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (TransactionId, unsafeEntryName, unsafeMoney, unsafeTransactionId)
+import Domain.Core.Types
+  ( TransactionId,
+    defaultCash,
+    unsafeEntryName,
+    unsafeMoney,
+    unsafeTransactionId,
+  )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Infrastructure.App (runAppM)
 import RIO
 import Test.Hspec
 import Testkit.Fixtures
   ( MetadataFixture (..),
+    createAccount,
     incomeAllocs,
+    postExpense,
     registerUser,
     setupMetadataFixture,
   )
@@ -180,3 +189,51 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
       Left (AccountError _) -> pure ()
       Left err -> expectationFailure $ "Expected AccountError, got: " <> show err
       Right _ -> expectationFailure "Expected Left AccountError"
+
+  it "records the merge and relation events in the transaction history" $ do
+    env <- createTestAppEnvWithProcessManager
+    fx <- setupMetadataFixture env "audit-merge@test.com"
+    -- A transfer-merge (Income target + Expense source on a different
+    -- account) exercises the same TransactionMergeCompleted /
+    -- TransactionRelationAdded pair as a same-kind merge (tracker#30);
+    -- the mapping under test is identical either way.
+    accB <- createAccount env fx.userId "Wallet B" defaultCash Core.USD 5000
+    expenseId <- postExpense env fx 50 Nothing
+    incomeRes <-
+      runAppM env
+        $ initiateIncome
+          fx.userId
+          accB
+          (unsafeMoney Core.USD 50)
+          (incomeAllocs fx (unsafeMoney Core.USD 50))
+          Set.empty
+          "Income"
+          Nothing
+          Nothing
+          Nothing
+    (incomeId, _) <- case incomeRes of
+      Right r -> pure r
+      Left err -> fail $ "initiateIncome failed: " <> show err
+
+    mergeResult <- runAppM env (mergeTransactions fx.userId incomeId (expenseId :| []))
+    case mergeResult of
+      Right _ -> pure ()
+      Left err -> expectationFailure $ "mergeTransactions failed: " <> show err
+
+    survivorResult <- runAppM env (getTransactionHistory fx.userId incomeId)
+    case survivorResult of
+      Right (Just hist) -> do
+        let isMergeCompleted HistoryMergeCompleted {} = True
+            isMergeCompleted _ = False
+        any isMergeCompleted hist.entries `shouldBe` True
+      Right Nothing -> expectationFailure "Expected Just"
+      Left err -> expectationFailure $ "Expected Right, got: " <> show err
+
+    cancelledResult <- runAppM env (getTransactionHistory fx.userId expenseId)
+    case cancelledResult of
+      Right (Just hist) -> do
+        let isRelationAdded HistoryRelationAdded {} = True
+            isRelationAdded _ = False
+        any isRelationAdded hist.entries `shouldBe` True
+      Right Nothing -> expectationFailure "Expected Just"
+      Left err -> expectationFailure $ "Expected Right, got: " <> show err
