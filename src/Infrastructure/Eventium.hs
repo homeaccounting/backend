@@ -126,12 +126,12 @@ import Eventium
 import Eventium.Store.Postgresql
   ( JSONString,
     SqlEventStoreConfig,
-    jsonStringCodec,
     postgresqlTaggedEventStoreWriter,
     sqlEventStoreReader,
     sqlGlobalEventStoreReader,
   )
 import Infrastructure.Database (runDbDirect)
+import Infrastructure.Eventium.Schema (accountingEventCodec)
 
 -- | Extract the embedding function from a 'TypeEmbedding'.
 embedWith :: TypeEmbedding a b -> a -> b
@@ -188,7 +188,7 @@ accountingVersionedEventStoreReader ::
   SqlEventStoreConfig entity JSONString ->
   AccountingVersionedEventStoreReader (SqlPersistT m)
 accountingVersionedEventStoreReader config =
-  codecVersionedEventStoreReader jsonStringCodec $
+  codecVersionedEventStoreReader accountingEventCodec $
     sqlEventStoreReader config
 
 -- | Create a global event store reader with JSON codec.
@@ -197,7 +197,7 @@ accountingGlobalEventStoreReader ::
   SqlEventStoreConfig entity JSONString ->
   AccountingGlobalEventStoreReader (SqlPersistT m)
 accountingGlobalEventStoreReader config =
-  codecGlobalEventStoreReader jsonStringCodec $
+  codecGlobalEventStoreReader accountingEventCodec $
     sqlGlobalEventStoreReader config
 
 -- | Legacy alias for versioned reader.
@@ -268,7 +268,7 @@ accountingEventStoreWriterWithRaw rawWriter config pmFactory persistentReadModel
         mconcat (map readModelPublisher persistentReadModels)
           <> synchronousGlobalPublisher (globalToVersionedHandler versionedHandler)
       publishingWriter =
-        publishingGlobalTaggedCodecEventStoreWriter jsonStringCodec rawWriter globalPublisher
+        publishingGlobalTaggedCodecEventStoreWriter accountingEventCodec rawWriter globalPublisher
    in publishingWriter
 
 -- -----------------------------------------------------------------------------
@@ -331,7 +331,7 @@ commandDispatcher ::
   CommandDispatcher m AccountingCommand
 commandDispatcher writer reader =
   commandHandlerDispatcher
-    jsonStringCodec
+    accountingEventCodec
     writer
     reader
     [ mkAggregateHandlerWith formatAccountError accountAccountingCommandHandler,
@@ -363,7 +363,7 @@ applyAccountCommand ::
   AccountCommand ->
   m (Either (CommandHandlerError AccountError) [AccountingEvent])
 applyAccountCommand writer reader enricher accountId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader
@@ -381,7 +381,7 @@ applyTransactionCommand ::
   TransactionCommand ->
   m (Either (CommandHandlerError TransactionError) [AccountingEvent])
 applyTransactionCommand writer reader enricher txId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader
@@ -399,7 +399,7 @@ applyUserCommand ::
   UserCommand ->
   m (Either (CommandHandlerError UserError) [AccountingEvent])
 applyUserCommand writer reader enricher userId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader
@@ -417,7 +417,7 @@ applyConfigurationCommand ::
   ConfigurationCommand ->
   m (Either (CommandHandlerError ConfigurationError) [AccountingEvent])
 applyConfigurationCommand writer reader enricher configId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher jsonStringCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader

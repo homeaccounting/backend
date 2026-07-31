@@ -169,6 +169,29 @@ tofu plan
 tofu apply
 ```
 
+## Event store: backup & restore
+
+The event store is an immutable append-only log — it is the source of truth, and
+read models are rebuilt from it. Backup is a plain PostgreSQL dump:
+
+```bash
+pg_dump "$DATABASE_URL" -t events > events-backup.sql   # the events table is what matters
+# full DB dump is also fine:
+pg_dump "$DATABASE_URL" > backup.sql
+```
+
+Restore into any PostgreSQL 15+ instance (new host, new machine, upgraded
+Postgres) with `psql < backup.sql`, then start the app.
+
+**Schema evolution makes restore version-independent.** Because the app
+normalizes older events to the current shape *on read* (upcast-on-read; see
+`docs/architecture.md`), **any app version can read any dump** — including a dump
+taken several releases ago restored against a much newer app. You do not need to
+match the app version to the dump, and you never run a migration step against the
+log. Version-skipping (e.g. restoring a v1-era backup into a v3 app) just runs
+more upcaster hops at read time. Stored bytes are never mutated, so a restore is
+non-destructive and re-runnable.
+
 ## Troubleshooting
 
 ### Check logs

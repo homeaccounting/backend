@@ -37,12 +37,12 @@ import qualified Data.UUID.V5 as UUID5
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..), Provider, unProvider)
 import Domain.Models (AccountingEvent (..))
 import Eventium (EventStoreWriter (..), ExpectedPosition (..), metadataEnrichingEventStoreWriter)
-import Eventium.Store.Postgresql (jsonStringCodec)
 import Infrastructure.Database (ConnectionPool, runDbDirect)
 import Infrastructure.Eventium
   ( AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
   )
+import Infrastructure.Eventium.Schema (accountingEventCodec)
 import Infrastructure.ExchangeRate.Provider (RateProvider (..))
 import RIO
 
@@ -114,7 +114,7 @@ publishRates prov writer _reader pool = liftIO $ do
                       at = today
                     }
               enrichedWriter =
-                metadataEnrichingEventStoreWriter jsonStringCodec writer
+                metadataEnrichingEventStoreWriter accountingEventCodec writer
           writeResult <-
             enrichedWriter.storeEvents streamId AnyPosition [payload]
           case writeResult of

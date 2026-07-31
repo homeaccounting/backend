@@ -181,6 +181,57 @@ Config path set via `CONFIG_PATH` env var. Environment variables loaded via dire
 - Process managers (sagas) handle cross-aggregate workflows (e.g., `TransferManager` for two-phase account transfers)
 - Eventium packages: `eventium-core`, `eventium-postgresql`, `eventium-memory`, `eventium-testkit`
 
+### Backward compatibility (production)
+
+The project is in **production**: self-hosters own their event-store DB with real,
+irreplaceable data. **Every change must be backward compatible and/or ship a
+migration.** The append-only event log is never mutated in place.
+
+- **Stored event shape changes** go through **upcast-on-read**: a versioned
+  envelope `{schemaVersion, payload}` plus chained single-hop upcasters registered
+  in the eventium `SchemaRegistry`. When you change an event's shape, add a
+  `v(N)→v(N+1)` upcaster; do **not** recreate the DB, and do **not** rely on ad-hoc
+  `.:? "field" .!= default` custom `FromJSON` as the migration story.
+- DTO/API changes are additive or versioned — don't break existing clients.
+- The generic machinery lives in eventium-core; the app supplies only the concrete
+  registry + `eventTypeOf` tag extractor. See
+  `docs/specs/2026-07-30-event-schema-evolution-design.md`.
+
+#### Upcaster vs. custom `FromJSON` — the rule
+
+The dividing line is **where the JSON comes from**, not how big the change is:
+
+- **Read from the event store → the change is a migration → use an upcaster.**
+  A stored event's `FromJSON`/`ToJSON` must describe **only the current shape**
+  (prefer `deriveJSON defaultOptions`; a hand-written instance is fine only if it
+  still targets one shape). Never encode historical compatibility inside it with
+  `.:?` / `.!=` / `fromMaybe`. Field renames, scalar→list widenings, moved/nested
+  fields — all of these belong in a registered upcaster, never in the instance.
+- **Read from an external source (HTTP request DTOs, bank-provider payloads) → use
+  a custom `FromJSON`.** There is no version envelope and you are *validating*
+  inbound data, not *migrating* history — the smart-constructor-in-`FromJSON`
+  pattern (`Money`, `Currency`, `ExternalTransactionId`) is correct there. Version
+  external contracts additively.
+
+Why custom-`FromJSON`-as-migration is banned for stored events: it is **invisible
+and unenforced**. The compatibility lives inside one hand-written function, so a
+later "simplification" to `deriveJSON` silently deletes it — **no compile error,
+no test failure** — and it only detonates in prod against old rows (this is
+exactly how the `importInfo` singular→list change broke monobank import). It also
+doesn't compose (each change bolts on another `.:?`) and can't express a rename at
+all. Upcasters keep migrations explicit, ordered, versioned, and unit-tested.
+
+Guardrails:
+
+- Every evolved event type gets a **legacy-shape decode test** in
+  `Infrastructure.Eventium.SchemaSpec` that reads a committed stored-JSON fixture
+  (`test/fixtures/events/*.json`, copyable verbatim from a prod row), upcasts it,
+  re-encodes at the current schema, and reads it back — proving both the migration
+  and round-trip stability.
+- **Replacing a custom `FromJSON` on a stored event with `deriveJSON` requires**
+  grepping the removed instance for `.:?` / `.!=` / `fromMaybe`; any such
+  compatibility must move to an upcaster **first**.
+
 ### Eventium as a first-class goal
 
 A core goal of this project is to grow **eventium** into the best event-sourcing

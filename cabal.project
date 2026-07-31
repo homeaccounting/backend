@@ -8,6 +8,11 @@ packages:
 -- Use system ghc for better integration with IDEs
 with-compiler: ghc-9.10.3
 
+-- Pin the Hackage snapshot so every machine and the release image resolve the
+-- identical dependency set (prevents "builds on host, fails in Docker" drift).
+-- Includes eventium 0.5.2. Bump this timestamp to pull newer dependencies.
+index-state: 2026-07-31T08:41:19Z
+
 -- Prevent hashable 1.5.0 which has breaking changes with uuid
 constraints:
   hashable >= 1.4.0.0 && < 1.5

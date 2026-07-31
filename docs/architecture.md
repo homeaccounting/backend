@@ -401,7 +401,50 @@ All API handlers follow a uniform pattern:
 - Immutable append-only log
 - Stream per aggregate (e.g., `account-{uuid}`)
 - Optimistic concurrency via version numbers
-- JSON event payloads
+- JSON event payloads, wrapped in a versioned envelope `{schemaVersion, payload}`
+
+#### Schema evolution (upcast-on-read)
+
+Stored events are **never rewritten**. When an event type's shape changes across
+a release, older stored events are normalized to the current shape *on read* by a
+chain of pure single-hop upcasters. The generic machinery lives in
+`Eventium.SchemaEvolution` (envelope + `SchemaRegistry` + `upcastingValueCodec`);
+the app supplies the concrete registry in `Infrastructure.Eventium.Schema`
+(`accountingSchemaRegistry`, `accountingEventTypeOf`, `accountingEventCodec`).
+See `docs/specs/2026-07-30-event-schema-evolution-design.md`.
+
+A stored event's `FromJSON`/`ToJSON` describes **only the current shape** —
+historical compatibility never lives in the instance (no `.:?`/`.!=`/`fromMaybe`
+migration logic); it belongs in an upcaster. External/inbound JSON (API DTOs,
+provider payloads) is the opposite case and keeps validating custom `FromJSON`
+instances. See the *Upcaster vs. custom `FromJSON`* rule in `CLAUDE.md`.
+
+**To evolve an event's schema** (add/rename/remove a field, split/merge):
+
+1. Change the event type in `Domain.*` to its new (current) shape.
+2. Add a single-hop upcaster `Value -> Value` transforming the *previous*
+   stored JSON into the new shape, and register it under the event's tag in
+   `accountingSchemaRegistry`:
+   ```haskell
+   registerUpcasters "TransactionAmendmentInitiated" [v1_to_v2, v2_to_v3] …
+   ```
+   The list is ordered `[v1→v2, v2→v3, …]`; its length sets the current version
+   (`1 + length`). Append the new hop — never edit or reorder existing hops.
+3. Remember the JSON shape: an `AccountingEvent` encodes as
+   `{ "tag": …, "contents": { …fields… } }`, so a field-level upcaster
+   transforms the `contents` object. Two worked examples:
+   `amendmentInitiatedV1toV2` (default an added field) and
+   `postingInitiatedV1toV2` (widen a scalar `externalTransactionId` string to the
+   `externalTransactionIds` list — a rename alone is insufficient, the value must
+   be wrapped in an array). Write each hop to be a **no-op when its marker is
+   absent**, since all pre-envelope events read as v1 and every hop runs on them.
+4. Add a legacy-decode test in `Infrastructure.Eventium.SchemaSpec`: commit a
+   stored-JSON fixture under `test/fixtures/events/` (copyable verbatim from a prod
+   event-store row — the pre-change shape), then assert it decodes via
+   `accountingEventCodec` and that re-encoding + re-reading is stable.
+
+Pre-envelope events (written before schema versioning existed) carry no
+`schemaVersion` and are read as version 1 automatically.
 
 ### Read Models (In-Memory)
 

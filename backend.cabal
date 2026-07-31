@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           backend
-version:        0.10.0
+version:        0.11.0
 synopsis:       Accounting system backend with CQRS and Event Sourcing
 description:    A REST API for an accounting system built with CQRS and Event Sourcing patterns
                 using the Eventium library. Implements DDD with clear aggregate boundaries,
@@ -124,6 +124,7 @@ library
       Infrastructure.Database.Orphans
       Infrastructure.Eventium
       Infrastructure.Eventium.GlobalEvent
+      Infrastructure.Eventium.Schema
       Infrastructure.ExchangeRate.ECB
       Infrastructure.ExchangeRate.NBU
       Infrastructure.ExchangeRate.Provider
@@ -181,10 +182,10 @@ library
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.4.0 && <0.5.0
-    , eventium-memory >=0.4.0 && <0.5.0
-    , eventium-postgresql >=0.4.0 && <0.5.0
-    , eventium-sql-common >=0.4.0 && <0.5.0
+    , eventium-core >=0.5.0 && <0.6.0
+    , eventium-memory >=0.5.0 && <0.6.0
+    , eventium-postgresql >=0.5.0 && <0.6.0
+    , eventium-sql-common >=0.5.0 && <0.6.0
     , hashable ==1.4.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -266,10 +267,10 @@ executable backend
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.4.0 && <0.5.0
-    , eventium-memory >=0.4.0 && <0.5.0
-    , eventium-postgresql >=0.4.0 && <0.5.0
-    , eventium-sql-common >=0.4.0 && <0.5.0
+    , eventium-core >=0.5.0 && <0.6.0
+    , eventium-memory >=0.5.0 && <0.6.0
+    , eventium-postgresql >=0.5.0 && <0.6.0
+    , eventium-sql-common >=0.5.0 && <0.6.0
     , hashable ==1.4.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -421,6 +422,7 @@ test-suite backend-test
       Infrastructure.ConfigSpec
       Infrastructure.Crypto.SecretBoxSpec
       Infrastructure.Database.OrphansSpec
+      Infrastructure.Eventium.SchemaSpec
       Infrastructure.ExchangeRate.NBUIntegrationSpec
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
@@ -507,12 +509,12 @@ test-suite backend-test
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.4.0 && <0.5.0
-    , eventium-memory >=0.4.0 && <0.5.0
-    , eventium-postgresql >=0.4.0 && <0.5.0
-    , eventium-sql-common >=0.4.0 && <0.5.0
-    , eventium-sqlite >=0.4.0 && <0.5.0
-    , eventium-testkit >=0.4.0 && <0.5.0
+    , eventium-core >=0.5.0 && <0.6.0
+    , eventium-memory >=0.5.0 && <0.6.0
+    , eventium-postgresql >=0.5.0 && <0.6.0
+    , eventium-sql-common >=0.5.0 && <0.6.0
+    , eventium-sqlite >=0.5.0 && <0.6.0
+    , eventium-testkit >=0.5.0 && <0.6.0
     , hashable ==1.4.*
     , hspec >=2.10 && <2.12
     , hspec-discover >=2.10 && <2.12
