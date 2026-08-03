@@ -10,7 +10,8 @@
 -- Description : HTTP server setup and configuration using Warp
 --
 -- This module provides the HTTP server implementation using Warp, including
--- middleware for CORS, logging, error handling, and request/response processing.
+-- middleware for request context, metrics, CORS, logging, error handling,
+-- and request/response processing.
 --
 -- Architecture:
 --
@@ -20,12 +21,13 @@
 --     ↓
 --   Middleware Stack (applied bottom-to-top):
 --     ├─→ CORS Middleware (cross-origin resource sharing)
---     ├─→ Logging Middleware (request/response logging)
 --     ├─→ Error Handling Middleware (uncaught exceptions)
---     ├─→ Compression Middleware (gzip responses)
---     └─→ Timeout Middleware (request timeouts)
+--     ├─→ Metrics Middleware (/metrics endpoint + HTTP request duration)
+--     ├─→ Logging Middleware (request/response logging; LogText mode only)
+--     ├─→ Context Middleware (correlation id + best-effort user, outermost)
+--     └─→ Compression Middleware (gzip responses)
 --     ↓
---   Servant Application
+--   Servant Application (per-request re-hoisted with the request's context)
 --     ↓
 --   AppM Handlers → Natural Transformation → Handler
 --     ↓
@@ -54,11 +56,14 @@
 --
 -- Middleware:
 --
---   1. CORS: Handles cross-origin requests
---   2. Logging: Logs all requests/responses
---   3. Error: Catches and formats uncaught exceptions
---   4. Compression: gzip compression for responses
---   5. Timeout: Prevents long-running requests
+--   1. Context: establishes the per-request 'Infrastructure.Observability.Context.RequestContext'
+--      (correlation id + best-effort user) and echoes @X-Correlation-Id@ on the response
+--   2. Logging (LogText mode only): logs all requests/responses to stdout
+--   3. Metrics: serves @GET \/metrics@ and records the HTTP request-duration histogram
+--   4. Error: catches and formats uncaught exceptions
+--   5. CORS: handles cross-origin requests
+--   6. Compression: gzip compression for responses
+--   7. Timeout: prevents long-running requests
 --
 -- Graceful Shutdown:
 --
@@ -102,12 +107,15 @@ module Web.Server
     corsMiddleware,
     loggingMiddleware,
     errorHandlingMiddleware,
+    metricsMiddleware,
   )
 where
 
 import Data.Text.Display (displayText)
 import Infrastructure.App (AppEnv (..), AppM, runAppM)
-import Infrastructure.Config (AppConfig (..), ServerConfig (..))
+import Infrastructure.Config (AppConfig (..), LogFormat (..), LoggingConfig (..), ServerConfig (..))
+import Infrastructure.Observability.Logging (mkContextLogFunc, rioLevel)
+import Infrastructure.Observability.Context (readRequestContext)
 -- For HTTP status and responses
 import Network.HTTP.Types (status500)
 import Network.Wai
@@ -132,6 +140,11 @@ import Network.Wai.Middleware.Cors
     simpleCorsResourcePolicy,
   )
 import Network.Wai.Middleware.Gzip (defaultGzipSettings, gzip)
+import Network.Wai.Middleware.Prometheus
+  ( PrometheusSettings (..),
+    instrumentApp,
+    prometheus,
+  )
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Network.Wai.Parse (setMaxRequestNumFiles)
 import RIO
@@ -142,6 +155,7 @@ import Servant.Server.Experimental.Auth (AuthHandler)
 import Web.API (API, api, server)
 import Web.API.InfoAPI (InfoAPI, infoAPI, infoHandler)
 import Web.Middleware.Auth (AuthenticatedUser, authHandler)
+import Web.Middleware.Context (contextMiddleware)
 
 -- -----------------------------------------------------------------------------
 -- Server Execution
@@ -257,31 +271,67 @@ makeServerSettings env port =
 --  >>> app <- buildApplication env
 --  >>> runSettings settings app
 -- | Full API including unauthenticated info endpoint.
-type FullAPI = InfoAPI S.:<|> API
+--
+-- The top-level 'S.Vault' combinator gives 'perRequestServer' access to the
+-- request's WAI 'Data.Vault.Lazy.Vault' (populated by 'contextMiddleware'),
+-- so it can read the per-request 'Infrastructure.Observability.Context.RequestContext'
+-- and re-hoist the server with a context-bound 'AppEnv' — see 'servantApp'.
+type FullAPI = S.Vault S.:> (InfoAPI S.:<|> API)
 
 buildApplication :: AppEnv -> Application
 buildApplication env =
   -- Middleware applied bottom-to-top (last applied is outermost)
   gzip defaultGzipSettings
-    $ loggingMiddleware -- Compression (outermost)
-    $ errorHandlingMiddleware env -- Request/response logging
-    $ corsMiddleware -- Error handling
-      servantApp -- CORS support
-      -- Core application (innermost)
+    $ contextMiddleware env -- Establishes RequestContext (outermost: sees every request/response)
+    $ requestLoggingMiddleware -- Dev-only human-readable request logging (LogText mode only)
+    $ metricsMiddleware -- /metrics endpoint + HTTP request-duration histogram
+    $ errorHandlingMiddleware env -- Uncaught-exception handling
+    $ corsMiddleware -- CORS support
+      servantApp -- Core application (innermost)
   where
     -- Create authentication context with JWT handler, plus the multipart
     -- upload options (see 'multipartOptions').
     jwtConfig = env.jwtConfig
     authContext = authHandler jwtConfig S.:. multipartOptions S.:. S.EmptyContext
 
+    -- 'loggingMiddleware' (@logStdoutDev@) prints unstructured, colourised
+    -- lines. In 'LogJson' mode stdout is a structured, one-JSON-object-per-line
+    -- stream consumed by log shippers (Promtail/Grafana); interleaving it with
+    -- ad-hoc text would violate that invariant, so it's only wired in for the
+    -- human-oriented 'LogText' mode.
+    requestLoggingMiddleware :: Middleware
+    requestLoggingMiddleware = case env.config.logging.format of
+      LogText -> loggingMiddleware
+      LogJson -> id
+
+    servantApp :: Application
     servantApp =
       S.serveWithContext
         (Proxy :: Proxy FullAPI)
         authContext
-        (infoServer S.:<|> hoistedServer env)
+        perRequestServer
 
-    infoServer :: S.ServerT InfoAPI S.Handler
-    infoServer = S.hoistServer infoAPI (appMToHandler env) infoHandler
+    -- \| Re-hoist the server per request with a context-bound 'AppEnv'.
+    --
+    -- 'contextMiddleware' stashes the request's 'RequestContext' (correlation
+    -- id, best-effort acting user) on the WAI 'Vault.Vault' before the
+    -- request reaches Servant; the 'S.Vault' combinator in 'FullAPI' hands
+    -- that same vault back here on every request. We read the context back
+    -- out and build a request-scoped 'AppEnv' — same resources, but with
+    -- 'requestContext' set and a 'logFunc' rebuilt from it — so every log
+    -- line and every persisted event's metadata for this request carries the
+    -- same correlation id / acting user.
+    perRequestServer :: S.Vault -> S.ServerT (InfoAPI S.:<|> API) S.Handler
+    perRequestServer vault =
+      S.hoistServer infoAPI (appMToHandler env') infoHandler
+        S.:<|> hoistedServer env'
+      where
+        ctx = readRequestContext env.contextVaultKey vault
+        env' =
+          env
+            { requestContext = ctx,
+              logFunc = mkContextLogFunc env.config.logging.format (rioLevel env.config.logging.level) ctx env.loggerSet
+            }
 
 -- | Multipart upload options placed in the Servant 'S.Context'.
 --
@@ -432,6 +482,36 @@ loggingMiddleware = logStdoutDev -- Development logging with colors
 
 -- Production logging:
 -- loggingMiddleware = logStdout
+
+-- | Prometheus @/metrics@ endpoint + HTTP request-duration histogram.
+--
+-- Composes two middlewares from @wai-middleware-prometheus@:
+--
+--   * 'prometheus' serves @GET \/metrics@ (scraping the process-global
+--     registry that 'Infrastructure.App.appMetrics' — and the standard GHC
+--     runtime-statistics collector — register into) and is told __not__ to
+--     auto-instrument the app itself ('prometheusInstrumentApp' = False):
+--     its default auto-instrumentation labels the request-duration
+--     histogram by the raw request path, which is unbounded cardinality for
+--     a REST API whose paths embed ids (accounts, transactions, ...).
+--   * 'instrumentApp' instruments the app with a single constant @"app"@
+--     handler label instead, so @http_request_duration_seconds@ carries only
+--     @{handler="app", method, status_code}@ — bounded regardless of how
+--     many distinct paths are served.
+--
+-- Example:
+--  >>> metricsMiddleware app
+--  >>> -- GET /metrics now returns the Prometheus text exposition format;
+--  >>> -- every other request bumps http_request_duration_seconds{handler="app",...}
+metricsMiddleware :: Middleware
+metricsMiddleware = prometheus settings . instrumentApp "app"
+  where
+    settings =
+      PrometheusSettings
+        { prometheusEndPoint = ["metrics"],
+          prometheusInstrumentApp = False,
+          prometheusInstrumentPrometheus = True
+        }
 
 -- | Error handling middleware for uncaught exceptions.
 --

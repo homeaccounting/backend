@@ -63,6 +63,7 @@ import Domain.Core.Types
     unsafeTransactionId,
     unsafeUserId,
   )
+import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
       ( CompleteTransactionPostingTransactionCommand,
@@ -71,8 +72,10 @@ import Domain.Transaction.CommandHandler
   )
 import Domain.Transaction.Commands (CompleteTransactionPosting (..), InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Eventium (EventMetadata (..), EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
+import Infrastructure.Observability.Context (RequestContext (..), enricherFromContext)
 import RIO
 import Test.Hspec
 import Testkit.Helpers (singletonExpense, singletonIncome)
@@ -251,6 +254,11 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
           }
 
   return txUuid
+
+-- | True for the @AccountCredited@ leg of a transfer saga.
+isCredit :: AccountingEvent -> Bool
+isCredit (AccountCreditedEvent _) = True
+isCredit _ = False
 
 -- -----------------------------------------------------------------------------
 -- Test Spec
@@ -517,6 +525,70 @@ processManagerDrivenSpec =
         Just txData -> do
           txData.status `shouldBe` Completed
           txData.sourceAmount `shouldBe` unsafeMoney USD 200
+
+    it "stamps the saga-emitted credit-leg event with its specific eventType tag" $ do
+      (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
+
+      -- The PM issues CreditAccount to the target as part of the saga; the
+      -- emitted AccountCredited event routes through the command dispatcher.
+      _ <- initiateTransferOnly env acct1Uuid acct2Uuid userUuid 200 "Tag test"
+
+      let EventStoreReader readStream = env.eventStoreReader
+      targetEvents <- readStream (allEvents acct2Uuid)
+      let creditTags :: [Text]
+          creditTags =
+            [ md.eventType
+            | StreamEvent _ _ md payload <- targetEvents,
+              isCredit payload
+            ]
+      -- Specific tag, not the generic Typeable "AccountingEvent" name.
+      creditTags `shouldBe` ["AccountCredited"]
+
+    it "propagates the request correlationId through the saga to the credit-leg event" $ do
+      (env, acct1Uuid, acct2Uuid, userUuid) <- setupRegularAccountsWithPM
+
+      -- A non-nil request context, as a real HTTP request would establish.
+      let cid = UUID.fromWords 777 0 0 1
+          ctx = RequestContext {correlationId = cid, userId = Just (unsafeUserId userUuid)}
+          env' = env {requestContext = ctx} :: AppEnv
+          writer = env'.eventStoreWriter
+          reader = env'.eventStoreReader
+
+      -- The direct command is enriched from the request context, exactly as
+      -- the Web/Application boundary does in production.
+      txUuid <- UUID.nextRandom
+      _ <-
+        applyTransactionCommand writer reader (enricherFromContext env'.requestContext) txUuid
+          $ InitiateTransactionPostingTransactionCommand
+            InitiateTransactionPosting
+              { sourceAccountId = unsafeAccountId acct1Uuid,
+                targetAccountId = unsafeAccountId acct2Uuid,
+                sourceAmount = unsafeMoney USD 200,
+                targetAmount = unsafeMoney USD 200,
+                exchangeRate = Nothing,
+                description = "Correlation propagation test",
+                initiatedBy = unsafeUserId userUuid,
+                at = mockTime,
+                transactionType = Transfer,
+                importInfo = Nothing,
+                labels = Set.empty,
+                contactId = Nothing,
+                relation = Nothing
+              }
+
+      -- The saga-emitted credit-leg event on the target account stream should
+      -- carry the same correlationId as the originating request, even though
+      -- the PM's own IssueCommand effects never saw the request directly.
+      let EventStoreReader readStream = reader
+      targetEvents <- readStream (allEvents acct2Uuid)
+      let creditMetas =
+            [ md
+            | StreamEvent _ _ md payload <- targetEvents,
+              isCredit payload
+            ]
+      case creditMetas of
+        [md] -> md.correlationId `shouldBe` Just cid
+        other -> expectationFailure $ "expected exactly one credit-leg event, got " <> show (length other)
 
     it "updates both account balances correctly" $ do
       (env, acct1Uuid, acct2Uuid, _userUuid) <- setupRegularAccountsWithPM

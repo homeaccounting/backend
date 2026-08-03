@@ -133,11 +133,10 @@ verify:
     @echo "Running setup verification..."
     ./scripts/verify-setup.sh
 
-# Update dependencies
+# Refresh the Hackage package index (to pull newer deps, bump index-state in cabal.project)
 update:
-    @echo "Updating dependencies..."
+    @echo "Refreshing Hackage package index..."
     cabal update
-    @echo "✓ Dependencies updated"
 
 # Generate REPL session
 repl:

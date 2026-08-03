@@ -69,7 +69,8 @@ import Domain.Core.Types
   )
 import Domain.Models
 import Eventium
-  ( ProcessManager (..),
+  ( EventMetadata,
+    ProcessManager (..),
     ProcessManagerEffect (..),
     Projection (..),
     RejectionReason (..),
@@ -77,6 +78,7 @@ import Eventium
     VersionedStreamEvent,
   )
 import Infrastructure.Eventium (embedWith)
+import Infrastructure.Observability.Context (propagateContext)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
 import RIO hiding ((%~), (&), (.~), (^.))
 
@@ -330,8 +332,8 @@ handleTransactionAmendmentEvent manager _ = manager
 -- | Translate the fallible new-source debit into the effect that
 -- issues it with compensation. The type guarantees this is the only
 -- leg ever wired to 'IssueCommandWithCompensation'.
-fallibleLegToEffect :: Bool -> FallibleLeg -> ProcessManagerEffect AccountingCommand
-fallibleLegToEffect allowOverdraft (DebitNewSource (acct, amt, txId)) =
+fallibleLegToEffect :: EventMetadata -> Bool -> FallibleLeg -> ProcessManagerEffect AccountingCommand
+fallibleLegToEffect trigMeta allowOverdraft (DebitNewSource (acct, amt, txId)) =
   IssueCommandWithCompensation
     (unAccountId acct)
     ( embedWith
@@ -340,7 +342,7 @@ fallibleLegToEffect allowOverdraft (DebitNewSource (acct, amt, txId)) =
             DebitAccount {amount = amt, transactionId = txId, allowOverdraft = allowOverdraft}
         )
     )
-    id
+    (propagateContext trigMeta)
     ( \(RejectionReason rejReason) ->
         [ IssueCommand
             (unTransactionId txId)
@@ -350,13 +352,13 @@ fallibleLegToEffect allowOverdraft (DebitNewSource (acct, amt, txId)) =
                     FailTransactionAmendment {reason = rejReason}
                 )
             )
-            id
+            (propagateContext trigMeta)
         ]
     )
 
 -- | Translate a guaranteed-success leg into its 'IssueCommand' effect.
-nonFallibleLegToEffect :: NonFallibleLeg -> ProcessManagerEffect AccountingCommand
-nonFallibleLegToEffect (ReverseOldTarget acct amt txId t) =
+nonFallibleLegToEffect :: EventMetadata -> NonFallibleLeg -> ProcessManagerEffect AccountingCommand
+nonFallibleLegToEffect trigMeta (ReverseOldTarget acct amt txId t) =
   IssueCommand
     (unAccountId acct)
     ( embedWith
@@ -365,8 +367,8 @@ nonFallibleLegToEffect (ReverseOldTarget acct amt txId t) =
             ReverseAccountCredit {amount = amt, transactionId = txId, at = t}
         )
     )
-    id
-nonFallibleLegToEffect (ReverseOldSource acct amt txId t) =
+    (propagateContext trigMeta)
+nonFallibleLegToEffect trigMeta (ReverseOldSource acct amt txId t) =
   IssueCommand
     (unAccountId acct)
     ( embedWith
@@ -375,8 +377,8 @@ nonFallibleLegToEffect (ReverseOldSource acct amt txId t) =
             ReverseAccountDebit {amount = amt, transactionId = txId, at = t}
         )
     )
-    id
-nonFallibleLegToEffect (CreditNewTarget acct amt txId) =
+    (propagateContext trigMeta)
+nonFallibleLegToEffect trigMeta (CreditNewTarget acct amt txId) =
   IssueCommand
     (unAccountId acct)
     ( embedWith
@@ -385,11 +387,11 @@ nonFallibleLegToEffect (CreditNewTarget acct amt txId) =
             CreditAccount {amount = amt, transactionId = txId}
         )
     )
-    id
+    (propagateContext trigMeta)
 
 -- | Build the 'CompleteTransactionAmendment' effect from the stored amendment data.
-completeEffect :: TransactionAmendmentData -> ProcessManagerEffect AccountingCommand
-completeEffect amend =
+completeEffect :: EventMetadata -> TransactionAmendmentData -> ProcessManagerEffect AccountingCommand
+completeEffect trigMeta amend =
   IssueCommand
     (unTransactionId amend.transactionId)
     ( embedWith
@@ -408,27 +410,27 @@ completeEffect amend =
               }
         )
     )
-    id
+    (propagateContext trigMeta)
 
 reactToTransactionAmendmentEvent ::
   TransactionAmendmentManager ->
   VersionedStreamEvent AccountingEvent ->
   [ProcessManagerEffect AccountingCommand]
-reactToTransactionAmendmentEvent manager (StreamEvent _ _ _ (TransactionAmendmentInitiatedEvent evt)) =
+reactToTransactionAmendmentEvent manager (StreamEvent _ _ trigMeta (TransactionAmendmentInitiatedEvent evt)) =
   case manager ^. #amendments % at evt.transactionId of
     Nothing -> []
     Just amend -> case amend.phase of
       AwaitingDebit debit _ ->
         -- Fallible debit first. Tail legs + completion fire on the
         -- resulting AccountDebited event.
-        [fallibleLegToEffect amend.allowOverdraft debit]
+        [fallibleLegToEffect trigMeta amend.allowOverdraft debit]
       ReadyToFinalize legs ->
         -- No fallible step needed. Issue everything (including the
         -- completion command) immediately. The amendments-map entry is
         -- cleared by the resulting 'TransactionAmendmentCompleted' event,
         -- so replays of the same Initiated event won't re-emit.
-        (nonFallibleLegToEffect <$> legs) ++ [completeEffect amend]
-reactToTransactionAmendmentEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
+        (nonFallibleLegToEffect trigMeta <$> legs) ++ [completeEffect trigMeta amend]
+reactToTransactionAmendmentEvent manager (StreamEvent _ _ trigMeta (AccountDebitedEvent evt)) =
   case manager ^. #amendments % at evt.transactionId of
     Just amend
       | ReadyToFinalize legs <- amend.phase ->
@@ -437,7 +439,7 @@ reactToTransactionAmendmentEvent manager (StreamEvent _ _ _ (AccountDebitedEvent
           -- AccountDebited replays is enforced by the
           -- 'TransactionAmendmentCompleted' event clearing the amendments-map
           -- entry below.
-          (nonFallibleLegToEffect <$> legs) ++ [completeEffect amend]
+          (nonFallibleLegToEffect trigMeta <$> legs) ++ [completeEffect trigMeta amend]
     _ -> []
 reactToTransactionAmendmentEvent _ _ = []
 

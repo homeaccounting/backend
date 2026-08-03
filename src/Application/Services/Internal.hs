@@ -45,14 +45,15 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (AccountId, UserId)
 import Domain.Transaction.CommandHandler (TransactionCommand, TransactionError)
 import Domain.User.CommandHandler (UserCommand)
-import Eventium (CommandHandlerError, MetadataEnricher)
-import Infrastructure.App (AppM, HasEventStore (..), runDb)
+import Eventium (CommandHandlerError)
+import Infrastructure.App (AppM, HasEventStore (..), HasRequestContext (..), runDb)
 import Infrastructure.Eventium
   ( applyAccountCommand,
     applyConfigurationCommand,
     applyTransactionCommand,
     applyUserCommand,
   )
+import Infrastructure.Observability.Context (enricherFromContext)
 import RIO
 
 -- -----------------------------------------------------------------------------
@@ -102,14 +103,19 @@ guardE cond e = unless cond (throwE e)
 -- -----------------------------------------------------------------------------
 
 -- | Apply an Account command, logging and translating rejection.
+--
+-- Derives the 'MetadataEnricher' from the ambient 'RequestContext' rather
+-- than taking one as a parameter, so every call site gets correlation/user
+-- metadata stamping for free.
 runAccountCmd ::
-  MetadataEnricher ->
   UUID ->
   AccountCommand ->
   ExceptT DomainError AppM ()
-runAccountCmd enricher accountId cmd = do
+runAccountCmd accountId cmd = do
   writer <- lift (view eventStoreWriterL)
   reader <- lift (view eventStoreReaderL)
+  ctx <- lift (view requestContextL)
+  let enricher = enricherFromContext ctx
   result <- liftIO $ applyAccountCommand writer reader enricher accountId cmd
   case result of
     Left err -> do
@@ -118,14 +124,18 @@ runAccountCmd enricher accountId cmd = do
     Right _events -> pure ()
 
 -- | Apply a User command, logging and translating rejection.
+--
+-- Derives the 'MetadataEnricher' from the ambient 'RequestContext' (see
+-- 'runAccountCmd').
 runUserCmd ::
-  MetadataEnricher ->
   UUID ->
   UserCommand ->
   ExceptT DomainError AppM ()
-runUserCmd enricher userId cmd = do
+runUserCmd userId cmd = do
   writer <- lift (view eventStoreWriterL)
   reader <- lift (view eventStoreReaderL)
+  ctx <- lift (view requestContextL)
+  let enricher = enricherFromContext ctx
   result <- liftIO $ applyUserCommand writer reader enricher userId cmd
   case result of
     Left err -> do
@@ -138,15 +148,18 @@ runUserCmd enricher userId cmd = do
 -- Takes an explicit translator so 'ConfigurationService.translateConfigurationError'
 -- (which maps 'CannotRewindBooksCloseDate' to a dedicated 'DomainError' value)
 -- stays local to its service.
+-- Derives the 'MetadataEnricher' from the ambient 'RequestContext' (see
+-- 'runAccountCmd').
 runConfigurationCmd ::
   (CommandHandlerError ConfigCh.ConfigurationError -> DomainError) ->
-  MetadataEnricher ->
   UUID ->
   ConfigurationCommand ->
   ExceptT DomainError AppM ()
-runConfigurationCmd translate enricher configId cmd = do
+runConfigurationCmd translate configId cmd = do
   writer <- lift (view eventStoreWriterL)
   reader <- lift (view eventStoreReaderL)
+  ctx <- lift (view requestContextL)
+  let enricher = enricherFromContext ctx
   result <- liftIO $ applyConfigurationCommand writer reader enricher configId cmd
   case result of
     Left err -> do
@@ -160,15 +173,18 @@ runConfigurationCmd translate enricher configId cmd = do
 -- (which maps 'CannotEditUncompletedTransaction' and
 -- 'CannotSetAllocationsOnUncategorisedTransaction' to dedicated 'DomainError' values)
 -- stays local to its service.
+-- Derives the 'MetadataEnricher' from the ambient 'RequestContext' (see
+-- 'runAccountCmd').
 runTransactionCmd ::
   (CommandHandlerError TransactionError -> DomainError) ->
-  MetadataEnricher ->
   UUID ->
   TransactionCommand ->
   ExceptT DomainError AppM ()
-runTransactionCmd translate enricher txId cmd = do
+runTransactionCmd translate txId cmd = do
   writer <- lift (view eventStoreWriterL)
   reader <- lift (view eventStoreReaderL)
+  ctx <- lift (view requestContextL)
+  let enricher = enricherFromContext ctx
   result <- liftIO $ applyTransactionCommand writer reader enricher txId cmd
   case result of
     Left err -> do

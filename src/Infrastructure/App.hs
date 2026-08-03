@@ -76,6 +76,9 @@ module Infrastructure.App
     BankingEnv (..),
     initializeAppEnv,
 
+    -- * Metrics: process-global, registered once
+    appMetrics,
+
     -- * Application Monad
     AppM,
 
@@ -95,6 +98,9 @@ module Infrastructure.App
     HasBankingKeyRing (..),
     HasBankProviderRegistry (..),
     HasLinkCodeStore (..),
+    HasRequestContext (..),
+    HasMetrics (..),
+    HasLoggerSet (..),
 
     -- * Banking feature gate
     bankingFeatureEnabled,
@@ -119,13 +125,15 @@ where
 -- Local imports
 import Application.LinkCodeStore (LinkCodeStore)
 import Control.Concurrent.STM (retry)
-import Control.Monad.Logger (LoggingT, filterLogger, runStdoutLoggingT)
+import Control.Monad.Logger (LoggingT, filterLogger, runLoggingT, runStdoutLoggingT)
 import qualified Control.Monad.Logger as ML
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
 import qualified Data.Set as Set
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
+import qualified Data.UUID as UUID
+import qualified Data.Vault.Lazy as Vault
 import Database.Persist.Postgresql (ConnectionPool, SqlBackend, runSqlPool)
 import Domain.Core.Types (UserId)
 import Infrastructure.Auth.JWT (JWTConfig)
@@ -148,11 +156,16 @@ import Infrastructure.Eventium
     AccountingVersionedEventStoreReader,
   )
 import Infrastructure.Llm.Provider (LlmClient)
+import Infrastructure.Observability.Logging (rioLevel, sqlJsonLogSink)
+import Infrastructure.Observability.Context (HasRequestContext (..), RequestContext (..))
+import Infrastructure.Observability.Metrics (HasMetrics (..), Metrics, registerMetrics)
 import Infrastructure.Version (VersionInfo)
 import Network.HTTP.Client (Manager)
 import RIO
 import qualified RIO.Text as T
 import Servant.Client (ClientEnv)
+import System.IO.Unsafe (unsafePerformIO)
+import System.Log.FastLogger (LoggerSet)
 import Telegram.Types (BotState)
 
 -- -----------------------------------------------------------------------------
@@ -221,7 +234,27 @@ data AppEnv = AppEnv
     bankingEnv :: !BankingEnv,
     -- | In-memory store for short-lived, single-use Telegram link codes
     -- used in the bot deep-link account-linking flow.
-    linkCodeStore :: !LinkCodeStore
+    linkCodeStore :: !LinkCodeStore,
+    -- | Shared, thread-safe, buffered 'FastLogger.LoggerSet' backing every
+    -- 'LogFunc' built via 'Infrastructure.Observability.Logging.mkContextLogFunc' — the
+    -- process-base one built in @Main@ and any per-request one built with a
+    -- request-scoped 'RequestContext'. Exactly one per process.
+    loggerSet :: !LoggerSet,
+    -- | The observability context (correlation id, acting user) for the
+    -- current scope. On the process-base 'AppEnv' this is
+    -- 'Infrastructure.Observability.Context.nilRequestContext'; a
+    -- request-scoped 'AppEnv' (a later task) carries the context read from
+    -- 'contextVaultKey' via WAI's request 'Vault.Vault'.
+    requestContext :: !RequestContext,
+    -- | The 'Vault.Key' used to stash/retrieve the per-request
+    -- 'RequestContext' on a WAI request's 'Vault.Vault'. Minted once at
+    -- startup so every middleware/handler that reads or writes the
+    -- request-scoped context agrees on the same key.
+    contextVaultKey :: !(Vault.Key RequestContext),
+    -- | Registered Prometheus metric handles for event-store telemetry (see
+    -- 'Infrastructure.Observability.Metrics'). Always the memoized
+    -- 'appMetrics' CAF — see its haddock for why.
+    metrics :: !Metrics
   }
 
 -- | Runtime dependencies scoped to the banking subsystem.
@@ -283,8 +316,12 @@ initializeAppEnv ::
   BankingEnv ->
   LinkCodeStore ->
   Maybe LlmClient ->
+  LoggerSet ->
+  RequestContext ->
+  Vault.Key RequestContext ->
+  Metrics ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' llmClient' =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' llmClient' loggerSet' requestContext' contextVaultKey' metrics' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -301,8 +338,39 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConf
       llmClient = llmClient',
       versionInfo = versionInfo,
       bankingEnv = bankingEnv,
-      linkCodeStore = linkCodeStore'
+      linkCodeStore = linkCodeStore',
+      loggerSet = loggerSet',
+      requestContext = requestContext',
+      contextVaultKey = contextVaultKey',
+      metrics = metrics'
     }
+
+-- -----------------------------------------------------------------------------
+-- Metrics: process-global, registered once
+-- -----------------------------------------------------------------------------
+
+-- | The process-global 'Metrics' handle, registered exactly once.
+--
+-- 'Prometheus.register' does NOT deduplicate by metric name: calling
+-- 'registerMetrics' a second time in the same process would register a
+-- second, independent set of handles into the process-global registry,
+-- silently duplicating every series on @\/metrics@ (and splitting the counts
+-- between the two handles, since only one is ever referenced by any given
+-- 'AppEnv'). 'AppEnv' construction is /not/ once-per-process — the test suite
+-- builds a fresh 'AppEnv' per spec (see @Testkit.InMemoryEventStore@) — so the
+-- registration itself must be memoized rather than tied to 'initializeAppEnv'
+-- or a test builder.
+--
+-- 'unsafePerformIO' is safe here for the same reason it is safe in
+-- @prometheus-client@\'s own default registry (also a top-level
+-- 'unsafePerformIO' 'IORef'): the action is idempotent-by-construction (it is
+-- only ever forced once, the CAF is shared process-wide by 'NOINLINE', and it
+-- has no interesting side effect beyond the registration itself). Every
+-- 'AppEnv' — production and test — must use this CAF for its 'metrics' field
+-- rather than calling 'registerMetrics' directly.
+{-# NOINLINE appMetrics #-}
+appMetrics :: Metrics
+appMetrics = unsafePerformIO registerMetrics
 
 -- -----------------------------------------------------------------------------
 -- Banking feature gate
@@ -571,6 +639,18 @@ class HasLinkCodeStore env where
 instance HasLinkCodeStore AppEnv where
   linkCodeStoreL = lens (.linkCodeStore) (\x y -> x {linkCodeStore = y})
 
+-- | 'AppEnv' carries the observability 'RequestContext' — see
+-- "Infrastructure.Observability.Context" for the class and its purpose.
+instance HasRequestContext AppEnv where
+  requestContextL = lens (.requestContext) (\x y -> x {requestContext = y})
+
+-- | 'AppEnv' carries the registered 'Metrics' handle — see
+-- "Infrastructure.Observability.Metrics" for the class and its purpose. The
+-- handle stored here is always 'appMetrics', the memoized, process-wide
+-- registration.
+instance HasMetrics AppEnv where
+  metricsL = lens (.metrics) (\x y -> x {metrics = y})
+
 -- | Type class for environments that have application configuration.
 --
 -- Provides a lens to access the application configuration.
@@ -602,6 +682,18 @@ class HasDatabaseConfig env where
 
 instance HasDatabaseConfig AppEnv where
   databaseConfigL = lens (.databaseConfig) (\x y -> x {databaseConfig = y})
+
+-- | Type class for environments that have the shared 'FastLogger.LoggerSet'.
+--
+-- Lets 'runDb' bridge persistent's SQL debug logging onto the same JSON
+-- stdout stream as the rest of the app's structured logging (see
+-- "Infrastructure.Observability.Logging".'Infrastructure.Observability.Logging.sqlJsonLogSink') without
+-- depending on the full 'AppEnv'.
+class HasLoggerSet env where
+  loggerSetL :: Lens' env LoggerSet
+
+instance HasLoggerSet AppEnv where
+  loggerSetL = lens (.loggerSet) (\x y -> x {loggerSet = y})
 
 -- -----------------------------------------------------------------------------
 -- RIO Integration
@@ -651,22 +743,38 @@ runAppM = runRIO
 -- >>>   insert $ DbAccount "Savings" 1000.0
 -- >>>   insert $ DbAccount "Checking" 500.0
 --
--- Note: persistent emits each SQL statement at 'ML.LevelDebug'. We gate that on
--- the configured log level via 'filterLogger', so @[Debug#SQL]@ lines appear
--- only under @logging.level: debug@ and are silent otherwise.
+-- Note: persistent emits each SQL statement at 'LevelDebug'. We gate that on
+-- the configured log level, so @[Debug#SQL]@ / SQL JSON lines appear only
+-- under @logging.level: debug@ and are silent otherwise.
+--
+-- In JSON log mode ('Config.LogJson'), the SQL logging is bridged onto the
+-- shared 'FastLogger.LoggerSet' as JSON (@source:"sql"@, tagged with the
+-- request's correlation id) via 'sqlJsonLogSink', instead of
+-- 'runStdoutLoggingT' emitting raw plaintext straight to stdout — see
+-- "Infrastructure.Observability.Logging". In text mode ('Config.LogText'),
+-- 'runStdoutLoggingT' is kept for dev readability.
 runDb ::
-  (MonadReader env m, HasDbPool env, HasAppConfig env, MonadUnliftIO m) =>
+  (MonadReader env m, HasDbPool env, HasAppConfig env, HasRequestContext env, HasLoggerSet env, MonadUnliftIO m) =>
   ReaderT SqlBackend (LoggingT IO) a ->
   m a
 runDb action = do
   pool <- view dbPoolL
   cfg <- view appConfigL
-  let minLevel = sqlLogMinLevel cfg.logging.level
-  liftIO $ runStdoutLoggingT $ filterLogger (\_ lvl -> lvl >= minLevel) $ runSqlPool action pool
+  ctx <- view requestContextL
+  ls <- view loggerSetL
+  let threshold = rioLevel cfg.logging.level
+      mlThreshold = sqlLogMinLevel cfg.logging.level
+      cid = Just (UUID.toText ctx.correlationId)
+  liftIO $ case cfg.logging.format of
+    Config.LogJson ->
+      runLoggingT (runSqlPool action pool) (sqlJsonLogSink threshold cid ls)
+    Config.LogText ->
+      runStdoutLoggingT $ filterLogger (\_ lvl -> lvl >= mlThreshold) $ runSqlPool action pool
 
--- | Map the application's configured log level onto monad-logger's, so SQL
--- logging (emitted at 'ML.LevelDebug') honours the same threshold as the rest
--- of the app.
+-- | Map the application's configured log level onto @monad-logger@'s, so the
+-- text-mode SQL logging (persistent emits at @monad-logger@'s 'ML.LevelDebug')
+-- honours the same threshold as the rest of the app. The JSON path uses
+-- 'rioLevel' instead ('sqlJsonLogSink' gates in RIO's level space).
 sqlLogMinLevel :: Config.LogLevel -> ML.LogLevel
 sqlLogMinLevel Config.LogDebug = ML.LevelDebug
 sqlLogMinLevel Config.LogInfo = ML.LevelInfo

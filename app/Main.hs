@@ -84,6 +84,7 @@ import Application.ReadModels.Persist (initializePersistentReadModels, persisten
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
+import qualified Data.Vault.Lazy as Vault
 import Domain.ExchangeRate.Events (unProvider)
 import Infrastructure.App
   ( AppEnv,
@@ -92,6 +93,7 @@ import Infrastructure.App
     HasAppConfig (appConfigL),
     HasBotState (botStateL),
     HasVersionInfo (versionInfoL),
+    appMetrics,
     bankingKeyRingFromConfig,
     initializeAppEnv,
     runAppM,
@@ -101,10 +103,13 @@ import qualified Infrastructure.Banking.Providers as BankProviders
 import Infrastructure.Bootstrap (configureProcess)
 import Infrastructure.Config
   ( AppConfig (..),
+    DatabaseConfig (..),
+    ExchangeRateConfig (..),
+    LlmConfig (..),
+    LoggingConfig (..),
     ServerConfig (..),
     loadConfigWithEnv,
   )
-import qualified Infrastructure.Config as Config
 import Infrastructure.Database
   ( convertDatabaseConfig,
     createConnectionPool,
@@ -124,6 +129,9 @@ import Infrastructure.Eventium
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
 import Infrastructure.Llm.OpenAICompat (mkOpenAICompatClient)
+import Infrastructure.Observability.Logging (mkContextLogFunc, newStdoutLoggerSet, rioLevel)
+import Infrastructure.Observability.Context (nilRequestContext)
+import Infrastructure.Observability.Interpreter (mkTelemetry)
 import Infrastructure.Version (VersionInfo, displayVersion, mkVersionInfo)
 import Network.HTTP.Client.TLS (newTlsManager)
 import RIO
@@ -134,6 +142,7 @@ import qualified RIO.Text as T
 -- System
 import System.Environment (getArgs, lookupEnv)
 import System.IO (hPutStrLn)
+import System.Log.FastLogger (LoggerSet, pushLogStr)
 import Telegram.Api (createTelegramClientEnv)
 import Telegram.Bot (initBot, runBotPolling, setupBotCommands, setupWebhook)
 import Web.Server (runServer)
@@ -175,19 +184,23 @@ main = do
   -- Build version info (reads APP_COMMIT_HASH env var)
   versionInfo <- mkVersionInfo
 
-  -- Setup logging
-  logOptions <- createLogOptions config
-  withLogFunc logOptions $ \logFunc -> do
-    -- Run application with RIO
-    runRIO logFunc $ do
-      logInfo "Starting Accounting Backend..."
-      logInfo $ "Environment: " <> displayShow config.environment
+  -- Setup logging: exactly one 'LoggerSet' for the whole process, shared by
+  -- the process-base 'LogFunc' built here and any request-scoped 'LogFunc'
+  -- built later from a request's 'RequestContext' (both render through
+  -- 'mkContextLogFunc' onto this same buffered sink).
+  loggerSet <- newStdoutLoggerSet
+  let baseLogFunc = mkContextLogFunc config.logging.format (rioLevel config.logging.level) nilRequestContext loggerSet
 
-      -- Initialize application environment
-      env <- initializeEnvironment logFunc config versionInfo
+  -- Run application with RIO
+  runRIO baseLogFunc $ do
+    logInfo "Starting Accounting Backend..."
+    logInfo $ "Environment: " <> displayShow config.environment
 
-      -- Run application
-      liftIO $ runAppM env applicationMain
+    -- Initialize application environment
+    env <- initializeEnvironment loggerSet baseLogFunc config versionInfo
+
+    -- Run application
+    liftIO $ runAppM env applicationMain
 
 -- | Get configuration file path from command-line args or environment.
 --
@@ -210,32 +223,6 @@ getConfigPath args = case args of
     maybeEnvPath <- lookupEnv "CONFIG_FILE"
     return $ fromMaybe "config/local.yaml" maybeEnvPath
 
--- | Create log options based on configuration.
---
--- This configures RIO's structured logging:
---  - Log output destination (stdout)
---  - Log level filtering
---  - Timestamp format
---  - Color output (for TTY)
---
--- Example:
--- >>> logOptions <- createLogOptions config
--- >>> -- LogOptions configured based on appLogging config
-createLogOptions :: AppConfig -> IO LogOptions
-createLogOptions config = do
-  let minLevel = convertLogLevel config.logging.level
-  baseOptions <- logOptionsHandle stdout True
-  return
-    $ setLogMinLevel minLevel
-    $ setLogUseLoc False
-    $ setLogUseTime True baseOptions
-  where
-    convertLogLevel :: Config.LogLevel -> RIO.LogLevel
-    convertLogLevel Config.LogDebug = LevelDebug
-    convertLogLevel Config.LogInfo = LevelInfo
-    convertLogLevel Config.LogWarn = LevelWarn
-    convertLogLevel Config.LogError = LevelError
-
 -- | Initialize the application environment.
 --
 -- This function creates and initializes all application resources:
@@ -248,16 +235,16 @@ createLogOptions config = do
 -- Returns the fully initialized AppEnv ready for use.
 --
 -- Example:
--- >>> env <- initializeEnvironment logFunc config
+-- >>> env <- initializeEnvironment loggerSet logFunc config versionInfo
 -- >>> -- AppEnv ready to use
-initializeEnvironment :: LogFunc -> AppConfig -> VersionInfo -> RIO LogFunc AppEnv
-initializeEnvironment logFunc config versionInfo = do
+initializeEnvironment :: LoggerSet -> LogFunc -> AppConfig -> VersionInfo -> RIO LogFunc AppEnv
+initializeEnvironment loggerSet logFunc config versionInfo = do
   logInfo "Initializing application environment..."
 
   -- 1. Initialize database connection pool
   logInfo "Creating database connection pool..."
   let dbConfigForPool = convertDatabaseConfig config.database
-  pool <- liftIO $ createConnectionPool dbConfigForPool
+  pool <- liftIO $ createConnectionPool config.logging.format (rioLevel config.logging.level) loggerSet dbConfigForPool
   logInfo
     $ "Database pool created (size: "
     <> displayShow config.database.poolSize
@@ -271,8 +258,14 @@ initializeEnvironment logFunc config versionInfo = do
   -- 3. Create event store readers/writers with the read-model publishers on the bus
   logInfo "Creating event store readers and writers..."
   let eventStoreConfig = defaultSqlEventStoreConfig
+      -- Write-path telemetry: turns every persisted batch / write conflict
+      -- into a metrics bump (the process-global, once-registered 'appMetrics')
+      -- and a level-gated structured log line pushed through the same
+      -- 'LoggerSet' as request-path logging.
+      telemetry = mkTelemetry (rioLevel config.logging.level) (pushLogStr loggerSet) appMetrics
       sqlWriter =
         accountingEventStoreWriter
+          telemetry
           eventStoreConfig
           ( wireProcessManagers
               [ wireProcessManager transferProcessManager,
@@ -380,7 +373,11 @@ initializeEnvironment logFunc config versionInfo = do
 
   -- 7. Build application environment
   linkCodeStore <- liftIO newLinkCodeStore
-  let configDbConfig = config.database -- Config.DatabaseConfig for AppEnv
+  -- Minted once here so every middleware/handler that reads or writes the
+  -- per-request 'RequestContext' on a WAI request's 'Vault.Vault' agrees on
+  -- the same key.
+  contextVaultKey <- liftIO Vault.newKey
+  let configDbConfig = config.database -- Infrastructure.Config.DatabaseConfig for AppEnv
       env =
         initializeAppEnv
           logFunc
@@ -399,6 +396,10 @@ initializeEnvironment logFunc config versionInfo = do
           bankingEnv'
           linkCodeStore
           llmClient
+          loggerSet
+          nilRequestContext
+          contextVaultKey
+          appMetrics
 
   logInfo "Application environment initialized successfully"
   return env

@@ -130,6 +130,10 @@ library
       Infrastructure.ExchangeRate.Provider
       Infrastructure.Llm.OpenAICompat
       Infrastructure.Llm.Provider
+      Infrastructure.Observability.Context
+      Infrastructure.Observability.Interpreter
+      Infrastructure.Observability.Logging
+      Infrastructure.Observability.Metrics
       Infrastructure.Version
       Telegram
       Telegram.Api
@@ -151,6 +155,7 @@ library
       Web.API.UserAPI
       Web.ErrorMapping
       Web.Middleware.Auth
+      Web.Middleware.Context
       Web.Query
       Web.Server
       Web.Types
@@ -182,10 +187,11 @@ library
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.5.0 && <0.6.0
-    , eventium-memory >=0.5.0 && <0.6.0
-    , eventium-postgresql >=0.5.0 && <0.6.0
-    , eventium-sql-common >=0.5.0 && <0.6.0
+    , eventium-core >=0.6.0 && <0.7.0
+    , eventium-memory >=0.6.0 && <0.7.0
+    , eventium-postgresql >=0.6.0 && <0.7.0
+    , eventium-sql-common >=0.6.0 && <0.7.0
+    , fast-logger ==3.2.*
     , hashable ==1.4.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -198,6 +204,8 @@ library
     , persistent >=2.13 && <2.15
     , persistent-postgresql ==2.13.*
     , postgresql-simple >=0.6 && <0.8
+    , prometheus-client ==1.1.*
+    , prometheus-metrics-ghc ==1.0.*
     , rio >=0.1.22 && <0.2
     , safe ==0.3.*
     , scientific ==0.3.*
@@ -214,9 +222,11 @@ library
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*
+    , vault ==0.3.*
     , wai ==3.2.*
     , wai-cors ==0.2.*
     , wai-extra ==3.1.*
+    , wai-middleware-prometheus ==1.0.*
     , warp >=3.3 && <3.5
     , xml-conduit >=1.9 && <2
     , yaml ==0.11.*
@@ -255,7 +265,7 @@ executable backend
       UndecidableInstances
       FlexibleContexts
       TypeOperators
-  ghc-options: -Wall -Wcompat -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -Wall -Wcompat -threaded -rtsopts
   build-depends:
       aeson >=2.0 && <2.3
     , aeson-pretty ==0.8.*
@@ -267,10 +277,11 @@ executable backend
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.5.0 && <0.6.0
-    , eventium-memory >=0.5.0 && <0.6.0
-    , eventium-postgresql >=0.5.0 && <0.6.0
-    , eventium-sql-common >=0.5.0 && <0.6.0
+    , eventium-core >=0.6.0 && <0.7.0
+    , eventium-memory >=0.6.0 && <0.7.0
+    , eventium-postgresql >=0.6.0 && <0.7.0
+    , eventium-sql-common >=0.6.0 && <0.7.0
+    , fast-logger ==3.2.*
     , hashable ==1.4.*
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
@@ -283,6 +294,8 @@ executable backend
     , persistent >=2.13 && <2.15
     , persistent-postgresql ==2.13.*
     , postgresql-simple >=0.6 && <0.8
+    , prometheus-client ==1.1.*
+    , prometheus-metrics-ghc ==1.0.*
     , rio >=0.1.22 && <0.2
     , safe ==0.3.*
     , scientific ==0.3.*
@@ -299,20 +312,24 @@ executable backend
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*
+    , vault ==0.3.*
     , wai ==3.2.*
     , wai-cors ==0.2.*
     , wai-extra ==3.1.*
+    , wai-middleware-prometheus ==1.0.*
     , warp >=3.3 && <3.5
     , xml-conduit >=1.9 && <2
     , yaml ==0.11.*
   default-language: Haskell2010
   if flag(ci)
     ghc-options: -Werror
+  ghc-options: "-with-rtsopts=-N -T"
 
 test-suite backend-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
+      Application.EnricherContextSpec
       Application.LinkCodeStorePropertySpec
       Application.LinkCodeStoreSpec
       Application.ProcessManagers.TransactionAmendmentManagerPropertySpec
@@ -423,11 +440,16 @@ test-suite backend-test
       Infrastructure.Crypto.SecretBoxSpec
       Infrastructure.Database.OrphansSpec
       Infrastructure.Eventium.SchemaSpec
+      Infrastructure.EventiumSpec
       Infrastructure.ExchangeRate.NBUIntegrationSpec
       Infrastructure.ExchangeRate.NBUSpec
       Infrastructure.ExchangeRate.ProviderPropertySpec
       Infrastructure.ExchangeRateIntegrationSpec
       Infrastructure.Llm.OpenAICompatSpec
+      Infrastructure.Observability.ContextSpec
+      Infrastructure.Observability.InterpreterSpec
+      Infrastructure.Observability.LoggingSpec
+      Infrastructure.Observability.MetricsSpec
       Integration.BankImportWorkflowSpec
       Integration.BaseCurrencyEditableIntegrationSpec
       Integration.BooksClosePeriodIntegrationSpec
@@ -475,6 +497,7 @@ test-suite backend-test
       Web.API.TransactionLabelsAPISpec
       Web.API.TransactionMergeAPISpec
       Web.API.TransactionRelationsAPISpec
+      Web.ObservabilityIntegrationSpec
       Web.QuerySpec
       Web.ReportingResponseSpec
       Web.TypesSpec
@@ -509,12 +532,13 @@ test-suite backend-test
     , bytestring >=0.10 && <0.13
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
-    , eventium-core >=0.5.0 && <0.6.0
-    , eventium-memory >=0.5.0 && <0.6.0
-    , eventium-postgresql >=0.5.0 && <0.6.0
-    , eventium-sql-common >=0.5.0 && <0.6.0
-    , eventium-sqlite >=0.5.0 && <0.6.0
-    , eventium-testkit >=0.5.0 && <0.6.0
+    , eventium-core >=0.6.0 && <0.7.0
+    , eventium-memory >=0.6.0 && <0.7.0
+    , eventium-postgresql >=0.6.0 && <0.7.0
+    , eventium-sql-common >=0.6.0 && <0.7.0
+    , eventium-sqlite >=0.6.0 && <0.7.0
+    , eventium-testkit >=0.6.0 && <0.7.0
+    , fast-logger ==3.2.*
     , hashable ==1.4.*
     , hspec >=2.10 && <2.12
     , hspec-discover >=2.10 && <2.12
@@ -532,6 +556,8 @@ test-suite backend-test
     , persistent-postgresql ==2.13.*
     , persistent-sqlite >=2.13 && <2.15
     , postgresql-simple >=0.6 && <0.8
+    , prometheus-client ==1.1.*
+    , prometheus-metrics-ghc ==1.0.*
     , rio >=0.1.22 && <0.2
     , safe ==0.3.*
     , scientific ==0.3.*
@@ -548,10 +574,12 @@ test-suite backend-test
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*
+    , vault ==0.3.*
     , vector >=0.12 && <0.14
     , wai ==3.2.*
     , wai-cors ==0.2.*
     , wai-extra ==3.1.*
+    , wai-middleware-prometheus ==1.0.*
     , warp >=3.3 && <3.5
     , xml-conduit >=1.9 && <2
     , yaml ==0.11.*

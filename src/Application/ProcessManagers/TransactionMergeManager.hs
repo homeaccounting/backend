@@ -70,7 +70,8 @@ import Domain.Core.Types
   )
 import Domain.Models
 import Eventium
-  ( ProcessManager (..),
+  ( EventMetadata,
+    ProcessManager (..),
     ProcessManagerEffect (..),
     Projection (..),
     RejectionReason (..),
@@ -79,6 +80,7 @@ import Eventium
     VersionedStreamEvent,
   )
 import Infrastructure.Eventium (embedWith)
+import Infrastructure.Observability.Context (propagateContext)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
 import RIO hiding ((%~), (&), (.~), (^.))
 import RIO.List (find)
@@ -212,8 +214,8 @@ clearByKey key manager = case mkTransactionIdSafe key of
 -- compensation so a command-level rejection (a guard bug) fails the merge
 -- cleanly; the amend SAGA's own failure surfaces separately as
 -- 'TransactionAmendmentFailed'.
-amendEffect :: TransactionMergeData -> ProcessManagerEffect AccountingCommand
-amendEffect md =
+amendEffect :: EventMetadata -> TransactionMergeData -> ProcessManagerEffect AccountingCommand
+amendEffect trigMeta md =
   IssueCommandWithCompensation
     (unTransactionId md.targetId)
     ( embedWith
@@ -237,13 +239,13 @@ amendEffect md =
               }
         )
     )
-    id
-    (\(RejectionReason r) -> [failEffect md.targetId r])
+    (propagateContext trigMeta)
+    (\(RejectionReason r) -> [failEffect trigMeta md.targetId r])
 
 -- | For one source: record the Merge edge (source → target) then cancel it.
 -- Both are wired with compensation → 'FailTransactionMerge'.
-sourceEffects :: TransactionId -> UserId -> TransactionId -> [ProcessManagerEffect AccountingCommand]
-sourceEffects target by src =
+sourceEffects :: EventMetadata -> TransactionId -> UserId -> TransactionId -> [ProcessManagerEffect AccountingCommand]
+sourceEffects trigMeta target by src =
   [ IssueCommandWithCompensation
       (unTransactionId src)
       ( embedWith
@@ -256,8 +258,8 @@ sourceEffects target by src =
                 }
           )
       )
-      id
-      (\(RejectionReason r) -> [failEffect target r]),
+      (propagateContext trigMeta)
+      (\(RejectionReason r) -> [failEffect trigMeta target r]),
     IssueCommandWithCompensation
       (unTransactionId src)
       ( embedWith
@@ -266,13 +268,13 @@ sourceEffects target by src =
               InitiateTransactionCancellation {transactionId = src, by = by}
           )
       )
-      id
-      (\(RejectionReason r) -> [failEffect target r])
+      (propagateContext trigMeta)
+      (\(RejectionReason r) -> [failEffect trigMeta target r])
   ]
 
 -- | Issue 'CompleteTransactionMerge' on the target.
-completeEffect :: TransactionMergeData -> ProcessManagerEffect AccountingCommand
-completeEffect md =
+completeEffect :: EventMetadata -> TransactionMergeData -> ProcessManagerEffect AccountingCommand
+completeEffect trigMeta md =
   IssueCommand
     (unTransactionId md.targetId)
     ( embedWith
@@ -281,11 +283,11 @@ completeEffect md =
             CompleteTransactionMerge {by = md.by}
         )
     )
-    id
+    (propagateContext trigMeta)
 
 -- | Issue 'FailTransactionMerge' on the target.
-failEffect :: TransactionId -> Text -> ProcessManagerEffect AccountingCommand
-failEffect target reason =
+failEffect :: EventMetadata -> TransactionId -> Text -> ProcessManagerEffect AccountingCommand
+failEffect trigMeta target reason =
   IssueCommand
     (unTransactionId target)
     ( embedWith
@@ -294,41 +296,41 @@ failEffect target reason =
             FailTransactionMerge {reason = reason}
         )
     )
-    id
+    (propagateContext trigMeta)
 
 reactToTransactionMergeEvent ::
   TransactionMergeManager ->
   VersionedStreamEvent AccountingEvent ->
   [ProcessManagerEffect AccountingCommand]
-reactToTransactionMergeEvent manager (StreamEvent key _ _ (TransactionMergeInitiatedEvent _)) =
+reactToTransactionMergeEvent manager (StreamEvent key _ trigMeta (TransactionMergeInitiatedEvent _)) =
   case mkTransactionIdSafe key of
     Nothing -> []
     Just target -> case manager ^. #merges % at target of
-      Just md | MergeAwaitingAmend <- md.phase -> [amendEffect md]
+      Just md | MergeAwaitingAmend <- md.phase -> [amendEffect trigMeta md]
       _ -> []
-reactToTransactionMergeEvent manager (StreamEvent _ _ _ (TransactionAmendmentCompletedEvent evt)) =
+reactToTransactionMergeEvent manager (StreamEvent _ _ trigMeta (TransactionAmendmentCompletedEvent evt)) =
   case manager ^. #merges % at evt.transactionId of
     Just md
       | MergeAwaitingCancellations _ <- md.phase ->
           -- 'handleTransactionMergeEvent' has just transitioned the phase to
           -- 'MergeAwaitingCancellations'. Issue every source's edge + cancel in
           -- order; the LAST cancellation's completion fires the merge completion.
-          concatMap (sourceEffects md.targetId md.by) md.sources
+          concatMap (sourceEffects trigMeta md.targetId md.by) md.sources
     _ -> []
-reactToTransactionMergeEvent manager (StreamEvent _ _ _ (TransactionCancellationCompletedEvent evt)) =
+reactToTransactionMergeEvent manager (StreamEvent _ _ trigMeta (TransactionCancellationCompletedEvent evt)) =
   case findMergeBySource manager evt.transactionId of
     Just target -> case manager ^. #merges % at target of
       Just md
         | MergeAwaitingCancellations remaining <- md.phase,
           Set.null remaining ->
-            [completeEffect md]
+            [completeEffect trigMeta md]
       _ -> []
     Nothing -> []
-reactToTransactionMergeEvent manager (StreamEvent key _ _ (TransactionAmendmentFailedEvent (TransactionAmendmentFailed r))) =
+reactToTransactionMergeEvent manager (StreamEvent key _ trigMeta (TransactionAmendmentFailedEvent (TransactionAmendmentFailed r))) =
   case mkTransactionIdSafe key of
     Nothing -> []
     Just target -> case manager ^. #merges % at target of
-      Just md | MergeAwaitingAmend <- md.phase -> [failEffect md.targetId r]
+      Just md | MergeAwaitingAmend <- md.phase -> [failEffect trigMeta md.targetId r]
       _ -> []
 reactToTransactionMergeEvent _ _ = []
 

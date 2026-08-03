@@ -83,6 +83,7 @@ import Control.Monad.IO.Class (MonadIO)
 import Control.Monad.Logger
   ( LoggingT,
     NoLoggingT (..),
+    runLoggingT,
     runNoLoggingT,
     runStdoutLoggingT,
   )
@@ -102,6 +103,12 @@ import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Sql (SqlEventStoreConfig, defaultSqlEventStoreConfig, migrateSqlEvent)
 import qualified Infrastructure.Config as Config
 import Infrastructure.Database.Orphans ()
+import Infrastructure.Observability.Logging (sqlJsonLogSink)
+-- The SQL-log threshold is RIO's 'LogLevel' (the app's canonical level, produced
+-- by 'Infrastructure.Observability.Logging.rioLevel'), not @monad-logger@'s; 'sqlJsonLogSink'
+-- maps the persistent callback's level onto it internally.
+import RIO (LogLevel)
+import System.Log.FastLogger (LoggerSet)
 
 -- -----------------------------------------------------------------------------
 -- Database Configuration
@@ -238,14 +245,22 @@ buildConnectionString DatabaseConfig {..} =
 --
 -- Cleanup:
 -- The pool is automatically cleaned up when no longer referenced.
-createConnectionPool :: DatabaseConfig -> IO ConnectionPool
-createConnectionPool config = do
+--
+-- Bridges persistent's pool-creation SQL logging (normally raw
+-- @runStdoutLoggingT@ plaintext) onto the shared 'LoggerSet' as JSON
+-- (@source:"sql"@, no correlation id — this runs at startup, before any
+-- request exists) when the configured 'Config.LogFormat' is 'Config.LogJson'.
+-- In 'Config.LogText' mode, 'runStdoutLoggingT' is kept for dev readability.
+createConnectionPool :: Config.LogFormat -> LogLevel -> LoggerSet -> DatabaseConfig -> IO ConnectionPool
+createConnectionPool fmt threshold loggerSet config = do
   let connString = buildConnectionString config
       poolSizeValue = config.poolSize
 
   -- Create pool with logging (shows SQL in development)
   -- Use runNoLoggingT for production to disable SQL logging
-  runStdoutLoggingT $ createPostgresqlPool connString poolSizeValue
+  case fmt of
+    Config.LogJson -> runLoggingT (createPostgresqlPool connString poolSizeValue) (sqlJsonLogSink threshold Nothing loggerSet)
+    Config.LogText -> runStdoutLoggingT $ createPostgresqlPool connString poolSizeValue
 
 -- | Create a PostgreSQL connection pool without logging.
 --
@@ -296,11 +311,18 @@ type SqlIO = SqlPersistT IO
 -- Useful for development and debugging during initialization.
 --
 -- Usage (initialization only):
--- >>> result <- runDbLoggedDirect pool $ do
+-- >>> result <- runDbLoggedDirect Config.LogJson threshold loggerSet pool $ do
 -- >>>   runMigrations
 -- >>>   pure ()
-runDbLoggedDirect :: ConnectionPool -> SqlPersistT (LoggingT IO) a -> IO a
-runDbLoggedDirect pool action = runStdoutLoggingT $ runSqlPool action pool
+--
+-- Same JSON-bridging behaviour as 'createConnectionPool': in
+-- 'Config.LogJson' mode the SQL logging is pushed onto the shared
+-- 'LoggerSet' as JSON (no correlation id — this is not a request-path
+-- call); in 'Config.LogText' mode 'runStdoutLoggingT' is kept.
+runDbLoggedDirect :: Config.LogFormat -> LogLevel -> LoggerSet -> ConnectionPool -> SqlPersistT (LoggingT IO) a -> IO a
+runDbLoggedDirect fmt threshold loggerSet pool action = case fmt of
+  Config.LogJson -> runLoggingT (runSqlPool action pool) (sqlJsonLogSink threshold Nothing loggerSet)
+  Config.LogText -> runStdoutLoggingT $ runSqlPool action pool
 
 -- -----------------------------------------------------------------------------
 -- Database Initialization

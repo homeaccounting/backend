@@ -168,6 +168,8 @@ import Infrastructure.App
   ( AppM,
     HasAppConfig (..),
     HasDbPool (..),
+    HasLoggerSet (..),
+    HasRequestContext (..),
     eventStoreReaderL,
     runDb,
   )
@@ -208,7 +210,6 @@ initiateTransaction transferCmd = runExceptT $ do
   lift $ logInfo $ "Generated transaction ID: " <> displayShow transactionUuid
   runTransactionCmd
     (\_ -> TransactionError "Transfer initiation rejected by domain")
-    id
     transactionUuid
     (InitiateTransactionPostingTransactionCommand transferCmd)
   ExceptT (queryTransactionResult transactionId)
@@ -1191,7 +1192,6 @@ addTransactionRelation userId fromId toId kind = runExceptT $ do
   ExceptT (validateRelationTarget userId (RelationSpec toId kind))
   runTransactionCmd
     translateTransactionError
-    id
     (unTransactionId fromId)
     (AddTransactionRelationTransactionCommand (AddTransactionRelation fromId toId kind))
 
@@ -1229,7 +1229,6 @@ removeTransactionRelation userId actingId otherId kind = runExceptT $ do
   let toId = if fromId == actingId then otherId else actingId
   runTransactionCmd
     translateTransactionError
-    id
     (unTransactionId fromId)
     (RemoveTransactionRelationTransactionCommand (RemoveTransactionRelation fromId toId kind))
 
@@ -1292,7 +1291,7 @@ dispatchEdit ::
   TransactionCommand ->
   AppM (Either DomainError TransactionData)
 dispatchEdit transactionId cmd = runExceptT $ do
-  runTransactionCmd translateTransactionError id (unTransactionId transactionId) cmd
+  runTransactionCmd translateTransactionError (unTransactionId transactionId) cmd
   (_, td) <- ExceptT (queryTransactionResult transactionId)
   pure td
 
@@ -1398,7 +1397,7 @@ dispatchAndAwaitAmendment ::
   TransactionCommand ->
   AppM (Either DomainError TransactionData)
 dispatchAndAwaitAmendment txId cmd = runExceptT $ do
-  runTransactionCmd translateTransactionError id (unTransactionId txId) cmd
+  runTransactionCmd translateTransactionError (unTransactionId txId) cmd
   outcome <- ExceptT (readLastAmendmentOutcome txId)
   case outcome of
     AmendmentSucceeded -> do
@@ -1448,7 +1447,7 @@ dispatchAndAwaitCancellation ::
   TransactionCommand ->
   AppM (Either DomainError TransactionData)
 dispatchAndAwaitCancellation txId cmd = runExceptT $ do
-  runTransactionCmd translateTransactionError id (unTransactionId txId) cmd
+  runTransactionCmd translateTransactionError (unTransactionId txId) cmd
   outcome <- ExceptT (readLastCancellationOutcome txId)
   case outcome of
     CancellationSucceeded -> do
@@ -1502,7 +1501,7 @@ dispatchAndAwaitMerge ::
   TransactionCommand ->
   AppM (Either DomainError TransactionData)
 dispatchAndAwaitMerge txId cmd = runExceptT $ do
-  runTransactionCmd translateTransactionError id (unTransactionId txId) cmd
+  runTransactionCmd translateTransactionError (unTransactionId txId) cmd
   outcome <- ExceptT (readLastMergeOutcome txId)
   case outcome of
     MergeSucceeded -> do
@@ -1672,7 +1671,7 @@ queryTransactionResult transactionId = runExceptT $ do
 --   maybeUserRate: optional user-provided exchange rate override (src -> tgt)
 --   rateDate: the date to look up exchange rates for
 resolveAmounts ::
-  (MonadReader env m, HasDbPool env, HasAppConfig env, MonadUnliftIO m) =>
+  (MonadReader env m, HasDbPool env, HasAppConfig env, HasRequestContext env, HasLoggerSet env, MonadUnliftIO m) =>
   Money ->
   Currency ->
   Currency ->

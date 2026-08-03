@@ -36,11 +36,12 @@ import Data.UUID (UUID)
 import qualified Data.UUID.V5 as UUID5
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..), Provider, unProvider)
 import Domain.Models (AccountingEvent (..))
-import Eventium (EventStoreWriter (..), ExpectedPosition (..), metadataEnrichingEventStoreWriter)
+import Eventium (EventStoreWriter (..), ExpectedPosition (..), metadataEnrichingEventStoreWriterWithTag)
 import Infrastructure.Database (ConnectionPool, runDbDirect)
 import Infrastructure.Eventium
   ( AccountingTaggedEventStoreWriter,
     AccountingVersionedEventStoreReader,
+    accountingEventTag,
   )
 import Infrastructure.Eventium.Schema (accountingEventCodec)
 import Infrastructure.ExchangeRate.Provider (RateProvider (..))
@@ -113,8 +114,12 @@ publishRates prov writer _reader pool = liftIO $ do
                       rates = rates,
                       at = today
                     }
+              -- 'metadataEnrichingEventStoreWriterWithTag' with 'accountingEventTag'
+              -- (not the plain 'metadataEnrichingEventStoreWriter', which would
+              -- derive the tag from 'Typeable' and stamp every event
+              -- @"AccountingEvent"@ — see 'Infrastructure.Eventium.accountingEventTag').
               enrichedWriter =
-                metadataEnrichingEventStoreWriter accountingEventCodec writer
+                metadataEnrichingEventStoreWriterWithTag accountingEventTag id accountingEventCodec writer
           writeResult <-
             enrichedWriter.storeEvents streamId AnyPosition [payload]
           case writeResult of

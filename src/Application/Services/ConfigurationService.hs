@@ -163,6 +163,7 @@ import Infrastructure.App
     HasBankProviderRegistry (..),
     HasBankingKeyRing (..),
     HasEventStore (..),
+    HasRequestContext (..),
     runDb,
   )
 import Infrastructure.Banking.Provider
@@ -175,6 +176,7 @@ import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Registry (lookupProvider)
 import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
 import Infrastructure.Eventium (applyConfigurationCommand)
+import Infrastructure.Observability.Context (enricherFromContext)
 import RIO
 import qualified RIO.Text as T
 
@@ -217,12 +219,10 @@ changeBaseCurrency userId newCurrency = runExceptT $ do
   externalAccId <- getUserExternalAccountId userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runAccountCmd
-    id
     (unAccountId externalAccId)
     (ChangeAccountCurrencyAccountCommand ChangeAccountCurrency {newCurrency = newCurrency})
   runConfigurationCmd
     translateConfigurationError
-    id
     (unConfigurationId configId)
     (ChangeBaseCurrencyConfigurationCommand ChangeBaseCurrency {baseCurrency = newCurrency})
   lift $ logInfo "Base currency changed successfully"
@@ -234,7 +234,6 @@ changeDefaultCurrency userId newCurrency = runExceptT $ do
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
-    id
     (unConfigurationId configId)
     (ChangeDefaultCurrencyConfigurationCommand ChangeDefaultCurrency {defaultCurrency = newCurrency})
   lift $ logInfo "Default currency changed successfully"
@@ -255,7 +254,7 @@ addDictionaryEntry userId dictKind entryName role parentId = runExceptT $ do
               role = role,
               parentId = parentId
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry added successfully"
   pure entryId
 
@@ -271,7 +270,7 @@ renameDictionaryEntry userId dictKind entryId newName = runExceptT $ do
               entryId = entryId,
               newName = newName
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry renamed successfully"
 
 -- | Remove an entry from a dictionary in the user's configuration.
@@ -303,7 +302,7 @@ removeDictionaryEntry userId dictKind entryId = runExceptT $ do
             { dictionaryKind = dictKind,
               entryId = entryId
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry removed successfully"
 
 -- | Move a dictionary entry to a new parent group (or to the root when
@@ -324,7 +323,7 @@ moveDictionaryEntry userId dictKind entryId newParentId = runExceptT $ do
               entryId = entryId,
               newParentId = newParentId
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry moved successfully"
 
 -- | Set the global default income category in the user's configuration.
@@ -334,7 +333,6 @@ setDefaultIncomeCategory userId categoryId = runExceptT $ do
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
-    id
     (unConfigurationId configId)
     (SetDefaultIncomeCategoryConfigurationCommand SetDefaultIncomeCategory {categoryId = categoryId})
   lift $ logInfo "Default income category set successfully"
@@ -346,7 +344,6 @@ setDefaultExpenseCategory userId categoryId = runExceptT $ do
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
-    id
     (unConfigurationId configId)
     (SetDefaultExpenseCategoryConfigurationCommand SetDefaultExpenseCategory {categoryId = categoryId})
   lift $ logInfo "Default expense category set successfully"
@@ -387,7 +384,6 @@ setDefaultAccount userId accountId = runExceptT $ do
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
-    id
     (unConfigurationId configId)
     (SetDefaultAccountConfigurationCommand SetDefaultAccount {accountId = accountId})
   lift $ logInfo "Default account set successfully"
@@ -401,7 +397,6 @@ setDefaultSubtypeAccounts userId mapping = runExceptT $ do
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
-    id
     (unConfigurationId configId)
     (SetDefaultSubtypeAccountsConfigurationCommand SetDefaultSubtypeAccounts {subtypeAccounts = mapping})
   lift $ logInfo "Default subtype accounts set successfully"
@@ -413,7 +408,6 @@ setBankingMccExpenseCategoryMap userId mapping = runExceptT $ do
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
-    id
     (unConfigurationId configId)
     (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {mapping = mapping})
   lift $ logInfo "Banking MCC expense category map set successfully"
@@ -489,7 +483,7 @@ addBankConnection userId provider name mCred enabled = runExceptT $ do
               secretHint = mHint,
               enabled = enabled
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Bank connection added successfully"
   pure connId
 
@@ -504,7 +498,7 @@ renameBankConnection userId connId newName = runExceptT $ do
             { connectionId = connId,
               name = newName
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Bank connection renamed successfully"
 
 -- | Replace an existing bank connection's credential. The new credential's
@@ -536,7 +530,7 @@ changeBankConnectionCredential userId connId cred = runExceptT $ do
               encryptedSecret = enc,
               secretHint = secretHintOf cred
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Bank connection credential changed successfully"
 
 -- | Enable or disable an existing bank connection.
@@ -550,7 +544,7 @@ setBankConnectionEnabled userId connId enabled = runExceptT $ do
             { connectionId = connId,
               enabled = enabled
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Bank connection enabled flag set successfully"
 
 -- | Remove an existing bank connection.
@@ -563,7 +557,7 @@ removeBankConnection userId connId = runExceptT $ do
           RemoveBankConnection
             { connectionId = connId
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Bank connection removed successfully"
 
 -- | Replace a bank connection's external-account map wholesale.
@@ -603,7 +597,7 @@ setBankConnectionAccountMap userId connId accountMap = runExceptT $ do
             { connectionId = connId,
               accountMap = accountMap
             }
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Bank connection account map set successfully"
 
 -- | Load a user's configuration, find the named connection, and decrypt its
@@ -741,7 +735,7 @@ closeBooksThrough userId newCutoff = runExceptT $ do
   let cmd =
         CloseBooksThroughConfigurationCommand
           CloseBooksThrough {closedThrough = newCutoff}
-  runConfigurationCmd translateConfigurationError id (unConfigurationId configId) cmd
+  runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Books closed through cutoff advanced successfully"
   ExceptT (getConfigurationForUser userId)
 
@@ -935,7 +929,6 @@ cloneConfiguration userId sourceConfigId configData = runExceptT $ do
   let newConfigUuidVal = unConfigurationId newConfigId
   runConfigurationCmd
     translateConfigurationError
-    id
     newConfigUuidVal
     ( CreateConfigurationConfigurationCommand
         CreateConfiguration
@@ -954,7 +947,6 @@ cloneConfiguration userId sourceConfigId configData = runExceptT $ do
   lift (copyDefaults newConfigUuidVal configData)
   lift (copyBanking newConfigUuidVal configData.banking)
   runUserCmd
-    id
     (unUserId userId)
     ( AssignConfigurationUserCommand
         AssignConfiguration {configurationId = newConfigId}
@@ -969,6 +961,7 @@ copyDictionaries :: UUID -> Map DictionaryKind DictionaryData -> AppM ()
 copyDictionaries newConfigUuidVal dictionaries = do
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
+  enricher <- enricherFromContext <$> view requestContextL
   forM_ (Map.toList dictionaries) $ \(dictKind, dictData) ->
     forM_ (dictionaryEntriesParentFirst dictData) $ \(eId, entryName, entryRole, mParent) -> do
       let cmd =
@@ -980,7 +973,7 @@ copyDictionaries newConfigUuidVal dictionaries = do
                   role = entryRole,
                   parentId = mParent
                 }
-      addResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+      addResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
       case addResult of
         Left err -> logWarn $ "Failed to clone dictionary entry: " <> displayShow err
         Right _ -> return ()
@@ -992,6 +985,7 @@ copyDefaults :: UUID -> ConfigurationData -> AppM ()
 copyDefaults newConfigUuidVal srcConfig = do
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
+  enricher <- enricherFromContext <$> view requestContextL
   let ConfigurationDefaults
         { incomeCategory = mIncome,
           expenseCategory = mExpense,
@@ -1002,7 +996,7 @@ copyDefaults newConfigUuidVal srcConfig = do
     let cmd =
           SetDefaultIncomeCategoryConfigurationCommand
             SetDefaultIncomeCategory {categoryId = eid}
-    copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+    copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
     case copyResult of
       Left err -> logWarn $ "Failed to clone defaultIncomeCategory: " <> displayShow err
       Right _ -> return ()
@@ -1011,7 +1005,7 @@ copyDefaults newConfigUuidVal srcConfig = do
     let cmd =
           SetDefaultExpenseCategoryConfigurationCommand
             SetDefaultExpenseCategory {categoryId = eid}
-    copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+    copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
     case copyResult of
       Left err -> logWarn $ "Failed to clone defaultExpenseCategory: " <> displayShow err
       Right _ -> return ()
@@ -1020,7 +1014,7 @@ copyDefaults newConfigUuidVal srcConfig = do
     let cmd =
           SetDefaultAccountConfigurationCommand
             SetDefaultAccount {accountId = aid}
-    copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+    copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
     case copyResult of
       Left err -> logWarn $ "Failed to clone defaultAccount: " <> displayShow err
       Right _ -> return ()
@@ -1029,7 +1023,7 @@ copyDefaults newConfigUuidVal srcConfig = do
     let cmd =
           SetDefaultSubtypeAccountsConfigurationCommand
             SetDefaultSubtypeAccounts {subtypeAccounts = subAccts}
-    copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+    copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
     case copyResult of
       Left err -> logWarn $ "Failed to clone defaultSubtypeAccounts: " <> displayShow err
       Right _ -> return ()
@@ -1040,11 +1034,12 @@ copyBanking :: UUID -> BankingConfiguration -> AppM ()
 copyBanking newConfigUuidVal srcBanking = do
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
+  enricher <- enricherFromContext <$> view requestContextL
   unless (Map.null srcBanking.mccExpenseCategoryMap) $ do
     let cmd =
           SetBankingMccExpenseCategoryMapConfigurationCommand
             SetBankingMccExpenseCategoryMap {mapping = srcBanking.mccExpenseCategoryMap}
-    copyResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal cmd
+    copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
     case copyResult of
       Left err -> logWarn $ "Failed to clone banking.mccExpenseCategoryMap: " <> displayShow err
       Right _ -> return ()
@@ -1064,7 +1059,7 @@ copyBanking newConfigUuidVal srcBanking = do
                 secretHint = conn.secretHint,
                 enabled = conn.enabled
               }
-    addResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal addCmd
+    addResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal addCmd
     case addResult of
       Left err -> logWarn $ "Failed to clone bank connection: " <> displayShow err
       Right _ ->
@@ -1075,7 +1070,7 @@ copyBanking newConfigUuidVal srcBanking = do
                     { connectionId = connId,
                       accountMap = conn.accountMap
                     }
-          mapResult <- liftIO $ applyConfigurationCommand writer reader id newConfigUuidVal mapCmd
+          mapResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal mapCmd
           case mapResult of
             Left err -> logWarn $ "Failed to clone bank connection account map: " <> displayShow err
             Right _ -> return ()

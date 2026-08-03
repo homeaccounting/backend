@@ -101,7 +101,7 @@ changePassword userId _currentPassword newPassword = runExceptT $ do
   lift $ logWarn "Current password verification skipped - implement aggregate loading"
   newPasswordHash <- lift (hashPassword newPassword)
   let changeCmd = ChangePasswordUserCommand ChangePassword {newHash = newPasswordHash}
-  runUserCmd id (unUserId userId) changeCmd
+  runUserCmd (unUserId userId) changeCmd
   lift $ logInfo "Password changed successfully"
 
 -- | Unlink an OAuth provider from a user's account.
@@ -136,7 +136,7 @@ unlinkOAuth userId providerText = runExceptT $ do
     lift $ logWarn "Cannot unlink last login method"
     throwE (UserError "Cannot unlink last login method")
   let unlinkCmd = UnlinkOAuthAccountUserCommand UnlinkOAuthAccount {identity = identity}
-  runUserCmd id (unUserId userId) unlinkCmd
+  runUserCmd (unUserId userId) unlinkCmd
   lift $ logInfo "OAuth provider unlinked successfully"
 
 -- | Unlink Telegram from a user's account.
@@ -163,7 +163,7 @@ unlinkTelegram userId = runExceptT $ do
     lift $ logWarn "Cannot unlink last login method"
     throwE (UserError "Cannot unlink last login method")
   let unlinkCmd = UnlinkTelegramAccountUserCommand UnlinkTelegramAccount
-  runUserCmd id (unUserId userId) unlinkCmd
+  runUserCmd (unUserId userId) unlinkCmd
   lift $ logInfo "Telegram account unlinked successfully"
 
 -- -----------------------------------------------------------------------------

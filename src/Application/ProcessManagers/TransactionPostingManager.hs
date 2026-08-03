@@ -67,6 +67,7 @@ import Eventium
     VersionedStreamEvent,
   )
 import Infrastructure.Eventium (embedWith)
+import Infrastructure.Observability.Context (propagateContext)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
 
 -- -----------------------------------------------------------------------------
@@ -187,7 +188,7 @@ handleTransactionPostingEvent manager _ = manager
 -- The process manager handles its own compensation.
 reactToTransactionPostingEvent :: TransactionPostingManager -> VersionedStreamEvent AccountingEvent -> [ProcessManagerEffect AccountingCommand]
 -- TransactionPostingInitiated -> Issue DebitAccount to source (with compensation on failure)
-reactToTransactionPostingEvent manager (StreamEvent txUuid _ _ (TransactionPostingInitiatedEvent evt)) =
+reactToTransactionPostingEvent manager (StreamEvent txUuid _ trigMeta (TransactionPostingInitiatedEvent evt)) =
   case mkTransactionIdSafe txUuid of
     Nothing -> []
     Just txId ->
@@ -210,7 +211,7 @@ reactToTransactionPostingEvent manager (StreamEvent txUuid _ _ (TransactionPosti
                             }
                       )
                   )
-                  id
+                  (propagateContext trigMeta)
                   ( \(RejectionReason rejReason) ->
                       [ IssueCommand
                           (unTransactionId txId)
@@ -220,13 +221,13 @@ reactToTransactionPostingEvent manager (StreamEvent txUuid _ _ (TransactionPosti
                                   FailTransactionPosting {reason = rejReason}
                               )
                           )
-                          id
+                          (propagateContext trigMeta)
                       ]
                   )
               ]
         _ -> [] -- Idempotency: not in AwaitingDebit phase
         -- AccountDebited -> Issue CreditAccount + CompleteTransactionPosting
-reactToTransactionPostingEvent manager (StreamEvent _ _ _ (AccountDebitedEvent evt)) =
+reactToTransactionPostingEvent manager (StreamEvent _ _ trigMeta (AccountDebitedEvent evt)) =
   case Map.lookup evt.transactionId (manager ^. #transfers) of
     Nothing -> []
     Just td ->
@@ -241,14 +242,14 @@ reactToTransactionPostingEvent manager (StreamEvent _ _ _ (AccountDebitedEvent e
                     }
               )
           )
-          id,
+          (propagateContext trigMeta),
         IssueCommand
           (unTransactionId evt.transactionId)
           ( embedWith
               transactionCommandEmbedding
               (CompleteTransactionPostingTransactionCommand CompleteTransactionPosting)
           )
-          id
+          (propagateContext trigMeta)
       ]
 -- All other events: no reaction
 reactToTransactionPostingEvent _ _ = []

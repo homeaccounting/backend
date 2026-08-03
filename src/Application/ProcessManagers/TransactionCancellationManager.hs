@@ -68,13 +68,15 @@ import Domain.Core.Types
   )
 import Domain.Models
 import Eventium
-  ( ProcessManager (..),
+  ( EventMetadata,
+    ProcessManager (..),
     ProcessManagerEffect (..),
     Projection (..),
     StreamEvent (..),
     VersionedStreamEvent,
   )
 import Infrastructure.Eventium (embedWith)
+import Infrastructure.Observability.Context (propagateContext)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
 import RIO ()
 
@@ -169,9 +171,10 @@ handleTransactionCancellationEvent manager _ = manager
 -- entry: once deleted, this function returns @[]@.
 completeIfReady ::
   TransactionCancellationManager ->
+  EventMetadata ->
   TransactionId ->
   [ProcessManagerEffect AccountingCommand]
-completeIfReady manager txId =
+completeIfReady manager trigMeta txId =
   case manager ^. #cancellations % at txId of
     Just c
       | c.sourceReversed && c.targetReversed ->
@@ -186,7 +189,7 @@ completeIfReady manager txId =
                         }
                   )
               )
-              id
+              (propagateContext trigMeta)
           ]
     _ -> []
 
@@ -194,7 +197,7 @@ reactToTransactionCancellationEvent ::
   TransactionCancellationManager ->
   VersionedStreamEvent AccountingEvent ->
   [ProcessManagerEffect AccountingCommand]
-reactToTransactionCancellationEvent manager (StreamEvent _ _ _ (TransactionCancellationInitiatedEvent evt)) =
+reactToTransactionCancellationEvent manager (StreamEvent _ _ trigMeta (TransactionCancellationInitiatedEvent evt)) =
   case (manager ^. #cancellations % at evt.transactionId, manager ^. #currentPostings % at evt.transactionId) of
     (Just _, Just postings) ->
       [ IssueCommand
@@ -209,7 +212,7 @@ reactToTransactionCancellationEvent manager (StreamEvent _ _ _ (TransactionCance
                     }
               )
           )
-          id,
+          (propagateContext trigMeta),
         IssueCommand
           (unAccountId postings.targetAccountId)
           ( embedWith
@@ -222,13 +225,13 @@ reactToTransactionCancellationEvent manager (StreamEvent _ _ _ (TransactionCance
                     }
               )
           )
-          id
+          (propagateContext trigMeta)
       ]
     _ -> []
-reactToTransactionCancellationEvent manager (StreamEvent _ _ _ (AccountDebitReversedEvent evt)) =
-  completeIfReady manager evt.transactionId
-reactToTransactionCancellationEvent manager (StreamEvent _ _ _ (AccountCreditReversedEvent evt)) =
-  completeIfReady manager evt.transactionId
+reactToTransactionCancellationEvent manager (StreamEvent _ _ trigMeta (AccountDebitReversedEvent evt)) =
+  completeIfReady manager trigMeta evt.transactionId
+reactToTransactionCancellationEvent manager (StreamEvent _ _ trigMeta (AccountCreditReversedEvent evt)) =
+  completeIfReady manager trigMeta evt.transactionId
 reactToTransactionCancellationEvent _ _ = []
 
 -- -----------------------------------------------------------------------------

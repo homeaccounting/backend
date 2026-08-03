@@ -16,10 +16,10 @@ dependencies:
   - base >= 4.17 && < 5
 
   # Eventium (local packages)
-  - eventium-core >= 0.5.0 && < 0.6.0
-  - eventium-sql-common >= 0.5.0 && < 0.6.0
-  - eventium-postgresql >= 0.5.0 && < 0.6.0
-  - eventium-memory >= 0.5.0 && < 0.6.0
+  - eventium-core >= 0.6.0 && < 0.7.0
+  - eventium-sql-common >= 0.6.0 && < 0.7.0
+  - eventium-postgresql >= 0.6.0 && < 0.7.0
+  - eventium-memory >= 0.6.0 && < 0.7.0
 
   # Servant web framework
   - servant >= 0.19 && < 0.21
@@ -92,6 +92,13 @@ dependencies:
   - telegram-bot-api >= 7.4 && < 7.5
   - servant-client >= 0.19 && < 0.21
 
+  # Observability (structured logging + Prometheus metrics)
+  - prometheus-client >= 1.1 && < 1.2
+  - prometheus-metrics-ghc >= 1.0 && < 1.1
+  - wai-middleware-prometheus >= 1.0 && < 1.1
+  - fast-logger >= 3.2 && < 3.3
+  - vault >= 0.3 && < 0.4
+
 flags:
   ci:
     description: Enable -Werror for CI builds
@@ -154,12 +161,18 @@ executables:
       - -Wcompat
       - -threaded
       - -rtsopts
-      - -with-rtsopts=-N
     when:
       - condition: flag(ci)
         ghc-options: -Werror
     dependencies:
       - backend
+    # -with-rtsopts must reach GHC as a single token so BOTH -N (capabilities)
+    # and -T (RTS/GC stats for prometheus-metrics-ghc) are embedded — GHC keeps
+    # only the last -with-rtsopts, and cabal splits unquoted ghc-options on
+    # whitespace. hpack (0.38.3) does not quote list items, so inject the quoted
+    # token verbatim as an extra ghc-options field (cabal accumulates them).
+    verbatim: |
+      ghc-options: "-with-rtsopts=-N -T"
 
 tests:
   backend-test:
@@ -191,9 +204,9 @@ tests:
       # HTTP integration testing
       - hspec-wai >= 0.11 && < 0.12
       - hspec-wai-json >= 0.11 && < 0.12
-      - eventium-testkit >= 0.5.0 && < 0.6.0
+      - eventium-testkit >= 0.6.0 && < 0.7.0
       # SQLite-backed harness for persistent read-model tests (in-memory DB).
-      - eventium-sqlite >= 0.5.0 && < 0.6.0
+      - eventium-sqlite >= 0.6.0 && < 0.7.0
       - persistent-sqlite >= 2.13 && < 2.15
       - vector >= 0.12 && < 0.14
     build-tools:

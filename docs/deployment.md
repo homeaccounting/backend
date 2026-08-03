@@ -192,6 +192,48 @@ log. Version-skipping (e.g. restoring a v1-era backup into a v3 app) just runs
 more upcaster hops at read time. Stored bytes are never mutated, so a restore is
 non-destructive and re-runnable.
 
+## Observability (metrics & logs)
+
+The backend provides two **operator seams**; the observability *stack* that
+consumes them (Prometheus, Loki, Promtail, Grafana) lives in the infra repo —
+**homeaccounting/infra#8**, not here. The app requires **no** observability
+backend to run.
+
+### Metrics — `GET /metrics`
+
+Unauthenticated Prometheus text-exposition endpoint (served at the WAI layer,
+outside the API). Low-cardinality by design — **no per-user or per-path labels**:
+
+- `events_persisted_total{event_type}` — events written, by specific event tag.
+- `events_write_conflicts_total` — optimistic-concurrency conflicts.
+- `http_request_duration_seconds{handler="app",method,status_code}` — request
+  latency/rate (constant `handler` label to avoid path cardinality). Display as
+  **ms** in Grafana; the metric is stored in seconds (base unit).
+- `ghc_*` — GHC runtime (heap, GC, threads); requires `-with-rtsopts=-T` (set).
+
+### Logs — structured JSON on stdout
+
+With `logging.format: json` (default in prod), every stdout line is **one JSON
+object**: `{ts,level,msg,caller,correlationId,userId}`. `persistent` SQL logs are
+bridged onto the same stream as `{…,"source":"sql"}` (debug-level, gated by
+`logging.level`). `logging.format: text` keeps the legacy human-readable output
+for dev. Ship stdout to Loki with a log agent (see infra#8); query per-user /
+per-request via LogQL `| json | userId="…"` / `correlationId="…"`.
+
+**Attribution limitation.** Per-request events and logs carry `correlationId` +
+`userId`. **Saga/process-manager-emitted events** now carry them too: since sagas
+run synchronously within the originating request, each `ProcessManager.react`
+receives the triggering event's metadata and propagates its `correlationId` +
+`userId` onto every command it issues (`propagateContext` in
+`Infrastructure.Observability.Context`), so the whole saga chain — e.g. the
+credit leg of a transfer, or the reversal legs of a cancellation — is attributed
+to the originating request. Only genuinely **background writes** (the
+exchange-rate publisher timer, startup seed) remain unattributed: they get the
+correct **`event_type`** but **no** `correlationId`/`userId`, since they run
+detached from any request. Their log lines carry a **nil** `correlationId`
+(`00000000-…`) as a "no request" sentinel, and `| json | correlationId="…"`
+won't match them.
+
 ## Troubleshooting
 
 ### Check logs

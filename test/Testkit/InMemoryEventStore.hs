@@ -47,10 +47,11 @@ import Application.ReadModels.Persist (persistentReadModels)
 import Application.ReadModels.User ()
 import Control.Monad.Logger (LoggingT, runNoLoggingT)
 import qualified Data.Set as Set
+import qualified Data.Vault.Lazy as Vault
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.Sqlite (createSqlitePool)
 import Domain.Models (AccountingEvent)
-import Eventium (GlobalStreamEvent, ReadModel (..))
+import Eventium (GlobalStreamEvent, ReadModel (..), silentTelemetry)
 import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Memory
   ( EventMap,
@@ -61,7 +62,7 @@ import Eventium.Store.Memory
   )
 import Eventium.Store.Sql (migrateSqlEvent)
 import Eventium.Store.Sqlite (sqliteTaggedEventStoreWriter)
-import Infrastructure.App (AppEnv (..), BankingEnv (..), bankingKeyRingFromConfig, runAppM, runDb)
+import Infrastructure.App (AppEnv (..), BankingEnv (..), appMetrics, bankingKeyRingFromConfig, runAppM, runDb)
 import Infrastructure.Auth.JWT (defaultJWTConfig)
 import Infrastructure.Auth.OAuth (OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
@@ -96,6 +97,8 @@ import Infrastructure.Eventium
     wireProcessManager,
     wireProcessManagers,
   )
+import Infrastructure.Observability.Logging (newStdoutLoggerSet)
+import Infrastructure.Observability.Context (nilRequestContext)
 import Infrastructure.Version (VersionInfo (..))
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import RIO hiding (atomically, newTVarIO)
@@ -241,6 +244,7 @@ mkAppEnv withProcessManager = do
       -- models apply in the writer transaction), but with the SQLite raw writer.
       sqlWriter =
         accountingEventStoreWriterWithRaw
+          silentTelemetry
           (sqliteTaggedEventStoreWriter eventStoreConfig)
           eventStoreConfig
           pmFactory
@@ -259,6 +263,8 @@ mkAppEnv withProcessManager = do
   -- 'tokenEncKey' so encryption is reproducible across test runs.
   testBankingKeyRing <- bankingKeyRingFromConfig config.environment config.banking
   linkCodeStore <- newLinkCodeStore
+  testLoggerSet <- newStdoutLoggerSet
+  testContextVaultKey <- Vault.newKey
 
   return
     AppEnv
@@ -288,7 +294,11 @@ mkAppEnv withProcessManager = do
               -- served fixtures override this with a stub via 'Testkit.AppEnv'.
               bankProviderRegistry = registryFromList [Monobank.descriptor "http://127.0.0.1:1" testHttpManager]
             },
-        linkCodeStore = linkCodeStore
+        linkCodeStore = linkCodeStore,
+        loggerSet = testLoggerSet,
+        requestContext = nilRequestContext,
+        contextVaultKey = testContextVaultKey,
+        metrics = appMetrics
       }
 
 -- | The default 'AppConfig' used by every in-memory test environment.

@@ -162,7 +162,6 @@ register email password = runExceptT $ do
   externalAccountId <-
     liftEitherWith (\_ -> AccountError "Internal error") (mkAccountId externalAccountUuid)
   runUserCmd
-    id
     userUuid
     ( RegisterUserUserCommand
         RegisterUser
@@ -172,13 +171,11 @@ register email password = runExceptT $ do
           }
     )
   runUserCmd
-    id
     userUuid
     (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
   maybeConfig <- lift (runDb (getConfiguration defaultConfigurationId))
   let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
   runAccountCmd
-    id
     externalAccountUuid
     ( CreateAccountAccountCommand
         CreateAccount
@@ -300,7 +297,6 @@ linkOrSignInWithOAuth provider userInfo = runExceptT $ do
           Just (uid, user) -> do
             lift $ logInfo "Auto-linking verified OAuth email to existing user"
             runUserCmd
-              id
               (unUserId uid)
               (LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity})
             ExceptT (generateAuthResult uid user.email)
@@ -350,7 +346,7 @@ linkOAuthIdentityToUser userId provider userInfo = runExceptT $ do
   maybeExisting <- lift (runDb (getUserByOAuthIdentity provider userInfo.subject))
   guardE (isNothing maybeExisting) (AccountError "OAuth account already linked to another user")
   let linkCmd = LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity}
-  runUserCmd id (unUserId userId) linkCmd
+  runUserCmd (unUserId userId) linkCmd
   lift $ logInfo "OAuth account linked successfully"
 
 -- | Issue a single-use deep-link the user can open in Telegram to attach
@@ -400,7 +396,6 @@ redeemTelegramLinkCode tok tgIdent = runExceptT $ do
     (isNothing maybeExisting)
     (AccountError "Telegram account already linked to another user")
   runUserCmd
-    id
     (unUserId uid)
     (LinkTelegramAccountUserCommand LinkTelegramAccount {identity = tgIdent})
   lift $ logInfo "Telegram identity linked via redemption"
@@ -496,7 +491,6 @@ createUserViaOAuth email oauthIdentity = runExceptT $ do
     liftEitherWith (\_ -> AccountError "Internal error") (mkAccountId externalAccountUuid)
   pwHash <- lift (hashPassword "OAUTH_USER_NO_PASSWORD")
   runUserCmd
-    id
     userUuid
     ( RegisterUserUserCommand
         RegisterUser
@@ -506,13 +500,11 @@ createUserViaOAuth email oauthIdentity = runExceptT $ do
           }
     )
   runUserCmd
-    id
     userUuid
     (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
   maybeConfig <- lift (runDb (getConfiguration defaultConfigurationId))
   let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
   runAccountCmd
-    id
     externalAccountUuid
     ( CreateAccountAccountCommand
         CreateAccount
@@ -524,7 +516,6 @@ createUserViaOAuth email oauthIdentity = runExceptT $ do
           }
     )
   runUserCmd
-    id
     userUuid
     (LinkOAuthAccountUserCommand LinkOAuthAccount {identity = oauthIdentity})
   ExceptT (generateAuthResult uid (Just email))
@@ -538,7 +529,6 @@ createUserViaTelegram telegramIdentity = runExceptT $ do
   externalAccountId <-
     liftEitherWith (\_ -> AccountError "Internal error") (mkAccountId externalAccountUuid)
   runUserCmd
-    id
     userUuid
     ( RegisterViaTelegramUserCommand
         RegisterViaTelegram
@@ -547,13 +537,11 @@ createUserViaTelegram telegramIdentity = runExceptT $ do
           }
     )
   runUserCmd
-    id
     userUuid
     (AssignConfigurationUserCommand (AssignConfiguration {configurationId = defaultConfigurationId}))
   maybeConfig <- lift (runDb (getConfiguration defaultConfigurationId))
   let baseCur = maybe USD (\c -> c.baseCurrency) maybeConfig
   runAccountCmd
-    id
     externalAccountUuid
     ( CreateAccountAccountCommand
         CreateAccount

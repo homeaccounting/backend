@@ -68,14 +68,13 @@ module Infrastructure.Eventium
 
     -- * Utilities
     embedWith,
-    printEventJSON,
+    accountingEventTag,
   )
 where
 
-import Control.Monad.IO.Class (MonadIO (..))
-import Data.Aeson (ToJSON)
-import Data.Aeson.Encode.Pretty (encodePretty)
-import qualified Data.ByteString.Lazy.Char8 as BSL
+import Control.Monad.IO.Class (MonadIO)
+import Data.Aeson (toJSON)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Database.Persist.Sql
   ( ConnectionPool,
@@ -89,9 +88,10 @@ import Domain.Models
 import Eventium
   ( CommandDispatcher,
     CommandHandlerError (..),
-    EventHandler (..),
+    EventHandler,
     EventStoreReader (..),
     EventStoreWriter,
+    EventTypeName,
     EventVersion,
     GlobalEventStoreReader,
     MetadataEnricher,
@@ -101,6 +101,7 @@ import Eventium
     RejectionReason (..),
     StreamEvent (..),
     TaggedEvent,
+    Telemetry,
     TypeEmbedding (..),
     UUID,
     VersionedEventStoreReader,
@@ -110,10 +111,11 @@ import Eventium
     applyCommandHandler,
     codecGlobalEventStoreReader,
     codecVersionedEventStoreReader,
-    commandHandlerDispatcher,
+    commandHandlerDispatcherWithTag,
+    eventTypeNameOf,
     globalToVersionedHandler,
     latestProjection,
-    metadataEnrichingEventStoreWriterWithEnricher,
+    metadataEnrichingEventStoreWriterWithTag,
     mkAggregateHandler,
     mkAggregateHandlerWith,
     processManagerEventHandler,
@@ -122,6 +124,7 @@ import Eventium
     runEventStoreReaderUsing,
     runEventStoreWriterUsing,
     synchronousGlobalPublisher,
+    telemetryEventStoreWriter,
   )
 import Eventium.Store.Postgresql
   ( JSONString,
@@ -131,7 +134,7 @@ import Eventium.Store.Postgresql
     sqlGlobalEventStoreReader,
   )
 import Infrastructure.Database (runDbDirect)
-import Infrastructure.Eventium.Schema (accountingEventCodec)
+import Infrastructure.Eventium.Schema (accountingEventCodec, accountingEventTypeOf)
 
 -- | Extract the embedding function from a 'TypeEmbedding'.
 embedWith :: TypeEmbedding a b -> a -> b
@@ -226,12 +229,13 @@ accountingEventStoreReader = accountingVersionedEventStoreReader
 accountingEventStoreWriter ::
   forall m entity.
   (MonadIO m, PersistEntity entity, PersistEntityBackend entity ~ SqlBackend, SafeToInsert entity) =>
+  Telemetry (SqlPersistT m) ->
   SqlEventStoreConfig entity JSONString ->
   AccountingProcessManagerFactory (SqlPersistT m) ->
   [ReadModel (SqlPersistT m) AccountingEvent] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
-accountingEventStoreWriter config =
-  accountingEventStoreWriterWithRaw (postgresqlTaggedEventStoreWriter config) config
+accountingEventStoreWriter telemetry config =
+  accountingEventStoreWriterWithRaw telemetry (postgresqlTaggedEventStoreWriter config) config
 
 -- | Like 'accountingEventStoreWriter' but with the raw (pre-publishing) tagged
 -- writer supplied explicitly, decoupling the wiring from the SQL backend.
@@ -243,42 +247,42 @@ accountingEventStoreWriter config =
 --   * @persistentReadModels@ — eventium 'ReadModel's, each driven by
 --     'readModelPublisher' so it applies and advances its own 'CheckpointStore'
 --     using the real global 'SequenceNumber' the write assigns.
---   * the logger and process managers, lifted onto the global stream via
---     'globalToVersionedHandler'.
+--   * process managers, lifted onto the global stream via
+--     'globalToVersionedHandler'. Persisted-event logging is handled by the
+--     'Telemetry' interpreter wrapping the raw writer, not a separate handler
+--     here (see 'Infrastructure.Observability.Interpreter').
 accountingEventStoreWriterWithRaw ::
   forall m entity.
   (MonadIO m, PersistEntity entity, PersistEntityBackend entity ~ SqlBackend) =>
+  Telemetry (SqlPersistT m) ->
   AccountingTaggedEventStoreWriter (SqlPersistT m) ->
   SqlEventStoreConfig entity JSONString ->
   AccountingProcessManagerFactory (SqlPersistT m) ->
   [ReadModel (SqlPersistT m) AccountingEvent] ->
   AccountingTaggedEventStoreWriter (SqlPersistT m)
-accountingEventStoreWriterWithRaw rawWriter config pmFactory persistentReadModels =
+accountingEventStoreWriterWithRaw telemetry rawWriter config pmFactory persistentReadModels =
   let globalReader = accountingGlobalEventStoreReader config
       versionedReader = accountingVersionedEventStoreReader config
-      -- Versioned consumers: logger and process managers.
+      -- Versioned consumers: process managers only.
       -- The process manager receives publishingWriter so events produced by
       -- dispatched commands re-enter the bus (lazy binding resolves the cycle).
-      versionedHandler =
-        eventLoggerHandler
-          <> pmFactory publishingWriter globalReader versionedReader
+      versionedHandler = pmFactory publishingWriter globalReader versionedReader
       -- Publish GlobalStreamEvents (real positions): persistent read models via
       -- their own checkpoint-advancing publisher; versioned consumers lifted in.
       globalPublisher =
         mconcat (map readModelPublisher persistentReadModels)
           <> synchronousGlobalPublisher (globalToVersionedHandler versionedHandler)
+      -- Write-path telemetry: the caller-supplied interpreter observes every
+      -- persisted batch (metrics + structured log line) and every optimistic-
+      -- concurrency conflict.
+      observedRawWriter = telemetryEventStoreWriter telemetry rawWriter
       publishingWriter =
-        publishingGlobalTaggedCodecEventStoreWriter accountingEventCodec rawWriter globalPublisher
+        publishingGlobalTaggedCodecEventStoreWriter accountingEventCodec observedRawWriter globalPublisher
    in publishingWriter
 
 -- -----------------------------------------------------------------------------
 -- Event Handlers
 -- -----------------------------------------------------------------------------
-
--- | Event logger handler — logs all events as pretty-printed JSON.
-eventLoggerHandler :: (MonadIO m) => AccountingEventHandler m
-eventLoggerHandler = EventHandler $ \versionedEvent ->
-  liftIO $ printEventJSON (versionedEvent.key, versionedEvent.payload)
 
 -- | Wire a process manager into the event bus.
 --
@@ -324,13 +328,21 @@ wireProcessManagers factories writer globalReader versionedReader =
 -- by the process manager via 'IssueCommandWithCompensation'.
 --
 -- Adding a new aggregate: append an 'mkAggregateHandler' entry to the list.
+--
+-- Events reaching this dispatcher are saga/process-manager-emitted (e.g.
+-- transfer debit/credit legs, amendment, cancellation, merge), so it tags
+-- them via 'accountingEventTag' rather than the plain
+-- 'commandHandlerDispatcher' — otherwise every event would be stamped with
+-- the generic Typeable name @"AccountingEvent"@, same rationale as
+-- 'applyAccountCommand' et al. below.
 commandDispatcher ::
   (MonadIO m) =>
   AccountingTaggedEventStoreWriter m ->
   AccountingVersionedEventStoreReader m ->
   CommandDispatcher m AccountingCommand
 commandDispatcher writer reader =
-  commandHandlerDispatcher
+  commandHandlerDispatcherWithTag
+    accountingEventTag
     accountingEventCodec
     writer
     reader
@@ -363,7 +375,7 @@ applyAccountCommand ::
   AccountCommand ->
   m (Either (CommandHandlerError AccountError) [AccountingEvent])
 applyAccountCommand writer reader enricher accountId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithTag accountingEventTag enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader
@@ -381,7 +393,7 @@ applyTransactionCommand ::
   TransactionCommand ->
   m (Either (CommandHandlerError TransactionError) [AccountingEvent])
 applyTransactionCommand writer reader enricher txId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithTag accountingEventTag enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader
@@ -399,7 +411,7 @@ applyUserCommand ::
   UserCommand ->
   m (Either (CommandHandlerError UserError) [AccountingEvent])
 applyUserCommand writer reader enricher userId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithTag accountingEventTag enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader
@@ -417,7 +429,7 @@ applyConfigurationCommand ::
   ConfigurationCommand ->
   m (Either (CommandHandlerError ConfigurationError) [AccountingEvent])
 applyConfigurationCommand writer reader enricher configId cmd =
-  let enrichedWriter = metadataEnrichingEventStoreWriterWithEnricher enricher accountingEventCodec writer
+  let enrichedWriter = metadataEnrichingEventStoreWriterWithTag accountingEventTag enricher accountingEventCodec writer
    in applyCommandHandler
         enrichedWriter
         reader
@@ -471,6 +483,18 @@ liftGlobalReader pool = runEventStoreReaderUsing (runDbDirect pool)
 -- Utilities
 -- -----------------------------------------------------------------------------
 
--- | Print an event as pretty-printed JSON.
-printEventJSON :: (MonadIO m, ToJSON a) => a -> m ()
-printEventJSON x = liftIO $ BSL.putStrLn $ encodePretty x
+-- | The 'EventTypeName' tag stamped onto a persisted 'AccountingEvent'\'s
+-- metadata.
+--
+-- 'AccountingEvent' is a single application-wide sum type, so the
+-- 'Typeable'-derived 'eventTypeNameOf' (used by
+-- 'metadataEnrichingEventStoreWriterWithEnricher') would tag every event
+-- @"AccountingEvent"@ regardless of which case it wraps — useless for
+-- filtering/alerting on a specific event type. Instead this reads the tag
+-- eventium-postgresql already writes for schema-evolution purposes (the
+-- Aeson @tag@ field of the tagged-constructor encoding, e.g.
+-- @"TransactionContactSet"@) via 'accountingEventTypeOf', falling back to the
+-- generic 'Typeable' name only if that ever fails to find a @tag@ (it
+-- shouldn't, for any well-formed 'AccountingEvent' encoding).
+accountingEventTag :: AccountingEvent -> EventTypeName
+accountingEventTag e = fromMaybe (eventTypeNameOf e) (accountingEventTypeOf (toJSON e))

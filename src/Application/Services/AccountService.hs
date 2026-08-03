@@ -135,7 +135,7 @@ createAccount createCmd = runExceptT $ do
       (\err -> AccountError ("Internal error: failed to generate account ID: " <> tshow err))
       (mkAccountId accountUuid)
   lift $ logInfo $ "Generated account ID: " <> displayShow accountUuid
-  runAccountCmd id accountUuid (CreateAccountAccountCommand createCmd)
+  runAccountCmd accountUuid (CreateAccountAccountCommand createCmd)
   account <-
     liftMaybeM
       (AccountError "Account created but not found in read model")
@@ -282,7 +282,7 @@ shareAccount requestingUserId accountUuid targetUserUuid roleText = runExceptT $
               role = role,
               grantedBy = requestingUserId
             }
-  runAccountCmd id accountUuid shareCmd
+  runAccountCmd accountUuid shareCmd
   lift $ logInfo "Account shared successfully"
 
 -- | Revoke a user's access to an account.
@@ -319,7 +319,7 @@ revokeAccountAccess requestingUserId accountUuid targetUserUuid = runExceptT $ d
             { userId = targetUserId,
               revokedBy = requestingUserId
             }
-  runAccountCmd id accountUuid revokeCmd
+  runAccountCmd accountUuid revokeCmd
   lift $ logInfo "Account access revoked successfully"
 
 -- -----------------------------------------------------------------------------
@@ -346,7 +346,7 @@ setOverdraftLimit requestingUserId accountUuid newLimit = runExceptT $ do
   let cmd =
         SetOverdraftLimitAccountCommand
           SetOverdraftLimit {overdraftLimit = newLimit, setBy = requestingUserId}
-  runAccountCmd id accountUuid cmd
+  runAccountCmd accountUuid cmd
   lift $ logInfo "Overdraft limit set successfully"
 
 -- | Rename an account.
@@ -361,7 +361,7 @@ renameAccount requestingUserId accountUuid newName = runExceptT $ do
   let cmd =
         RenameAccountAccountCommand
           RenameAccount {newName = newName, renamedBy = requestingUserId}
-  runAccountCmd id accountUuid cmd
+  runAccountCmd accountUuid cmd
   lift $ logInfo "Account renamed successfully"
 
 -- | Set the account type on an account.
@@ -376,7 +376,7 @@ setAccountSubtype requestingUserId accountUuid newType = runExceptT $ do
   let cmd =
         SetAccountSubtypeAccountCommand
           SetAccountSubtype {subtype = newType, setBy = requestingUserId}
-  runAccountCmd id accountUuid cmd
+  runAccountCmd accountUuid cmd
   lift $ logInfo "Account type set successfully"
 
 -- | Close (deactivate) an account. Owner-only; enforced by the domain handler.
@@ -388,7 +388,7 @@ closeAccount requestingUserId accountUuid = runExceptT $ do
   lift $ logInfo $ "Closing account: " <> displayShow accountUuid
   _ <- liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
   let cmd = CloseAccountAccountCommand CloseAccount {by = requestingUserId}
-  runAccountCmd id accountUuid cmd
+  runAccountCmd accountUuid cmd
   lift $ logInfo "Account closed successfully"
 
 -- | Reopen a previously-closed account. Owner-only; enforced by the domain handler.
@@ -400,7 +400,7 @@ reopenAccount requestingUserId accountUuid = runExceptT $ do
   lift $ logInfo $ "Reopening account: " <> displayShow accountUuid
   _ <- liftEitherWith (\_ -> NotFound "Account" (tshow accountUuid)) (mkAccountId accountUuid)
   let cmd = ReopenAccountAccountCommand ReopenAccount {by = requestingUserId}
-  runAccountCmd id accountUuid cmd
+  runAccountCmd accountUuid cmd
   lift $ logInfo "Account reopened successfully"
 
 -- -----------------------------------------------------------------------------
