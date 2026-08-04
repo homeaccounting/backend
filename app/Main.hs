@@ -80,7 +80,10 @@ module Main (main) where
 
 import Application.LinkCodeStore (newLinkCodeStore)
 import Application.ProcessManagers (transactionCancellationProcessManager, transactionMergeProcessManager, transferAmendmentProcessManager, transferProcessManager)
+import Application.ReadModels.Account (countRegularAccounts)
 import Application.ReadModels.Persist (initializePersistentReadModels, persistentReadModels)
+import Application.ReadModels.Transaction (countTransactions)
+import Application.ReadModels.User (countUsers)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
@@ -115,6 +118,7 @@ import Infrastructure.Database
     createConnectionPool,
     defaultSqlEventStoreConfig,
     initializeDatabase,
+    runDbDirect,
   )
 import Infrastructure.Eventium
   ( accountingEventStoreWriter,
@@ -129,9 +133,10 @@ import Infrastructure.Eventium
 import Infrastructure.ExchangeRate.ECB (ecbProvider)
 import Infrastructure.ExchangeRate.NBU (nbuProvider)
 import Infrastructure.Llm.OpenAICompat (mkOpenAICompatClient)
-import Infrastructure.Observability.Logging (mkContextLogFunc, newStdoutLoggerSet, rioLevel)
 import Infrastructure.Observability.Context (nilRequestContext)
 import Infrastructure.Observability.Interpreter (mkTelemetry)
+import Infrastructure.Observability.Logging (mkContextLogFunc, newStdoutLoggerSet, rioLevel)
+import Infrastructure.Observability.Metrics (gaugeSample, registerGaugeCollector)
 import Infrastructure.Version (VersionInfo, displayVersion, mkVersionInfo)
 import Network.HTTP.Client.TLS (newTlsManager)
 import RIO
@@ -292,6 +297,27 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
   logInfo "Migrating + catching up persistent read models..."
   liftIO $ initializePersistentReadModels pool sqlGlobalReader
   logInfo "Persistent read models up to date"
+
+  -- Business metrics: scrape-time COUNT(*) on the read-model tables, exposed as
+  -- gauges on /metrics (a recomputed snapshot, not an accumulated total — a
+  -- read-model rebuild under changed rules can lower it, which a counter would
+  -- misread as a reset). Wrapped so a DB error drops only the business series,
+  -- never the operator metrics on the same exposition path.
+  logInfo "Registering business metrics collector..."
+  baseLogFunc <- view logFuncL
+  liftIO
+    $ registerGaugeCollector
+    $ handleAny (\e -> runRIO baseLogFunc (logWarn ("business-metrics fetch failed: " <> displayShow e)) >> pure [])
+    $ runDbDirect pool
+    $ do
+      u <- countUsers
+      a <- countRegularAccounts
+      t <- countTransactions
+      pure
+        [ gaugeSample "users" "Registered users" (fromIntegral u),
+          gaugeSample "accounts" "Regular accounts" (fromIntegral a),
+          gaugeSample "transactions" "Recorded transactions" (fromIntegral t)
+        ]
 
   -- 5. Auth configurations (loaded from YAML config)
   logInfo "Auth configurations loaded from config file"

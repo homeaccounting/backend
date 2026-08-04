@@ -6,7 +6,14 @@ module Infrastructure.Observability.MetricsSpec (spec) where
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.List as List
 import Infrastructure.Observability.Metrics
-import Prometheus (exportMetricsAsText, getCounter, getVectorWith)
+import Prometheus
+  ( Info (..),
+    Sample (..),
+    SampleGroup (..),
+    exportMetricsAsText,
+    getCounter,
+    getVectorWith,
+  )
 import RIO
 import Test.Hspec
 
@@ -41,6 +48,26 @@ spec = describe "Observability.Metrics" $ do
     incEventPersisted m "AccountOpened"
     txt <- exportMetricsAsText
     BLC.unpack txt `shouldContain` "event_type=\"AccountOpened\""
+  describe "scrape-time gauge collector" $ do
+    it "renders each gauge sample as a gauge-typed sample group" $ do
+      let groups = toSampleGroups [gaugeSample "users" "Registered users" 3]
+      case groups of
+        [SampleGroup (Info n h) ty [Sample sn _ v]] -> do
+          n `shouldBe` "users"
+          h `shouldBe` "Registered users"
+          show ty `shouldBe` "gauge" -- SampleType has no Eq instance; its Show renders lowercase
+          sn `shouldBe` "users"
+          v `shouldBe` "3" -- decimal-encoded value bytes
+        other -> expectationFailure ("unexpected shape: " <> show other)
+
+    it "preserves order and encodes each Int64 value as decimal bytes" $ do
+      let groups =
+            toSampleGroups
+              [ gaugeSample "users" "u" 0,
+                gaugeSample "accounts" "a" 42
+              ]
+      [n | SampleGroup (Info n _) _ _ <- groups] `shouldBe` ["users", "accounts"]
+      [v | SampleGroup _ _ [Sample _ _ v] <- groups] `shouldBe` ["0", "42"]
 
 readEventsPersisted :: Metrics -> Text -> IO Double
 readEventsPersisted m label =

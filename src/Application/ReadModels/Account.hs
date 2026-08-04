@@ -36,6 +36,7 @@ module Application.ReadModels.Account
     accountProjectionName,
     migrateAccount,
     resetAccount,
+    applyAccountEvent,
     AccountEntity (..),
     AccountAccessEntity (..),
 
@@ -45,6 +46,7 @@ module Application.ReadModels.Account
     getAccounts,
     getAccountIds,
     getRegularAccounts,
+    countRegularAccounts,
     accountExists,
 
     -- * Temporal balance (event-store fold)
@@ -68,11 +70,13 @@ import Data.UUID (UUID)
 import Database.Persist
   ( Entity (..),
     Filter,
+    count,
     deleteWhere,
     getBy,
     insertUnique,
     replace,
     selectList,
+    (!=.),
     (<-.),
     (==.),
   )
@@ -398,6 +402,16 @@ getRegularAccounts userId = do
 -- | Whether an account exists.
 accountExists :: (MonadIO m) => AccountId -> SqlPersistT m Bool
 accountExists accId = isJust <$> getBy (UniqueAccountId accId)
+
+-- | Total number of regular (non-'External') accounts. Backs the
+-- @accounts_total@ business metric. Filters in SQL: the 'AccountType'
+-- 'PersistField' encoding makes every @Regular _@ value compare unequal to
+-- 'External'. (@getRegularAccounts@ filters in Haskell via
+-- @accountTypeSubtypeKind@, which is not usable inside a persistent @count@;
+-- this expresses the equivalent condition at the SQL level. @accountType@ is
+-- not indexed, so this is a full-table COUNT — trivial at self-hoster scale.)
+countRegularAccounts :: (MonadIO m) => SqlPersistT m Int
+countRegularAccounts = count [AccountEntityAccountType !=. External]
 
 -- -----------------------------------------------------------------------------
 -- Temporal balance query (event-store fold; unchanged)

@@ -24,12 +24,21 @@ module Infrastructure.Observability.Metrics
     HasMetrics (..),
     incEventPersisted,
     incWriteConflict,
+    GaugeSample,
+    gaugeSample,
+    toSampleGroups,
+    registerGaugeCollector,
   )
 where
 
+import qualified Data.ByteString.Char8 as BS8
 import Prometheus
   ( Counter,
     Info (..),
+    Metric (..),
+    Sample (..),
+    SampleGroup (..),
+    SampleType (..),
     Vector,
     counter,
     incCounter,
@@ -79,3 +88,50 @@ incEventPersisted m eventType = withLabel m.eventsPersisted eventType incCounter
 -- | Increment the @events_write_conflicts_total@ counter.
 incWriteConflict :: Metrics -> IO ()
 incWriteConflict m = incCounter m.eventWriteConflicts
+
+-- -----------------------------------------------------------------------------
+-- Scrape-time gauge collector
+--
+-- A generic, computed-at-scrape gauge (as opposed to the imperatively-bumped
+-- counter handles in 'Metrics' above): the value is produced by a fetch action
+-- each time Prometheus scrapes. Gauge, not counter, because the value is a
+-- recomputed snapshot of current state (e.g. @COUNT(*)@ over a read-model table),
+-- not an accumulated total — a read-model rebuild under changed projection rules
+-- can legitimately settle it at a lower number, and a Prometheus counter would
+-- misread any such decrease as a reset. The concrete series and their meaning
+-- (e.g. the business @users@ / @accounts@ / @transactions@ totals) are decided by
+-- the caller in the composition root; this module stays metric-generic and
+-- Application-agnostic (the fetch is injected, so no 'Application.*' import).
+-- -----------------------------------------------------------------------------
+
+-- | One scrape-time gauge to expose: a Prometheus name, help text, and current
+-- value. Abstract — construct via 'gaugeSample'.
+data GaugeSample = GaugeSample
+  { name :: !Text,
+    help :: !Text,
+    value :: !Int64
+  }
+
+-- | Build a 'GaugeSample'. @name@ is the full Prometheus series name
+-- (e.g. @"users"@). Do not use a @_total@ suffix — that convention is reserved
+-- for counters.
+gaugeSample :: Text -> Text -> Int64 -> GaugeSample
+gaugeSample = GaugeSample
+
+-- | Render gauge samples as gauge-typed Prometheus sample groups. Pure and
+-- order-preserving; this is the unit-tested surface.
+toSampleGroups :: [GaugeSample] -> [SampleGroup]
+toSampleGroups = map render
+  where
+    render m =
+      SampleGroup
+        (Info m.name m.help)
+        GaugeType
+        [Sample m.name [] (BS8.pack (show m.value))]
+
+-- | Register a scrape-time collector that runs @fetch@ on every scrape and emits
+-- the resulting gauges. Registers once into the process-global registry
+-- (mirrors 'registerMetrics'); call exactly once at startup.
+registerGaugeCollector :: IO [GaugeSample] -> IO ()
+registerGaugeCollector fetch =
+  void $ register $ Metric $ pure ((), toSampleGroups <$> fetch)

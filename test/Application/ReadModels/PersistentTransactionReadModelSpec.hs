@@ -23,6 +23,7 @@ module Application.ReadModels.PersistentTransactionReadModelSpec (spec) where
 import Application.ReadModels.Transaction
   ( TransactionData (..),
     applyTransactionEvent,
+    countTransactions,
     emptyTransactionFilter,
     findReferencingTransactions,
     getTransaction,
@@ -287,3 +288,13 @@ spec = describe "Persistent Transaction read model" $ do
       runDbIn env (findReferencingTransactions (contact 6)) `shouldReturn` 0
       -- An unreferenced contact has no users.
       runDbIn env (findReferencingTransactions (contact 99)) `shouldReturn` 0
+
+  describe "countTransactions (business-metric semantic)" $ do
+    it "counts all transaction rows, including cancelled" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+            initiated (tx 2) acctA acctB Transfer Set.empty 1,
+            cancelled (tx 2) 2
+          ]
+      runDbIn env countTransactions `shouldReturn` 2

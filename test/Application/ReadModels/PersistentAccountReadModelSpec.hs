@@ -23,6 +23,8 @@ module Application.ReadModels.PersistentAccountReadModelSpec (spec) where
 
 import Application.ReadModels.Account
   ( AccountData (..),
+    applyAccountEvent,
+    countRegularAccounts,
     getAccount,
     getAccountIds,
     getAccounts,
@@ -31,20 +33,50 @@ import Application.ReadModels.Account
 import Application.Services.AccountService (shareAccount)
 import Application.Services.AuthService (AuthResult (..), register)
 import qualified Application.Services.ConfigurationService as ConfigurationService
+import qualified Data.UUID as UUID
+import Domain.Account.Events (AccountCreated (..))
 import Domain.Core.Types
-  ( AccountRole (..),
+  ( AccountId,
+    AccountRole (..),
+    AccountType (..),
     Currency (..),
+    UserId,
+    defaultCash,
     unAccountId,
     unUserId,
     unsafeMoney,
   )
+import Domain.Models (AccountingEvent (..))
+import qualified Eventium
 import Infrastructure.App (runAppM)
 import RIO
 import qualified RIO.Set as Set
 import Test.Hspec
 import qualified Testkit.Fixtures as Fixtures
-import Testkit.Helpers (fromRight')
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
+import Testkit.Helpers (fromRight', globalEvent, mockAccountId, mockUserId)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn, seedGlobals)
+
+-- -----------------------------------------------------------------------------
+-- Fixtures
+-- -----------------------------------------------------------------------------
+
+user :: Word32 -> UserId
+user n = mockUserId (UUID.fromWords n 0 0 0)
+
+acctCreated :: AccountId -> UserId -> AccountType -> Eventium.SequenceNumber -> Eventium.GlobalStreamEvent AccountingEvent
+acctCreated accId owner ty =
+  globalEvent
+    (unAccountId accId)
+    0
+    ( AccountCreatedEvent
+        AccountCreated
+          { name = "acc",
+            initialBalance = unsafeMoney USD 0,
+            by = owner,
+            accountType = ty,
+            overdraftLimit = Nothing
+          }
+    )
 
 -- -----------------------------------------------------------------------------
 -- Spec
@@ -130,3 +162,14 @@ spec = describe "Persistent Account read model" $ do
       Fixtures.creditAccount env acct 2 (unsafeMoney USD 10)
       v2 <- runDbIn env (fmap (fmap (.version)) (getAccount acct))
       v2 `shouldBe` Just 2
+
+  describe "countRegularAccounts" $ do
+    it "counts regular accounts and excludes External" $ do
+      env <-
+        seedGlobals
+          applyAccountEvent
+          [ acctCreated (mockAccountId (UUID.fromWords 1 0 0 0)) (user 1) (Regular defaultCash) 0,
+            acctCreated (mockAccountId (UUID.fromWords 2 0 0 0)) (user 1) (Regular defaultCash) 1,
+            acctCreated (mockAccountId (UUID.fromWords 3 0 0 0)) (user 1) External 2
+          ]
+      runDbIn env countRegularAccounts `shouldReturn` 2

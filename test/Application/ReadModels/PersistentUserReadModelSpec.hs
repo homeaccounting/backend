@@ -24,6 +24,7 @@ module Application.ReadModels.PersistentUserReadModelSpec (spec) where
 import Application.ReadModels.User
   ( UserData (..),
     applyUserEvent,
+    countUsers,
     emailExists,
     getUser,
     getUserByEmail,
@@ -229,3 +230,13 @@ spec = describe "Persistent User read model" $ do
       u <- runDbIn env (getUser (user 1))
       length . (.oauthIdentities) <$> u `shouldBe` Just 1
       ((.firstName) <$> ((.telegramIdentity) =<< u)) `shouldBe` Just "First"
+
+  describe "countUsers" $ do
+    it "counts every registered user, both registration paths" $ do
+      env <-
+        seedEnv
+          [ registered (user 1) "a@test.com" 0 0,
+            registered (user 2) "b@test.com" 0 1,
+            registeredViaTelegram (user 3) 777 0 2
+          ]
+      runDbIn env countUsers `shouldReturn` 3

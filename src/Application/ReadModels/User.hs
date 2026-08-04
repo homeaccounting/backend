@@ -48,6 +48,7 @@ module Application.ReadModels.User
     userExists,
     emailExists,
     telegramIdLinked,
+    countUsers,
   )
 where
 
@@ -59,6 +60,7 @@ import Data.Text (Text)
 import Database.Persist
   ( Entity (..),
     Filter,
+    count,
     deleteWhere,
     getBy,
     insertUnique,
@@ -349,3 +351,8 @@ emailExists emailAddr = isJust <$> selectFirst [UserEntityEmail ==. Just emailAd
 -- | Whether a Telegram id is already linked to a user.
 telegramIdLinked :: (MonadIO m) => TelegramId -> SqlPersistT m Bool
 telegramIdLinked tgId = isJust <$> getBy (UniqueUserTelegramId tgId)
+
+-- | Total number of registered users (both registration paths). Backs the
+-- @users_total@ business metric.
+countUsers :: (MonadIO m) => SqlPersistT m Int
+countUsers = count ([] :: [Filter UserEntity])
