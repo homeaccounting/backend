@@ -4,7 +4,7 @@
 
 -- |
 -- Module      : Infrastructure.Observability.Interpreter
--- Description : Telemetry interpreter turning eventium 'Signal's into metrics + JSON logs
+-- Description : Telemetry interpreter turning eventium 'Signal's into metrics + structured logs
 --
 -- A pure factory: 'mkTelemetry' takes its dependencies explicitly (a log
 -- threshold, a sink, and a registered 'Metrics' handle) and returns a
@@ -33,7 +33,8 @@ import Eventium
     Telemetry (..),
     uuidToText,
   )
-import Infrastructure.Observability.Logging (renderJsonLogLineFields, shouldLog)
+import qualified Infrastructure.Config as Config
+import Infrastructure.Observability.Logging (renderJsonLogLineFields, renderTextLogLineFields, shouldLog)
 import Infrastructure.Observability.Metrics (Metrics, incEventPersisted, incWriteConflict)
 import RIO
 import qualified RIO.Map as Map
@@ -41,18 +42,25 @@ import RIO.Time (getCurrentTime)
 import System.Log.FastLogger (LogStr, toLogStr)
 
 -- | Turn one eventium 'Signal' into metric bumps and (level-gated) a single
--- JSON log line pushed to 'sink'. Best-effort and non-throwing: metrics use
--- 'Prometheus' counters (which don't throw) and the sink is caller-supplied.
-interpretSignal :: LogLevel -> (LogStr -> IO ()) -> Metrics -> Signal -> IO ()
-interpretSignal threshold sink metrics sig = do
+-- log line pushed to 'sink'. The line is rendered in the app's configured
+-- 'Config.LogFormat' — JSON ('Config.LogJson') or plain text
+-- ('Config.LogText') — so the telemetry path matches the rest of the app's
+-- logging (previously it always emitted JSON, so dev/text runs got mixed
+-- formats). Best-effort and non-throwing: metrics use 'Prometheus' counters
+-- (which don't throw) and the sink is caller-supplied.
+interpretSignal :: Config.LogFormat -> LogLevel -> (LogStr -> IO ()) -> Metrics -> Signal -> IO ()
+interpretSignal fmt threshold sink metrics sig = do
   now <- getCurrentTime
+  let renderLine = case fmt of
+        Config.LogJson -> renderJsonLogLineFields
+        Config.LogText -> renderTextLogLineFields
   case sig of
     EventsPersisted _ metas _ -> do
       for_ metas $ \m -> incEventPersisted metrics m.eventType
       when (shouldLog threshold LevelDebug)
         $ sink
           ( toLogStr
-              ( renderJsonLogLineFields
+              ( renderLine
                   now
                   LevelDebug
                   (correlationIdOf metas)
@@ -66,7 +74,7 @@ interpretSignal threshold sink metrics sig = do
       when (shouldLog threshold LevelWarn)
         $ sink
           ( toLogStr
-              ( renderJsonLogLineFields
+              ( renderLine
                   now
                   LevelWarn
                   Nothing
@@ -92,6 +100,6 @@ interpretSignal threshold sink metrics sig = do
 -- | Build a 'Telemetry' interpreter over 'SqlPersistT IO' — the monad the
 -- eventium write path runs its store operations in — from explicit
 -- dependencies. Pure factory: no 'AppEnv' reads.
-mkTelemetry :: LogLevel -> (LogStr -> IO ()) -> Metrics -> Telemetry (SqlPersistT IO)
-mkTelemetry threshold sink metrics =
-  Telemetry $ \sig -> lift (interpretSignal threshold sink metrics sig)
+mkTelemetry :: Config.LogFormat -> LogLevel -> (LogStr -> IO ()) -> Metrics -> Telemetry (SqlPersistT IO)
+mkTelemetry fmt threshold sink metrics =
+  Telemetry $ \sig -> lift (interpretSignal fmt threshold sink metrics sig)

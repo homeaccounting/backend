@@ -21,6 +21,7 @@ module Infrastructure.Observability.Logging
   ( shouldLog,
     renderJsonLogLine,
     renderJsonLogLineFields,
+    renderTextLogLineFields,
     renderSqlJsonLine,
     sqlJsonLogSink,
     mlToRioLevel,
@@ -192,6 +193,10 @@ mlToRioLevel (ML.LevelOther t) = LevelOther t
 
 -- | Plain human-readable line used in 'Config.LogText' mode: mirrors the
 -- JSON line's fields without the JSON envelope.
+--
+-- Thin wrapper over 'renderTextLogLineFields' that projects the
+-- 'RequestContext' down to already-rendered text fields — mirroring how
+-- 'renderJsonLogLine' wraps 'renderJsonLogLineFields'.
 renderTextLogLine ::
   UTCTime ->
   LogLevel ->
@@ -199,16 +204,42 @@ renderTextLogLine ::
   Maybe Text ->
   Utf8Builder ->
   BL.ByteString
-renderTextLogLine now lvl ctx caller msg =
+renderTextLogLine now lvl ctx =
+  renderTextLogLineFields
+    now
+    lvl
+    (Just (UUID.toText ctx.correlationId))
+    (fmap renderUserId ctx.userId)
+
+-- | Core plain-text log line renderer, taking the log fields directly rather
+-- than a 'RequestContext' — the text-mode counterpart of
+-- 'renderJsonLogLineFields'. Shared by 'renderTextLogLine' (the request-path
+-- 'LogFunc') and "Infrastructure.Observability.Interpreter" (the
+-- eventium-'Signal' telemetry path), so both honour 'Config.LogText' through
+-- the exact same layout instead of the telemetry path always emitting JSON.
+--
+-- @correlationId@ and @userId@ are already-rendered 'Text' and are omitted
+-- from the line when 'Nothing'.
+renderTextLogLineFields ::
+  UTCTime ->
+  LogLevel ->
+  -- | correlationId, already rendered as text; omitted when 'Nothing'
+  Maybe Text ->
+  -- | userId, already rendered as text; omitted when 'Nothing'
+  Maybe Text ->
+  Maybe Text ->
+  Utf8Builder ->
+  BL.ByteString
+renderTextLogLineFields now lvl correlationId userId caller msg =
   BL.fromStrict (encodeUtf8 line) <> "\n"
   where
     line =
       T.unwords
         $ [ iso8601 now,
-            "[" <> levelText lvl <> "]",
-            "cid=" <> UUID.toText ctx.correlationId
+            "[" <> levelText lvl <> "]"
           ]
-        <> maybe [] (\uid -> ["user=" <> renderUserId uid]) ctx.userId
+        <> maybe [] (\c -> ["cid=" <> c]) correlationId
+        <> maybe [] (\uid -> ["user=" <> uid]) userId
         <> maybe [] (\c -> ["caller=" <> c]) caller
         <> [utf8BuilderToText msg]
 

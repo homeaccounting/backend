@@ -18,6 +18,7 @@ import Eventium
     emptyMetadata,
     insertCustomMetadata,
   )
+import qualified Infrastructure.Config as Config
 import Infrastructure.Observability.Context (renderUserId, setCorrelationId)
 import Infrastructure.Observability.Interpreter (interpretSignal)
 import Infrastructure.Observability.Metrics
@@ -27,6 +28,7 @@ import Infrastructure.Observability.Metrics
 import Prometheus (getCounter, getVectorWith)
 import RIO
 import qualified RIO.ByteString.Lazy as BL
+import qualified RIO.Text as T
 import System.Log.FastLogger (LogStr, fromLogStr)
 import Test.Hspec
 
@@ -40,7 +42,7 @@ spec = describe "Observability.Interpreter" $ do
         md = mkMetadata cid uid "AccountOpened"
 
     before <- readEventsPersisted metrics "AccountOpened"
-    interpretSignal LevelDebug (captureSink ref) metrics (EventsPersisted UUID.nil [md, md] [])
+    interpretSignal Config.LogJson LevelDebug (captureSink ref) metrics (EventsPersisted UUID.nil [md, md] [])
     after <- readEventsPersisted metrics "AccountOpened"
     (after - before) `shouldBe` 2
 
@@ -51,6 +53,25 @@ spec = describe "Observability.Interpreter" $ do
         KM.lookup "userId" o `shouldBe` Just (A.String (renderUserId uid))
       _ -> expectationFailure "expected at least one decodable JSON line"
 
+  it "on EventsPersisted in LogText mode: emits a plain-text line (not JSON) carrying the message and correlation id" $ do
+    ref <- newIORef []
+    let cid = UUID.nil
+        uid = unsafeUserId UUID.nil
+        md = mkMetadata cid uid "AccountOpened"
+
+    interpretSignal Config.LogText LevelDebug (captureSink ref) metrics (EventsPersisted UUID.nil [md, md] [])
+
+    captured <- readIORef ref
+    case captured of
+      (line : _) -> do
+        let text = decodeUtf8Lenient line
+        -- Plain text, not a JSON object.
+        (A.decode (BL.fromStrict line) :: Maybe A.Value) `shouldBe` Nothing
+        ("{" `T.isPrefixOf` text) `shouldBe` False
+        ("persisted 2 event(s)" `T.isInfixOf` text) `shouldBe` True
+        ("cid=" <> UUID.toText cid) `T.isInfixOf` text `shouldBe` True
+      [] -> expectationFailure "expected one plain-text line"
+
   it "on EventsPersisted at Info threshold: suppresses the debug persist line but still bumps the metric" $ do
     ref <- newIORef []
     let cid = UUID.nil
@@ -58,7 +79,7 @@ spec = describe "Observability.Interpreter" $ do
         md = mkMetadata cid uid "AccountOpened"
 
     before <- readEventsPersisted metrics "AccountOpened"
-    interpretSignal LevelInfo (captureSink ref) metrics (EventsPersisted UUID.nil [md, md] [])
+    interpretSignal Config.LogJson LevelInfo (captureSink ref) metrics (EventsPersisted UUID.nil [md, md] [])
     after <- readEventsPersisted metrics "AccountOpened"
     (after - before) `shouldBe` 2
 
@@ -70,6 +91,7 @@ spec = describe "Observability.Interpreter" $ do
     before <- getCounter metrics.eventWriteConflicts
 
     interpretSignal
+      Config.LogJson
       LevelInfo
       (captureSink ref)
       metrics

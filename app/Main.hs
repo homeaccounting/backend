@@ -267,7 +267,7 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
       -- into a metrics bump (the process-global, once-registered 'appMetrics')
       -- and a level-gated structured log line pushed through the same
       -- 'LoggerSet' as request-path logging.
-      telemetry = mkTelemetry (rioLevel config.logging.level) (pushLogStr loggerSet) appMetrics
+      telemetry = mkTelemetry config.logging.format (rioLevel config.logging.level) (pushLogStr loggerSet) appMetrics
       sqlWriter =
         accountingEventStoreWriter
           telemetry
