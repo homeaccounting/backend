@@ -5,14 +5,12 @@
 module Domain.Configuration.DefaultsSpec (spec) where
 
 import qualified Data.Map.Strict as Map
-import qualified Data.Text as T
 import Domain.Configuration.Defaults
   ( DefaultEntry (entryId, entryName, parentId, role),
-    ExpenseDefaults (beauty, dining, electronics, foodAndDining, groceries, healthWellness, housing, leisureTravel, other, pets, shopping, shoppingGoods, transport),
+    ExpenseDefaults (dining, foodAndDining, groceries, healthWellness, housing, leisureTravel, other, shoppingGoods, transport),
     IncomeDefaults (earned, other, passive, salary),
     defaultExpenseCategories,
     defaultIncomeCategories,
-    defaultMccExpenseCategoryMap,
     expense,
     expenseCategoryDictKind,
     income,
@@ -115,40 +113,6 @@ spec = describe "Domain.Configuration.Defaults" $ do
     it "orders every child after its parent (seed parent-exists invariant)" $ do
       defaultExpenseCategories `shouldSatisfy` parentsBeforeChildren
       defaultIncomeCategories `shouldSatisfy` parentsBeforeChildren
-
-  describe "defaultMccExpenseCategoryMap" $ do
-    it "has all keys as non-empty text"
-      $ Map.keys defaultMccExpenseCategoryMap
-      `shouldSatisfy` (not . any T.null)
-
-    it "every value is a CategoryId present in the default expense categories" $ do
-      let expenseIds = map (.entryId) defaultExpenseCategories
-      Map.elems defaultMccExpenseCategoryMap `shouldSatisfy` all (`elem` expenseIds)
-
-    it "contains the canonical grocery MCC (mapped to the renamed Groceries leaf)"
-      $ Map.lookup "5411" defaultMccExpenseCategoryMap
-      `shouldBe` Just expense.groceries.entryId
-
-    it "never targets a group node" $ do
-      let groupIds =
-            [ expense.foodAndDining.entryId,
-              expense.housing.entryId,
-              expense.healthWellness.entryId,
-              expense.shoppingGoods.entryId,
-              expense.leisureTravel.entryId
-            ]
-      Map.elems defaultMccExpenseCategoryMap `shouldSatisfy` all (`notElem` groupIds)
-
-    it "maps dining MCCs to the Dining category (split from Food)" $ do
-      Map.lookup "5812" defaultMccExpenseCategoryMap `shouldBe` Just expense.dining.entryId
-      Map.lookup "5813" defaultMccExpenseCategoryMap `shouldBe` Just expense.dining.entryId
-      Map.lookup "5814" defaultMccExpenseCategoryMap `shouldBe` Just expense.dining.entryId
-
-    it "maps sample new-category MCCs to their categories" $ do
-      Map.lookup "7230" defaultMccExpenseCategoryMap `shouldBe` Just expense.beauty.entryId
-      Map.lookup "5995" defaultMccExpenseCategoryMap `shouldBe` Just expense.pets.entryId
-      Map.lookup "5732" defaultMccExpenseCategoryMap `shouldBe` Just expense.electronics.entryId
-      Map.lookup "5311" defaultMccExpenseCategoryMap `shouldBe` Just expense.shopping.entryId
 
 -- | Every entry's parent (when it has one) must appear earlier in the list, so
 -- the seed loop's parent-exists guard never rejects a child.

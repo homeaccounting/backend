@@ -9,8 +9,8 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.UUID as UUID
 import Domain.Core.Types (unsafeUserId)
 import Infrastructure.Config (LogFormat (..))
-import Infrastructure.Observability.Logging
 import Infrastructure.Observability.Context (RequestContext (..), nilRequestContext, renderUserId)
+import Infrastructure.Observability.Logging
 import RIO
 import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text as T

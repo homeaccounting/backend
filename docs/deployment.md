@@ -192,6 +192,25 @@ log. Version-skipping (e.g. restoring a v1-era backup into a v3 app) just runs
 more upcaster hops at read time. Stored bytes are never mutated, so a restore is
 non-destructive and re-runnable.
 
+### One-time data reset — provider category-signal release (pre-launch alpha)
+
+> **This release is an exception to the version-independent-restore guarantee
+> above, and only because we are still pre-launch alpha (beta-testers only).** The
+> provider category-signal change altered several stored-event shapes without
+> shipping upcasters (documented alpha escape hatch — see `CLAUDE.md` "Backward
+> compatibility"). Deploying it therefore **requires recreating the event-store
+> DB**; existing beta-tester data is discarded, not migrated. Old dumps taken
+> before this release are **not** readable by this app version.
+>
+> ```bash
+> # stop the app, then drop & recreate the event-store database (destroys data)
+> dropdb "$PGDATABASE" && createdb "$PGDATABASE"
+> # start the app; eventium-postgresql recreates the schema on boot
+> ```
+>
+> This is a one-off tied to alpha. Once launched, the standing upcast-on-read
+> policy applies and restores become version-independent again.
+
 ## Observability (metrics & logs)
 
 The backend provides two **operator seams**; the observability *stack* that

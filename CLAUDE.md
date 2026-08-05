@@ -197,6 +197,28 @@ migration.** The append-only event log is never mutated in place.
   registry + `eventTypeOf` tag extractor. See
   `docs/specs/2026-07-30-event-schema-evolution-design.md`.
 
+> **Pre-launch alpha status.** We are currently **pre-launch alpha** (invited
+> beta-testers only), not yet public. The **standing rule above is unchanged** —
+> once launched, every stored-event shape change requires upcast-on-read. During
+> alpha a **one-time full event-store DB recreate is an acceptable, documented
+> escape hatch** in place of shipping an upcaster, because the only data at risk is
+> disposable beta-tester data. Use it sparingly and record it here + in the
+> deployment runbook.
+
+##### Recorded exception — provider category-signal (tracker#51)
+
+The provider category-signal feature changed several **stored** shapes at once —
+`ImportInfo.category` (was `mcc`), `TransactionImportReconciled.category`, the
+renamed `BankProviderExpenseCategoryMapSet` config event (was
+`BankingMccExpenseCategoryMapSet`), the Configuration read-model table, and the
+DTO. Per the alpha escape hatch above, this shipped via a **one-time event-store
+DB recreate rather than upcasters**; the two historical upcasters that predated it
+(`TransactionAmendmentInitiated` `allowOverdraft` default and
+`TransactionPostingInitiated` `externalTransactionId` scalar→list) were removed as
+dead code at the same time, leaving `accountingSchemaRegistry` empty. The
+registry/codec seam is retained so the first post-launch shape change re-activates
+upcast-on-read with no wiring changes.
+
 #### Upcaster vs. custom `FromJSON` — the rule
 
 The dividing line is **where the JSON comes from**, not how big the change is:

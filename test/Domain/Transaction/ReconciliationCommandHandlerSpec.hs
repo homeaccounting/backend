@@ -64,8 +64,8 @@ txId = mockTransactionIdN 1
 extId :: ExternalTransactionId
 extId = unsafeExternalTransactionId "mono:stmt-42"
 
-mockMcc :: MCC
-mockMcc = "5411"
+mockCategory :: BankProviderCategory
+mockCategory = mkByMcc (unsafeMcc 5411)
 
 reconcileCommand :: TransactionCommand
 reconcileCommand =
@@ -73,7 +73,7 @@ reconcileCommand =
     $ ReconcileTransactionImport
       { transactionId = txId,
         externalTransactionIds = extId :| [],
-        mcc = Just mockMcc
+        category = Just mockCategory
       }
 
 spec :: Spec
@@ -88,7 +88,7 @@ spec = describe "ReconcileTransactionImport Command" $ do
               TransactionImportReconciled
                 { transactionId = txId,
                   externalTransactionIds = extId :| [],
-                  mcc = Just mockMcc
+                  category = Just mockCategory
                 }
           ]
 
@@ -110,7 +110,7 @@ spec = describe "ReconcileTransactionImport Command" $ do
                   TransactionImportReconciled
                     { transactionId = txId,
                       externalTransactionIds = extId :| [],
-                      mcc = Just mockMcc
+                      category = Just mockCategory
                     }
               )
       handleTransactionCommand reconciled reconcileCommand

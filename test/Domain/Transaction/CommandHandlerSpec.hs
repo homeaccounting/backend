@@ -183,7 +183,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     initiatedBy = testUserId,
                     at = mockTime,
                     transactionType = Transfer,
-                    importInfo = Just ImportInfo {externalTransactionIds = extTxId :| [], mcc = Nothing},
+                    importInfo = Just ImportInfo {externalTransactionIds = extTxId :| [], category = Nothing},
                     labels = labels,
                     contactId = Nothing,
                     relation = Nothing

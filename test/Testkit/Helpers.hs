@@ -37,6 +37,7 @@ module Testkit.Helpers
     fixtureTime,
     mockAccountData,
     mockTransactionData,
+    mockTransactionDataWithCategory,
     globalEvent,
 
     -- * Test Assertions
@@ -240,12 +241,20 @@ mockTransactionData src tgt srcAmt tgtAmt rate tt =
       status = Completed,
       transactionType = tt,
       date = fixtureTime,
-      mcc = Nothing,
+      category = Nothing,
       labels = mempty,
       contactId = Nothing,
       relations = [],
       amendmentCount = 0
     }
+
+-- | Set the raw provider category signal on a 'TransactionData' fixture.
+-- Lives here (rather than as an inline record update at the call site) because
+-- the @category@ field name collides with 'Web.Types.CategoryAmount.category'
+-- under DuplicateRecordFields; this module has no such collision, so the update
+-- resolves unambiguously to 'TransactionData'.
+mockTransactionDataWithCategory :: Maybe BankProviderCategory -> TransactionData -> TransactionData
+mockTransactionDataWithCategory c td = td {category = c}
 
 -- | Wrap an 'AccountingEvent' as a 'GlobalStreamEvent' on the given stream
 -- @UUID@ at a per-stream 'EventVersion' and global 'SequenceNumber' — the

@@ -33,7 +33,7 @@ module Application.Services.ConfigurationService
     setDefaultExpenseCategory,
     setDefaultAccount,
     setDefaultSubtypeAccounts,
-    setBankingMccExpenseCategoryMap,
+    setBankProviderExpenseCategoryMap,
     addBankConnection,
     renameBankConnection,
     changeBankConnectionCredential,
@@ -85,8 +85,8 @@ import Domain.Account.Commands (ChangeAccountCurrency (..))
 import Domain.Banking.Types
   ( BankConnectionId,
     BankConnectionName,
+    BankProviderCredential (..),
     ExternalAccountId,
-    ProviderCredential (..),
     unBankProviderId,
     unsafeBankConnectionId,
   )
@@ -108,7 +108,7 @@ import Domain.Configuration.Commands
     RenameDictionaryEntry (..),
     SetBankConnectionAccountMap (..),
     SetBankConnectionEnabled (..),
-    SetBankingMccExpenseCategoryMap (..),
+    SetBankProviderExpenseCategoryMap (..),
     SetDefaultAccount (..),
     SetDefaultExpenseCategory (..),
     SetDefaultIncomeCategory (..),
@@ -120,7 +120,6 @@ import Domain.Configuration.Defaults
     IncomeDefaults (other),
     defaultExpenseCategories,
     defaultIncomeCategories,
-    defaultMccExpenseCategoryMap,
     expense,
     expenseCategoryDictKind,
     income,
@@ -129,7 +128,7 @@ import Domain.Configuration.Defaults
 import Domain.Configuration.Dictionary (DictionaryKind (..), EntryRole)
 import Domain.Configuration.Projection
   ( BankConnection (..),
-    BankingConfiguration (connections, mccExpenseCategoryMap),
+    BankingConfiguration (bankProviderExpenseCategoryMap, connections),
     ConfigurationDefaults (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
@@ -137,13 +136,13 @@ import Domain.Core.Types
   ( AccountId,
     AccountRole (..),
     AccountSubtypeKind,
+    BankProviderCategory,
     CategoryId,
     ConfigurationId,
     CreatedBy (..),
     Currency (..),
     DictionaryEntryId,
     EntryName,
-    MCC,
     UserId,
     defaultConfigurationId,
     isRegular,
@@ -166,6 +165,7 @@ import Infrastructure.App
     HasRequestContext (..),
     runDb,
   )
+import Infrastructure.Banking.CategoryDefaults (defaultBankProviderExpenseCategoryMap)
 import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),
     FileImportCapability,
@@ -401,16 +401,17 @@ setDefaultSubtypeAccounts userId mapping = runExceptT $ do
     (SetDefaultSubtypeAccountsConfigurationCommand SetDefaultSubtypeAccounts {subtypeAccounts = mapping})
   lift $ logInfo "Default subtype accounts set successfully"
 
--- | Replace the MCC-to-expense-category map wholesale in the user's configuration.
-setBankingMccExpenseCategoryMap :: UserId -> Map MCC CategoryId -> AppM (Either DomainError ())
-setBankingMccExpenseCategoryMap userId mapping = runExceptT $ do
-  lift $ logInfo $ "Setting banking MCC expense category map for user " <> displayShow userId
+-- | Replace the provider-category-to-expense-category map wholesale in the
+-- user's configuration.
+setBankProviderExpenseCategoryMap :: UserId -> Map BankProviderCategory CategoryId -> AppM (Either DomainError ())
+setBankProviderExpenseCategoryMap userId mapping = runExceptT $ do
+  lift $ logInfo $ "Setting banking provider-category map for user " <> displayShow userId
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
     (unConfigurationId configId)
-    (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {mapping = mapping})
-  lift $ logInfo "Banking MCC expense category map set successfully"
+    (SetBankProviderExpenseCategoryMapConfigurationCommand SetBankProviderExpenseCategoryMap {mapping = mapping})
+  lift $ logInfo "Banking provider-category map set successfully"
 
 -- -----------------------------------------------------------------------------
 -- Bank Connections
@@ -419,21 +420,21 @@ setBankingMccExpenseCategoryMap userId mapping = runExceptT $ do
 -- | Compute the non-secret hint from a decrypted credential: for a
 -- 'StaticSecret', the last (up to) four characters of the plaintext secret,
 -- used so the user can recognise a stored credential.
-secretHintOf :: ProviderCredential -> Text
+secretHintOf :: BankProviderCredential -> Text
 secretHintOf (StaticSecret t) = T.takeEnd 4 t
 
--- | Encode a 'ProviderCredential' to the JSON 'Text' that gets encrypted at
+-- | Encode a 'BankProviderCredential' to the JSON 'Text' that gets encrypted at
 -- rest (via 'encryptSecret'). The persisted 'EncryptedSecret' therefore
 -- carries the credential's tagged JSON, not the credential's shape directly —
 -- see "Domain.Banking.Types" for why this keeps the event schema unchanged.
-encodeCredential :: ProviderCredential -> Text
+encodeCredential :: BankProviderCredential -> Text
 -- 'encodeToLazyText' yields JSON as 'Text' directly — total, no partial UTF-8
 -- decode (unlike 'Data.Text.Encoding.decodeUtf8').
 encodeCredential = TL.toStrict . encodeToLazyText
 
--- | Decode a decrypted credential JSON 'Text' back into a 'ProviderCredential'.
+-- | Decode a decrypted credential JSON 'Text' back into a 'BankProviderCredential'.
 -- Total: a decode failure is reported as 'Left', never a partial function.
-decodeCredential :: Text -> Either Text ProviderCredential
+decodeCredential :: Text -> Either Text BankProviderCredential
 decodeCredential plaintext =
   case eitherDecode (BSL.fromStrict (TE.encodeUtf8 plaintext)) of
     Left err -> Left (T.pack err)
@@ -458,7 +459,7 @@ addBankConnection ::
   BankConnectionName ->
   -- | Provider credential, if any (its JSON encoding is encrypted before it
   -- leaves this function; 'Nothing' for a connection with no credential)
-  Maybe ProviderCredential ->
+  Maybe BankProviderCredential ->
   -- | Whether the connection is enabled for syncing
   Bool ->
   AppM (Either DomainError BankConnectionId)
@@ -507,7 +508,7 @@ renameBankConnection userId connId newName = runExceptT $ do
 --
 -- Rejected with 'BankingError' when the connection's provider has no pull/API
 -- transport: a file-only connection has no credential to change.
-changeBankConnectionCredential :: UserId -> BankConnectionId -> ProviderCredential -> AppM (Either DomainError ())
+changeBankConnectionCredential :: UserId -> BankConnectionId -> BankProviderCredential -> AppM (Either DomainError ())
 changeBankConnectionCredential userId connId cred = runExceptT $ do
   lift $ logInfo $ "Changing bank connection credential for user " <> displayShow userId
   configData <- ExceptT (getConfigurationForUser userId)
@@ -608,9 +609,9 @@ setBankConnectionAccountMap userId connId accountMap = runExceptT $ do
 -- 'BankingError' when the connection has no stored credential (a file-only
 -- connection), a 'BankingError' when decryption fails (a
 -- misconfigured/rotated key ring), and a 'BankingError' when the decrypted
--- plaintext fails to decode as a 'ProviderCredential' (should not happen
+-- plaintext fails to decode as a 'BankProviderCredential' (should not happen
 -- under no-backcompat, but handled totally — no partial functions).
-getDecryptedConnectionCredential :: UserId -> BankConnectionId -> AppM (Either DomainError ProviderCredential)
+getDecryptedConnectionCredential :: UserId -> BankConnectionId -> AppM (Either DomainError BankProviderCredential)
 getDecryptedConnectionCredential userId connId = runExceptT $ do
   configData <- ExceptT (getConfigurationForUser userId)
   conn <-
@@ -870,12 +871,12 @@ seedFresh = do
         Left err -> logWarn $ "Failed to set default expense category: " <> displayShow err
         Right _ -> return ()
 
-      let mccMapCmd =
-            SetBankingMccExpenseCategoryMapConfigurationCommand
-              SetBankingMccExpenseCategoryMap {mapping = defaultMccExpenseCategoryMap}
-      mccResult <- liftIO $ applyConfigurationCommand writer reader id configUuid mccMapCmd
-      case mccResult of
-        Left err -> logWarn $ "Failed to set banking MCC expense category map: " <> displayShow err
+      let bankProviderExpenseCategoryMapCmd =
+            SetBankProviderExpenseCategoryMapConfigurationCommand
+              SetBankProviderExpenseCategoryMap {mapping = defaultBankProviderExpenseCategoryMap}
+      bankProviderCategoryResult <- liftIO $ applyConfigurationCommand writer reader id configUuid bankProviderExpenseCategoryMapCmd
+      case bankProviderCategoryResult of
+        Left err -> logWarn $ "Failed to set banking provider-category map: " <> displayShow err
         Right _ -> return ()
 
       logInfo "Default configuration seeded successfully"
@@ -1035,13 +1036,13 @@ copyBanking newConfigUuidVal srcBanking = do
   writer <- view eventStoreWriterL
   reader <- view eventStoreReaderL
   enricher <- enricherFromContext <$> view requestContextL
-  unless (Map.null srcBanking.mccExpenseCategoryMap) $ do
+  unless (Map.null srcBanking.bankProviderExpenseCategoryMap) $ do
     let cmd =
-          SetBankingMccExpenseCategoryMapConfigurationCommand
-            SetBankingMccExpenseCategoryMap {mapping = srcBanking.mccExpenseCategoryMap}
+          SetBankProviderExpenseCategoryMapConfigurationCommand
+            SetBankProviderExpenseCategoryMap {mapping = srcBanking.bankProviderExpenseCategoryMap}
     copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
     case copyResult of
-      Left err -> logWarn $ "Failed to clone banking.mccExpenseCategoryMap: " <> displayShow err
+      Left err -> logWarn $ "Failed to clone banking.bankProviderExpenseCategoryMap: " <> displayShow err
       Right _ -> return ()
 
   -- Clone bank connections. Each connection is re-emitted with its already

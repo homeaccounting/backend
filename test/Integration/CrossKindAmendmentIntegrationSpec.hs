@@ -122,7 +122,7 @@ seedIncomeWithExtId seed accId amount extId = do
             initiatedBy = seed.seedUserId,
             at = now,
             transactionType = tt,
-            importInfo = Just ImportInfo {externalTransactionIds = unsafeExternalTransactionId extId :| [], mcc = Nothing},
+            importInfo = Just ImportInfo {externalTransactionIds = unsafeExternalTransactionId extId :| [], category = Nothing},
             labels = Set.empty,
             contactId = Nothing,
             relation = Nothing

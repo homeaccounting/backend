@@ -23,17 +23,19 @@ import Application.ReadModels.BankImportReadModel
     isImported,
     isReconciled,
   )
-import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItems)
+import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), dictionaryItems)
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.ReadModels.Transaction as TransactionRM
 import Application.Services.AccountService (createAccount)
 import Application.Services.BankImportService
   ( AccountImportResult (..),
+    CategoryResolution (..),
     ImportOutcome (..),
     ImportResult (..),
     SkipReason (..),
     importMany,
     importTransaction,
+    resolveCategory,
   )
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
@@ -50,12 +52,20 @@ import Domain.Configuration.Defaults
     ExpenseDefaults (..),
     IncomeDefaults (..),
     expense,
+    expenseCategoryDictKind,
     income,
   )
-import Domain.Configuration.Dictionary (EntryRole (ItemRole))
+import Domain.Configuration.Dictionary (DictionaryNode (..), EntryRole (ItemRole))
+import Domain.Configuration.Projection
+  ( BankingConfiguration (bankProviderExpenseCategoryMap),
+    ConfigurationDefaults (..),
+    emptyBankingConfiguration,
+    emptyConfigurationDefaults,
+  )
 import Domain.Core.Types
   ( AccountId,
     AccountType (..),
+    CreatedBy (..),
     Currency (..),
     DictionaryEntryId,
     ExternalTransactionId,
@@ -65,10 +75,15 @@ import Domain.Core.Types
     TransactionType (..),
     UserId,
     defaultBankAccount,
+    mkByLabel,
+    mkByMcc,
     mkMoney,
+    parseMcc,
     unTransactionId,
+    unsafeDictionaryEntryId,
     unsafeEntryName,
     unsafeExternalTransactionId,
+    unsafeMcc,
   )
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
@@ -133,7 +148,7 @@ mockClassify tx =
 -- | The interpretation passed to 'importMany': 'mockClassify' plus the generic
 -- (default) transfer matcher over the default pairing window.
 testInterp :: TransactionInterpretation
-testInterp = TransactionInterpretation mockClassify (defaultTransferMatcher defaultTransferPairingWindow)
+testInterp = TransactionInterpretation mockClassify (defaultTransferMatcher defaultTransferPairingWindow) mempty
 
 -- | Assert an outcome imported a transaction and return its id; fail otherwise.
 expectImported :: ImportOutcome -> IO TransactionId
@@ -144,10 +159,17 @@ expectImported other = expectationFailure ("expected Imported, got " <> show oth
 mkTestTransaction :: Rational -> Text -> BankTransaction
 mkTestTransaction = mkTestTransactionWithAccount' "mono-acc-1"
 
--- | Create a bank transaction for testing with a specific MCC.
+-- | Create a bank transaction for testing with a specific MCC (as a 'ByMcc'
+-- provider category).
 mkTestTransactionWithMcc :: Rational -> Text -> Text -> BankTransaction
 mkTestTransactionWithMcc amount extId mcc =
-  (mkTestTransactionWithAccount' "mono-acc-1" amount extId) {mcc = Just mcc}
+  (mkTestTransactionWithAccount' "mono-acc-1" amount extId) {category = mkByMcc <$> parseMcc mcc}
+
+-- | Create a bank transaction for testing with a specific 'ByLabel' provider
+-- category.
+mkTestTransactionWithLabel :: Rational -> Text -> Text -> BankTransaction
+mkTestTransactionWithLabel amount extId label =
+  (mkTestTransactionWithAccount' "mono-acc-1" amount extId) {category = mkByLabel label}
 
 -- | Create a bank transaction with a specific account ID for testing.
 mkTestTransactionWithAccount :: Rational -> Text -> Text -> BankTransaction
@@ -167,10 +189,9 @@ mkTestTransactionWithDescription amount extId desc =
       currencyCode = 840, -- USD, matching setupContactTestEnv's bank account currency
       description = desc,
       hold = False,
-      mcc = Nothing,
+      category = Nothing,
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }
 
 mkTestTransactionWithAccount' :: Text -> Rational -> Text -> BankTransaction
@@ -183,10 +204,9 @@ mkTestTransactionWithAccount' acctId amount extId =
       currencyCode = 980, -- UAH
       description = "Test transaction",
       hold = False,
-      mcc = Nothing,
+      category = Nothing,
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }
 
 -- | Create a hold bank transaction for testing. Amount is in major units.
@@ -200,10 +220,9 @@ mkHoldTransaction amount extId =
       currencyCode = 980,
       description = "Hold transaction",
       hold = True,
-      mcc = Nothing,
+      category = Nothing,
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }
 
 -- -----------------------------------------------------------------------------
@@ -321,10 +340,9 @@ mkLeg acctId amount extId desc t =
       currencyCode = 980,
       description = desc,
       hold = False,
-      mcc = Nothing,
+      category = Nothing,
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }
 
 -- | External account id of an 'AccountImportResult'. Extracted via constructor
@@ -443,6 +461,41 @@ seedManualTransfer env source target amt date = do
 
 spec :: Spec
 spec = describe "BankImportService" $ do
+  describe "resolveCategory (unit)" $ do
+    let mkCfg dicts bankingCfg defaultExpense =
+          ConfigurationData
+            { baseCurrency = UAH,
+              defaultCurrency = UAH,
+              dictionaries = dicts,
+              banking = bankingCfg,
+              defaults = emptyConfigurationDefaults {expenseCategory = Just defaultExpense},
+              booksClosedThrough = Nothing,
+              createdBy = System,
+              version = 0
+            }
+        expenseDict items =
+          Map.singleton expenseCategoryDictKind (DictionaryData [ItemNode i (unsafeEntryName "cat") | i <- items])
+        code = mkByMcc (unsafeMcc 5411)
+        otherItem = expense.other.entryId
+        groceriesItem = expense.groceries.entryId
+
+    it "returns the mapped category when the hit is an assignable dictionary item" $ do
+      let bankingCfg = emptyBankingConfiguration {bankProviderExpenseCategoryMap = Map.singleton code groceriesItem}
+          cfg = mkCfg (expenseDict [groceriesItem, otherItem]) bankingCfg otherItem
+      resolveCategory bankingCfg cfg ClassifiedExpense (Just code)
+        `shouldBe` Right (groceriesItem, MapHit code)
+
+    it "falls back to the direction default when the map hit targets a category absent from the dictionary" $ do
+      -- The map value passed command-level validation (it is in the dictionary
+      -- as some entry), but the resolver only accepts assignable *item*
+      -- categories; an id not among the dictionary items is rejected and the
+      -- direction default wins.
+      let bogus = unsafeDictionaryEntryId UUID.nil
+          bankingCfg = emptyBankingConfiguration {bankProviderExpenseCategoryMap = Map.singleton code bogus}
+          cfg = mkCfg (expenseDict [otherItem]) bankingCfg otherItem
+      resolveCategory bankingCfg cfg ClassifiedExpense (Just code)
+        `shouldBe` Right (otherItem, DefaultFallback (Just code))
+
   describe "importTransaction" $ do
     it "imports hold transactions like settled ones (Mono leaves some accounts stuck on hold)" $ do
       (env, bankAccId) <- setupTestEnv
@@ -771,10 +824,27 @@ spec = describe "BankImportService" $ do
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
       txData.transactionType `shouldBe` singletonExpense expense.groceries.entryId (fromRight' (mkMoney UAH 50))
-      -- The original MCC is retained on the imported transaction.
-      txData.mcc `shouldBe` Just "5411"
+      -- The original provider category is retained on the imported transaction.
+      txData.category `shouldBe` Just (mkByMcc (unsafeMcc 5411))
 
-    it "falls back to defaultExpenseCategory when MCC is not in the map" $ do
+    it "maps a known ByLabel provider category to the configured category id" $ do
+      -- The PrivatBank label "Дім та ремонт" → expense.household is baked into
+      -- the seeded provider-category map.
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      let tx = mkTestTransactionWithLabel (-50) "tx-label-household" "Дім та ремонт"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      txId <- expectImported result
+
+      maybeTxData <- runDbIn env (TransactionRM.getTransaction txId)
+      txData <- case maybeTxData of
+        Just d -> pure d
+        Nothing -> expectationFailure "transaction not found" >> error "unreachable"
+      txData.transactionType `shouldBe` singletonExpense expense.household.entryId (fromRight' (mkMoney UAH 50))
+      txData.category `shouldBe` mkByLabel "Дім та ремонт"
+
+    it "falls back to defaultExpenseCategory when the provider category is unmapped" $ do
       -- MCC "9999" is not in the default MCC map → falls back to expense.other
       (env, bankAccId) <- setupTestEnv
       let accountLink :: [(ExternalAccountId, AccountId)]
@@ -803,8 +873,8 @@ spec = describe "BankImportService" $ do
         Just d -> pure d
         Nothing -> expectationFailure "transaction not found" >> error "unreachable"
       txData.transactionType `shouldBe` singletonExpense expense.other.entryId (fromRight' (mkMoney UAH 50))
-      -- A transaction with no MCC records no MCC.
-      txData.mcc `shouldBe` Nothing
+      -- A transaction with no provider category records none.
+      txData.category `shouldBe` Nothing
 
     it "records BankingError in AccountImportResult.failed when no expense default is configured" $ do
       -- Seed a configuration without defaultExpenseCategory set, then import
@@ -1325,7 +1395,7 @@ mkInitiatedEventWithIds txId mExtIds seqNo =
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = testTime,
                   transactionType = Transfer,
-                  importInfo = fmap (\es -> ImportInfo {externalTransactionIds = es, mcc = Nothing}) mExtIds,
+                  importInfo = fmap (\es -> ImportInfo {externalTransactionIds = es, category = Nothing}) mExtIds,
                   labels = Set.empty,
                   contactId = Nothing
                 }
@@ -1349,7 +1419,7 @@ storeInitiatedEvent env txId extId =
               by = mockUserId (UUID.fromWords 9 0 0 0),
               at = testTime,
               transactionType = Transfer,
-              importInfo = Just ImportInfo {externalTransactionIds = extId :| [], mcc = Nothing},
+              importInfo = Just ImportInfo {externalTransactionIds = extId :| [], category = Nothing},
               labels = Set.empty,
               contactId = Nothing
             }
@@ -1374,7 +1444,7 @@ mkReconciledEvent txId extIds seqNo =
               TransactionImportReconciled
                 { transactionId = txId,
                   externalTransactionIds = extIds,
-                  mcc = Nothing
+                  category = Nothing
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransactionImportReconciled") inner

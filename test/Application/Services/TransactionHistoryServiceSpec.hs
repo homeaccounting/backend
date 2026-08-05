@@ -165,7 +165,7 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
             ReconcileTransactionImport
               { transactionId = txId,
                 externalTransactionIds = unsafeExternalTransactionId "audit-mono-1" :| [],
-                mcc = Nothing
+                category = Nothing
               }
         )
     case reconcileResult of

@@ -4,6 +4,7 @@
 
 module Infrastructure.Banking.PrivatBank
   ( descriptor,
+    labelExpenseCategories,
     ownCardCounterpartLast4,
     privatBankInterpretation,
     privatBankTransferMatcher,
@@ -14,6 +15,8 @@ import qualified Data.Map.Strict as Map
 import Data.Time (NominalDiffTime)
 import Domain.Banking.Types (unExternalAccountId)
 import qualified Domain.Banking.Types as Domain
+import Domain.Configuration.Defaults (DefaultEntry (entryId), ExpenseDefaults (..), expense)
+import Domain.Core.Types (CategoryId)
 import Infrastructure.Banking.PrivatBank.Internal (parsePrivatBankCsv)
 import Infrastructure.Banking.Provider
 import RIO
@@ -66,4 +69,39 @@ privatBankTransferMatcher window =
 
 privatBankInterpretation :: TransactionInterpretation
 privatBankInterpretation =
-  TransactionInterpretation defaultClassify (privatBankTransferMatcher defaultTransferPairingWindow)
+  TransactionInterpretation
+    { classify = defaultClassify,
+      transferMatcher = privatBankTransferMatcher defaultTransferPairingWindow,
+      labelExpenseCategories = labelExpenseCategories
+    }
+
+-- | PrivatBank's default mapping from its Ukrainian statement category labels
+-- to expense category ids (spec §7). This is the single source of truth for the
+-- provider's label defaults: it is both baked into a user's category map at
+-- configuration-seed time (via 'Infrastructure.Banking.CategoryDefaults') and
+-- exposed on the descriptor's 'TransactionInterpretation'. Only
+-- expense-meaningful labels are mapped; transfer/income/cash-withdrawal labels
+-- are omitted and fall through to the direction default at resolution time.
+labelExpenseCategories :: Map Text CategoryId
+labelExpenseCategories =
+  Map.fromList
+    [ ("Дім та ремонт", expense.household.entryId),
+      ("Побутова техніка", expense.household.entryId),
+      ("Комуналка та Інтернет", expense.utilities.entryId),
+      ("Поповнення мобільного", expense.utilities.entryId),
+      ("Супермаркети та продукти", expense.groceries.entryId),
+      ("Ресторани, кафе, бари", expense.dining.entryId),
+      ("Розваги", expense.entertainment.entryId),
+      ("Кіно", expense.entertainment.entryId),
+      ("Авто", expense.transport.entryId),
+      ("Медичні послуги", expense.health.entryId),
+      ("Краса", expense.beauty.entryId),
+      ("Одяг та взуття", expense.clothing.entryId),
+      ("Цифрові товари", expense.electronics.entryId),
+      ("Інтернет-магазини", expense.shopping.entryId),
+      ("Квіти", expense.gifts.entryId),
+      ("Освіта", expense.education.entryId),
+      ("Страхування", expense.insurance.entryId),
+      ("Платежі до бюджету", expense.taxesFees.entryId),
+      ("Інше", expense.other.entryId)
+    ]

@@ -1,0 +1,9 @@
+{
+  "tag": "BankProviderExpenseCategoryMapSet",
+  "contents": {
+    "mapping": {
+      "mcc:0742": "00000000-0000-0001-0000-000000000000",
+      "label:eating_out": "00000000-0000-0002-0000-000000000000"
+    }
+  }
+}

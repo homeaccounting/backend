@@ -52,7 +52,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ExternalTransactionId, ImportInfo, LabelId, MCC, Money, RelationKind, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, BankProviderCategory, ContactId, ExchangeRate, ExternalTransactionId, ImportInfo, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -433,8 +433,9 @@ data TransactionImportReconciled = TransactionImportReconciled
     -- | The external id(s) now attributed to this transaction (one for a plain
     -- income/expense reconcile; both legs for a transfer reconcile).
     externalTransactionIds :: NonEmpty ExternalTransactionId,
-    -- | Provider MCC, if any (only some providers supply one).
-    mcc :: Maybe MCC
+    -- | Provider category, if any (an MCC or a provider text label; only some
+    -- providers supply one).
+    category :: Maybe BankProviderCategory
   }
   deriving (Show, Eq)
 

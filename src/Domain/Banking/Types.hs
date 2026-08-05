@@ -30,7 +30,7 @@ module Domain.Banking.Types
     unExternalAccountId,
 
     -- * Banking Value Types
-    ProviderCredential (..),
+    BankProviderCredential (..),
     BankConnectionName,
   )
 where
@@ -164,7 +164,7 @@ instance FromJSONKey ExternalAccountId where
 -- JSON is explicitly tagged (@{"kind":"static","secret":"…"}@) rather than
 -- derived, so adding a future variant is purely additive to the plaintext
 -- format and never disturbs 'StaticSecret'\'s own encoding.
-data ProviderCredential
+data BankProviderCredential
   = -- | A single opaque static secret (e.g. a Monobank personal API token),
     -- used verbatim as the provider's bearer credential.
     StaticSecret Text
@@ -175,16 +175,16 @@ data ProviderCredential
   --   UTCTime, scopes :: [Text] }
   deriving (Show, Eq, Generic)
 
-instance ToJSON ProviderCredential where
+instance ToJSON BankProviderCredential where
   toJSON (StaticSecret secret) =
     object ["kind" .= ("static" :: Text), "secret" .= secret]
 
-instance FromJSON ProviderCredential where
-  parseJSON = withObject "ProviderCredential" $ \o -> do
+instance FromJSON BankProviderCredential where
+  parseJSON = withObject "BankProviderCredential" $ \o -> do
     kind <- o .: "kind"
     case (kind :: Text) of
       "static" -> StaticSecret <$> o .: "secret"
-      other -> fail ("Unknown ProviderCredential kind: " <> T.unpack other)
+      other -> fail ("Unknown BankProviderCredential kind: " <> T.unpack other)
 
 -- | A bank connection's user-facing display name.
 type BankConnectionName = Text

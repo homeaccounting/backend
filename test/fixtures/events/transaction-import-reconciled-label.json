@@ -2,7 +2,7 @@
   "tag": "TransactionImportReconciled",
   "contents": {
     "transactionId": "00000000-0000-0000-0000-000100000000",
-    "externalTransactionIds": ["mono-abc123"],
-    "category": { "kind": "mcc", "value": "5411" }
+    "externalTransactionIds": ["privat-xyz789"],
+    "category": { "kind": "label", "value": "eating_out" }
   }
 }

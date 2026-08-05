@@ -26,7 +26,7 @@ module Domain.Configuration.Commands
     SetDefaultExpenseCategory (..),
     SetDefaultAccount (..),
     SetDefaultSubtypeAccounts (..),
-    SetBankingMccExpenseCategoryMap (..),
+    SetBankProviderExpenseCategoryMap (..),
     CloseBooksThrough (..),
     AddBankConnection (..),
     RenameBankConnection (..),
@@ -51,12 +51,12 @@ import Domain.Configuration.Dictionary (DictionaryKind, EntryRole)
 import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
+    BankProviderCategory,
     CategoryId,
     CreatedBy,
     Currency,
     DictionaryEntryId,
     EntryName,
-    MCC,
   )
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import Language.Haskell.TH (Name)
@@ -82,7 +82,7 @@ configurationCommands =
     ''SetDefaultExpenseCategory,
     ''SetDefaultAccount,
     ''SetDefaultSubtypeAccounts,
-    ''SetBankingMccExpenseCategoryMap,
+    ''SetBankProviderExpenseCategoryMap,
     ''CloseBooksThrough,
     ''AddBankConnection,
     ''RenameBankConnection,
@@ -211,9 +211,11 @@ newtype SetDefaultSubtypeAccounts = SetDefaultSubtypeAccounts
   }
   deriving (Show, Eq)
 
--- | Command to replace the banking MCC -> expense category map wholesale.
-data SetBankingMccExpenseCategoryMap = SetBankingMccExpenseCategoryMap
-  { mapping :: Map MCC CategoryId
+-- | Command to replace the banking provider-category -> expense category map
+-- wholesale. Keys are 'BankProviderCategory' values (an MCC or a provider text
+-- label); values are expense category ids.
+data SetBankProviderExpenseCategoryMap = SetBankProviderExpenseCategoryMap
+  { mapping :: Map BankProviderCategory CategoryId
   }
   deriving (Show, Eq)
 
@@ -336,7 +338,7 @@ deriveJSON defaultOptions ''SetDefaultIncomeCategory
 deriveJSON defaultOptions ''SetDefaultExpenseCategory
 deriveJSON defaultOptions ''SetDefaultAccount
 deriveJSON defaultOptions ''SetDefaultSubtypeAccounts
-deriveJSON defaultOptions ''SetBankingMccExpenseCategoryMap
+deriveJSON defaultOptions ''SetBankProviderExpenseCategoryMap
 deriveJSON defaultOptions ''CloseBooksThrough
 deriveJSON defaultOptions ''AddBankConnection
 deriveJSON defaultOptions ''RenameBankConnection

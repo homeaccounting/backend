@@ -14,17 +14,33 @@
 -- response) is covered by 'Web.API.TransactionAllocationsAPISpec'.
 module Web.TypesSpec (spec) where
 
-import Data.Aeson (object, (.=))
+import Data.Aeson (Value (Null, Object), object, (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.UUID as UUID
+import Domain.Core.Types
+  ( Currency (USD),
+    TransactionType (Transfer),
+    mkByLabel,
+    mkByMcc,
+    unsafeMcc,
+    unsafeMoney,
+  )
 import RIO
 import Test.Hspec
+import Testkit.Helpers
+  ( mockAccountId,
+    mockTransactionData,
+    mockTransactionDataWithCategory,
+    mockTransactionId,
+  )
 import Web.Types
   ( CategoryAmount (..),
     IncomeRequest (..),
     TransactionRelation (..),
     TransactionRelationsResponse (..),
+    fromTransactionData,
   )
 
 spec :: Spec
@@ -102,6 +118,39 @@ spec = do
           fmap (.relatedTransactionId) req.relation
             `shouldBe` UUID.fromString "00000002-0000-0000-0000-000000000000"
           fmap (.relationKind) req.relation `shouldBe` Just "associated"
+
+  describe "TransactionResponse bankProviderCategory JSON" $ do
+    let txId = mockTransactionId (UUID.fromWords 1 0 0 0)
+        acc = mockAccountId (UUID.fromWords 2 0 0 0)
+        amt = unsafeMoney USD 100
+        baseTd = mockTransactionData acc acc amt amt Nothing Transfer
+        -- Encode a response, then pull out just the @bankProviderCategory@ field.
+        bankProviderCategoryField td =
+          case Aeson.toJSON (fromTransactionData txId td) of
+            Object o -> KeyMap.lookup "bankProviderCategory" o
+            _ -> Nothing
+
+    it "surfaces an MCC-based category as a tagged object" $ do
+      let td = mockTransactionDataWithCategory (Just (mkByMcc (unsafeMcc 5411))) baseTd
+      bankProviderCategoryField td
+        `shouldBe` Just
+          (object ["kind" .= ("mcc" :: Text), "value" .= ("5411" :: Text)])
+
+    it "zero-pads a short MCC to four digits" $ do
+      let td = mockTransactionDataWithCategory (Just (mkByMcc (unsafeMcc 742))) baseTd
+      bankProviderCategoryField td
+        `shouldBe` Just
+          (object ["kind" .= ("mcc" :: Text), "value" .= ("0742" :: Text)])
+
+    it "surfaces a label-based category as a tagged object" $ do
+      let td = mockTransactionDataWithCategory (mkByLabel "eating_out") baseTd
+      bankProviderCategoryField td
+        `shouldBe` Just
+          (object ["kind" .= ("label" :: Text), "value" .= ("eating_out" :: Text)])
+
+    it "encodes an absent category as null" $ do
+      let td = mockTransactionDataWithCategory Nothing baseTd
+      bankProviderCategoryField td `shouldBe` Just Null
 
   describe "CategoryAmount JSON" $ do
     it "decodes without comment field (backward-compatible)" $ do

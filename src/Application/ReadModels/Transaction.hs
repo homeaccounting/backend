@@ -99,11 +99,11 @@ import Domain.Core.Range (Range (..))
 import Domain.Core.Types
   ( AccountId,
     Allocation (..),
+    BankProviderCategory,
     ContactId,
     DictionaryEntryId,
     ExchangeRate,
     LabelId,
-    MCC,
     Money,
     RelationKind (..),
     TransactionId,
@@ -111,9 +111,11 @@ import Domain.Core.Types
     TransactionType,
     allAllocations,
     allocationsOf,
-    importInfoMcc,
+    importInfoCategory,
     kindOf,
     mkTransactionIdSafe,
+    parseBankProviderCategoryKey,
+    renderBankProviderCategoryKey,
     replaceAllocations,
   )
 -- Event record types imported with @(..)@ so their field labels are in scope —
@@ -162,9 +164,10 @@ data TransactionData = TransactionData
     status :: TransactionStatus,
     transactionType :: TransactionType,
     date :: UTCTime,
-    -- | Original provider MCC for imported transactions; 'Nothing' for manual
-    -- entries and providers that supply no MCC.
-    mcc :: Maybe MCC,
+    -- | Original provider category (MCC or provider text label) for imported
+    -- transactions; 'Nothing' for manual entries and providers that supply no
+    -- category.
+    category :: Maybe BankProviderCategory,
     labels :: Set LabelId,
     -- | Optional contact (payee/payer) associated with this transaction.
     -- 'Nothing' when no contact is set.
@@ -237,7 +240,7 @@ TransactionEntity sql=transactions
     failureReason Text Maybe
     transactionType TransactionType
     date UTCTime
-    mcc Text Maybe
+    bankProviderCategory Text Maybe
     contactId DictionaryEntryId Maybe
     amendmentCount Int
     version EventVersion
@@ -327,7 +330,7 @@ applyTransactionEvent globalEvent =
                     transactionEntityFailureReason = Nothing,
                     transactionEntityTransactionType = evt.transactionType,
                     transactionEntityDate = evt.at,
-                    transactionEntityMcc = evt.importInfo >>= importInfoMcc,
+                    transactionEntityBankProviderCategory = renderBankProviderCategoryKey <$> (evt.importInfo >>= importInfoCategory),
                     transactionEntityContactId = evt.contactId,
                     transactionEntityAmendmentCount = 0,
                     transactionEntityVersion = ver
@@ -351,14 +354,15 @@ applyTransactionEvent globalEvent =
           TransactionDateChangedEvent evt ->
             modifyTx txId (\e -> e {transactionEntityDate = evt.newAt, transactionEntityVersion = ver})
           TransactionImportReconciledEvent evt ->
-            -- Destructure the constructor rather than @evt.mcc@: the bare field
-            -- @mcc@ is shared across records ('ImportInfo', 'TransactionData',
-            -- this event) so dot-access is ambiguous under 'DuplicateRecordFields'.
-            -- Non-clobber: keep the existing row @mcc@ when the event carries none.
-            let TransactionImportReconciled {mcc = evtMcc} = evt
+            -- Destructure the constructor rather than @evt.category@: the bare
+            -- field @category@ is shared across records ('ImportInfo',
+            -- 'TransactionData', this event) so dot-access is ambiguous under
+            -- 'DuplicateRecordFields'. Non-clobber: keep the existing row
+            -- category when the event carries none.
+            let TransactionImportReconciled {category = evtCategory} = evt
              in modifyTx txId $ \e ->
                   e
-                    { transactionEntityMcc = evtMcc <|> e.transactionEntityMcc,
+                    { transactionEntityBankProviderCategory = (renderBankProviderCategoryKey <$> evtCategory) <|> e.transactionEntityBankProviderCategory,
                       transactionEntityVersion = ver
                     }
           TransactionAmendmentCompletedEvent evt ->
@@ -423,7 +427,7 @@ entToData e ls rels =
       status = statusFromKind e.transactionEntityStatusKind e.transactionEntityFailureReason,
       transactionType = e.transactionEntityTransactionType,
       date = e.transactionEntityDate,
-      mcc = e.transactionEntityMcc,
+      category = e.transactionEntityBankProviderCategory >>= parseBankProviderCategoryKey,
       labels = Set.fromList ls,
       contactId = e.transactionEntityContactId,
       relations = rels,

@@ -31,7 +31,7 @@
 --   - Account mapping via a caller-supplied [(ExternalAccountId, AccountId)] list
 --   - Currency conversion from numeric codes
 --   - Transaction classification (income/expense)
---   - MCC→CategoryId resolution from per-user banking configuration
+--   - BankProviderCategory→CategoryId resolution from per-user banking configuration
 --   - Transfer command creation and delegation to TransactionService
 --
 -- The 'hold' flag on incoming transactions is intentionally ignored — see
@@ -45,6 +45,10 @@ module Application.Services.BankImportService
     ImportOutcome (..),
     SkipReason (..),
     renderSkipReason,
+
+    -- * Category resolution (exposed for unit testing)
+    resolveCategory,
+    CategoryResolution (..),
   )
 where
 
@@ -81,12 +85,12 @@ import Domain.Configuration.Projection (BankingConfiguration (..), Configuration
 import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
+    BankProviderCategory,
     CategoryId,
     ContactId,
     Currency,
     ExternalTransactionId,
     ImportInfo (..),
-    MCC,
     Money,
     TransactionId,
     TransactionKind (..),
@@ -99,6 +103,7 @@ import Domain.Core.Types
     mkIncomeAllocations,
     mkMoney,
     moneyCurrency,
+    renderBankProviderCategoryKey,
     unEntryName,
     unMoney,
   )
@@ -437,7 +442,7 @@ postInternalTransfer userId dLocal cLocal dLeg cLeg =
                   Just
                     ImportInfo
                       { externalTransactionIds = dLeg.externalId :| [cLeg.externalId],
-                        mcc = Nothing
+                        category = Nothing
                       },
                 labels = Set.empty,
                 contactId = Nothing,
@@ -538,44 +543,59 @@ groupAccountResults entries =
 -- | How the resolver arrived at its 'CategoryId'.
 --
 -- Exposed alongside the resolved id so the caller can log the provenance
--- (MCC hit vs fallback) without re-deriving it.
+-- (provider-category map hit vs fallback) without re-deriving it.
 data CategoryResolution
-  = -- | An MCC present on the transaction matched the user's MCC map.
-    MccHit !MCC
+  = -- | The transaction's provider category matched the user's category map.
+    MapHit !BankProviderCategory
   | -- | Fell back to the direction-appropriate default category. Carries
-    --   the transaction's MCC (if any) so the caller can spot unmapped
-    --   MCCs worth adding to the map.
-    DefaultFallback !(Maybe MCC)
+    --   the transaction's provider category (if any) so the caller can spot
+    --   unmapped categories worth adding to the map.
+    DefaultFallback !(Maybe BankProviderCategory)
   deriving (Show, Eq)
 
 -- | Resolve the category for a transaction from the user's banking configuration.
 --
+-- The provider-category → category matching is EXPENSE-ONLY: only
+-- 'ClassifiedExpense' transactions consult 'bankProviderExpenseCategoryMap'. Income
+-- never performs this matching — an income transaction (even one carrying a
+-- provider category on its 'ImportInfo', e.g. @ByLabel "Зарахування"@) resolves
+-- straight to the income default. This mirrors the map's name and the seed data:
+-- provider label defaults cover only expense labels (income labels are omitted).
+--
+-- Resolution is otherwise a SINGLE lookup: provider label defaults are baked
+-- into the user's 'bankProviderExpenseCategoryMap' at configuration-seed time, so
+-- the resolver needs only the transaction's own provider category.
+--
 -- Resolution order:
---   1. For expenses: look up tx.mcc in mccExpenseCategoryMap; verify the hit
---      exists in the expense dictionary. Income always skips the MCC map.
---   2. Fall back to the direction-appropriate banking default category.
+--   1. Expenses only: look up tx.category in 'bankProviderExpenseCategoryMap' and
+--      verify the hit is an assignable item in the expense dictionary.
+--   2. Fall back to the direction-appropriate banking default category — this is
+--      the ONLY path for income, an unmapped/absent category, or a hit whose
+--      target is not in the dictionary.
 --   3. If no default is configured, return a 'BankingError'.
 resolveCategory ::
   BankingConfiguration ->
   ConfigurationData ->
   TransactionClassification ->
-  Maybe MCC ->
+  Maybe BankProviderCategory ->
   Either DomainError (CategoryId, CategoryResolution)
-resolveCategory banking cfg direction maybeMcc =
+resolveCategory banking cfg direction maybeCategory =
   let ConfigurationDefaults {incomeCategory = mIncomeDefault, expenseCategory = mExpenseDefault} = cfg.defaults
       (dictKind, deflt) = case direction of
         ClassifiedIncome -> (incomeCategoryDictKind, mIncomeDefault)
         ClassifiedExpense -> (expenseCategoryDictKind, mExpenseDefault)
       dictItemIds =
         maybe Set.empty dictionaryItemIds (Map.lookup dictKind cfg.dictionaries)
-      mccHit = case direction of
-        ClassifiedExpense -> maybeMcc >>= \m -> (m,) <$> Map.lookup m banking.mccExpenseCategoryMap
+      -- EXPENSE-ONLY: income deliberately never consults the map (it stays
+      -- 'Nothing' here) and falls through to the income default below.
+      mapHit = case direction of
+        ClassifiedExpense -> maybeCategory >>= \pc -> (pc,) <$> Map.lookup pc banking.bankProviderExpenseCategoryMap
         ClassifiedIncome -> Nothing
       existsInDict eid = Set.member eid dictItemIds
-   in case mccHit of
-        Just (mcc, eid) | existsInDict eid -> Right (eid, MccHit mcc)
+   in case mapHit of
+        Just (pc, eid) | existsInDict eid -> Right (eid, MapHit pc)
         _ -> case deflt of
-          Just eid -> Right (eid, DefaultFallback maybeMcc)
+          Just eid -> Right (eid, DefaultFallback maybeCategory)
           Nothing ->
             Left
               $ BankingError
@@ -679,12 +699,12 @@ logContactResolution tx resolution =
       NoContactMatch -> "NoContactMatch"
 
 -- | Emit a grep-friendly structured log line recording how a bank transaction
---   was categorised: its MCC, the resolution path (MCC hit vs default
---   fallback), the resolved category id and its dictionary name.
+--   was categorised: its provider category, the resolution path (map hit vs
+--   default fallback), the resolved category id and its dictionary name.
 --
--- Lets an operator grep for @resolution=DefaultFallback:unmapped-mcc@ to
--- surface MCCs worth adding to the user's map, or for a specific @mcc=…@
--- to audit individual decisions.
+-- Lets an operator grep for @resolution=DefaultFallback:unmapped-category@ to
+-- surface provider categories worth adding to the user's map, or for a specific
+-- @category=…@ to audit individual decisions.
 logCategoryResolution ::
   BankTransaction ->
   TransactionClassification ->
@@ -696,11 +716,11 @@ logCategoryResolution tx direction cfg categoryId resolution =
   logInfo
     $ "Category resolved tx="
     <> display tx.externalId
-    <> " mcc="
-    <> display mccField
+    <> " category="
+    <> display categoryField
     <> " resolution="
     <> display resolutionTag
-    <> " category="
+    <> " resolvedCategory="
     <> display categoryName
     <> " merchant="
     <> display tx.description
@@ -714,13 +734,13 @@ logCategoryResolution tx direction cfg categoryId resolution =
         >>= (lookup categoryId . dictionaryItems)
     resolutionTag :: Text
     resolutionTag = case resolution of
-      MccHit _ -> "MccHit"
-      DefaultFallback (Just _) -> "DefaultFallback:unmapped-mcc"
-      DefaultFallback Nothing -> "DefaultFallback:no-mcc"
-    mccField :: Text
-    mccField = case resolution of
-      MccHit m -> m
-      DefaultFallback (Just m) -> m
+      MapHit _ -> "MapHit"
+      DefaultFallback (Just _) -> "DefaultFallback:unmapped-category"
+      DefaultFallback Nothing -> "DefaultFallback:no-category"
+    categoryField :: Text
+    categoryField = case resolution of
+      MapHit pc -> renderBankProviderCategoryKey pc
+      DefaultFallback (Just pc) -> renderBankProviderCategoryKey pc
       DefaultFallback Nothing -> "none"
 
 -- | Core import logic for a single bank transaction.
@@ -852,7 +872,7 @@ commitImport classify userId userData localAccId tx money = do
           importedLeg = Leg (unMoney money) (moneyCurrency money) tx.time
       candidates <- lift $ runDb (findReconciliationCandidates localAccId legSide money kind fromT toT)
       result <-
-        lift $ attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.mcc
+        lift $ attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.category
       case result of
         ReconciledOnto tid -> pure (Imported tid)
         ReconcileAmbiguous -> pure (Skipped AmbiguousReconciliation)
@@ -890,9 +910,9 @@ attemptReconcile ::
   [(TransactionId, TransactionData)] ->
   (TransactionData -> Leg Currency) ->
   NonEmpty ExternalTransactionId ->
-  Maybe MCC ->
+  Maybe BankProviderCategory ->
   AppM ReconcileResult
-attemptReconcile userId label importedLeg candidates projectLeg extIds mcc = do
+attemptReconcile userId label importedLeg candidates projectLeg extIds category = do
   fresh <- filterM (\(tid, _) -> not <$> runDb (isReconciled tid)) candidates
   case reconcile reconciliationWindow importedLeg [(tid, projectLeg td) | (tid, td) <- fresh] of
     NoMatch -> pure ReconcileNoMatch
@@ -900,7 +920,7 @@ attemptReconcile userId label importedLeg candidates projectLeg extIds mcc = do
       logInfo $ "Ambiguous reconciliation for import " <> display label <> " (" <> displayShow (length tids) <> " candidates); skipping"
       pure ReconcileAmbiguous
     UniqueMatch tid -> do
-      reconResult <- TransactionService.reconcileTransactionImport userId tid extIds mcc
+      reconResult <- TransactionService.reconcileTransactionImport userId tid extIds category
       case reconResult of
         Right _ -> do
           logInfo $ "Reconciled import " <> display label <> " onto manual tx " <> displayShow tid
@@ -929,7 +949,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
         logWarn $ "Failed to load configuration for user " <> displayShow userId <> ": " <> displayShow err
         pure (Left err)
       Right c -> pure (Right c)
-  (categoryId, resolution) <- case resolveCategory cfg.banking cfg direction tx.mcc of
+  (categoryId, resolution) <- case resolveCategory cfg.banking cfg direction tx.category of
     Left err -> do
       lift $ logWarn $ "Category resolution failed for tx " <> display tx.externalId <> ": " <> displayShow err
       throwE err
@@ -1006,7 +1026,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
             Just
               ImportInfo
                 { externalTransactionIds = bankTx.externalId :| [],
-                  mcc = bankTx.mcc
+                  category = bankTx.category
                 },
           labels = Set.empty,
           contactId = case contactResolution of

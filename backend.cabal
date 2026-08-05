@@ -116,6 +116,7 @@ library
       Infrastructure.Auth.OAuth
       Infrastructure.Auth.Password
       Infrastructure.Auth.Telegram
+      Infrastructure.Banking.CategoryDefaults
       Infrastructure.Banking.Provider
       Infrastructure.Banking.Providers
       Infrastructure.Banking.Registry
@@ -433,6 +434,7 @@ test-suite backend-test
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
+      Infrastructure.Banking.CategoryDefaultsSpec
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.PrivatBankSpec
       Infrastructure.Banking.PrivatBankTransferSpec

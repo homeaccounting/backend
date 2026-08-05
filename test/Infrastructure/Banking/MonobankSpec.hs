@@ -7,7 +7,7 @@ import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
-import Domain.Core.Types (unsafeExternalTransactionId)
+import Domain.Core.Types (mkByMcc, parseMcc, unsafeExternalTransactionId)
 import Infrastructure.Banking.Monobank (descriptor)
 import Infrastructure.Banking.Monobank.Internal
   ( MonoAccount (..),
@@ -64,7 +64,17 @@ spec = describe "Monobank Provider" $ do
         Right stmt ->
           case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
-            Right tx -> tx.mcc `shouldBe` Nothing
+            Right tx -> tx.category `shouldBe` Nothing
+
+    it "carries a non-zero MCC as a ByMcc provider category" $ do
+      let body :: BSL.ByteString
+          body = "{\"id\":\"tx-mcc\",\"time\":1700000000,\"description\":\"shop\",\"mcc\":5411,\"amount\":-100,\"operationAmount\":-100,\"currencyCode\":980,\"hold\":false,\"comment\":\"n/a\"}"
+      case eitherDecode body :: Either String MonoStatement of
+        Left err -> expectationFailure ("decode failed: " <> err)
+        Right stmt ->
+          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+            Left err -> expectationFailure ("adapter rejected statement: " <> show err)
+            Right tx -> tx.category `shouldBe` (mkByMcc <$> parseMcc "5411")
 
     it "handles missing 'comment' field" $ do
       -- Key is entirely absent (not `\"comment\": null`).
@@ -124,8 +134,7 @@ mkTx mccVal amt =
       currencyCode = 980,
       description = "test",
       hold = False,
-      mcc = mccVal,
+      category = mkByMcc <$> (mccVal >>= parseMcc),
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }

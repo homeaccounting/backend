@@ -31,10 +31,11 @@ where
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time (NominalDiffTime, UTCTime)
-import Domain.Banking.Types (BankProviderId, ExternalAccountId, ProviderCredential)
-import Domain.Core.Types (ExternalTransactionId, MCC)
+import Domain.Banking.Types (BankProviderCredential, BankProviderId, ExternalAccountId)
+import Domain.Core.Types (BankProviderCategory, CategoryId, ExternalTransactionId)
 import Domain.Transaction.Matching.Transfer (TransferDirection (..), TransferLeg (..), isTransferMatch)
 import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, abs, isJust, otherwise, ($), (<))
 
@@ -66,14 +67,16 @@ data BankTransaction = BankTransaction
     currencyCode :: !Int,
     description :: !Text,
     hold :: !Bool,
-    mcc :: !(Maybe MCC),
+    -- | Provider-supplied category signal, if any: an MCC ('ByMcc', e.g.
+    -- Monobank) or a text label ('ByLabel', e.g. PrivatBank). 'Nothing' when
+    -- the provider supplies no category.
+    category :: !(Maybe BankProviderCategory),
     -- | Major-unit amount in the transaction's original currency, iff the
     -- transaction was in a currency different from the account. Monobank
     -- does not report the original currency code; Phase 1 uses the ratio
     -- @|originalAmount| / |amount|@ to derive an exchange rate.
     originalAmount :: !(Maybe Rational),
-    notes :: !(Maybe Text),
-    categoryHint :: !(Maybe Text)
+    notes :: !(Maybe Text)
   }
   deriving (Show, Eq)
 
@@ -88,7 +91,7 @@ data BankProviderDescriptor = BankProviderDescriptor
   { providerId :: !BankProviderId,
     displayName :: !Text,
     interpretation :: TransactionInterpretation,
-    pull :: !(Maybe (ProviderCredential -> PullCapability)),
+    pull :: !(Maybe (BankProviderCredential -> PullCapability)),
     fileImport :: !(Maybe FileImportCapability)
   }
 
@@ -153,10 +156,22 @@ newtype TransferMatcher = TransferMatcher
   }
 
 -- | Provider-contributed interpretation of raw bank transactions: the
--- direction 'classify' hint plus the internal-transfer 'transferMatcher'.
+-- direction 'classify' hint, the internal-transfer 'transferMatcher', and the
+-- provider's default label→category map ('labelExpenseCategories'). Groups the
+-- label-category capability alongside classify/transfer matching so a
+-- live-registry consumer can read it off the descriptor.
 data TransactionInterpretation = TransactionInterpretation
   { classify :: BankTransaction -> TransactionClassification,
-    transferMatcher :: TransferMatcher
+    transferMatcher :: TransferMatcher,
+    -- | Mirrors the provider module's pure @labelExpenseCategories@ binding — the
+    -- single source of truth for that provider's default text-label→expense-
+    -- category mapping (empty for providers with no label defaults). NOTE:
+    -- configuration seeding does NOT read this field; seeding must be pure, but
+    -- the provider registry is effectful, so
+    -- 'Infrastructure.Banking.CategoryDefaults' unions the standalone pure
+    -- @labelExpenseCategories@ bindings directly. This field carries the same data for
+    -- a live-registry (effectful) consumer.
+    labelExpenseCategories :: Map Text CategoryId
   }
 
 -- | Default window within which two opposite legs may be paired as a single
@@ -187,4 +202,8 @@ defaultTransferMatcher window =
 -- 'defaultClassify' plus 'defaultTransferMatcher' over 'defaultTransferPairingWindow'.
 defaultInterpretation :: TransactionInterpretation
 defaultInterpretation =
-  TransactionInterpretation defaultClassify (defaultTransferMatcher defaultTransferPairingWindow)
+  TransactionInterpretation
+    { classify = defaultClassify,
+      transferMatcher = defaultTransferMatcher defaultTransferPairingWindow,
+      labelExpenseCategories = Map.empty
+    }

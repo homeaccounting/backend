@@ -19,8 +19,8 @@
 --   * @configurations@ — one row per configuration (currencies, default
 --     categories, books-closed cutoff, creator, version),
 --   * @configuration_dictionary_entries@ — one row per dictionary entry,
---   * @configuration_mcc_categories@ — one row per MCC → expense-category map
---     entry,
+--   * @configuration_bank_provider_expense_categories@ — one row per provider-category →
+--     expense-category map entry,
 --   * @configuration_bank_connections@ — one row per bank connection, and
 --   * @configuration_bank_account_map@ — one row per connection's
 --     external→local account mapping.
@@ -51,7 +51,7 @@ module Application.ReadModels.Configuration
     applyConfigurationEvent,
     ConfigurationEntity (..),
     ConfigDictionaryEntryEntity (..),
-    ConfigMccCategoryEntity (..),
+    ConfigBankProviderExpenseCategoryEntity (..),
     ConfigBankConnectionEntity (..),
     ConfigBankAccountMapEntity (..),
 
@@ -95,7 +95,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankingMccExpenseCategoryMapSet (..),
+    BankProviderExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
     ConfigurationCreated (..),
@@ -124,6 +124,8 @@ import Domain.Core.Types
     DictionaryEntryId,
     EntryName,
     mkConfigurationIdSafe,
+    parseBankProviderCategoryKey,
+    renderBankProviderCategoryKey,
     unDefaultSubtypeAccounts,
   )
 import Domain.Models (AccountingEvent (..))
@@ -248,11 +250,11 @@ ConfigDictionaryEntryEntity sql=configuration_dictionary_entries
     position Int
     UniqueConfigDictEntry configId dictionaryKind entryId
     deriving Show Eq
-ConfigMccCategoryEntity sql=configuration_mcc_categories
+ConfigBankProviderExpenseCategoryEntity sql=configuration_bank_provider_expense_categories
     configId ConfigurationId
-    mcc Text
+    bankProviderCategory Text
     categoryId DictionaryEntryId
-    UniqueConfigMcc configId mcc
+    UniqueConfigBankProviderExpenseCategory configId bankProviderCategory
     deriving Show Eq
 ConfigBankConnectionEntity sql=configuration_bank_connections
     configId ConfigurationId
@@ -283,7 +285,7 @@ resetConfiguration :: (MonadIO m) => SqlPersistT m ()
 resetConfiguration = do
   deleteWhere ([] :: [Filter ConfigBankAccountMapEntity])
   deleteWhere ([] :: [Filter ConfigBankConnectionEntity])
-  deleteWhere ([] :: [Filter ConfigMccCategoryEntity])
+  deleteWhere ([] :: [Filter ConfigBankProviderExpenseCategoryEntity])
   deleteWhere ([] :: [Filter ConfigDictionaryEntryEntity])
   deleteWhere ([] :: [Filter ConfigurationEntity])
 
@@ -385,11 +387,11 @@ applyConfigurationEvent globalEvent =
                   ConfigDictionaryEntryEntityEntryId ==. evt.entryId
                 ]
                 [ConfigDictionaryEntryEntityParentId =. evt.newParentId]
-          BankingMccExpenseCategoryMapSetEvent evt ->
+          BankProviderExpenseCategoryMapSetEvent evt ->
             whenConfig configId ver $ do
-              deleteWhere [ConfigMccCategoryEntityConfigId ==. configId]
-              forM_ (Map.toList evt.mapping) $ \(mcc, cat) ->
-                insert_ (ConfigMccCategoryEntity configId mcc cat)
+              deleteWhere [ConfigBankProviderExpenseCategoryEntityConfigId ==. configId]
+              forM_ (Map.toList evt.mapping) $ \(pc, cat) ->
+                insert_ (ConfigBankProviderExpenseCategoryEntity configId (renderBankProviderCategoryKey pc) cat)
           BankConnectionAddedEvent evt ->
             whenConfig configId ver $ do
               -- Adding (re)initializes the connection with an empty account map.
@@ -516,11 +518,11 @@ loadDictionaries configId = do
         | Entity _ r <- rows
         ]
 
--- | Assemble the configuration's banking configuration from the MCC-map,
--- connection, and account-map rows.
+-- | Assemble the configuration's banking configuration from the
+-- provider-category-map, connection, and account-map rows.
 loadBanking :: (MonadIO m) => ConfigurationId -> SqlPersistT m BankingConfiguration
 loadBanking configId = do
-  mccRows <- selectList [ConfigMccCategoryEntityConfigId ==. configId] []
+  bankProviderCategoryRows <- selectList [ConfigBankProviderExpenseCategoryEntityConfigId ==. configId] []
   connRows <- selectList [ConfigBankConnectionEntityConfigId ==. configId] []
   conns <- forM connRows $ \(Entity _ c) -> do
     acctRows <-
@@ -548,10 +550,11 @@ loadBanking configId = do
       )
   pure
     emptyBankingConfiguration
-      { mccExpenseCategoryMap =
+      { bankProviderExpenseCategoryMap =
           Map.fromList
-            [ (m.configMccCategoryEntityMcc, m.configMccCategoryEntityCategoryId)
-            | Entity _ m <- mccRows
+            [ (pc, m.configBankProviderExpenseCategoryEntityCategoryId)
+            | Entity _ m <- bankProviderCategoryRows,
+              Just pc <- [parseBankProviderCategoryKey m.configBankProviderExpenseCategoryEntityBankProviderCategory]
             ],
         connections = Map.fromList conns
       }

@@ -30,7 +30,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankingMccExpenseCategoryMapSet (..),
+    BankProviderExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
     DefaultExpenseCategorySet (..),
@@ -73,7 +73,7 @@ configurationDefaultSpec =
       configurationDefault.defaults.expenseCategory `shouldBe` Nothing
       configurationDefault.defaults.account `shouldBe` Nothing
       configurationDefault.defaults.subtypeAccounts `shouldBe` Map.empty
-      b.mccExpenseCategoryMap `shouldBe` Map.empty
+      b.bankProviderExpenseCategoryMap `shouldBe` Map.empty
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -500,22 +500,22 @@ bankingProjectionSpec = describe "banking projection" $ do
             ]
     config.defaults.subtypeAccounts `shouldBe` m2
 
-  it "BankingMccExpenseCategoryMapSet replaces the mcc map wholesale" $ do
-    let m1 = Map.singleton "5411" testEntryId1
-        m2 = Map.singleton "5812" testEntryId2
+  it "BankProviderExpenseCategoryMapSet replaces the provider-category map wholesale" $ do
+    let m1 = Map.singleton (mkByMcc (unsafeMcc 5411)) testEntryId1
+        m2 = Map.singleton (mkByMcc (unsafeMcc 5812)) testEntryId2
         config =
           applyEvents
             [ createdEvent,
-              BankingMccExpenseCategoryMapSetConfigurationEvent
-                BankingMccExpenseCategoryMapSet
+              BankProviderExpenseCategoryMapSetConfigurationEvent
+                BankProviderExpenseCategoryMapSet
                   { mapping = m1
                   },
-              BankingMccExpenseCategoryMapSetConfigurationEvent
-                BankingMccExpenseCategoryMapSet
+              BankProviderExpenseCategoryMapSetConfigurationEvent
+                BankProviderExpenseCategoryMapSet
                   { mapping = m2
                   }
             ]
-    config.banking.mccExpenseCategoryMap `shouldBe` m2
+    config.banking.bankProviderExpenseCategoryMap `shouldBe` m2
 
 -- -----------------------------------------------------------------------------
 -- Bank Connection Projection Tests

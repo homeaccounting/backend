@@ -156,8 +156,8 @@ import Infrastructure.Eventium
     AccountingVersionedEventStoreReader,
   )
 import Infrastructure.Llm.Provider (LlmClient)
-import Infrastructure.Observability.Logging (rioLevel, sqlJsonLogSink)
 import Infrastructure.Observability.Context (HasRequestContext (..), RequestContext (..))
+import Infrastructure.Observability.Logging (rioLevel, sqlJsonLogSink)
 import Infrastructure.Observability.Metrics (HasMetrics (..), Metrics, registerMetrics)
 import Infrastructure.Version (VersionInfo)
 import Network.HTTP.Client (Manager)

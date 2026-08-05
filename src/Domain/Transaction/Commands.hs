@@ -51,7 +51,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ExternalTransactionId, ImportInfo, LabelId, MCC, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, BankProviderCategory, ContactId, ExchangeRate, ExternalTransactionId, ImportInfo, LabelId, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -522,7 +522,7 @@ data RemoveTransactionRelation = RemoveTransactionRelation
 data ReconcileTransactionImport = ReconcileTransactionImport
   { transactionId :: TransactionId,
     externalTransactionIds :: NonEmpty ExternalTransactionId,
-    mcc :: Maybe MCC
+    category :: Maybe BankProviderCategory
   }
   deriving (Show, Eq)
 

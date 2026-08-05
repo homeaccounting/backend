@@ -17,10 +17,9 @@ where
 
 import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
 import Data.Ratio ((%))
-import qualified Data.Text as T
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Domain.Banking.Types (ExternalAccountId)
-import Domain.Core.Types (mkExternalTransactionId)
+import Domain.Core.Types (mkByMcc, mkExternalTransactionId, mkMcc)
 import Infrastructure.Banking.Provider
 import RIO
 
@@ -116,8 +115,10 @@ toProviderTransaction accId ms =
                 currencyCode = ms.stmtCurrencyCode,
                 description = ms.stmtDescription,
                 hold = ms.stmtHold,
-                mcc = if ms.stmtMcc == 0 then Nothing else Just (T.pack (show ms.stmtMcc)),
+                category =
+                  if ms.stmtMcc == 0
+                    then Nothing
+                    else mkByMcc <$> either (const Nothing) Just (mkMcc (fromIntegral ms.stmtMcc)),
                 originalAmount = maybeOriginal,
-                notes = ms.stmtComment,
-                categoryHint = Nothing
+                notes = ms.stmtComment
               }

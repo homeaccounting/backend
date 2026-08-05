@@ -33,7 +33,7 @@ module Domain.Configuration.Events
     DefaultExpenseCategorySet (..),
     DefaultAccountSet (..),
     DefaultSubtypeAccountsSet (..),
-    BankingMccExpenseCategoryMapSet (..),
+    BankProviderExpenseCategoryMapSet (..),
     BooksClosedThroughSet (..),
     BankConnectionAdded (..),
     BankConnectionRenamed (..),
@@ -58,12 +58,12 @@ import Domain.Configuration.Dictionary (DictionaryKind, EntryRole)
 import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
+    BankProviderCategory,
     CategoryId,
     CreatedBy,
     Currency,
     DictionaryEntryId,
     EntryName,
-    MCC,
   )
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import Language.Haskell.TH (Name)
@@ -89,7 +89,7 @@ configurationEvents =
     ''DefaultExpenseCategorySet,
     ''DefaultAccountSet,
     ''DefaultSubtypeAccountsSet,
-    ''BankingMccExpenseCategoryMapSet,
+    ''BankProviderExpenseCategoryMapSet,
     ''BooksClosedThroughSet,
     ''BankConnectionAdded,
     ''BankConnectionRenamed,
@@ -198,9 +198,11 @@ newtype DefaultSubtypeAccountsSet = DefaultSubtypeAccountsSet
   }
   deriving (Show, Eq)
 
--- | Event emitted when the banking MCC -> expense category map is set (bulk replace).
-data BankingMccExpenseCategoryMapSet = BankingMccExpenseCategoryMapSet
-  { mapping :: Map MCC CategoryId
+-- | Event emitted when the banking provider-category -> expense category map is
+-- set (bulk replace). Keys are 'BankProviderCategory' values (an MCC or a provider
+-- text label); values are expense category ids.
+data BankProviderExpenseCategoryMapSet = BankProviderExpenseCategoryMapSet
+  { mapping :: Map BankProviderCategory CategoryId
   }
   deriving (Show, Eq)
 
@@ -292,7 +294,7 @@ deriveJSON defaultOptions ''DefaultIncomeCategorySet
 deriveJSON defaultOptions ''DefaultExpenseCategorySet
 deriveJSON defaultOptions ''DefaultAccountSet
 deriveJSON defaultOptions ''DefaultSubtypeAccountsSet
-deriveJSON defaultOptions ''BankingMccExpenseCategoryMapSet
+deriveJSON defaultOptions ''BankProviderExpenseCategoryMapSet
 deriveJSON defaultOptions ''BooksClosedThroughSet
 deriveJSON defaultOptions ''BankConnectionAdded
 deriveJSON defaultOptions ''BankConnectionRenamed

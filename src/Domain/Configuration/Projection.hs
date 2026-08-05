@@ -16,7 +16,7 @@ module Domain.Configuration.Projection
     Configuration (..),
 
     -- * Banking Sub-record
-    BankingConfiguration (mccExpenseCategoryMap, connections),
+    BankingConfiguration (bankProviderExpenseCategoryMap, connections),
     emptyBankingConfiguration,
 
     -- * Defaults Sub-record
@@ -55,7 +55,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankingMccExpenseCategoryMapSet (..),
+    BankProviderExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
     ConfigurationCreated (..),
@@ -73,11 +73,11 @@ import Domain.Configuration.Events
 import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
+    BankProviderCategory,
     CategoryId,
     CreatedBy (..),
     Currency (..),
     EntryName,
-    MCC,
   )
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, withTagOptions)
@@ -93,8 +93,9 @@ import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 -- main 'Configuration' record stays readable. The field is empty on every
 -- projection that has not yet received any banking events.
 data BankingConfiguration = BankingConfiguration
-  { -- | Mapping from MCC codes to expense category IDs for automatic categorisation
-    mccExpenseCategoryMap :: !(Map MCC CategoryId),
+  { -- | Mapping from provider categories (MCC or provider text label) to expense
+    -- category IDs for automatic categorisation.
+    bankProviderExpenseCategoryMap :: !(Map BankProviderCategory CategoryId),
     -- | Configured bank connections, keyed by connection ID
     connections :: !(Map BankConnectionId BankConnection)
   }
@@ -126,7 +127,7 @@ data BankConnection = BankConnection
 emptyBankingConfiguration :: BankingConfiguration
 emptyBankingConfiguration =
   BankingConfiguration
-    { mccExpenseCategoryMap = Map.empty,
+    { bankProviderExpenseCategoryMap = Map.empty,
       connections = Map.empty
     }
 
@@ -336,8 +337,8 @@ handleConfigurationEvent config (DefaultSubtypeAccountsSetConfigurationEvent evt
                 subtypeAccounts = evt.subtypeAccounts
               }
         }
-handleConfigurationEvent config (BankingMccExpenseCategoryMapSetConfigurationEvent evt) =
-  config {banking = config.banking {mccExpenseCategoryMap = evt.mapping}}
+handleConfigurationEvent config (BankProviderExpenseCategoryMapSetConfigurationEvent evt) =
+  config {banking = config.banking {bankProviderExpenseCategoryMap = evt.mapping}}
 handleConfigurationEvent config (BooksClosedThroughSetConfigurationEvent evt) =
   config {booksClosedThrough = Just evt.closedThrough}
 handleConfigurationEvent c (BankConnectionAddedConfigurationEvent e) =

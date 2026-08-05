@@ -51,10 +51,9 @@ mkSameCurrencyBankTx eid accId amt =
       currencyCode = 980,
       description = "test",
       hold = False,
-      mcc = Nothing,
+      category = Nothing,
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }
 
 -- | Construct a cross-currency 'BankTransaction'. The @accountAmt@ is the

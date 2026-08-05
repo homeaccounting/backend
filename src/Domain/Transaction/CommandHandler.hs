@@ -301,7 +301,7 @@ handleTransactionCommand transaction (ReconcileTransactionImportTransactionComma
                 TransactionImportReconciled
                   { transactionId = transactionId,
                     externalTransactionIds = externalTransactionIds,
-                    mcc = mcc
+                    category = category
                   }
             ]
     _ -> Left CannotEditUncompletedTransaction

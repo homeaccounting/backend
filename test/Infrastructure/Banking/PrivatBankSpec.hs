@@ -6,6 +6,7 @@ module Infrastructure.Banking.PrivatBankSpec (spec) where
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import Domain.Banking.Types (unBankProviderId)
+import Domain.Core.Types (mkByLabel)
 import Infrastructure.Banking.PrivatBank (descriptor)
 import Infrastructure.Banking.PrivatBank.Internal (parsePrivatBankCsv)
 import Infrastructure.Banking.Provider
@@ -66,6 +67,23 @@ goodRow =
       "UAH"
     ]
 
+-- | A well-formed data row carrying the given category label (column 2).
+rowWithCategory :: Text -> Text
+rowWithCategory categoryLabel =
+  T.intercalate
+    ","
+    [ "10.07.2026 03:30:50",
+      categoryLabel,
+      "0000 **** **** 0000",
+      "Опис",
+      "-281",
+      "UAH",
+      "281",
+      "UAH",
+      "87654.32",
+      "UAH"
+    ]
+
 badDateRow :: Text
 badDateRow =
   T.intercalate
@@ -111,8 +129,19 @@ spec = describe "Infrastructure.Banking.PrivatBank" $ do
           (Right tx : _) -> do
             tx.amount `shouldBe` 40000
             defaultClassify tx `shouldBe` ClassifiedIncome
-            tx.categoryHint `shouldBe` Just "Зарахування"
+            tx.category `shouldBe` mkByLabel "Зарахування"
           _ -> expectationFailure "expected row 13 to be a successfully parsed transaction"
+
+  describe "category label" $ do
+    it "carries the PrivatBank category label as ByLabel"
+      $ case parsePrivatBankCsv (mkCsv [rowWithCategory "Дім та ремонт"]) of
+        Right [Right tx] -> tx.category `shouldBe` mkByLabel "Дім та ремонт"
+        _ -> expectationFailure "expected one parsed row"
+
+    it "leaves a blank category as Nothing"
+      $ case parsePrivatBankCsv (mkCsv [rowWithCategory ""]) of
+        Right [Right tx] -> tx.category `shouldBe` Nothing
+        _ -> expectationFailure "expected one parsed row"
 
     it "reports currencyCode 980 for a UAH row" $ do
       bytes <- loadFixture

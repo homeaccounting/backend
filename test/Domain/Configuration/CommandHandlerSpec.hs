@@ -30,7 +30,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
-    BankingMccExpenseCategoryMapSet (..),
+    BankProviderExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
     DefaultExpenseCategorySet (..),
@@ -58,7 +58,7 @@ spec = do
   setDefaultExpenseCategorySpec
   setDefaultAccountSpec
   setDefaultSubtypeAccountsSpec
-  setBankingMccExpenseCategoryMapSpec
+  setBankProviderExpenseCategoryMapSpec
   removeDictionaryEntryBankingGuardSpec
   addTreeGuardSpec
   moveTreeGuardSpec
@@ -331,9 +331,9 @@ configWithMccMapEntry =
             role = ItemRole,
             parentId = Nothing
           },
-      BankingMccExpenseCategoryMapSetConfigurationEvent
-        BankingMccExpenseCategoryMapSet
-          { mapping = Map.fromList [("5411", testCategoryId1)]
+      BankProviderExpenseCategoryMapSetConfigurationEvent
+        BankProviderExpenseCategoryMapSet
+          { mapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testCategoryId1)]
           }
     ]
 
@@ -934,32 +934,32 @@ setDefaultSubtypeAccountsSpec = describe "SetDefaultSubtypeAccounts Command" $ d
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
 -- -----------------------------------------------------------------------------
--- SetBankingMccExpenseCategoryMap Tests
+-- SetBankProviderExpenseCategoryMap Tests
 -- -----------------------------------------------------------------------------
 
-setBankingMccExpenseCategoryMapSpec :: Spec
-setBankingMccExpenseCategoryMapSpec = describe "SetBankingMccExpenseCategoryMap Command" $ do
+setBankProviderExpenseCategoryMapSpec :: Spec
+setBankProviderExpenseCategoryMapSpec = describe "SetBankProviderExpenseCategoryMap Command" $ do
   context "Given map referencing a CategoryId NOT in expense-category dictionary" $ do
-    describe "When issuing SetBankingMccExpenseCategoryMap" $ do
+    describe "When issuing SetBankProviderExpenseCategoryMap" $ do
       it "Then returns an error" $ do
         let config = configWithExpenseEntry -- testCategoryId1 in expense dict
         let command =
-              SetBankingMccExpenseCategoryMapConfigurationCommand
-                SetBankingMccExpenseCategoryMap
-                  { mapping = Map.fromList [("5411", testUnknownCategoryId)]
+              SetBankProviderExpenseCategoryMapConfigurationCommand
+                SetBankProviderExpenseCategoryMap
+                  { mapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testUnknownCategoryId)]
                   }
         let result = handleConfigurationCommand config command
 
         result `shouldSatisfy` isLeft
 
   context "Given map whose values are all in expense-category dictionary" $ do
-    describe "When issuing SetBankingMccExpenseCategoryMap" $ do
-      it "Then emits BankingMccExpenseCategoryMapSet event" $ do
+    describe "When issuing SetBankProviderExpenseCategoryMap" $ do
+      it "Then emits BankProviderExpenseCategoryMapSet event" $ do
         let config = configWithTwoExpenseEntries
-        let testMapping = Map.fromList [("5411", testCategoryId1), ("4111", testCategoryId2)]
+        let testMapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testCategoryId1), (mkByMcc (unsafeMcc 4111), testCategoryId2)]
         let command =
-              SetBankingMccExpenseCategoryMapConfigurationCommand
-                SetBankingMccExpenseCategoryMap
+              SetBankProviderExpenseCategoryMapConfigurationCommand
+                SetBankProviderExpenseCategoryMap
                   { mapping = testMapping
                   }
         let result = handleConfigurationCommand config command
@@ -968,18 +968,18 @@ setBankingMccExpenseCategoryMapSpec = describe "SetBankingMccExpenseCategoryMap 
           Right events -> do
             length events `shouldBe` 1
             case head events of
-              BankingMccExpenseCategoryMapSetConfigurationEvent evt ->
+              BankProviderExpenseCategoryMapSetConfigurationEvent evt ->
                 evt.mapping `shouldBe` testMapping
-              _ -> expectationFailure "Expected BankingMccExpenseCategoryMapSet event"
+              _ -> expectationFailure "Expected BankProviderExpenseCategoryMapSet event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
   context "Given an empty map" $ do
-    describe "When issuing SetBankingMccExpenseCategoryMap" $ do
+    describe "When issuing SetBankProviderExpenseCategoryMap" $ do
       it "Then accepts empty map (signals cleared)" $ do
         let config = configWithExpenseEntry
         let command =
-              SetBankingMccExpenseCategoryMapConfigurationCommand
-                SetBankingMccExpenseCategoryMap
+              SetBankProviderExpenseCategoryMapConfigurationCommand
+                SetBankProviderExpenseCategoryMap
                   { mapping = Map.empty
                   }
         let result = handleConfigurationCommand config command
@@ -988,9 +988,9 @@ setBankingMccExpenseCategoryMapSpec = describe "SetBankingMccExpenseCategoryMap 
           Right events -> do
             length events `shouldBe` 1
             case head events of
-              BankingMccExpenseCategoryMapSetConfigurationEvent evt ->
+              BankProviderExpenseCategoryMapSetConfigurationEvent evt ->
                 evt.mapping `shouldBe` Map.empty
-              _ -> expectationFailure "Expected BankingMccExpenseCategoryMapSet event"
+              _ -> expectationFailure "Expected BankProviderExpenseCategoryMapSet event"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
 -- -----------------------------------------------------------------------------

@@ -114,8 +114,8 @@ where
 import Data.Text.Display (displayText)
 import Infrastructure.App (AppEnv (..), AppM, runAppM)
 import Infrastructure.Config (AppConfig (..), LogFormat (..), LoggingConfig (..), ServerConfig (..))
-import Infrastructure.Observability.Logging (mkContextLogFunc, rioLevel)
 import Infrastructure.Observability.Context (readRequestContext)
+import Infrastructure.Observability.Logging (mkContextLogFunc, rioLevel)
 -- For HTTP status and responses
 import Network.HTTP.Types (status500)
 import Network.Wai

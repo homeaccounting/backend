@@ -6,14 +6,15 @@
     "sourceAmount": { "amount": 30000, "currency": "UAH" },
     "targetAmount": { "amount": 30000, "currency": "UAH" },
     "exchangeRate": null,
-    "description": "Переказ на картку",
+    "description": "Сільпо",
     "by": "072bf081-d5df-4422-9850-838c3d0fafa6",
     "at": "2026-07-20T07:37:16Z",
     "transactionType": { "tag": "Transfer" },
     "importInfo": {
-      "externalTransactionId": "7IXfaQ8bpY5s7RO5Uw",
-      "mcc": null
+      "externalTransactionIds": ["7IXfaQ8bpY5s7RO5Uw"],
+      "category": { "kind": "mcc", "value": "5411" }
     },
-    "labels": []
+    "labels": [],
+    "contactId": null
   }
 }

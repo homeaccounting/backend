@@ -24,8 +24,10 @@ import Domain.Core.Types
     RelationKind (..),
     TransactionId,
     TransactionType (Transfer),
+    mkByMcc,
     unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
+    unsafeMcc,
     unsafeTransactionId,
   )
 import Domain.Transaction.Events
@@ -55,14 +57,14 @@ postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
       Left err -> expectationFailure $ "legacy decode failed: " <> err
       Right decoded -> decoded.importInfo `shouldBe` Nothing
 
-  it "round-trips TransactionPostingInitiated with Just importInfo carrying an mcc" $ do
+  it "round-trips TransactionPostingInitiated with Just importInfo carrying a category" $ do
     let evt =
           sampleEvent
             { importInfo =
                 Just
                   ImportInfo
                     { externalTransactionIds = unsafeExternalTransactionId "mono-tx-123" :| [],
-                      mcc = Just "5411"
+                      category = Just (mkByMcc (unsafeMcc 5411))
                     }
             }
     (eitherDecode (encode evt) :: Either String TransactionPostingInitiated)

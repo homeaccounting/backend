@@ -14,11 +14,18 @@ module Infrastructure.Eventium.SchemaSpec (spec) where
 
 import Data.Aeson (Value (..), decodeStrict, toJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
+import qualified Data.Map.Strict as Map
+import Domain.Configuration.Events (BankProviderExpenseCategoryMapSet (..))
 import Domain.Core.Types
-  ( ExternalTransactionId,
+  ( BankProviderCategory,
+    ExternalTransactionId,
     TransactionType (..),
+    importInfoCategory,
     importInfoExternalTransactionIds,
+    mkByLabel,
+    mkByMcc,
     unsafeExternalTransactionId,
+    unsafeMcc,
   )
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
@@ -34,6 +41,7 @@ import RIO
 import Test.Hspec
 import Testkit.Helpers
   ( mockAccountIdN,
+    mockCategoryIdN,
     mockMoney,
     mockTransactionIdN,
     mockUserIdN,
@@ -57,15 +65,6 @@ amendEvent allowOd =
         by = mockUserIdN 4
       }
 
--- | Delete @allowOverdraft@ from the event's @contents@ object, reproducing the
--- pre-field (v1) stored shape from a real current encoding — so the test never
--- hardcodes the full field list.
-stripAllowOverdraft :: Value -> Value
-stripAllowOverdraft (Object o) = case KeyMap.lookup "contents" o of
-  Just (Object c) -> Object (KeyMap.insert "contents" (Object (KeyMap.delete "allowOverdraft" c)) o)
-  _ -> Object o
-stripAllowOverdraft v = v
-
 -- | Load a stored event payload from a committed JSON fixture — a verbatim copy
 -- of a row's @payload@ as it sits in a production event store (no envelope, the
 -- shape that release wrote). Read as an Aeson 'Value' and re-serialised through
@@ -83,27 +82,30 @@ postingImportIds (TransactionPostingInitiatedEvent (TransactionPostingInitiated 
   importInfoExternalTransactionIds <$> imp
 postingImportIds _ = Nothing
 
+-- | The provider category carried by a decoded posting event's import info.
+postingImportCategory :: AccountingEvent -> Maybe BankProviderCategory
+postingImportCategory (TransactionPostingInitiatedEvent (TransactionPostingInitiated {importInfo = imp})) =
+  imp >>= importInfoCategory
+postingImportCategory _ = Nothing
+
 spec :: Spec
 spec = describe "accountingEventCodec (schema evolution)" $ do
-  it "decodes a legacy amendment event with no allowOverdraft as allowOverdraft = False" $ do
-    let expected = amendEvent False
-        legacy = encodeJSON (stripAllowOverdraft (toJSON expected))
-    accountingEventCodec.decode legacy `shouldBe` Just expected
-
   it "round-trips a current amendment event, preserving allowOverdraft = True" $ do
     let ev = amendEvent True
     accountingEventCodec.decode (accountingEventCodec.encode ev) `shouldBe` Just ev
 
-  -- Reads a real pre-widening stored posting event (scalar @externalTransactionId@)
-  -- from a fixture, upcasts it on read, re-encodes it at the current schema, and
-  -- reads it again: the upcast must succeed (the field becomes a one-element
-  -- list) and the write-back/read-again must be stable.
-  it "upcasts a legacy import posting event from a fixture and round-trips it" $ do
-    stored <- loadStoredEvent "test/fixtures/events/transaction-posting-initiated-legacy-import.json"
+  -- Reads a current-shape stored posting event whose import info carries a
+  -- provider category (an MCC value) from a fixture, decodes it, and confirms the
+  -- decode -> encode -> decode loop is stable. The registry has no upcaster for
+  -- this type any more (the historical scalar->list widening was cleared by the
+  -- pre-launch DB recreate), so this exercises the current stored shape only.
+  it "decodes a current import posting event carrying a provider category and round-trips it" $ do
+    stored <- loadStoredEvent "test/fixtures/events/transaction-posting-initiated-import.json"
     case accountingEventCodec.decode stored of
-      Nothing -> expectationFailure "legacy posting event failed to decode after upcast"
+      Nothing -> expectationFailure "import posting event failed to decode"
       Just event -> do
         postingImportIds event `shouldBe` Just (unsafeExternalTransactionId "7IXfaQ8bpY5s7RO5Uw" :| [])
+        postingImportCategory event `shouldBe` Just (mkByMcc (unsafeMcc 5411))
         accountingEventCodec.decode (accountingEventCodec.encode event) `shouldBe` Just event
 
   -- Pins the compile-time-safe registry key: the type-derived 'eventTag' must
@@ -125,11 +127,47 @@ spec = describe "accountingEventCodec (schema evolution)" $ do
             TransactionImportReconciled
               { transactionId = mockTransactionIdN 1,
                 externalTransactionIds = unsafeExternalTransactionId "mono-abc123" :| [],
-                mcc = Just "5411"
+                category = Just (mkByMcc (unsafeMcc 5411))
               }
     stored <- loadStoredEvent "test/fixtures/events/transaction-import-reconciled.json"
     accountingEventCodec.decode stored `shouldBe` Just expected
     accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
+
+  -- Sibling of the above for the other 'BankProviderCategory' case: a reconciled
+  -- event whose category is a provider text label (@ByLabel@). Pins the label
+  -- value-shape @{"kind":"label", ...}@ and round-trips it.
+  it "decodes a TransactionImportReconciled fixture carrying a label category and round-trips it" $ do
+    let expected =
+          TransactionImportReconciledEvent
+            TransactionImportReconciled
+              { transactionId = mockTransactionIdN 1,
+                externalTransactionIds = unsafeExternalTransactionId "privat-xyz789" :| [],
+                category = mkByLabel "eating_out"
+              }
+    stored <- loadStoredEvent "test/fixtures/events/transaction-import-reconciled-label.json"
+    accountingEventCodec.decode stored `shouldBe` Just expected
+    accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
+
+  -- 'BankProviderExpenseCategoryMapSet' serialises its 'BankProviderCategory' map keys in
+  -- the tagged KEY form (@"mcc:0742"@ / @"label:eating_out"@), the other JSON
+  -- form of a 'BankProviderCategory'. Reads a committed fixture, confirms both key
+  -- kinds parse back, and confirms round-trip stability.
+  it "decodes a BankProviderExpenseCategoryMapSet fixture with tagged category keys and round-trips it" $ do
+    case mkByLabel "eating_out" of
+      Nothing -> expectationFailure "mkByLabel unexpectedly rejected a valid label"
+      Just labelKey -> do
+        let expected =
+              BankProviderExpenseCategoryMapSetEvent
+                BankProviderExpenseCategoryMapSet
+                  { mapping =
+                      Map.fromList
+                        [ (mkByMcc (unsafeMcc 742), mockCategoryIdN 1),
+                          (labelKey, mockCategoryIdN 2)
+                        ]
+                  }
+        stored <- loadStoredEvent "test/fixtures/events/bank-provider-expense-category-map-set.json"
+        accountingEventCodec.decode stored `shouldBe` Just expected
+        accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
 
   it "tags TransactionImportReconciled with its type-derived registry key" $ do
     let ev =
@@ -137,7 +175,7 @@ spec = describe "accountingEventCodec (schema evolution)" $ do
             TransactionImportReconciled
               { transactionId = mockTransactionIdN 1,
                 externalTransactionIds = unsafeExternalTransactionId "mono-abc123" :| [],
-                mcc = Nothing
+                category = Nothing
               }
         tagField = case toJSON ev of
           Object o -> KeyMap.lookup "tag" o

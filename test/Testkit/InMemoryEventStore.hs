@@ -97,8 +97,8 @@ import Infrastructure.Eventium
     wireProcessManager,
     wireProcessManagers,
   )
-import Infrastructure.Observability.Logging (newStdoutLoggerSet)
 import Infrastructure.Observability.Context (nilRequestContext)
+import Infrastructure.Observability.Logging (newStdoutLoggerSet)
 import Infrastructure.Version (VersionInfo (..))
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import RIO hiding (atomically, newTVarIO)

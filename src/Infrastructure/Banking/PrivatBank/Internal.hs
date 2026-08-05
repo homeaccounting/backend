@@ -24,7 +24,7 @@ import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import qualified Data.Vector as V
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (currencyNumericCode, mkExternalTransactionId, parseCurrency)
+import Domain.Core.Types (currencyNumericCode, mkByLabel, mkExternalTransactionId, parseCurrency)
 import Infrastructure.Banking.Provider
 import RIO
 
@@ -138,10 +138,9 @@ validateRow rowNumber raw =
                   currencyCode = currCode,
                   description = raw.rawDescription,
                   hold = False,
-                  mcc = Nothing,
+                  category = mkByLabel raw.rawCategory,
                   originalAmount = Nothing,
-                  notes = Nothing,
-                  categoryHint = if T.null raw.rawCategory then Nothing else Just raw.rawCategory
+                  notes = Nothing
                 }
   where
     rowErr = Left . RowError rowNumber

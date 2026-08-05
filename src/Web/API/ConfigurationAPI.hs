@@ -71,8 +71,8 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Banking.Types
   ( BankConnectionId,
+    BankProviderCredential (..),
     BankProviderId,
-    ProviderCredential (..),
     mkBankConnectionId,
     mkBankProviderId,
     mkExternalAccountId,
@@ -94,7 +94,9 @@ import Domain.Core.Types
     mkAccountId,
     mkDictionaryEntryId,
     mkEntryName,
+    parseBankProviderCategoryKey,
     parseCurrency,
+    renderBankProviderCategoryKey,
     unAccountId,
     unDictionaryEntryId,
     unEntryName,
@@ -300,9 +302,11 @@ type ConfigurationAPI =
 -- Request/Response Types
 -- -----------------------------------------------------------------------------
 
--- | Projection of BankingConfiguration for wire transport.
+-- | Projection of BankingConfiguration for wire transport. The
+-- @bankProviderExpenseCategoryMap@ keys are 'BankProviderCategory' key strings
+-- (@"mcc:0742"@ / @"label:…"@).
 data BankingConfigurationDTO = BankingConfigurationDTO
-  { mccExpenseCategoryMap :: Map Text UUID,
+  { bankProviderExpenseCategoryMap :: Map Text UUID,
     -- | Configured bank connections (secrets never serialised).
     connections :: [BankConnectionDTO]
   }
@@ -379,7 +383,7 @@ toBankConnectionDTO c =
 toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
 toBankingDTO b =
   BankingConfigurationDTO
-    { mccExpenseCategoryMap = Map.map unDictionaryEntryId b.mccExpenseCategoryMap,
+    { bankProviderExpenseCategoryMap = Map.mapKeys renderBankProviderCategoryKey (Map.map unDictionaryEntryId b.bankProviderExpenseCategoryMap),
       connections = map toBankConnectionDTO (Map.elems b.connections)
     }
 
@@ -551,7 +555,7 @@ instance FromJSON MoveEntryRequest
 --
 -- Absent or null fields mean no change; present value sets the field.
 newtype UpdateBankingRequest = UpdateBankingRequest
-  { mccExpenseCategoryMap :: Maybe (Map Text UUID)
+  { bankProviderExpenseCategoryMap :: Maybe (Map Text UUID)
   }
   deriving (Show, Eq, Generic)
 
@@ -706,12 +710,17 @@ updateBankingHandler :: AuthenticatedUser -> UpdateBankingRequest -> AppM Bankin
 updateBankingHandler user req = do
   let uid = user.userId
 
-  forM_ req.mccExpenseCategoryMap $ \rawMap -> do
+  forM_ req.bankProviderExpenseCategoryMap $ \rawMap -> do
     newMap <-
-      Map.traverseWithKey
-        (\_ uuid -> validateFieldCtx "mccExpenseCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid))
-        rawMap
-    result <- ConfigService.setBankingMccExpenseCategoryMap uid newMap
+      fmap Map.fromList . forM (Map.toList rawMap) $ \(rawKey, uuid) -> do
+        pc <-
+          validateFieldCtx
+            "bankProviderExpenseCategoryMap"
+            rawKey
+            (maybe (Left ("Invalid provider-category key: " <> rawKey)) Right (parseBankProviderCategoryKey rawKey))
+        cat <- validateFieldCtx "bankProviderExpenseCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid)
+        pure (pc, cat)
+    result <- ConfigService.setBankProviderExpenseCategoryMap uid newMap
     case result of
       Left err -> throwDomainError err
       Right () -> pure ()

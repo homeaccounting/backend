@@ -161,7 +161,7 @@ mockClassify tx =
 -- | The interpretation the mock provider pairs with: 'mockClassify' plus the
 -- generic (default) transfer matcher over the default pairing window.
 interp :: TransactionInterpretation
-interp = TransactionInterpretation mockClassify (defaultTransferMatcher defaultTransferPairingWindow)
+interp = TransactionInterpretation mockClassify (defaultTransferMatcher defaultTransferPairingWindow) mempty
 
 -- | Create a bank transaction for testing. Amount is in major units.
 mkTestTransaction :: Rational -> Text -> BankTransaction
@@ -174,10 +174,9 @@ mkTestTransaction amount extId =
       currencyCode = 980, -- UAH
       description = "Test transaction",
       hold = False,
-      mcc = Nothing,
+      category = Nothing,
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }
 
 -- | Create a bank transaction with a caller-chosen description, for testing
@@ -196,10 +195,9 @@ mkHoldTransaction amount extId =
       currencyCode = 980,
       description = "Hold transaction",
       hold = True,
-      mcc = Nothing,
+      category = Nothing,
       originalAmount = Nothing,
-      notes = Nothing,
-      categoryHint = Nothing
+      notes = Nothing
     }
 
 -- -----------------------------------------------------------------------------

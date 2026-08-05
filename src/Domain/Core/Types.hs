@@ -67,6 +67,18 @@ module Domain.Core.Types
     CategoryId,
     ContactId,
     MCC,
+    mkMcc,
+    unsafeMcc,
+    renderMcc,
+    parseMcc,
+    mccInt,
+    BankProviderCategory,
+    mkByMcc,
+    mkByLabel,
+    bankProviderCategory,
+    bankProviderCategoryMcc,
+    renderBankProviderCategoryKey,
+    parseBankProviderCategoryKey,
     EntryName,
     mkEntryName,
     unsafeEntryName,
@@ -148,7 +160,7 @@ module Domain.Core.Types
     -- * Import provenance
     ImportInfo (..),
     importInfoExternalTransactionIds,
-    importInfoMcc,
+    importInfoCategory,
 
     -- * Password Types
     PasswordHash (..),
@@ -158,6 +170,7 @@ where
 
 import Data.Aeson (FromJSON (..), FromJSONKey (..), ToJSON (..), ToJSONKey (..), defaultJSONKeyOptions, genericFromJSONKey, genericToJSONKey, object, withObject, withText, (.:), (.=))
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (FromJSONKeyFunction (FromJSONKeyTextParser), toJSONKeyText)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int64)
@@ -167,6 +180,7 @@ import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import qualified Data.Text.Read as TR
 import Data.Time.Calendar (Day)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -654,14 +668,161 @@ type CategoryId = DictionaryEntryId
 -- beneficiary of an expense. An entry in the shared @contact@ dictionary.
 type ContactId = DictionaryEntryId
 
--- | ISO 18245 Merchant Category Code, rendered as text.
+-- | ISO 18245 Merchant Category Code: a validated 4-digit numeric code in
+-- the range @0..9999@.
 --
--- Monobank-produced MCCs are 4-digit numeric codes but they are
--- consistently transported and stored as strings (API payloads, JSON
--- map keys, log lines). Modeling as 'Text' also keeps the door open
--- for future providers that emit non-numeric category keys through
--- the same field.
-type MCC = Text
+-- On the wire and in storage an MCC is the zero-padded 4-digit text form
+-- (e.g. @\"0742\"@, @\"5411\"@) via 'renderMcc' / 'parseMcc', so JSON and
+-- persisted representations are unchanged from the earlier @type MCC = Text@.
+newtype MCC = MCC Int
+  deriving (Show, Eq, Ord, Generic)
+
+-- | Extract the raw integer code from an 'MCC'.
+mccInt :: MCC -> Int
+mccInt (MCC n) = n
+
+-- | Render an 'MCC' as its canonical zero-padded 4-digit text form.
+renderMcc :: MCC -> Text
+renderMcc (MCC n) = T.justifyRight 4 '0' (T.pack (show n))
+
+-- | Smart constructor for an 'MCC'. Enforces @0 <= v && v <= 9999@.
+
+{-@ mkMcc :: Int -> Either DomainError {v:MCC | 0 <= mccInt v && mccInt v <= 9999} @-}
+mkMcc :: Int -> Either DomainError MCC
+mkMcc n
+  | n >= 0 && n <= 9999 = Right (MCC n)
+  | otherwise =
+      Left . ValidationErr $
+        mkValidationError
+          "mcc"
+          "MCC must be a 4-digit code in the range 0..9999"
+          (T.pack (show n))
+
+-- | Construct an 'MCC' from a known-good literal, bypassing validation. For
+-- test fixtures and compile-time constants only; mirrors
+-- 'unsafeExternalTransactionId'.
+unsafeMcc :: Int -> MCC
+unsafeMcc = MCC
+
+-- | Parse an 'MCC' from its text form (digits only). 'Nothing' on non-digit
+-- input or an out-of-range value. Round-trips with 'renderMcc' for zero-padded
+-- forms such as @\"0742\"@.
+parseMcc :: Text -> Maybe MCC
+parseMcc t = case TR.decimal t of
+  Right (n, rest) | T.null rest -> either (const Nothing) Just (mkMcc (n :: Int))
+  _ -> Nothing
+
+instance ToJSON MCC where
+  toJSON = toJSON . renderMcc
+
+instance FromJSON MCC where
+  parseJSON = withText "MCC" $ \t ->
+    maybe (fail ("Invalid MCC: " <> T.unpack t)) pure (parseMcc t)
+
+instance ToJSONKey MCC where
+  toJSONKey = toJSONKeyText renderMcc
+
+instance FromJSONKey MCC where
+  fromJSONKey =
+    FromJSONKeyTextParser $ \t ->
+      maybe (fail ("Invalid MCC: " <> T.unpack t)) pure (parseMcc t)
+
+instance Display MCC where
+  display = display . renderMcc
+
+-- | A provider-supplied category signal attached to an imported transaction.
+--
+-- Bank providers surface a category hint in one of two mutually exclusive
+-- forms: a numeric ISO 18245 merchant category code ('ByMcc', e.g. PrivatBank)
+-- or a free-text provider label ('ByLabel', e.g. Monzo/Monzo-style enum words
+-- such as @\"eating_out\"@). This type unifies both so downstream category
+-- mapping can key on a single value.
+--
+-- The value JSON form is a tagged object
+-- @{ \"kind\": \"mcc\" | \"label\", \"value\": \<string\> }@ (the mcc value is
+-- the zero-padded 'renderMcc' text). The map-key JSON form is the tagged text
+-- @\"mcc:0742\"@ / @\"label:eating_out\"@ (split on the first @\':\'@ only, so
+-- labels containing colons survive).
+data BankProviderCategory
+  = ByMcc MCC
+  | ByLabel Text
+  deriving (Eq, Ord, Show)
+
+-- | Build a 'BankProviderCategory' from a validated merchant category code.
+mkByMcc :: MCC -> BankProviderCategory
+mkByMcc = ByMcc
+
+-- | Smart constructor for a label-based 'BankProviderCategory'. Trims surrounding
+-- whitespace and rejects an empty or blank label.
+mkByLabel :: Text -> Maybe BankProviderCategory
+mkByLabel t
+  | T.null trimmed = Nothing
+  | otherwise = Just (ByLabel trimmed)
+  where
+    trimmed = T.strip t
+
+-- | Fold over the two cases of a 'BankProviderCategory'.
+bankProviderCategory :: (MCC -> a) -> (Text -> a) -> BankProviderCategory -> a
+bankProviderCategory onMcc _ (ByMcc m) = onMcc m
+bankProviderCategory _ onLabel (ByLabel t) = onLabel t
+
+-- | Extract the merchant category code, if this is an mcc-based category.
+bankProviderCategoryMcc :: BankProviderCategory -> Maybe MCC
+bankProviderCategoryMcc = bankProviderCategory Just (const Nothing)
+
+-- | Tagged text key form: @\"mcc:0742\"@ / @\"label:eating_out\"@.
+renderBankProviderCategoryKey :: BankProviderCategory -> Text
+renderBankProviderCategoryKey =
+  bankProviderCategory
+    (\m -> "mcc:" <> renderMcc m)
+    ("label:" <>)
+
+-- | Parse the tagged text key form, splitting on the first @\':\'@ only so that
+-- labels containing colons round-trip.
+parseBankProviderCategoryKey :: Text -> Maybe BankProviderCategory
+parseBankProviderCategoryKey t =
+  case T.stripPrefix ":" rest of
+    Just suffix -> case prefix of
+      "mcc" -> mkByMcc <$> parseMcc suffix
+      "label" -> mkByLabel suffix
+      _ -> Nothing
+    Nothing -> Nothing
+  where
+    (prefix, rest) = T.breakOn ":" t
+
+instance ToJSON BankProviderCategory where
+  toJSON =
+    bankProviderCategory
+      (\m -> object ["kind" .= ("mcc" :: Text), "value" .= renderMcc m])
+      (\t -> object ["kind" .= ("label" :: Text), "value" .= t])
+
+instance FromJSON BankProviderCategory where
+  parseJSON = withObject "BankProviderCategory" $ \o -> do
+    kind <- o .: "kind"
+    value <- o .: "value"
+    case kind :: Text of
+      "mcc" ->
+        maybe
+          (fail ("Invalid BankProviderCategory mcc value: " <> T.unpack value))
+          (pure . mkByMcc)
+          (parseMcc value)
+      "label" ->
+        maybe
+          (fail "BankProviderCategory label must not be blank")
+          pure
+          (mkByLabel value)
+      other -> fail ("Unknown BankProviderCategory kind: " <> T.unpack other)
+
+instance ToJSONKey BankProviderCategory where
+  toJSONKey = toJSONKeyText renderBankProviderCategoryKey
+
+instance FromJSONKey BankProviderCategory where
+  fromJSONKey =
+    FromJSONKeyTextParser $ \t ->
+      maybe
+        (fail ("Invalid BankProviderCategory key: " <> T.unpack t))
+        pure
+        (parseBankProviderCategoryKey t)
 
 -- -----------------------------------------------------------------------------
 -- Entry Name
@@ -1394,12 +1555,12 @@ instance FromJSON ExternalTransactionId where
 -- carries one, a detected internal transfer carries both legs' ids (so both can
 -- be deduplicated). It is required (every import has at least one; it drives the
 -- overdraft-bypass guard and import dedup), while 'mcc' is optional because only
--- some providers supply a merchant category code (monobank does; PrivatBank does
--- not). Grouping the import-only fields keeps future provider metadata in one
--- place. Mirrors 'RelationSpec' in shape and role.
+-- some providers supply a provider category (monobank supplies an MCC; PrivatBank
+-- supplies a text label). Grouping the import-only fields keeps future provider
+-- metadata in one place. Mirrors 'RelationSpec' in shape and role.
 data ImportInfo = ImportInfo
   { externalTransactionIds :: NonEmpty ExternalTransactionId,
-    mcc :: Maybe MCC
+    category :: Maybe BankProviderCategory
   }
   deriving (Show, Eq, Generic)
 
@@ -1408,16 +1569,15 @@ instance ToJSON ImportInfo
 instance FromJSON ImportInfo
 
 -- | The external identifiers carried by an import (one or more). Accessor
--- function provided for API consistency with 'importInfoMcc', whose shared
--- @mcc@ field name is ambiguous under @DuplicateRecordFields@ at call sites
+-- function provided for API consistency with 'importInfoCategory', whose shared
+-- @category@ field name is ambiguous under @DuplicateRecordFields@ at call sites
 -- that also see other records with that field name.
 importInfoExternalTransactionIds :: ImportInfo -> NonEmpty ExternalTransactionId
 importInfoExternalTransactionIds ImportInfo {externalTransactionIds = e} = e
 
--- | The merchant category code carried by an import, if the provider supplied
--- one.
-importInfoMcc :: ImportInfo -> Maybe MCC
-importInfoMcc ImportInfo {mcc = m} = m
+-- | The provider category carried by an import, if the provider supplied one.
+importInfoCategory :: ImportInfo -> Maybe BankProviderCategory
+importInfoCategory ImportInfo {category = c} = c
 
 -- -----------------------------------------------------------------------------
 -- Password Types

@@ -16,6 +16,7 @@ module Domain.Core.TypesSpec (spec) where
 
 import Data.Aeson (Result (..), fromJSON, toJSON)
 import qualified Data.Aeson as Aeson
+import qualified Data.Map.Strict as Map
 import Data.Text (isInfixOf)
 import qualified Data.Text as T
 import Data.UUID (nil)
@@ -33,6 +34,8 @@ spec = do
   accountIdSpec
   transactionIdSpec
   externalTransactionIdSpec
+  mccSpec
+  bankProviderCategorySpec
   transactionTypeSpec
   roleToTextSpec
 
@@ -223,6 +226,65 @@ externalTransactionIdSpec = describe "ExternalTransactionId" $ do
   it "FromJSON accepts non-empty string"
     $ (Aeson.eitherDecode "\"tx-123\"" :: Either String ExternalTransactionId)
     `shouldSatisfy` isRight
+
+-- -----------------------------------------------------------------------------
+-- MCC Tests
+-- -----------------------------------------------------------------------------
+
+mccSpec :: Spec
+mccSpec = describe "MCC" $ do
+  it "mkMcc accepts a 4-digit code and renders zero-padded" $ do
+    fmap renderMcc (mkMcc 742) `shouldBe` Right "0742"
+    fmap renderMcc (mkMcc 5411) `shouldBe` Right "5411"
+  it "mkMcc rejects out-of-range codes" $ do
+    mkMcc (-1) `shouldSatisfy` isLeft
+    mkMcc 10000 `shouldSatisfy` isLeft
+  it "parseMcc round-trips the zero-padded text form"
+    $ (parseMcc "0742" >>= \m -> Just (renderMcc m))
+    `shouldBe` Just "0742"
+
+-- -----------------------------------------------------------------------------
+-- BankProviderCategory Tests
+-- -----------------------------------------------------------------------------
+
+bankProviderCategorySpec :: Spec
+bankProviderCategorySpec = describe "BankProviderCategory" $ do
+  it "value JSON round-trips ByMcc, including leading-zero codes" $ do
+    Aeson.decode (Aeson.encode (mkByMcc (unsafeMcc 5411)))
+      `shouldBe` Just (mkByMcc (unsafeMcc 5411))
+    Aeson.decode (Aeson.encode (mkByMcc (unsafeMcc 742)))
+      `shouldBe` Just (mkByMcc (unsafeMcc 742))
+  it "value JSON round-trips ByLabel" $ do
+    let cat = mkByLabel "eating_out"
+    (Aeson.decode . Aeson.encode <$> cat) `shouldBe` Just cat
+  it "encodes ByMcc value form as a tagged object with zero-padded code"
+    $ Aeson.encode (mkByMcc (unsafeMcc 742))
+    `shouldBe` "{\"kind\":\"mcc\",\"value\":\"0742\"}"
+  it "encodes ByLabel value form as a tagged object"
+    $ (Aeson.encode <$> mkByLabel "eating_out")
+    `shouldBe` Just "{\"kind\":\"label\",\"value\":\"eating_out\"}"
+  it "map-key JSON uses tagged text form and round-trips" $ do
+    let cid = unsafeDictionaryEntryId nil
+        m = Map.fromList [(mkByMcc (unsafeMcc 742), cid)] :: Map.Map BankProviderCategory DictionaryEntryId
+    Aeson.encode m `shouldBe` "{\"mcc:0742\":\"00000000-0000-0000-0000-000000000000\"}"
+    Aeson.decode (Aeson.encode m) `shouldBe` Just m
+  it "map-key JSON round-trips ByLabel keys" $ do
+    let cid = unsafeDictionaryEntryId nil
+    case mkByLabel "eating_out" of
+      Nothing -> expectationFailure "mkByLabel rejected a valid label"
+      Just cat -> do
+        let m = Map.fromList [(cat, cid)] :: Map.Map BankProviderCategory DictionaryEntryId
+        Aeson.encode m `shouldBe` "{\"label:eating_out\":\"00000000-0000-0000-0000-000000000000\"}"
+        Aeson.decode (Aeson.encode m) `shouldBe` Just m
+  it "mkByLabel rejects empty and whitespace-only labels" $ do
+    mkByLabel "" `shouldSatisfy` isNothing
+    mkByLabel "   " `shouldSatisfy` isNothing
+  it "bankProviderCategory folds over both cases" $ do
+    bankProviderCategory (const True) (const False) (mkByMcc (unsafeMcc 742)) `shouldBe` True
+    (bankProviderCategory (const True) (const False) <$> mkByLabel "x") `shouldBe` Just False
+  it "bankProviderCategoryMcc extracts only the ByMcc code" $ do
+    bankProviderCategoryMcc (mkByMcc (unsafeMcc 5411)) `shouldBe` Just (unsafeMcc 5411)
+    (bankProviderCategoryMcc <$> mkByLabel "x") `shouldBe` Just Nothing
 
 -- -----------------------------------------------------------------------------
 -- TransactionType Tests

@@ -57,11 +57,11 @@ bankConnectionIdSpec = describe "BankConnectionId" $ do
           Right _ -> expectationFailure "Expected Left"
 
 -- -----------------------------------------------------------------------------
--- ProviderCredential Tests
+-- BankProviderCredential Tests
 -- -----------------------------------------------------------------------------
 
 providerCredentialSpec :: Spec
-providerCredentialSpec = describe "ProviderCredential" $ do
+providerCredentialSpec = describe "BankProviderCredential" $ do
   describe "JSON round-trip" $ do
     it "round-trips a StaticSecret through toJSON/fromJSON" $ do
       let cred = StaticSecret "u_supersecrettoken1234"
@@ -74,4 +74,4 @@ providerCredentialSpec = describe "ProviderCredential" $ do
 
     it "decodes the same tagged shape back into StaticSecret" $ do
       let wire = Aeson.object ["kind" Aeson..= ("static" :: Text), "secret" Aeson..= ("xyz" :: Text)]
-      (Aeson.fromJSON wire :: Aeson.Result ProviderCredential) `shouldBe` Aeson.Success (StaticSecret "xyz")
+      (Aeson.fromJSON wire :: Aeson.Result BankProviderCredential) `shouldBe` Aeson.Success (StaticSecret "xyz")

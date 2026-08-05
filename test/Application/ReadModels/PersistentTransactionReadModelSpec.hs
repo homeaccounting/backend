@@ -50,8 +50,11 @@ import Domain.Core.Types
     TransactionId,
     TransactionKind (..),
     TransactionType (..),
+    mkByMcc,
     mkExpenseAllocations,
+    parseMcc,
     unsafeExternalTransactionId,
+    unsafeMcc,
     unsafeMoney,
   )
 import Domain.Models (AccountingEvent (..))
@@ -143,7 +146,7 @@ reconciled txId mccVal =
         TransactionImportReconciled
           { transactionId = txId,
             externalTransactionIds = unsafeExternalTransactionId "ext-1" NE.:| [],
-            mcc = mccVal
+            category = mkByMcc <$> (mccVal >>= parseMcc)
           }
     )
 
@@ -342,7 +345,7 @@ spec = describe "Persistent Transaction read model" $ do
             reconciled (tx 1) (Just "5411") 2
           ]
       mTd <- runDbIn env (getTransaction (tx 1))
-      (.mcc) <$> mTd `shouldBe` Just (Just "5411")
+      (.category) <$> mTd `shouldBe` Just (Just (mkByMcc (unsafeMcc 5411)))
 
     it "does not clobber an existing mcc when the reconcile carries none" $ do
       env <-
@@ -353,7 +356,7 @@ spec = describe "Persistent Transaction read model" $ do
             reconciled (tx 1) Nothing 3
           ]
       mTd <- runDbIn env (getTransaction (tx 1))
-      (.mcc) <$> mTd `shouldBe` Just (Just "5999")
+      (.category) <$> mTd `shouldBe` Just (Just (mkByMcc (unsafeMcc 5999)))
 
   describe "findReconciliationCandidates" $ do
     it "returns a completed manual leg matching account/side/amount/kind/window" $ do

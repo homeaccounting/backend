@@ -16,10 +16,10 @@
 --   - AddDictionaryEntry: Configuration must exist, no duplicate entry names in same dictionary
 --   - RenameDictionaryEntry: Configuration must exist, dictionary and entry must exist, no duplicate names
 --   - RemoveDictionaryEntry: Configuration must exist, dictionary and entry must exist, cannot remove last entry,
---       cannot remove entry set as global default or referenced by MCC map
+--       cannot remove entry set as global default or referenced by the provider-category map
 --   - SetDefaultIncomeCategory: Category must exist in income-category dictionary
 --   - SetDefaultExpenseCategory: Category must exist in expense-category dictionary
---   - SetBankingMccExpenseCategoryMap: All map values must exist in expense-category dictionary
+--   - SetBankProviderExpenseCategoryMap: All map values must exist in expense-category dictionary
 module Domain.Configuration.CommandHandler
   ( -- * Command Sum Type
     ConfigurationCommand (..),
@@ -78,7 +78,7 @@ data ConfigurationError
   | CannotRemoveLastEntry
   | EntryNotInDictionary
   | EntryIsGlobalDefault
-  | EntryIsInMccMap
+  | EntryIsInBankProviderExpenseCategoryMap
   | -- | An add/move named a parent entry that does not exist in the dictionary.
     ParentEntryNotFound
   | -- | An add/move named a parent that exists but is an item, not a group.
@@ -248,9 +248,9 @@ isGlobalDefault eid config =
   config.defaults.incomeCategory == Just eid
     || config.defaults.expenseCategory == Just eid
 
--- | Check if an entry is referenced as a value in the banking MCC expense category map.
-isInMccMap :: CategoryId -> Configuration -> Bool
-isInMccMap eid config = eid `elem` Map.elems config.banking.mccExpenseCategoryMap
+-- | Check if an entry is referenced as a value in the banking provider-category map.
+isInBankProviderExpenseCategoryMap :: CategoryId -> Configuration -> Bool
+isInBankProviderExpenseCategoryMap eid config = eid `elem` Map.elems config.banking.bankProviderExpenseCategoryMap
 
 -- | Reject the command if the targeted bank connection does not exist.
 requireConnection :: BankConnectionId -> Configuration -> Either ConfigurationError ()
@@ -362,7 +362,7 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
   | wouldEmptyRequiredDictionary dictionaryKind config = Left CannotRemoveLastEntry
   | not (null (childrenOf entryId (entriesOf dictionaryKind config))) = Left GroupNotEmpty
   | isGlobalDefault entryId config = Left EntryIsGlobalDefault
-  | isInMccMap entryId config = Left EntryIsInMccMap
+  | isInBankProviderExpenseCategoryMap entryId config = Left EntryIsInBankProviderExpenseCategoryMap
   | otherwise =
       Right
         [ DictionaryEntryRemovedConfigurationEvent
@@ -435,12 +435,12 @@ handleConfigurationCommand _ (SetDefaultSubtypeAccountsConfigurationCommand SetD
     [ DefaultSubtypeAccountsSetConfigurationEvent
         DefaultSubtypeAccountsSet {subtypeAccounts = subtypeAccounts}
     ]
--- Handle SetBankingMccExpenseCategoryMap command
-handleConfigurationCommand config (SetBankingMccExpenseCategoryMapConfigurationCommand SetBankingMccExpenseCategoryMap {..}) = do
+-- Handle SetBankProviderExpenseCategoryMap command
+handleConfigurationCommand config (SetBankProviderExpenseCategoryMapConfigurationCommand SetBankProviderExpenseCategoryMap {..}) = do
   mapM_ (\cid -> requireEntryIn expenseCategoryDictKind cid config) (Map.elems mapping)
   Right
-    [ BankingMccExpenseCategoryMapSetConfigurationEvent
-        BankingMccExpenseCategoryMapSet
+    [ BankProviderExpenseCategoryMapSetConfigurationEvent
+        BankProviderExpenseCategoryMapSet
           { mapping = mapping
           }
     ]

@@ -27,14 +27,13 @@ import Application.Services.ConfigurationService
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
-import Domain.Banking.Types (ProviderCredential (..), unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
+import Domain.Banking.Types (BankProviderCredential (..), unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
 import Domain.Configuration.Commands (AddBankConnection (..))
 import Domain.Configuration.Defaults
   ( DefaultEntry (entryId),
     ExpenseDefaults (other),
     IncomeDefaults (other),
-    defaultMccExpenseCategoryMap,
     expense,
     income,
   )
@@ -57,6 +56,7 @@ import Infrastructure.App
     HasEventStore (..),
     bankingKeyRingL,
   )
+import Infrastructure.Banking.CategoryDefaults (defaultBankProviderExpenseCategoryMap)
 import Infrastructure.Banking.Provider (FileImportCapability (..), StatementFormat (..))
 import Infrastructure.Banking.Registry (registryFromList)
 import Infrastructure.Crypto.SecretBox (decryptSecret, encryptSecret)
@@ -92,8 +92,8 @@ seedBankingDefaultsSpec =
           let ConfigurationDefaults {incomeCategory = mInc, expenseCategory = mExp} = cfg.defaults
           mInc `shouldBe` Just income.other.entryId
           mExp `shouldBe` Just expense.other.entryId
-          cfg.banking.mccExpenseCategoryMap
-            `shouldBe` defaultMccExpenseCategoryMap
+          cfg.banking.bankProviderExpenseCategoryMap
+            `shouldBe` defaultBankProviderExpenseCategoryMap
 
 -- -----------------------------------------------------------------------------
 -- cloneConfiguration carries banking fields from source
@@ -132,8 +132,8 @@ cloneBankingDefaultsSpec =
                   let ConfigurationDefaults {incomeCategory = mInc, expenseCategory = mExp} = clonedCfg.defaults
                   mInc `shouldBe` Just income.other.entryId
                   mExp `shouldBe` Just expense.other.entryId
-                  clonedCfg.banking.mccExpenseCategoryMap
-                    `shouldBe` defaultMccExpenseCategoryMap
+                  clonedCfg.banking.bankProviderExpenseCategoryMap
+                    `shouldBe` defaultBankProviderExpenseCategoryMap
 
                   -- Confirm it is a ClonedBy config (not System)
                   case clonedCfg.createdBy of

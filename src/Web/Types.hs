@@ -129,7 +129,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), BankProviderCategory, CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
@@ -678,9 +678,12 @@ data TransactionResponse
     -- 'Refund' edge to the expense it refunds). Empty for transactions with
     -- no declared edges.
     relations :: [TransactionRelation],
-    -- | Original provider merchant category code for imported transactions;
-    -- @null@ for manual entries and providers that supply no MCC.
-    mcc :: Maybe Text
+    -- | Raw provider category signal for imported transactions, surfaced
+    -- faithfully as a tagged object: @{"kind":"mcc","value":"5411"}@ for an
+    -- ISO 18245 merchant category code or @{"kind":"label","value":"eating_out"}@
+    -- for a free-text provider label. @null@ for manual entries and providers
+    -- that supply no category signal.
+    bankProviderCategory :: Maybe BankProviderCategory
   }
   deriving (Show, Eq, Generic)
 
@@ -1152,7 +1155,10 @@ fromTransactionData txId TransactionData {..} =
         [ TransactionRelation (unTransactionId rel) (renderRelationKind k)
         | (rel, k) <- relations
         ],
-      mcc = mcc
+      -- Surface the raw provider category signal verbatim (both MCC- and
+      -- label-based categories); it serialises as a tagged @{kind,value}@
+      -- object or @null@.
+      bankProviderCategory = category
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -1187,7 +1193,7 @@ fromTransaction txId tx =
       contactId = unDictionaryEntryId <$> tx.contactId,
       amendmentCount = tx.amendmentCount,
       relations = [],
-      mcc = Nothing
+      bankProviderCategory = Nothing
     }
 
 -- | Converts TransactionStatus to Text representation.
