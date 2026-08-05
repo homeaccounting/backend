@@ -303,10 +303,11 @@ type ConfigurationAPI =
 -- -----------------------------------------------------------------------------
 
 -- | Projection of BankingConfiguration for wire transport. The
--- @bankProviderExpenseCategoryMap@ keys are 'BankProviderCategory' key strings
--- (@"mcc:0742"@ / @"label:…"@).
+-- @expenseCategoryMap@ keys are 'BankProviderCategory' key strings
+-- (@"mcc:0742"@ / @"label:…"@); already nested under @banking@, so the field
+-- needs no @bankProvider@ prefix.
 data BankingConfigurationDTO = BankingConfigurationDTO
-  { bankProviderExpenseCategoryMap :: Map Text UUID,
+  { expenseCategoryMap :: Map Text UUID,
     -- | Configured bank connections (secrets never serialised).
     connections :: [BankConnectionDTO]
   }
@@ -383,7 +384,7 @@ toBankConnectionDTO c =
 toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
 toBankingDTO b =
   BankingConfigurationDTO
-    { bankProviderExpenseCategoryMap = Map.mapKeys renderBankProviderCategoryKey (Map.map unDictionaryEntryId b.bankProviderExpenseCategoryMap),
+    { expenseCategoryMap = Map.mapKeys renderBankProviderCategoryKey (Map.map unDictionaryEntryId b.bankProviderExpenseCategoryMap),
       connections = map toBankConnectionDTO (Map.elems b.connections)
     }
 
@@ -555,7 +556,7 @@ instance FromJSON MoveEntryRequest
 --
 -- Absent or null fields mean no change; present value sets the field.
 newtype UpdateBankingRequest = UpdateBankingRequest
-  { bankProviderExpenseCategoryMap :: Maybe (Map Text UUID)
+  { expenseCategoryMap :: Maybe (Map Text UUID)
   }
   deriving (Show, Eq, Generic)
 
@@ -710,15 +711,15 @@ updateBankingHandler :: AuthenticatedUser -> UpdateBankingRequest -> AppM Bankin
 updateBankingHandler user req = do
   let uid = user.userId
 
-  forM_ req.bankProviderExpenseCategoryMap $ \rawMap -> do
+  forM_ req.expenseCategoryMap $ \rawMap -> do
     newMap <-
       fmap Map.fromList . forM (Map.toList rawMap) $ \(rawKey, uuid) -> do
         pc <-
           validateFieldCtx
-            "bankProviderExpenseCategoryMap"
+            "expenseCategoryMap"
             rawKey
             (maybe (Left ("Invalid provider-category key: " <> rawKey)) Right (parseBankProviderCategoryKey rawKey))
-        cat <- validateFieldCtx "bankProviderExpenseCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid)
+        cat <- validateFieldCtx "expenseCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid)
         pure (pc, cat)
     result <- ConfigService.setBankProviderExpenseCategoryMap uid newMap
     case result of

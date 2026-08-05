@@ -225,13 +225,13 @@ updateDefaultsSpec =
 
 updateBankingMccMapSpec :: Spec
 updateBankingMccMapSpec =
-  describe "PUT /api/users/me/configuration/banking (bankProviderExpenseCategoryMap)"
+  describe "PUT /api/users/me/configuration/banking (expenseCategoryMap)"
     $ with mkAppSeeded
     $ do
       it "returns 200 and GET reflects a single-entry provider-category map" $ do
         tok <- registerAndGetToken
         let mcc = "mcc:5411" :: Text
-            body = encode $ object ["bankProviderExpenseCategoryMap" .= object [Key.fromText mcc .= expenseOtherUUID]]
+            body = encode $ object ["expenseCategoryMap" .= object [Key.fromText mcc .= expenseOtherUUID]]
         resp <-
           request
             "PUT"
@@ -243,7 +243,7 @@ updateBankingMccMapSpec =
           case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
             Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
             Right dto ->
-              Map.lookup mcc dto.bankProviderExpenseCategoryMap `shouldBe` Just expenseOtherUUID
+              Map.lookup mcc dto.expenseCategoryMap `shouldBe` Just expenseOtherUUID
         -- Verify GET also shows the map
         getResp <-
           request
@@ -267,7 +267,7 @@ updateBankingMccMapSpec =
             body =
               encode
                 $ object
-                  [ "bankProviderExpenseCategoryMap"
+                  [ "expenseCategoryMap"
                       .= object
                         [ Key.fromText mccKey .= expenseOtherUUID,
                           Key.fromText labelKey .= expenseOtherUUID
@@ -284,8 +284,8 @@ updateBankingMccMapSpec =
           case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
             Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
             Right dto -> do
-              Map.lookup mccKey dto.bankProviderExpenseCategoryMap `shouldBe` Just expenseOtherUUID
-              Map.lookup labelKey dto.bankProviderExpenseCategoryMap `shouldBe` Just expenseOtherUUID
+              Map.lookup mccKey dto.expenseCategoryMap `shouldBe` Just expenseOtherUUID
+              Map.lookup labelKey dto.expenseCategoryMap `shouldBe` Just expenseOtherUUID
         getResp <-
           request
             "GET"
@@ -303,7 +303,7 @@ updateBankingMccMapSpec =
       it "returns 200 and GET shows empty map when {} supplied" $ do
         tok <- registerAndGetToken
         -- First set a map entry
-        let setupBody = encode $ object ["bankProviderExpenseCategoryMap" .= object ["mcc:5411" .= expenseOtherUUID]]
+        let setupBody = encode $ object ["expenseCategoryMap" .= object ["mcc:5411" .= expenseOtherUUID]]
         _ <-
           request
             "PUT"
@@ -311,7 +311,7 @@ updateBankingMccMapSpec =
             (jsonAuthHeaders tok)
             setupBody
         -- Now clear via empty map
-        let clearBody = encode $ object ["bankProviderExpenseCategoryMap" .= object ([] :: [Pair])]
+        let clearBody = encode $ object ["expenseCategoryMap" .= object ([] :: [Pair])]
         resp <-
           request
             "PUT"
@@ -323,11 +323,11 @@ updateBankingMccMapSpec =
           case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
             Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
             Right dto ->
-              Map.null dto.bankProviderExpenseCategoryMap `shouldBe` True
+              Map.null dto.expenseCategoryMap `shouldBe` True
 
       it "returns 400 when a map UUID value is not in the expense-category dictionary" $ do
         tok <- registerAndGetToken
-        let body = encode $ object ["bankProviderExpenseCategoryMap" .= object ["mcc:5411" .= unknownUUID]]
+        let body = encode $ object ["expenseCategoryMap" .= object ["mcc:5411" .= unknownUUID]]
         resp <-
           request
             "PUT"
