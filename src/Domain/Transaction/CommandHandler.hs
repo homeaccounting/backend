@@ -132,6 +132,9 @@ data TransactionError
   | -- | 'CompleteTransactionMerge' / 'FailTransactionMerge' was issued when no
     -- merge is in progress (@mergeInProgress = False@).
     NoMergeInProgress
+  | -- | 'ReconcileTransactionImport' was issued against a transaction that has
+    -- already had import attribution attached (@reconciled = True@).
+    TransactionAlreadyReconciled
   deriving (Show, Eq)
 
 -- -----------------------------------------------------------------------------
@@ -282,6 +285,25 @@ handleTransactionCommand transaction (SetTransactionContactTransactionCommand Se
                 contactId = contactId
               }
         ]
+    _ -> Left CannotEditUncompletedTransaction
+-- Handle ReconcileTransactionImport command
+--
+-- Attaches import attribution onto a completed manual transaction. Balance-neutral —
+-- emits a single 'TransactionImportReconciled'. Rejected if the transaction is not
+-- Completed, or if it has already been reconciled (guard against a double attach).
+handleTransactionCommand transaction (ReconcileTransactionImportTransactionCommand ReconcileTransactionImport {..}) =
+  case transaction ^. #status of
+    Completed
+      | transaction ^. #reconciled -> Left TransactionAlreadyReconciled
+      | otherwise ->
+          Right
+            [ TransactionImportReconciledTransactionEvent
+                TransactionImportReconciled
+                  { transactionId = transactionId,
+                    externalTransactionIds = externalTransactionIds,
+                    mcc = mcc
+                  }
+            ]
     _ -> Left CannotEditUncompletedTransaction
 -- Handle ChangeTransactionAllocations command
 --

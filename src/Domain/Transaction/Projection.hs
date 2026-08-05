@@ -219,7 +219,10 @@ data Transaction = Transaction
     -- (reject re-entry) and 'CompleteTransactionMerge' / 'FailTransactionMerge'.
     -- Because the whole merge cascade runs in one transaction, this flag is only
     -- ever True on uncommitted state and always False once committed.
-    mergeInProgress :: Bool
+    mergeInProgress :: Bool,
+    -- | True once a 'TransactionImportReconciled' event has been folded; gates
+    -- re-reconciliation.
+    reconciled :: Bool
   }
   deriving (Show, Eq)
 
@@ -287,7 +290,8 @@ transactionDefault =
       amendmentCount = 0,
       amendmentInProgress = False,
       cancellationInProgress = False,
-      mergeInProgress = False
+      mergeInProgress = False,
+      reconciled = False
     }
 
 -- -----------------------------------------------------------------------------
@@ -469,6 +473,12 @@ handleTransactionEvent transaction (TransactionMergeFailedTransactionEvent _) =
   -- Clear the transient flag. No canonical change on failure (the amend was
   -- sequenced first and its failure applied nothing).
   transaction & #mergeInProgress .~ False
+handleTransactionEvent transaction (TransactionImportReconciledTransactionEvent _) =
+  -- Attach import attribution onto a completed manual transaction. Balance-neutral:
+  -- flips the 'reconciled' flag so the command handler rejects a second reconcile.
+  case transaction ^. #status of
+    Completed -> transaction & #reconciled .~ True
+    _ -> transaction
 handleTransactionEvent transaction (TransactionRelationAddedTransactionEvent _) =
   -- Relationships are a read-model concern; the aggregate never gates on them.
   transaction

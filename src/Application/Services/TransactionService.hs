@@ -33,6 +33,7 @@ module Application.Services.TransactionService
     setTransactionLabels,
     setTransactionContact,
     setTransactionAllocations,
+    reconcileTransactionImport,
     changeTransactionDescription,
     changeTransactionDate,
     amendTransaction,
@@ -95,7 +96,9 @@ import Domain.Core.Types
     Currency,
     DictionaryEntryId,
     ExchangeRate,
+    ExternalTransactionId,
     LabelId,
+    MCC,
     Money,
     RelationKind (..),
     RelationSpec (..),
@@ -137,6 +140,7 @@ import Domain.Transaction.CommandHandler
         InitiateTransactionCancellationTransactionCommand,
         InitiateTransactionMergeTransactionCommand,
         InitiateTransactionPostingTransactionCommand,
+        ReconcileTransactionImportTransactionCommand,
         RemoveTransactionRelationTransactionCommand,
         SetTransactionContactTransactionCommand,
         SetTransactionLabelsTransactionCommand
@@ -153,6 +157,7 @@ import Domain.Transaction.Commands
     InitiateTransactionCancellation (..),
     InitiateTransactionMerge (..),
     InitiateTransactionPosting (..),
+    ReconcileTransactionImport (..),
     RemoveTransactionRelation (..),
     SetTransactionContact (..),
     SetTransactionLabels (..),
@@ -161,8 +166,8 @@ import Domain.Transaction.Events
   ( TransactionAmendmentFailed (..),
     TransactionMergeFailed (..),
   )
+import Domain.Transaction.Matching.Transfer (TransferDirection (..), TransferLeg (..), isTransferMatch)
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Domain.Transaction.TransferMatch (TransferDirection (..), TransferLeg (..), isTransferMatch)
 import Eventium (CommandHandlerError (..), EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App
   ( AppM,
@@ -568,6 +573,27 @@ setTransactionAllocations userId transactionId newAllocations = runExceptT $ do
           ChangeTransactionAllocations
             { transactionId = transactionId,
               newAllocations = newAllocations
+            }
+  ExceptT (dispatchEdit transactionId cmd)
+
+-- | Attach bank-import attribution (external id(s) + MCC) onto an existing
+-- completed manual transaction — the reconcile leg of manual↔import dedup.
+-- Mirrors 'setTransactionContact'\/'setTransactionLabels' (including the
+-- Editor+ access check); issues 'ReconcileTransactionImport' via 'dispatchEdit'.
+reconcileTransactionImport ::
+  UserId ->
+  TransactionId ->
+  NonEmpty ExternalTransactionId ->
+  Maybe MCC ->
+  AppM (Either DomainError TransactionData)
+reconcileTransactionImport userId transactionId externalIds mcc = runExceptT $ do
+  _transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
+  let cmd =
+        ReconcileTransactionImportTransactionCommand
+          ReconcileTransactionImport
+            { transactionId = transactionId,
+              externalTransactionIds = externalIds,
+              mcc = mcc
             }
   ExceptT (dispatchEdit transactionId cmd)
 

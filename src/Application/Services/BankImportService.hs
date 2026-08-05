@@ -50,8 +50,14 @@ where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
-import Application.ReadModels.BankImportReadModel (isImported)
+import Application.ReadModels.BankImportReadModel (isImported, isReconciled)
 import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItemIds, dictionaryItems)
+import Application.ReadModels.Transaction
+  ( LegSide (..),
+    TransactionData (..),
+    findReconciliationCandidates,
+    findTransferReconciliationCandidates,
+  )
 import qualified Application.ReadModels.User as UserRM
 import Application.Services.BankImport.TransferPairing
   ( InternalTransfer,
@@ -68,7 +74,7 @@ import Data.Aeson (ToJSON)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text.Match (normalizeName)
-import Data.Time (UTCTime, utctDay)
+import Data.Time (NominalDiffTime, UTCTime, addUTCTime, utctDay)
 import Domain.Banking.Types (ExternalAccountId, unExternalAccountId)
 import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
 import Domain.Configuration.Projection (BankingConfiguration (..), ConfigurationDefaults (..))
@@ -77,6 +83,8 @@ import Domain.Core.Types
   ( AccountId,
     CategoryId,
     ContactId,
+    Currency,
+    ExternalTransactionId,
     ImportInfo (..),
     MCC,
     Money,
@@ -92,8 +100,11 @@ import Domain.Core.Types
     mkMoney,
     moneyCurrency,
     unEntryName,
+    unMoney,
   )
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
+import Domain.Transaction.Matching.Leg (Leg (..))
+import Domain.Transaction.Matching.Reconciliation (ReconciliationOutcome (..), reconcile)
 import Infrastructure.App
   ( AppM,
     runDb,
@@ -127,6 +138,9 @@ data SkipReason
     InvalidAmount !Text
   | -- | The local account's currency differs from the transaction's currency.
     CurrencyMismatch !Text
+  | -- | A confident-but-ambiguous match — 2+ manual candidates — so not
+    -- auto-reconciled; left for the user to resolve.
+    AmbiguousReconciliation
   deriving (Show, Eq)
 
 -- | The outcome of attempting to import a single bank transaction.
@@ -146,6 +160,7 @@ renderSkipReason = \case
   UnsupportedCurrency msg -> "unsupported currency: " <> msg
   InvalidAmount msg -> "invalid amount: " <> msg
   CurrencyMismatch msg -> "currency mismatch: " <> msg
+  AmbiguousReconciliation -> "ambiguous duplicate; not auto-reconciled"
 
 -- | Per-account outcome of an import call.
 --
@@ -225,17 +240,16 @@ importConnection ::
   UTCTime ->
   UTCTime ->
   AppM ImportResult
-importConnection interpretation pull userId accountLink fromTime toTime =
-  withUserLock userId $ do
-    logInfo $ "Importing bank transactions for user " <> displayShow userId
-    fetched <- forM accountLink fetchOne
-    let allTxns = concat [txns | (_, _, Right txns) <- fetched]
-    result <- importMany interpretation userId accountLink allTxns
-    let byExtId =
-          Map.fromList
-            [(eid, a) | a@(AccountImportResult {externalAccountId = eid}) <- result.accounts]
-        accountResults = map (regroup byExtId) fetched
-    pure (ImportResult {accounts = accountResults, unresolved = result.unresolved})
+importConnection interpretation pull userId accountLink fromTime toTime = do
+  logInfo $ "Importing bank transactions for user " <> displayShow userId
+  fetched <- forM accountLink fetchOne
+  let allTxns = concat [txns | (_, _, Right txns) <- fetched]
+  result <- importMany interpretation userId accountLink allTxns
+  let byExtId =
+        Map.fromList
+          [(eid, a) | a@(AccountImportResult {externalAccountId = eid}) <- result.accounts]
+      accountResults = map (regroup byExtId) fetched
+  pure (ImportResult {accounts = accountResults, unresolved = result.unresolved})
   where
     fetchOne (extAccId, localAccId) = do
       fetchResult <- liftIO $ pull.fetchStatements extAccId fromTime toTime
@@ -292,31 +306,32 @@ importMany ::
   [(ExternalAccountId, AccountId)] ->
   [BankTransaction] ->
   AppM ImportResult
-importMany interpretation userId accountLink txns = do
-  let classify = interpretation.classify
-      routed =
-        [ (tx.externalAccountId, localAccId, tx)
-        | tx <- txns,
-          Just localAccId <- [lookup tx.externalAccountId accountLink]
-        ]
-      unmatched = [tx.externalAccountId | tx <- txns, isNothing (lookup tx.externalAccountId accountLink)]
-      (pairs, unorderedLeftovers) = pairInternalTransfers interpretation.transferMatcher routed
-      -- 'pairInternalTransfers' sorts its input internally for deterministic
-      -- pairing; restore the caller's original transaction order for the
-      -- unpaired remainder so 'ImportResult' stays input-ordered (exactly as it
-      -- was before pairing was introduced) — the per-account breakdown and its
-      -- consumers rely on that order.
-      leftoverIds = Set.fromList [tx.externalId | (_, _, tx) <- unorderedLeftovers]
-      leftovers = [entry | entry@(_, _, tx) <- routed, tx.externalId `Set.member` leftoverIds]
-  pairEntries <- concat <$> forM pairs (importTransferPair classify userId accountLink)
-  leftoverEntries <- forM leftovers $ \(extAccId, localAccId, tx) -> do
-    outcome <- importTransaction classify userId accountLink tx
-    pure (extAccId, localAccId, outcome)
-  pure
-    ImportResult
-      { accounts = groupAccountResults (pairEntries <> leftoverEntries),
-        unresolved = nubOrd (map unExternalAccountId unmatched)
-      }
+importMany interpretation userId accountLink txns =
+  withUserLock userId $ do
+    let classify = interpretation.classify
+        routed =
+          [ (tx.externalAccountId, localAccId, tx)
+          | tx <- txns,
+            Just localAccId <- [lookup tx.externalAccountId accountLink]
+          ]
+        unmatched = [tx.externalAccountId | tx <- txns, isNothing (lookup tx.externalAccountId accountLink)]
+        (pairs, unorderedLeftovers) = pairInternalTransfers interpretation.transferMatcher routed
+        -- 'pairInternalTransfers' sorts its input internally for deterministic
+        -- pairing; restore the caller's original transaction order for the
+        -- unpaired remainder so 'ImportResult' stays input-ordered (exactly as it
+        -- was before pairing was introduced) — the per-account breakdown and its
+        -- consumers rely on that order.
+        leftoverIds = Set.fromList [tx.externalId | (_, _, tx) <- unorderedLeftovers]
+        leftovers = [entry | entry@(_, _, tx) <- routed, tx.externalId `Set.member` leftoverIds]
+    pairEntries <- concat <$> forM pairs (importTransferPair classify userId accountLink)
+    leftoverEntries <- forM leftovers $ \(extAccId, localAccId, tx) -> do
+      outcome <- importTransaction classify userId accountLink tx
+      pure (extAccId, localAccId, outcome)
+    pure
+      ImportResult
+        { accounts = groupAccountResults (pairEntries <> leftoverEntries),
+          unresolved = nubOrd (map unExternalAccountId unmatched)
+        }
 
 -- | Import a detected internal-transfer pair.
 --
@@ -339,6 +354,8 @@ importTransferPair classify userId accountLink transfer = do
       cLeg = creditLeg transfer
       dLocal = debitLocalAccount transfer
       cLocal = creditLocalAccount transfer
+      bothLegs out = pure [(dLeg.externalAccountId, dLocal, out), (cLeg.externalAccountId, cLocal, out)]
+      postFresh = postInternalTransfer userId dLocal cLocal dLeg cLeg >>= bothLegs
   dImported <- runDb (isImported dLeg.externalId)
   cImported <- runDb (isImported cLeg.externalId)
   if dImported || cImported
@@ -346,9 +363,22 @@ importTransferPair classify userId accountLink transfer = do
       dOut <- importTransaction classify userId accountLink dLeg
       cOut <- importTransaction classify userId accountLink cLeg
       pure [(dLeg.externalAccountId, dLocal, dOut), (cLeg.externalAccountId, cLocal, cOut)]
-    else do
-      outcome <- postInternalTransfer userId dLocal cLocal dLeg cLeg
-      pure [(dLeg.externalAccountId, dLocal, outcome), (cLeg.externalAccountId, cLocal, outcome)]
+    else case currencyFromNumericCode dLeg.currencyCode >>= \c -> mkMoney c (abs dLeg.amount) of
+      -- Currency/amount resolution failure: let postInternalTransfer produce the
+      -- proper Skip (UnsupportedCurrency / InvalidAmount) — don't duplicate that here.
+      Left _ -> postFresh
+      Right money -> do
+        let fromT = addUTCTime (negate reconciliationWindow) dLeg.time
+            toT = addUTCTime reconciliationWindow dLeg.time
+            importedLeg = Leg (unMoney money) (moneyCurrency money) dLeg.time
+            label = textDisplay dLeg.externalId <> "/" <> textDisplay cLeg.externalId
+        candidates <- runDb (findTransferReconciliationCandidates dLocal cLocal money fromT toT)
+        result <-
+          attemptReconcile userId label importedLeg candidates (legOf SourceLeg) (dLeg.externalId :| [cLeg.externalId]) Nothing
+        case result of
+          ReconciledOnto tid -> bothLegs (Imported tid)
+          ReconcileAmbiguous -> bothLegs (Skipped AmbiguousReconciliation)
+          ReconcileNoMatch -> postFresh
 
 -- | Post a fresh internal transfer between two of the user's own local accounts
 -- as a single 'Transfer' (rather than double-booking an income + expense).
@@ -810,7 +840,74 @@ commitImport classify userId userData localAccId tx money = do
                 )
             )
         )
-    else commitMatchingCurrencyImport userId externalAccId localAccId tx money direction
+    else do
+      let legSide = case direction of
+            ClassifiedExpense -> SourceLeg
+            ClassifiedIncome -> TargetLeg
+          kind = case direction of
+            ClassifiedExpense -> ExpenseKind
+            ClassifiedIncome -> IncomeKind
+          fromT = addUTCTime (negate reconciliationWindow) tx.time
+          toT = addUTCTime reconciliationWindow tx.time
+          importedLeg = Leg (unMoney money) (moneyCurrency money) tx.time
+      candidates <- lift $ runDb (findReconciliationCandidates localAccId legSide money kind fromT toT)
+      result <-
+        lift $ attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.mcc
+      case result of
+        ReconciledOnto tid -> pure (Imported tid)
+        ReconcileAmbiguous -> pure (Skipped AmbiguousReconciliation)
+        ReconcileNoMatch -> commitMatchingCurrencyImport userId externalAccId localAccId tx money direction
+
+-- | Fuzzy-match window for manual↔import reconciliation: ±3 days (spec §1).
+reconciliationWindow :: NominalDiffTime
+reconciliationWindow = 3 * 86400
+
+-- | Project a matched candidate's local leg into a 'Leg' for the pure matcher.
+legOf :: LegSide -> TransactionData -> Leg Currency
+legOf SourceLeg td = Leg (unMoney td.sourceAmount) (moneyCurrency td.sourceAmount) td.date
+legOf TargetLeg td = Leg (unMoney td.targetAmount) (moneyCurrency td.targetAmount) td.date
+
+-- | Outcome of the shared reconcile step, which each caller maps onto its own
+-- 'ImportOutcome' shape.
+data ReconcileResult
+  = -- | Unique match — attribution attached onto this manual transaction.
+    ReconciledOnto !TransactionId
+  | -- | Two or more candidates matched — not auto-reconciled.
+    ReconcileAmbiguous
+  | -- | No candidate matched (or the attach itself failed) — import fresh.
+    ReconcileNoMatch
+
+-- | The shared reconcile step for both import paths (single transaction and
+-- whole-pair transfer): exclude already-reconciled candidates, run the pure
+-- matcher, and on a unique match attach the incoming external id(s) + MCC onto
+-- the matched manual transaction. Returns a 'ReconcileResult' the caller turns
+-- into its own outcome. @label@ is a grep-friendly tag for the log lines (the
+-- transaction's external id, or @"d/c"@ for a transfer pair).
+attemptReconcile ::
+  UserId ->
+  Text ->
+  Leg Currency ->
+  [(TransactionId, TransactionData)] ->
+  (TransactionData -> Leg Currency) ->
+  NonEmpty ExternalTransactionId ->
+  Maybe MCC ->
+  AppM ReconcileResult
+attemptReconcile userId label importedLeg candidates projectLeg extIds mcc = do
+  fresh <- filterM (\(tid, _) -> not <$> runDb (isReconciled tid)) candidates
+  case reconcile reconciliationWindow importedLeg [(tid, projectLeg td) | (tid, td) <- fresh] of
+    NoMatch -> pure ReconcileNoMatch
+    Ambiguous tids -> do
+      logInfo $ "Ambiguous reconciliation for import " <> display label <> " (" <> displayShow (length tids) <> " candidates); skipping"
+      pure ReconcileAmbiguous
+    UniqueMatch tid -> do
+      reconResult <- TransactionService.reconcileTransactionImport userId tid extIds mcc
+      case reconResult of
+        Right _ -> do
+          logInfo $ "Reconciled import " <> display label <> " onto manual tx " <> displayShow tid
+          pure (ReconciledOnto tid)
+        Left err -> do
+          logWarn $ "Reconcile of " <> display label <> " onto " <> displayShow tid <> " failed (" <> displayShow err <> "); importing fresh"
+          pure ReconcileNoMatch
 
 -- | Continue an import once the LOCAL account's currency has been confirmed to
 -- match the transaction currency. Handles configuration lookup, category

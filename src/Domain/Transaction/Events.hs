@@ -43,14 +43,16 @@ module Domain.Transaction.Events
     TransactionMergeFailed (..),
     TransactionRelationAdded (..),
     TransactionRelationRemoved (..),
+    TransactionImportReconciled (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ExternalTransactionId, ImportInfo, LabelId, MCC, Money, RelationKind, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -80,7 +82,8 @@ transactionEvents =
     ''TransactionMergeCompleted,
     ''TransactionMergeFailed,
     ''TransactionRelationAdded,
-    ''TransactionRelationRemoved
+    ''TransactionRelationRemoved,
+    ''TransactionImportReconciled
   ]
 
 -- -----------------------------------------------------------------------------
@@ -416,6 +419,25 @@ data TransactionRelationRemoved = TransactionRelationRemoved
   }
   deriving (Show, Eq)
 
+-- | Event emitted when a bank import is recognised as the SAME movement as an
+-- already-recorded manual transaction: it attaches the import attribution
+-- (external id(s) + optional MCC) onto that transaction instead of booking a
+-- second ledger entry. Balance-neutral — no leg/amount change; sibling in
+-- spirit to 'TransactionContactSet'. No `by`: a system-driven metadata
+-- attachment, not a whole-aggregate lifecycle action.
+data TransactionImportReconciled = TransactionImportReconciled
+  { -- | The manual transaction gaining import attribution. Carried in the
+    -- payload for symmetry with 'TransactionContactSet'; the stream key is
+    -- authoritative.
+    transactionId :: TransactionId,
+    -- | The external id(s) now attributed to this transaction (one for a plain
+    -- income/expense reconcile; both legs for a transfer reconcile).
+    externalTransactionIds :: NonEmpty ExternalTransactionId,
+    -- | Provider MCC, if any (only some providers supply one).
+    mcc :: Maybe MCC
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -439,3 +461,4 @@ deriveJSON defaultOptions ''TransactionMergeCompleted
 deriveJSON defaultOptions ''TransactionMergeFailed
 deriveJSON defaultOptions ''TransactionRelationAdded
 deriveJSON defaultOptions ''TransactionRelationRemoved
+deriveJSON defaultOptions ''TransactionImportReconciled

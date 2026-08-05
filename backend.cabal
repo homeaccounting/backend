@@ -100,8 +100,10 @@ library
       Domain.Transaction.Commands
       Domain.Transaction.Errors
       Domain.Transaction.Events
+      Domain.Transaction.Matching.Leg
+      Domain.Transaction.Matching.Reconciliation
+      Domain.Transaction.Matching.Transfer
       Domain.Transaction.Projection
-      Domain.Transaction.TransferMatch
       Domain.User
       Domain.User.CommandHandler
       Domain.User.Commands
@@ -421,6 +423,9 @@ test-suite backend-test
       Domain.Transaction.EventsSpec
       Domain.Transaction.LabelsAndCategorySpec
       Domain.Transaction.LabelsProjectionSpec
+      Domain.Transaction.Matching.LegPropertySpec
+      Domain.Transaction.Matching.ReconciliationPropertySpec
+      Domain.Transaction.ReconciliationCommandHandlerSpec
       Domain.Transaction.RelationsCommandHandlerSpec
       Domain.Transaction.RelationsProjectionPropertySpec
       Domain.Transaction.StatusKindSpec

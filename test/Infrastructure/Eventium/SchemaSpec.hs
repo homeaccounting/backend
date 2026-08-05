@@ -21,7 +21,11 @@ import Domain.Core.Types
     unsafeExternalTransactionId,
   )
 import Domain.Models (AccountingEvent (..))
-import Domain.Transaction.Events (TransactionAmendmentInitiated (..), TransactionPostingInitiated (..))
+import Domain.Transaction.Events
+  ( TransactionAmendmentInitiated (..),
+    TransactionImportReconciled (..),
+    TransactionPostingInitiated (..),
+  )
 import Eventium.Codec (Codec (..))
 import Eventium.Store.Postgresql (JSONString, encodeJSON)
 import Eventium.Store.Types (eventTypeName)
@@ -110,3 +114,32 @@ spec = describe "accountingEventCodec (schema evolution)" $ do
           Object o -> KeyMap.lookup "tag" o
           _ -> Nothing
     tagField `shouldBe` Just (String (eventTypeName @TransactionAmendmentInitiated))
+
+  -- 'TransactionImportReconciled' is a brand-new (v1) event with no prior stored
+  -- shape, so it needs no upcaster. This still pins its wire shape: reads a
+  -- committed fixture, confirms it decodes to the expected event, and confirms
+  -- the decode -> encode -> decode loop is stable.
+  it "decodes a TransactionImportReconciled fixture and round-trips it" $ do
+    let expected =
+          TransactionImportReconciledEvent
+            TransactionImportReconciled
+              { transactionId = mockTransactionIdN 1,
+                externalTransactionIds = unsafeExternalTransactionId "mono-abc123" :| [],
+                mcc = Just "5411"
+              }
+    stored <- loadStoredEvent "test/fixtures/events/transaction-import-reconciled.json"
+    accountingEventCodec.decode stored `shouldBe` Just expected
+    accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
+
+  it "tags TransactionImportReconciled with its type-derived registry key" $ do
+    let ev =
+          TransactionImportReconciledEvent
+            TransactionImportReconciled
+              { transactionId = mockTransactionIdN 1,
+                externalTransactionIds = unsafeExternalTransactionId "mono-abc123" :| [],
+                mcc = Nothing
+              }
+        tagField = case toJSON ev of
+          Object o -> KeyMap.lookup "tag" o
+          _ -> Nothing
+    tagField `shouldBe` Just (String (eventTypeName @TransactionImportReconciled))

@@ -12,13 +12,15 @@
 -- Module      : Application.ReadModels.BankImportReadModel
 -- Description : Persistent read model for bank import deduplication
 --
--- Indexes external transaction IDs from 'TransactionPostingInitiated' events into
--- the @imported_transactions@ table, so the bank import service can detect and
--- skip duplicate imports.
+-- Indexes external transaction IDs from 'TransactionPostingInitiated' and
+-- 'TransactionImportReconciled' events into the @imported_transactions@ table, so
+-- the bank import service can detect and skip duplicate imports.
 --
 -- Key components:
 --   - 'ImportedTransactionEntity': @imported_transactions@ row (external id -> internal tx id)
 --   - 'isImported': SQL membership check used during bank statement import
+--   - 'isReconciled': reverse lookup (by internal tx id) — whether a transaction
+--     already carries import attribution, used to exclude reconciliation candidates
 --   - 'bankImportReadModel': the eventium 'ReadModel' (apply, checkpoint,
 --     migrate, reset), driven synchronously in the event-append transaction
 --   - 'migrateBankImport' / 'resetBankImport': schema + rebuild support
@@ -40,14 +42,15 @@ module Application.ReadModels.BankImportReadModel
     resetBankImport,
     bankImportReadModel,
     isImported,
+    isReconciled,
   )
 where
 
 import Control.Monad (forM_, void)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Maybe (isJust)
-import Database.Persist (Filter, deleteWhere, getBy, insertUnique)
-import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
+import Database.Persist (Filter, SelectOpt (LimitTo), deleteWhere, getBy, insertUnique, selectList, (==.))
+import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationSilent)
 import Database.Persist.TH
   ( mkMigrate,
     mkPersist,
@@ -57,7 +60,7 @@ import Database.Persist.TH
   )
 import Domain.Core.Types (ExternalTransactionId, TransactionId, importInfoExternalTransactionIds, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
-import Domain.Transaction.Events (TransactionPostingInitiated (..))
+import Domain.Transaction.Events (TransactionImportReconciled (..), TransactionPostingInitiated (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, ReadModel (..))
 import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
 import Infrastructure.Database.Orphans ()
@@ -104,6 +107,12 @@ resetBankImport = deleteWhere ([] :: [Filter ImportedTransactionEntity])
 isImported :: (MonadIO m) => ExternalTransactionId -> SqlPersistT m Bool
 isImported extId = isJust <$> getBy (UniqueExternalTransactionId extId)
 
+-- | Whether a transaction already carries import attribution (was imported or
+-- reconciled). Reverse lookup used by reconciliation candidate exclusion.
+isReconciled :: (MonadIO m) => TransactionId -> SqlPersistT m Bool
+isReconciled txId =
+  not . null <$> selectList [ImportedTransactionEntityTransactionId ==. txId] [LimitTo 1]
+
 -- -----------------------------------------------------------------------------
 -- Read model
 -- -----------------------------------------------------------------------------
@@ -112,8 +121,10 @@ isImported extId = isJust <$> getBy (UniqueExternalTransactionId extId)
 -- 'TransactionPostingInitiated' carrying import info, records one
 -- external-id -> internal-tx-id row per external id (a normal import has one; a
 -- detected internal transfer has both legs' ids, all mapping to the same
--- transaction). 'insertUnique' (keyed by the external id) makes re-application a
--- no-op.
+-- transaction). 'TransactionImportReconciled' is projected the same way, so a
+-- manual transaction later reconciled against a bank import gains its external
+-- id(s) in the dedup table (a subsequent re-sync then skips via 'isImported').
+-- 'insertUnique' (keyed by the external id) makes re-application a no-op.
 applyBankImportEvent :: (MonadIO m) => GlobalStreamEvent AccountingEvent -> SqlPersistT m ()
 applyBankImportEvent globalEvent =
   let (streamUuid, payload) = unpackGlobalEvent globalEvent
@@ -124,7 +135,25 @@ applyBankImportEvent globalEvent =
               forM_ extIds $ \extId ->
                 void $ insertUnique (ImportedTransactionEntity extId txId)
             _ -> pure ()
+        TransactionImportReconciledEvent evt ->
+          case mkTransactionIdSafe streamUuid of
+            Just txId ->
+              forM_ evt.externalTransactionIds $ \extId ->
+                void $ insertUnique (ImportedTransactionEntity extId txId)
+            Nothing -> pure ()
         _ -> pure ()
+
+-- | Secondary indexes the query layer relies on. Persistent's quasi-quoter only
+-- emits the unique constraint on the external id, so the @transaction_id@ column
+-- backing the 'isReconciled' reverse lookup gets an explicit
+-- @CREATE INDEX IF NOT EXISTS@ (valid on both PostgreSQL and SQLite) at startup.
+createBankImportIndexes :: (MonadIO m) => SqlPersistT m ()
+createBankImportIndexes =
+  forM_ stmts $ \s -> rawExecute s []
+  where
+    stmts =
+      [ "CREATE INDEX IF NOT EXISTS idx_imported_transactions_tx ON imported_transactions (transaction_id)"
+      ]
 
 -- | The bank-import dedup as an eventium 'ReadModel'. Driven synchronously in the
 -- event-append transaction via 'readModelPublisher' (real global positions,
@@ -133,7 +162,9 @@ applyBankImportEvent globalEvent =
 bankImportReadModel :: ReadModel (SqlPersistT IO) AccountingEvent
 bankImportReadModel =
   ReadModel
-    { initialize = void (runMigrationSilent migrateBankImport),
+    { initialize = do
+        void (runMigrationSilent migrateBankImport)
+        createBankImportIndexes,
       eventHandler = EventHandler applyBankImportEvent,
       checkpointStore = postgresqlCheckpointStore bankImportProjectionName,
       -- Only drop view data; rebuildReadModel resets the checkpoint itself.

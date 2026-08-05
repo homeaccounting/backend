@@ -35,7 +35,7 @@ import Data.Text (Text)
 import Data.Time (NominalDiffTime, UTCTime)
 import Domain.Banking.Types (BankProviderId, ExternalAccountId, ProviderCredential)
 import Domain.Core.Types (ExternalTransactionId, MCC)
-import Domain.Transaction.TransferMatch (TransferDirection (..), TransferLeg (..), isTransferMatch)
+import Domain.Transaction.Matching.Transfer (TransferDirection (..), TransferLeg (..), isTransferMatch)
 import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, abs, isJust, otherwise, ($), (<))
 
 -- | Provider-contributed classification hint — direction only.

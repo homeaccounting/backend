@@ -4,7 +4,7 @@ module Domain.Transaction.TransferMatchPropertySpec (spec) where
 
 import Data.Time (NominalDiffTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
-import Domain.Transaction.TransferMatch
+import Domain.Transaction.Matching.Transfer
   ( TransferDirection (..),
     TransferLeg (..),
     isTransferMatch,

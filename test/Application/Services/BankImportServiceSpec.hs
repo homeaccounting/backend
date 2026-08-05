@@ -21,6 +21,7 @@ import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.BankImportReadModel
   ( bankImportReadModel,
     isImported,
+    isReconciled,
   )
 import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItems)
 import Application.ReadModels.Transaction (TransactionData (..))
@@ -35,6 +36,7 @@ import Application.Services.BankImportService
     importTransaction,
   )
 import qualified Application.Services.ConfigurationService as ConfigurationService
+import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
@@ -70,7 +72,8 @@ import Domain.Core.Types
   )
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
-  ( TransactionPostingFailed (..),
+  ( TransactionImportReconciled (..),
+    TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Completed))
@@ -93,11 +96,13 @@ import RIO.List (find)
 import Test.Hspec
 import qualified Testkit.Fixtures as Fixtures
 import Testkit.Helpers
-  ( fromRight',
+  ( expenseSingletonAllocation,
+    fromRight',
     mockAccountId,
     mockMoneyWith,
     mockTransactionId,
     mockUserId,
+    singletonAllocation,
     singletonExpense,
     singletonIncome,
   )
@@ -368,6 +373,69 @@ contactDictionaryCount env userId = do
   case result of
     Right cfg -> pure (length (maybe [] dictionaryItems (Map.lookup ConfigurationService.contactsDictKind cfg.dictionaries)))
     Left err -> expectationFailure ("failed to load configuration: " <> show err) >> error "unreachable"
+
+-- | Seed a Completed manual UAH expense on the given (Regular) account via the
+-- real 'TransactionService.initiateExpense' flow, returning its id. Used by the
+-- reconciliation tests to plant a manual entry a later bank import should match.
+seedManualExpense :: AppEnv -> AccountId -> Rational -> UTCTime -> IO TransactionId
+seedManualExpense env accId amt date = do
+  res <-
+    runAppM env
+      $ TransactionService.initiateExpense
+        testUserId
+        accId
+        (fromRight' (mkMoney UAH amt))
+        (expenseSingletonAllocation expense.other.entryId (fromRight' (mkMoney UAH amt)))
+        Set.empty
+        "Manual expense"
+        (Just date)
+        Nothing
+        Nothing
+  case res of
+    Right (tid, _) -> pure tid
+    Left err -> expectationFailure ("seedManualExpense failed: " <> show err) >> error "unreachable"
+
+-- | Seed a Completed manual UAH income on the given (Regular) account via the
+-- real 'TransactionService.initiateIncome' flow, returning its id. The income
+-- lands on the account's TARGET leg, exercising the TargetLeg reconciliation
+-- branch.
+seedManualIncome :: AppEnv -> AccountId -> Rational -> UTCTime -> IO TransactionId
+seedManualIncome env accId amt date = do
+  res <-
+    runAppM env
+      $ TransactionService.initiateIncome
+        testUserId
+        accId
+        (fromRight' (mkMoney UAH amt))
+        (singletonAllocation income.other.entryId (fromRight' (mkMoney UAH amt)))
+        Set.empty
+        "Manual income"
+        (Just date)
+        Nothing
+        Nothing
+  case res of
+    Right (tid, _) -> pure tid
+    Left err -> expectationFailure ("seedManualIncome failed: " <> show err) >> error "unreachable"
+
+-- | Seed a Completed manual UAH transfer @source -> target@ via the real
+-- 'TransactionService.initiateTransfer' flow, returning its id.
+seedManualTransfer :: AppEnv -> AccountId -> AccountId -> Rational -> UTCTime -> IO TransactionId
+seedManualTransfer env source target amt date = do
+  res <-
+    runAppM env
+      $ TransactionService.initiateTransfer
+        testUserId
+        source
+        target
+        (fromRight' (mkMoney UAH amt))
+        Set.empty
+        "Manual transfer"
+        Nothing
+        (Just date)
+        Nothing
+  case res of
+    Right (tid, _) -> pure tid
+    Left err -> expectationFailure ("seedManualTransfer failed: " <> show err) >> error "unreachable"
 
 -- -----------------------------------------------------------------------------
 -- Tests
@@ -1048,6 +1116,162 @@ spec = describe "BankImportService" $ do
       runDbDirect env.dbPool (rebuildReadModel gr bankImportReadModel)
       runDbIn env (isImported ext1) `shouldReturn` True
 
+  -- A manual transaction reconciled against a later bank import gains import
+  -- attribution: its external id(s) land in the dedup table (so a re-sync skips
+  -- via the normal isImported path) and the reverse isReconciled lookup returns
+  -- True for the transaction id.
+  describe "BankImportReadModel projects TransactionImportReconciled" $ do
+    it "records the external id and marks the transaction reconciled" $ do
+      let txId = mockTransactionId (UUID.fromWords 21 0 0 0)
+          extId = unsafeExternalTransactionId "mono-x"
+      env <- createTestAppEnvWithProcessManager
+      feedBankImportEvents env [mkReconciledEvent txId (extId :| []) 0]
+      runDbIn env (isImported extId) `shouldReturn` True
+      runDbIn env (isReconciled txId) `shouldReturn` True
+
+    it "records both external ids of a transfer-style reconcile" $ do
+      let txId = mockTransactionId (UUID.fromWords 22 0 0 0)
+          idA = unsafeExternalTransactionId "mono-a"
+          idB = unsafeExternalTransactionId "mono-b"
+      env <- createTestAppEnvWithProcessManager
+      feedBankImportEvents env [mkReconciledEvent txId (idA :| [idB]) 0]
+      runDbIn env (isImported idA) `shouldReturn` True
+      runDbIn env (isImported idB) `shouldReturn` True
+
+    it "is idempotent: re-applying the same reconcile event does not error" $ do
+      let txId = mockTransactionId (UUID.fromWords 23 0 0 0)
+          extId = unsafeExternalTransactionId "mono-dup"
+      env <- createTestAppEnvWithProcessManager
+      feedBankImportEvents env [mkReconciledEvent txId (extId :| []) 0]
+      feedBankImportEvents env [mkReconciledEvent txId (extId :| []) 1]
+      runDbIn env (isImported extId) `shouldReturn` True
+      runDbIn env (isReconciled txId) `shouldReturn` True
+
+    it "isReconciled is False for a transaction never imported or reconciled" $ do
+      let txId = mockTransactionId (UUID.fromWords 24 0 0 0)
+      env <- createTestAppEnvWithProcessManager
+      runDbIn env (isReconciled txId) `shouldReturn` False
+
+  -- A bank import that fuzzy-matches an existing manual transaction attaches its
+  -- external id onto that manual entry (no new ledger row) instead of
+  -- double-booking. A confident-but-ambiguous match (2+ candidates) skips; no
+  -- candidate imports fresh, exactly as before.
+  describe "manual↔import reconciliation" $ do
+    it "reconciles onto a unique matching manual expense instead of double-booking" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      manualTxId <- seedManualExpense env bankAccId 50 testTime
+      countBefore <- runDbIn env TransactionRM.countTransactions
+      countBefore `shouldBe` 1
+
+      let tx = mkTestTransaction (-50) "recon-unique"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      -- Same id as the manual tx: this reconciled, it did not create a new tx.
+      result `shouldBe` Imported manualTxId
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      runDbIn env (isImported (unsafeExternalTransactionId "recon-unique")) `shouldReturn` True
+      runDbIn env (isReconciled manualTxId) `shouldReturn` True
+
+    it "reconciles onto a unique matching manual income (TargetLeg branch)" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      manualTxId <- seedManualIncome env bankAccId 100 testTime
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+
+      -- Positive amount → mockClassify → Income → TargetLeg / IncomeKind.
+      let tx = mkTestTransaction 100 "recon-income"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      result `shouldBe` Imported manualTxId
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      runDbIn env (isImported (unsafeExternalTransactionId "recon-income")) `shouldReturn` True
+      runDbIn env (isReconciled manualTxId) `shouldReturn` True
+
+    it "skips an ambiguous match (2+ candidates) without recording the import" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      manual1 <- seedManualExpense env bankAccId 50 testTime
+      manual2 <- seedManualExpense env bankAccId 50 testTime
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 2
+
+      let tx = mkTestTransaction (-50) "recon-ambig"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      result `shouldBe` Skipped AmbiguousReconciliation
+      -- No new ledger row, and a skip is NOT dedup-recorded (so a later manual
+      -- resolution + re-sync can still proceed).
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 2
+      runDbIn env (isImported (unsafeExternalTransactionId "recon-ambig")) `shouldReturn` False
+      runDbIn env (isReconciled manual1) `shouldReturn` False
+      runDbIn env (isReconciled manual2) `shouldReturn` False
+
+    it "skips a re-synced bank tx after it was reconciled (AlreadyImported)" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      manualTxId <- seedManualExpense env bankAccId 50 testTime
+      let tx = mkTestTransaction (-50) "recon-resync"
+      result1 <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      result1 `shouldBe` Imported manualTxId
+
+      -- Re-importing the same bank tx now dedups via the normal isImported path.
+      result2 <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      result2 `shouldBe` Skipped AlreadyImported
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      runDbIn env (isReconciled manualTxId) `shouldReturn` True
+
+    it "imports fresh when no manual candidate matches (regression)" $ do
+      (env, bankAccId) <- setupTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      -- A manual expense of a DIFFERENT amount is not a candidate.
+      manualTxId <- seedManualExpense env bankAccId 999 testTime
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+
+      let tx = mkTestTransaction (-50) "recon-fresh"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
+      newTxId <- expectImported result
+      newTxId `shouldNotBe` manualTxId
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 2
+
+  -- A user records a transfer manually; a later bank sync detects the same
+  -- movement as an internal-transfer pair. Both legs' external ids are attached
+  -- onto the existing manual transfer instead of double-booking a fresh one.
+  describe "manual↔import transfer reconciliation" $ do
+    it "reconciles a later-imported transfer pair onto a matching manual transfer" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink =
+            [ (unsafeExternalAccountId "card-a", accA),
+              (unsafeExternalAccountId "card-b", accB)
+            ]
+      manualTxId <- seedManualTransfer env accA accB 500 testTime
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+
+      let debitA = mkLeg "card-a" (-500) "xfer-recon-out" "Transfer out" (addUTCTime 3600 testTime)
+          creditB = mkLeg "card-b" 500 "xfer-recon-in" "Transfer in" (addUTCTime 3600 testTime)
+      result <- runAppM env $ importMany testInterp testUserId accountLink [debitA, creditB]
+
+      -- No new ledger row: the import reconciled onto the manual transfer.
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      -- Both accounts report the SAME (manual) transaction id as imported.
+      let allSucceeded = concatMap (.succeeded) result.accounts
+      allSucceeded `shouldBe` [manualTxId, manualTxId]
+      -- Both legs' external ids are now recorded for dedup, and the manual
+      -- transfer is reconciled.
+      runDbIn env (isImported (unsafeExternalTransactionId "xfer-recon-out")) `shouldReturn` True
+      runDbIn env (isImported (unsafeExternalTransactionId "xfer-recon-in")) `shouldReturn` True
+      runDbIn env (isReconciled manualTxId) `shouldReturn` True
+
+      -- Re-syncing the same pair now dedups both legs (AlreadyImported), no new row.
+      result2 <- runAppM env $ importMany testInterp testUserId accountLink [debitA, creditB]
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      let allSucceeded2 = concatMap (.succeeded) result2.accounts
+          allSkipped2 = concatMap (.skipped) result2.accounts
+      allSucceeded2 `shouldBe` []
+      allSkipped2 `shouldBe` ["already imported", "already imported"]
+
 -- -----------------------------------------------------------------------------
 -- Event construction for the read-model dedup test
 --
@@ -1132,6 +1356,28 @@ storeInitiatedEvent env txId extId =
    in runAppM env
         $ runDb
         $ insert_ (SqlEvent (unTransactionId txId) 0 (jsonStringCodec.encode payload) Nothing)
+
+-- | A 'TransactionImportReconciled' global event on the manual transaction's
+-- stream, attributing one or more external ids to it.
+mkReconciledEvent ::
+  TransactionId ->
+  NonEmpty ExternalTransactionId ->
+  SequenceNumber ->
+  GlobalStreamEvent AccountingEvent
+mkReconciledEvent txId extIds seqNo =
+  let inner =
+        StreamEvent
+          (unTransactionId txId)
+          1
+          (emptyMetadata "TransactionImportReconciled")
+          ( TransactionImportReconciledEvent
+              TransactionImportReconciled
+                { transactionId = txId,
+                  externalTransactionIds = extIds,
+                  mcc = Nothing
+                }
+          )
+   in StreamEvent () seqNo (emptyMetadata "TransactionImportReconciled") inner
 
 mkFailedEvent ::
   TransactionId ->

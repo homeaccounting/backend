@@ -50,6 +50,9 @@ module Application.ReadModels.Transaction
     listTransactions,
     transactionDatesForAccount,
     findReferencingTransactions,
+    findReconciliationCandidates,
+    findTransferReconciliationCandidates,
+    LegSide (..),
     reportableTransactions,
     countTransactions,
     relationsFrom,
@@ -62,6 +65,7 @@ module Application.ReadModels.Transaction
   )
 where
 
+import Control.Applicative ((<|>))
 import Control.Monad (forM_, void)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson (FromJSON, ToJSON)
@@ -103,10 +107,12 @@ import Domain.Core.Types
     Money,
     RelationKind (..),
     TransactionId,
+    TransactionKind (..),
     TransactionType,
     allAllocations,
     allocationsOf,
     importInfoMcc,
+    kindOf,
     mkTransactionIdSafe,
     replaceAllocations,
   )
@@ -120,6 +126,7 @@ import Domain.Models
     TransactionContactSet (..),
     TransactionDateChanged (..),
     TransactionDescriptionChanged (..),
+    TransactionImportReconciled (..),
     TransactionLabelsSet (..),
     TransactionPostingFailed (..),
     TransactionPostingInitiated (..),
@@ -343,6 +350,17 @@ applyTransactionEvent globalEvent =
             modifyTx txId (\e -> e {transactionEntityDescription = evt.newDescription, transactionEntityVersion = ver})
           TransactionDateChangedEvent evt ->
             modifyTx txId (\e -> e {transactionEntityDate = evt.newAt, transactionEntityVersion = ver})
+          TransactionImportReconciledEvent evt ->
+            -- Destructure the constructor rather than @evt.mcc@: the bare field
+            -- @mcc@ is shared across records ('ImportInfo', 'TransactionData',
+            -- this event) so dot-access is ambiguous under 'DuplicateRecordFields'.
+            -- Non-clobber: keep the existing row @mcc@ when the event carries none.
+            let TransactionImportReconciled {mcc = evtMcc} = evt
+             in modifyTx txId $ \e ->
+                  e
+                    { transactionEntityMcc = evtMcc <|> e.transactionEntityMcc,
+                      transactionEntityVersion = ver
+                    }
           TransactionAmendmentCompletedEvent evt ->
             modifyTx
               txId
@@ -581,6 +599,65 @@ findReferencingTransactions entryId = do
     referencesEntry eid tt = case allocationsOf tt of
       Nothing -> False
       Just allocs -> any (\(Allocation cid _ _) -> cid == eid) (allAllocations allocs)
+
+-- -----------------------------------------------------------------------------
+-- Reconciliation candidate queries
+-- -----------------------------------------------------------------------------
+
+-- | Which leg the local account sits on for the import direction.
+data LegSide = SourceLeg | TargetLeg deriving (Show, Eq)
+
+-- | Completed manual candidates on @account@ on @legSide@, with exact
+-- @amount@ (currency-tagged 'Money'), matching @kind@, business date within
+-- @[from, to]@. Callers exclude already-reconciled ids via
+-- 'Application.ReadModels.BankImportReadModel.isReconciled'. Amount equality is
+-- exact (no fuzz); the date-window and account/leg constraints are enforced here
+-- in SQL.
+findReconciliationCandidates ::
+  (MonadIO m) =>
+  AccountId ->
+  LegSide ->
+  Money ->
+  TransactionKind ->
+  UTCTime ->
+  UTCTime ->
+  SqlPersistT m [(TransactionId, TransactionData)]
+findReconciliationCandidates account legSide amount kind from to = do
+  let legFilter = case legSide of
+        SourceLeg -> [TransactionEntitySourceAccountId ==. account, TransactionEntitySourceAmount ==. amount]
+        TargetLeg -> [TransactionEntityTargetAccountId ==. account, TransactionEntityTargetAmount ==. amount]
+      filters =
+        legFilter
+          ++ [ TransactionEntityStatusKind ==. CompletedKind,
+               TransactionEntityDate >=. from,
+               TransactionEntityDate <=. to
+             ]
+  rows <- selectList filters []
+  withLabels [r | r@(Entity _ e) <- rows, kindOf e.transactionEntityTransactionType == kind]
+
+-- | Completed manual Transfer candidates from @dLocal@ to @cLocal@ with exact
+-- source @amount@, business date within @[from, to]@. Used by whole-pair
+-- transfer reconciliation. (Kind is 'TransferKind' by construction of the leg
+-- filter, but filter on it explicitly for clarity/safety.)
+findTransferReconciliationCandidates ::
+  (MonadIO m) =>
+  AccountId ->
+  AccountId ->
+  Money ->
+  UTCTime ->
+  UTCTime ->
+  SqlPersistT m [(TransactionId, TransactionData)]
+findTransferReconciliationCandidates dLocal cLocal amount from to = do
+  let filters =
+        [ TransactionEntitySourceAccountId ==. dLocal,
+          TransactionEntityTargetAccountId ==. cLocal,
+          TransactionEntitySourceAmount ==. amount,
+          TransactionEntityStatusKind ==. CompletedKind,
+          TransactionEntityDate >=. from,
+          TransactionEntityDate <=. to
+        ]
+  rows <- selectList filters []
+  withLabels [r | r@(Entity _ e) <- rows, kindOf e.transactionEntityTransactionType == TransferKind]
 
 -- | Transactions eligible for reporting: 'Completed', touching a visible
 -- account, within the optional inclusive business-date window. Returned as

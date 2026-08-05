@@ -42,14 +42,16 @@ module Domain.Transaction.Commands
     FailTransactionMerge (..),
     AddTransactionRelation (..),
     RemoveTransactionRelation (..),
+    ReconcileTransactionImport (..),
   )
 where
 
 import Data.Aeson.TH (defaultOptions, deriveJSON)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ImportInfo, LabelId, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, ExternalTransactionId, ImportInfo, LabelId, MCC, Money, RelationKind, RelationSpec, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------
@@ -79,7 +81,8 @@ transactionCommands =
     ''CompleteTransactionMerge,
     ''FailTransactionMerge,
     ''AddTransactionRelation,
-    ''RemoveTransactionRelation
+    ''RemoveTransactionRelation,
+    ''ReconcileTransactionImport
   ]
 
 -- -----------------------------------------------------------------------------
@@ -513,6 +516,16 @@ data RemoveTransactionRelation = RemoveTransactionRelation
   }
   deriving (Show, Eq)
 
+-- | Attach import attribution (external id(s) + MCC) onto an existing completed
+-- manual transaction — the reconcile leg of manual↔import dedup. Mirrors the
+-- emitted 'TransactionImportReconciled'.
+data ReconcileTransactionImport = ReconcileTransactionImport
+  { transactionId :: TransactionId,
+    externalTransactionIds :: NonEmpty ExternalTransactionId,
+    mcc :: Maybe MCC
+  }
+  deriving (Show, Eq)
+
 -- -----------------------------------------------------------------------------
 -- JSON Instances
 -- -----------------------------------------------------------------------------
@@ -536,3 +549,4 @@ deriveJSON defaultOptions ''CompleteTransactionMerge
 deriveJSON defaultOptions ''FailTransactionMerge
 deriveJSON defaultOptions ''AddTransactionRelation
 deriveJSON defaultOptions ''RemoveTransactionRelation
+deriveJSON defaultOptions ''ReconcileTransactionImport

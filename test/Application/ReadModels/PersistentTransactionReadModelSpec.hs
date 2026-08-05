@@ -21,11 +21,14 @@
 module Application.ReadModels.PersistentTransactionReadModelSpec (spec) where
 
 import Application.ReadModels.Transaction
-  ( TransactionData (..),
+  ( LegSide (..),
+    TransactionData (..),
     applyTransactionEvent,
     countTransactions,
     emptyTransactionFilter,
+    findReconciliationCandidates,
     findReferencingTransactions,
+    findTransferReconciliationCandidates,
     getTransaction,
     listTransactions,
     reportableTransactions,
@@ -43,9 +46,12 @@ import Domain.Core.Types
     ContactId,
     Currency (..),
     LabelId,
+    Money,
     TransactionId,
+    TransactionKind (..),
     TransactionType (..),
     mkExpenseAllocations,
+    unsafeExternalTransactionId,
     unsafeMoney,
   )
 import Domain.Models (AccountingEvent (..))
@@ -53,6 +59,7 @@ import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
     TransactionCancellationCompleted (..),
     TransactionContactSet (..),
+    TransactionImportReconciled (..),
     TransactionPostingCompleted (..),
     TransactionPostingFailed (..),
   )
@@ -121,6 +128,33 @@ failed txId =
 -- | An expense transaction type with a single allocation against @c@.
 expenseOn :: CategoryId -> TransactionType
 expenseOn c = Expense (mkExpenseAllocations (Allocation c (unsafeMoney USD 100) Nothing NE.:| []))
+
+-- | A @TransactionImportReconciled@ global event attributing one external id
+-- (and optional @mcc@) to @txId@'s stream.
+reconciled ::
+  TransactionId ->
+  Maybe Text ->
+  Eventium.SequenceNumber ->
+  Eventium.GlobalStreamEvent AccountingEvent
+reconciled txId mccVal =
+  transactionEditGlobal
+    txId
+    ( TransactionImportReconciledEvent
+        TransactionImportReconciled
+          { transactionId = txId,
+            externalTransactionIds = unsafeExternalTransactionId "ext-1" NE.:| [],
+            mcc = mccVal
+          }
+    )
+
+-- | A fixed calendar date at midnight UTC.
+dayAt :: Integer -> Int -> Int -> UTCTime
+dayAt y m d = UTCTime (fromGregorian y m d) (secondsToDiffTime 0)
+
+-- The seed fixtures ('postingInitiatedGlobal') fix both leg amounts at USD 100.
+m100, m200 :: Money
+m100 = unsafeMoney USD 100
+m200 = unsafeMoney USD 200
 
 seedEnv :: [Eventium.GlobalStreamEvent AccountingEvent] -> IO AppEnv
 seedEnv = seedGlobals applyTransactionEvent
@@ -298,3 +332,73 @@ spec = describe "Persistent Transaction read model" $ do
             cancelled (tx 2) 2
           ]
       runDbIn env countTransactions `shouldReturn` 2
+
+  describe "TransactionImportReconciled apply" $ do
+    it "attributes the reconcile event's mcc onto a manual transaction row" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB (expenseOn (cat 50)) Set.empty 0,
+            completed (tx 1) 1,
+            reconciled (tx 1) (Just "5411") 2
+          ]
+      mTd <- runDbIn env (getTransaction (tx 1))
+      (.mcc) <$> mTd `shouldBe` Just (Just "5411")
+
+    it "does not clobber an existing mcc when the reconcile carries none" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB (expenseOn (cat 50)) Set.empty 0,
+            completed (tx 1) 1,
+            reconciled (tx 1) (Just "5999") 2,
+            reconciled (tx 1) Nothing 3
+          ]
+      mTd <- runDbIn env (getTransaction (tx 1))
+      (.mcc) <$> mTd `shouldBe` Just (Just "5999")
+
+  describe "findReconciliationCandidates" $ do
+    it "returns a completed manual leg matching account/side/amount/kind/window" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB (expenseOn (cat 50)) Set.empty 0,
+            completed (tx 1) 1,
+            -- tx2: same shape but never completed (Pending) → excluded on status.
+            initiated (tx 2) acctA acctB (expenseOn (cat 50)) Set.empty 2
+          ]
+      let query acc side amt kind lo hi =
+            map fst <$> runDbIn env (findReconciliationCandidates acc side amt kind lo hi)
+      -- Exact match on the source leg.
+      query acctA SourceLeg m100 ExpenseKind (dayAt 2026 1 10) (dayAt 2026 1 20)
+        `shouldReturn` [tx 1]
+      -- Amount differs.
+      query acctA SourceLeg m200 ExpenseKind (dayAt 2026 1 10) (dayAt 2026 1 20)
+        `shouldReturn` []
+      -- Date outside the window.
+      query acctA SourceLeg m100 ExpenseKind (dayAt 2026 2 1) (dayAt 2026 2 28)
+        `shouldReturn` []
+      -- Wrong kind.
+      query acctA SourceLeg m100 IncomeKind (dayAt 2026 1 10) (dayAt 2026 1 20)
+        `shouldReturn` []
+      -- Wrong account/leg (tx1's source is acctA, not acctB).
+      query acctB SourceLeg m100 ExpenseKind (dayAt 2026 1 10) (dayAt 2026 1 20)
+        `shouldReturn` []
+
+  describe "findTransferReconciliationCandidates" $ do
+    it "returns a completed manual transfer matching the account pair/amount/window" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+            completed (tx 1) 1
+          ]
+      let query src tgt amt lo hi =
+            map fst <$> runDbIn env (findTransferReconciliationCandidates src tgt amt lo hi)
+      query acctA acctB m100 (dayAt 2026 1 10) (dayAt 2026 1 20)
+        `shouldReturn` [tx 1]
+      -- Wrong account pair (direction reversed).
+      query acctB acctA m100 (dayAt 2026 1 10) (dayAt 2026 1 20)
+        `shouldReturn` []
+      -- Amount differs.
+      query acctA acctB m200 (dayAt 2026 1 10) (dayAt 2026 1 20)
+        `shouldReturn` []
+      -- Date outside the window.
+      query acctA acctB m100 (dayAt 2026 2 1) (dayAt 2026 2 28)
+        `shouldReturn` []

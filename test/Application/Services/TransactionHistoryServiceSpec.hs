@@ -35,12 +35,19 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( TransactionId,
     defaultCash,
+    unTransactionId,
     unsafeEntryName,
+    unsafeExternalTransactionId,
     unsafeMoney,
     unsafeTransactionId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
-import Infrastructure.App (runAppM)
+import Domain.Transaction
+  ( ReconcileTransactionImport (..),
+    TransactionCommand (ReconcileTransactionImportTransactionCommand),
+  )
+import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
 import Test.Hspec
 import Testkit.Fixtures
@@ -126,6 +133,51 @@ spec = describe "TransactionHistoryService.getTransactionHistory" $ do
         let isLabels HistoryLabelsSet {} = True
             isLabels _ = False
         any isLabels hist.entries `shouldBe` True
+      Right Nothing -> expectationFailure "Expected Just"
+      Left err -> expectationFailure $ "Expected Right, got: " <> show err
+
+  it "includes a TransactionImportReconciled entry after reconciling an import" $ do
+    env <- createTestAppEnvWithProcessManager
+    fx <- setupMetadataFixture env "audit-reconciled@test.com"
+    create <-
+      runAppM env
+        $ initiateIncome
+          fx.userId
+          fx.regularAccountId
+          (unsafeMoney Core.USD 25)
+          (incomeAllocs fx (unsafeMoney Core.USD 25))
+          Set.empty
+          "With reconciled import"
+          Nothing
+          Nothing
+          Nothing
+    (txId, _) <- case create of
+      Right r -> pure r
+      Left err -> fail $ "initiateIncome failed: " <> show err
+
+    reconcileResult <-
+      applyTransactionCommand
+        env.eventStoreWriter
+        env.eventStoreReader
+        id
+        (unTransactionId txId)
+        ( ReconcileTransactionImportTransactionCommand
+            ReconcileTransactionImport
+              { transactionId = txId,
+                externalTransactionIds = unsafeExternalTransactionId "audit-mono-1" :| [],
+                mcc = Nothing
+              }
+        )
+    case reconcileResult of
+      Right _ -> pure ()
+      Left err -> expectationFailure $ "applyTransactionCommand failed: " <> show err
+
+    result <- runAppM env (getTransactionHistory fx.userId txId)
+    case result of
+      Right (Just hist) -> do
+        let isImportReconciled HistoryImportReconciled {} = True
+            isImportReconciled _ = False
+        any isImportReconciled hist.entries `shouldBe` True
       Right Nothing -> expectationFailure "Expected Just"
       Left err -> expectationFailure $ "Expected Right, got: " <> show err
 
