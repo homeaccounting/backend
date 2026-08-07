@@ -12,7 +12,8 @@
     "transactionType": { "tag": "Transfer" },
     "importInfo": {
       "externalTransactionIds": ["7IXfaQ8bpY5s7RO5Uw"],
-      "category": { "kind": "mcc", "value": "5411" }
+      "category": { "kind": "mcc", "value": "5411" },
+      "contact": "Магазин РЕМОНТІ"
     },
     "labels": [],
     "contactId": null

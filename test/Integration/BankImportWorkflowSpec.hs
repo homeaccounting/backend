@@ -175,6 +175,7 @@ mkTestTransaction amount extId =
       description = "Test transaction",
       hold = False,
       category = Nothing,
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }
@@ -196,6 +197,7 @@ mkHoldTransaction amount extId =
       description = "Hold transaction",
       hold = True,
       category = Nothing,
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }

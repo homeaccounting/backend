@@ -7,7 +7,7 @@ import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
-import Domain.Core.Types (mkByMcc, parseMcc, unsafeExternalTransactionId)
+import Domain.Core.Types (mkBankProviderContact, mkByMcc, parseMcc, unsafeExternalTransactionId)
 import Infrastructure.Banking.Monobank (descriptor)
 import Infrastructure.Banking.Monobank.Internal
   ( MonoAccount (..),
@@ -76,6 +76,26 @@ spec = describe "Monobank Provider" $ do
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.category `shouldBe` (mkByMcc <$> parseMcc "5411")
 
+    it "carries the statement description as a contact signal" $ do
+      let body :: BSL.ByteString
+          body = "{\"id\":\"tx-contact\",\"time\":1700000000,\"description\":\"Book Store\",\"mcc\":5411,\"amount\":-100,\"operationAmount\":-100,\"currencyCode\":980,\"hold\":false}"
+      case eitherDecode body :: Either String MonoStatement of
+        Left err -> expectationFailure ("decode failed: " <> err)
+        Right stmt ->
+          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+            Left err -> expectationFailure ("adapter rejected statement: " <> show err)
+            Right tx -> tx.contact `shouldBe` mkBankProviderContact "Book Store"
+
+    it "leaves contact Nothing for a blank description" $ do
+      let body :: BSL.ByteString
+          body = "{\"id\":\"tx-blank-desc\",\"time\":1700000000,\"description\":\"\",\"mcc\":5411,\"amount\":-100,\"operationAmount\":-100,\"currencyCode\":980,\"hold\":false}"
+      case eitherDecode body :: Either String MonoStatement of
+        Left err -> expectationFailure ("decode failed: " <> err)
+        Right stmt ->
+          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+            Left err -> expectationFailure ("adapter rejected statement: " <> show err)
+            Right tx -> tx.contact `shouldBe` Nothing
+
     it "handles missing 'comment' field" $ do
       -- Key is entirely absent (not `\"comment\": null`).
       let body :: BSL.ByteString
@@ -135,6 +155,7 @@ mkTx mccVal amt =
       description = "test",
       hold = False,
       category = mkByMcc <$> (mccVal >>= parseMcc),
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }

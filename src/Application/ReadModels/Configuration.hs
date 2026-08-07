@@ -14,13 +14,15 @@
 -- Module      : Application.ReadModels.Configuration
 -- Description : Persistent read model for configuration queries
 --
--- A configuration is projected into five Postgres tables:
+-- A configuration is projected into six Postgres tables:
 --
 --   * @configurations@ — one row per configuration (currencies, default
 --     categories, books-closed cutoff, creator, version),
 --   * @configuration_dictionary_entries@ — one row per dictionary entry,
 --   * @configuration_bank_provider_expense_categories@ — one row per provider-category →
 --     expense-category map entry,
+--   * @configuration_bank_provider_contacts@ — one row per provider-contact →
+--     contact-dictionary-entry map entry,
 --   * @configuration_bank_connections@ — one row per bank connection, and
 --   * @configuration_bank_account_map@ — one row per connection's
 --     external→local account mapping.
@@ -52,6 +54,7 @@ module Application.ReadModels.Configuration
     ConfigurationEntity (..),
     ConfigDictionaryEntryEntity (..),
     ConfigBankProviderExpenseCategoryEntity (..),
+    ConfigBankProviderContactEntity (..),
     ConfigBankConnectionEntity (..),
     ConfigBankAccountMapEntity (..),
 
@@ -95,6 +98,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
+    BankProviderContactMapSet (..),
     BankProviderExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
@@ -125,7 +129,9 @@ import Domain.Core.Types
     EntryName,
     mkConfigurationIdSafe,
     parseBankProviderCategoryKey,
+    parseBankProviderContactKey,
     renderBankProviderCategoryKey,
+    renderBankProviderContactKey,
     unDefaultSubtypeAccounts,
   )
 import Domain.Models (AccountingEvent (..))
@@ -256,6 +262,12 @@ ConfigBankProviderExpenseCategoryEntity sql=configuration_bank_provider_expense_
     categoryId DictionaryEntryId
     UniqueConfigBankProviderExpenseCategory configId bankProviderCategory
     deriving Show Eq
+ConfigBankProviderContactEntity sql=configuration_bank_provider_contacts
+    configId ConfigurationId
+    bankProviderContact Text
+    contactId DictionaryEntryId
+    UniqueConfigBankProviderContact configId bankProviderContact
+    deriving Show Eq
 ConfigBankConnectionEntity sql=configuration_bank_connections
     configId ConfigurationId
     connectionId BankConnectionId
@@ -279,12 +291,13 @@ ConfigBankAccountMapEntity sql=configuration_bank_account_map
 configurationProjectionName :: CheckpointName
 configurationProjectionName = CheckpointName "configuration"
 
--- | Clear all five configuration tables. The checkpoint is reset by
+-- | Clear all six configuration tables. The checkpoint is reset by
 -- 'rebuildReadModel'.
 resetConfiguration :: (MonadIO m) => SqlPersistT m ()
 resetConfiguration = do
   deleteWhere ([] :: [Filter ConfigBankAccountMapEntity])
   deleteWhere ([] :: [Filter ConfigBankConnectionEntity])
+  deleteWhere ([] :: [Filter ConfigBankProviderContactEntity])
   deleteWhere ([] :: [Filter ConfigBankProviderExpenseCategoryEntity])
   deleteWhere ([] :: [Filter ConfigDictionaryEntryEntity])
   deleteWhere ([] :: [Filter ConfigurationEntity])
@@ -392,6 +405,11 @@ applyConfigurationEvent globalEvent =
               deleteWhere [ConfigBankProviderExpenseCategoryEntityConfigId ==. configId]
               forM_ (Map.toList evt.mapping) $ \(pc, cat) ->
                 insert_ (ConfigBankProviderExpenseCategoryEntity configId (renderBankProviderCategoryKey pc) cat)
+          BankProviderContactMapSetEvent evt ->
+            whenConfig configId ver $ do
+              deleteWhere [ConfigBankProviderContactEntityConfigId ==. configId]
+              forM_ (Map.toList evt.mapping) $ \(pc, contact) ->
+                insert_ (ConfigBankProviderContactEntity configId (renderBankProviderContactKey pc) contact)
           BankConnectionAddedEvent evt ->
             whenConfig configId ver $ do
               -- Adding (re)initializes the connection with an empty account map.
@@ -519,10 +537,12 @@ loadDictionaries configId = do
         ]
 
 -- | Assemble the configuration's banking configuration from the
--- provider-category-map, connection, and account-map rows.
+-- provider-category-map, provider-contact-map, connection, and account-map
+-- rows.
 loadBanking :: (MonadIO m) => ConfigurationId -> SqlPersistT m BankingConfiguration
 loadBanking configId = do
   bankProviderCategoryRows <- selectList [ConfigBankProviderExpenseCategoryEntityConfigId ==. configId] []
+  bankProviderContactRows <- selectList [ConfigBankProviderContactEntityConfigId ==. configId] []
   connRows <- selectList [ConfigBankConnectionEntityConfigId ==. configId] []
   conns <- forM connRows $ \(Entity _ c) -> do
     acctRows <-
@@ -555,6 +575,12 @@ loadBanking configId = do
             [ (pc, m.configBankProviderExpenseCategoryEntityCategoryId)
             | Entity _ m <- bankProviderCategoryRows,
               Just pc <- [parseBankProviderCategoryKey m.configBankProviderExpenseCategoryEntityBankProviderCategory]
+            ],
+        bankProviderContactMap =
+          Map.fromList
+            [ (pc, m.configBankProviderContactEntityContactId)
+            | Entity _ m <- bankProviderContactRows,
+              Just pc <- [parseBankProviderContactKey m.configBankProviderContactEntityBankProviderContact]
             ],
         connections = Map.fromList conns
       }

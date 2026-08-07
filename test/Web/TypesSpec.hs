@@ -22,6 +22,7 @@ import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( Currency (USD),
     TransactionType (Transfer),
+    mkBankProviderContact,
     mkByLabel,
     mkByMcc,
     unsafeMcc,
@@ -33,6 +34,7 @@ import Testkit.Helpers
   ( mockAccountId,
     mockTransactionData,
     mockTransactionDataWithCategory,
+    mockTransactionDataWithContact,
     mockTransactionId,
   )
 import Web.Types
@@ -151,6 +153,25 @@ spec = do
     it "encodes an absent category as null" $ do
       let td = mockTransactionDataWithCategory Nothing baseTd
       bankProviderCategoryField td `shouldBe` Just Null
+
+  describe "TransactionResponse bankProviderContact JSON" $ do
+    let txId = mockTransactionId (UUID.fromWords 1 0 0 0)
+        acc = mockAccountId (UUID.fromWords 2 0 0 0)
+        amt = unsafeMoney USD 100
+        baseTd = mockTransactionData acc acc amt amt Nothing Transfer
+        -- Encode a response, then pull out just the @bankProviderContact@ field.
+        bankProviderContactField td =
+          case Aeson.toJSON (fromTransactionData txId td) of
+            Object o -> KeyMap.lookup "bankProviderContact" o
+            _ -> Nothing
+
+    it "surfaces a provider contact token as a plain string" $ do
+      let td = mockTransactionDataWithContact (mkBankProviderContact "MagazinREMONTI") baseTd
+      bankProviderContactField td `shouldBe` Just (Aeson.String "MagazinREMONTI")
+
+    it "encodes an absent contact as null" $ do
+      let td = mockTransactionDataWithContact Nothing baseTd
+      bankProviderContactField td `shouldBe` Just Null
 
   describe "CategoryAmount JSON" $ do
     it "decodes without comment field (backward-compatible)" $ do

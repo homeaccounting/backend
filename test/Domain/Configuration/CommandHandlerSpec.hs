@@ -30,6 +30,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
+    BankProviderContactMapSet (..),
     BankProviderExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
@@ -59,6 +60,7 @@ spec = do
   setDefaultAccountSpec
   setDefaultSubtypeAccountsSpec
   setBankProviderExpenseCategoryMapSpec
+  setBankProviderContactMapSpec
   removeDictionaryEntryBankingGuardSpec
   addTreeGuardSpec
   moveTreeGuardSpec
@@ -100,6 +102,16 @@ testCategoryId2 = mockDictionaryEntryId (read "77777777-7777-7777-7777-777777777
 
 testUnknownCategoryId :: CategoryId
 testUnknownCategoryId = mockDictionaryEntryId (read "99999999-9999-9999-9999-999999999999")
+
+-- | Entry IDs used as ContactIds in banking tests
+testContactId1 :: ContactId
+testContactId1 = mockDictionaryEntryId (read "88888888-8888-8888-8888-888888888888")
+
+testContactId2 :: ContactId
+testContactId2 = mockDictionaryEntryId (read "dddddddd-dddd-dddd-dddd-dddddddddddd")
+
+testUnknownContactId :: ContactId
+testUnknownContactId = mockDictionaryEntryId (read "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
 
 testEntryName1 :: EntryName
 testEntryName1 = mockEntryName "Food"
@@ -334,6 +346,87 @@ configWithMccMapEntry =
       BankProviderExpenseCategoryMapSetConfigurationEvent
         BankProviderExpenseCategoryMapSet
           { mapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testCategoryId1)]
+          }
+    ]
+
+-- | A created configuration with one contact-dictionary entry (testContactId1)
+configWithContactEntry :: Configuration
+configWithContactEntry =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = DictKind.ContactKind,
+            entryId = testContactId1,
+            name = mockEntryName "Ivan",
+            role = ItemRole,
+            parentId = Nothing
+          }
+    ]
+
+-- | A created configuration with two contact-dictionary entries (testContactId1, testContactId2)
+configWithTwoContactEntries :: Configuration
+configWithTwoContactEntries =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = DictKind.ContactKind,
+            entryId = testContactId1,
+            name = mockEntryName "Ivan",
+            role = ItemRole,
+            parentId = Nothing
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = DictKind.ContactKind,
+            entryId = testContactId2,
+            name = mockEntryName "Oksana",
+            role = ItemRole,
+            parentId = Nothing
+          }
+    ]
+
+-- | Config with two contact entries, contact map referencing testContactId1.
+-- Two entries ensure CannotRemoveLastEntry does not fire before the banking guard.
+configWithContactMapEntry :: Configuration
+configWithContactMapEntry =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = DictKind.ContactKind,
+            entryId = testContactId1,
+            name = mockEntryName "Ivan",
+            role = ItemRole,
+            parentId = Nothing
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = DictKind.ContactKind,
+            entryId = testContactId2,
+            name = mockEntryName "Oksana",
+            role = ItemRole,
+            parentId = Nothing
+          },
+      BankProviderContactMapSetConfigurationEvent
+        BankProviderContactMapSet
+          { mapping = Map.fromList [(unsafeBankProviderContact "IVAN PETRENKO", testContactId1)]
           }
     ]
 
@@ -994,6 +1087,70 @@ setBankProviderExpenseCategoryMapSpec = describe "SetBankProviderExpenseCategory
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
 -- -----------------------------------------------------------------------------
+-- SetBankProviderContactMap Tests
+-- -----------------------------------------------------------------------------
+
+setBankProviderContactMapSpec :: Spec
+setBankProviderContactMapSpec = describe "SetBankProviderContactMap Command" $ do
+  context "Given map referencing a ContactId NOT in the contact dictionary" $ do
+    describe "When issuing SetBankProviderContactMap" $ do
+      it "Then returns an error" $ do
+        let config = configWithContactEntry -- testContactId1 in contact dict
+        let command =
+              SetBankProviderContactMapConfigurationCommand
+                SetBankProviderContactMap
+                  { mapping = Map.fromList [(unsafeBankProviderContact "IVAN PETRENKO", testUnknownContactId)]
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given map whose values are all in the contact dictionary" $ do
+    describe "When issuing SetBankProviderContactMap" $ do
+      it "Then emits BankProviderContactMapSet event" $ do
+        let config = configWithTwoContactEntries
+        let testMapping =
+              Map.fromList
+                [ (unsafeBankProviderContact "IVAN PETRENKO", testContactId1),
+                  (unsafeBankProviderContact "OKSANA KOVAL", testContactId2)
+                ]
+        let command =
+              SetBankProviderContactMapConfigurationCommand
+                SetBankProviderContactMap
+                  { mapping = testMapping
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankProviderContactMapSetConfigurationEvent evt ->
+                evt.mapping `shouldBe` testMapping
+              _ -> expectationFailure "Expected BankProviderContactMapSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+  context "Given an empty map" $ do
+    describe "When issuing SetBankProviderContactMap" $ do
+      it "Then accepts empty map (signals cleared)" $ do
+        let config = configWithContactEntry
+        let command =
+              SetBankProviderContactMapConfigurationCommand
+                SetBankProviderContactMap
+                  { mapping = Map.empty
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankProviderContactMapSetConfigurationEvent evt ->
+                evt.mapping `shouldBe` Map.empty
+              _ -> expectationFailure "Expected BankProviderContactMapSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
 -- RemoveDictionaryEntry Banking Guard Tests
 -- -----------------------------------------------------------------------------
 
@@ -1040,6 +1197,20 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
         let result = handleConfigurationCommand config command
 
         result `shouldSatisfy` isLeft
+
+  context "Given entry referenced in banking.bankProviderContactMap" $ do
+    describe "When removing that entry" $ do
+      it "Then returns EntryIsInBankProviderContactMap" $ do
+        let config = configWithContactMapEntry
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryKind = DictKind.ContactKind,
+                    entryId = testContactId1
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldBe` Left EntryIsInBankProviderContactMap
 
   context "Given entry that is NOT a banking default nor in MCC map" $ do
     describe "When removing that entry (two entries exist)" $ do

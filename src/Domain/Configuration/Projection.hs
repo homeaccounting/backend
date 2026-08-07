@@ -16,7 +16,7 @@ module Domain.Configuration.Projection
     Configuration (..),
 
     -- * Banking Sub-record
-    BankingConfiguration (bankProviderExpenseCategoryMap, connections),
+    BankingConfiguration (bankProviderExpenseCategoryMap, bankProviderContactMap, connections),
     emptyBankingConfiguration,
 
     -- * Defaults Sub-record
@@ -55,6 +55,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
+    BankProviderContactMapSet (..),
     BankProviderExpenseCategoryMapSet (..),
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
@@ -74,7 +75,9 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
     BankProviderCategory,
+    BankProviderContact,
     CategoryId,
+    ContactId,
     CreatedBy (..),
     Currency (..),
     EntryName,
@@ -96,6 +99,9 @@ data BankingConfiguration = BankingConfiguration
   { -- | Mapping from provider categories (MCC or provider text label) to expense
     -- category IDs for automatic categorisation.
     bankProviderExpenseCategoryMap :: !(Map BankProviderCategory CategoryId),
+    -- | Mapping from provider contact tokens (name-agnostic counterparty
+    -- signal) to contact IDs for automatic contact resolution.
+    bankProviderContactMap :: !(Map BankProviderContact ContactId),
     -- | Configured bank connections, keyed by connection ID
     connections :: !(Map BankConnectionId BankConnection)
   }
@@ -128,6 +134,7 @@ emptyBankingConfiguration :: BankingConfiguration
 emptyBankingConfiguration =
   BankingConfiguration
     { bankProviderExpenseCategoryMap = Map.empty,
+      bankProviderContactMap = Map.empty,
       connections = Map.empty
     }
 
@@ -339,6 +346,8 @@ handleConfigurationEvent config (DefaultSubtypeAccountsSetConfigurationEvent evt
         }
 handleConfigurationEvent config (BankProviderExpenseCategoryMapSetConfigurationEvent evt) =
   config {banking = config.banking {bankProviderExpenseCategoryMap = evt.mapping}}
+handleConfigurationEvent config (BankProviderContactMapSetConfigurationEvent evt) =
+  config {banking = config.banking {bankProviderContactMap = evt.mapping}}
 handleConfigurationEvent config (BooksClosedThroughSetConfigurationEvent evt) =
   config {booksClosedThrough = Just evt.closedThrough}
 handleConfigurationEvent c (BankConnectionAddedConfigurationEvent e) =

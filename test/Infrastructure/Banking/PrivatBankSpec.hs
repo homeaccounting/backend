@@ -6,9 +6,9 @@ module Infrastructure.Banking.PrivatBankSpec (spec) where
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import Domain.Banking.Types (unBankProviderId)
-import Domain.Core.Types (mkByLabel)
+import Domain.Core.Types (mkBankProviderContact, mkByLabel)
 import Infrastructure.Banking.PrivatBank (descriptor)
-import Infrastructure.Banking.PrivatBank.Internal (parsePrivatBankCsv)
+import Infrastructure.Banking.PrivatBank.Internal (counterpartyToken, parsePrivatBankCsv)
 import Infrastructure.Banking.Provider
 import RIO
 import qualified RIO.Map as Map
@@ -84,6 +84,23 @@ rowWithCategory categoryLabel =
       "UAH"
     ]
 
+-- | A well-formed data row carrying the given description (column 4).
+rowWithDescription :: Text -> Text
+rowWithDescription description =
+  T.intercalate
+    ","
+    [ "10.07.2026 03:30:50",
+      "Категорія",
+      "0000 **** **** 0000",
+      description,
+      "-281",
+      "UAH",
+      "281",
+      "UAH",
+      "87654.32",
+      "UAH"
+    ]
+
 badDateRow :: Text
 badDateRow =
   T.intercalate
@@ -142,6 +159,52 @@ spec = describe "Infrastructure.Banking.PrivatBank" $ do
       $ case parsePrivatBankCsv (mkCsv [rowWithCategory ""]) of
         Right [Right tx] -> tx.category `shouldBe` Nothing
         _ -> expectationFailure "expected one parsed row"
+
+  describe "contact" $ do
+    it "carries the PrivatBank counterparty descriptor as a contact signal"
+      $ case parsePrivatBankCsv (mkCsv [rowWithDescription "Магазин РЕМОНТІ"]) of
+        Right [Right tx] -> tx.contact `shouldBe` mkBankProviderContact "Магазин РЕМОНТІ"
+        _ -> expectationFailure "expected one parsed row"
+
+    it "leaves a blank descriptor as Nothing"
+      $ case parsePrivatBankCsv (mkCsv [rowWithDescription ""]) of
+        Right [Right tx] -> tx.contact `shouldBe` Nothing
+        _ -> expectationFailure "expected one parsed row"
+
+    it "still carries the self-transfer label as a contact signal (transfer classification happens upstream on description, independent of contact)"
+      $ case parsePrivatBankCsv (mkCsv [rowWithDescription "На свою картку *0000"]) of
+        Right [Right tx] -> tx.contact `shouldBe` mkBankProviderContact "На свою картку *0000"
+        _ -> expectationFailure "expected one parsed row"
+
+    it "strips the volatile comment tail from the contact signal, keeping the counterparty"
+      $ case parsePrivatBankCsv (mkCsv [rowWithDescription "ТОВ Приклад. Коментар: платіж за послуги"]) of
+        Right [Right tx] -> tx.contact `shouldBe` mkBankProviderContact "ТОВ Приклад"
+        _ -> expectationFailure "expected one parsed row"
+
+  -- NB: all descriptions below are synthetic placeholders — never paste real
+  -- counterparty names, card numbers, or payment ids from bank exports here.
+  describe "counterpartyToken" $ do
+    it "strips a '. Коментар:' payment-purpose tail (which varies per transaction), keeping a comma-bearing counterparty"
+      $ counterpartyToken "Компанія Приклад, ТОВ. Коментар: оплата за товар від платника"
+      `shouldBe` "Компанія Приклад, ТОВ"
+
+    it "strips a ', ID платежу:' per-transaction payment id"
+      $ counterpartyToken "acme.ua, ID платежу: 1234567890"
+      `shouldBe` "acme.ua"
+
+    it "leaves a plain merchant untouched, including internal dots"
+      $ counterpartyToken "acme.ua"
+      `shouldBe` "acme.ua"
+
+    it "leaves a trailing initial's dot untouched"
+      $ counterpartyToken "Тест Т."
+      `shouldBe` "Тест Т."
+
+    it "leaves cosmetic city/double-conversion suffixes intact"
+      $ do
+        counterpartyToken "ACME MERCHANT, KYIV" `shouldBe` "ACME MERCHANT, KYIV"
+        counterpartyToken "Acme Оплата з подвійною конвертацією pb.ua/conv"
+          `shouldBe` "Acme Оплата з подвійною конвертацією pb.ua/conv"
 
     it "reports currencyCode 980 for a UAH row" $ do
       bytes <- loadFixture

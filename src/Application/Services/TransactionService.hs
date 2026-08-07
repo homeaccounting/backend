@@ -93,6 +93,7 @@ import Domain.Core.Types
     Allocation (..),
     Allocations (..),
     BankProviderCategory,
+    BankProviderContact,
     ContactId,
     Currency,
     DictionaryEntryId,
@@ -585,15 +586,17 @@ reconcileTransactionImport ::
   TransactionId ->
   NonEmpty ExternalTransactionId ->
   Maybe BankProviderCategory ->
+  Maybe BankProviderContact ->
   AppM (Either DomainError TransactionData)
-reconcileTransactionImport userId transactionId externalIds category = runExceptT $ do
+reconcileTransactionImport userId transactionId externalIds category contact = runExceptT $ do
   _transaction <- ExceptT (ensureCanModifyTransaction userId transactionId)
   let cmd =
         ReconcileTransactionImportTransactionCommand
           ReconcileTransactionImport
             { transactionId = transactionId,
               externalTransactionIds = externalIds,
-              category = category
+              category = category,
+              contact = contact
             }
   ExceptT (dispatchEdit transactionId cmd)
 

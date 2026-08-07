@@ -35,7 +35,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time (NominalDiffTime, UTCTime)
 import Domain.Banking.Types (BankProviderCredential, BankProviderId, ExternalAccountId)
-import Domain.Core.Types (BankProviderCategory, CategoryId, ExternalTransactionId)
+import Domain.Core.Types (BankProviderCategory, BankProviderContact, CategoryId, ExternalTransactionId)
 import Domain.Transaction.Matching.Transfer (TransferDirection (..), TransferLeg (..), isTransferMatch)
 import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, abs, isJust, otherwise, ($), (<))
 
@@ -71,6 +71,10 @@ data BankTransaction = BankTransaction
     -- Monobank) or a text label ('ByLabel', e.g. PrivatBank). 'Nothing' when
     -- the provider supplies no category.
     category :: !(Maybe BankProviderCategory),
+    -- | Provider-supplied counterparty signal, if any: a name-agnostic token
+    -- identifying who the transaction was with (e.g. the counterparty
+    -- descriptor/merchant text). 'Nothing' when the provider supplies none.
+    contact :: !(Maybe BankProviderContact),
     -- | Major-unit amount in the transaction's original currency, iff the
     -- transaction was in a currency different from the account. Monobank
     -- does not report the original currency code; Phase 1 uses the ratio

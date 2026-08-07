@@ -129,7 +129,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), BankProviderCategory, CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), BankProviderCategory, BankProviderContact, CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
@@ -683,7 +683,14 @@ data TransactionResponse
     -- ISO 18245 merchant category code or @{"kind":"label","value":"eating_out"}@
     -- for a free-text provider label. @null@ for manual entries and providers
     -- that supply no category signal.
-    bankProviderCategory :: Maybe BankProviderCategory
+    bankProviderCategory :: Maybe BankProviderCategory,
+    -- | Raw provider counterparty signal for imported transactions, surfaced
+    -- faithfully as a plain string (the token verbatim, e.g. @"MagazinREMONTI"@) —
+    -- 'BankProviderContact' has a plain-string JSON instance, unlike the tagged
+    -- 'bankProviderCategory'. @null@ for manual entries and providers that
+    -- supply no contact signal. Lets the client offer "map this token" to a
+    -- dictionary contact.
+    bankProviderContact :: Maybe BankProviderContact
   }
   deriving (Show, Eq, Generic)
 
@@ -1158,7 +1165,10 @@ fromTransactionData txId TransactionData {..} =
       -- Surface the raw provider category signal verbatim (both MCC- and
       -- label-based categories); it serialises as a tagged @{kind,value}@
       -- object or @null@.
-      bankProviderCategory = category
+      bankProviderCategory = category,
+      -- Surface the raw provider contact signal verbatim; it serialises as a
+      -- plain string or @null@.
+      bankProviderContact = providerContact
     }
 
 -- | Converts Transaction aggregate to TransactionResponse.
@@ -1193,7 +1203,8 @@ fromTransaction txId tx =
       contactId = unDictionaryEntryId <$> tx.contactId,
       amendmentCount = tx.amendmentCount,
       relations = [],
-      bankProviderCategory = Nothing
+      bankProviderCategory = Nothing,
+      bankProviderContact = Nothing
     }
 
 -- | Converts TransactionStatus to Text representation.

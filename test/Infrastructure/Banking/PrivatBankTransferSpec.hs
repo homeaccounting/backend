@@ -17,20 +17,20 @@ import RIO
 import Test.Hspec
 import Testkit.BankingHelpers (mkSameCurrencyBankTx)
 
--- | Outgoing leg: account ends in 1440, description names the destination card
--- *9713.
+-- | Outgoing leg: account ends in 1111, description names the destination card
+-- *2222.
 outLeg :: BankTransaction
 outLeg =
-  (mkSameCurrencyBankTx (unsafeExternalTransactionId "out") (unsafeExternalAccountId "5168001440") (-20000))
-    { description = "На свою картку *9713"
+  (mkSameCurrencyBankTx (unsafeExternalTransactionId "out") (unsafeExternalAccountId "5168001111") (-20000))
+    { description = "На свою картку *2222"
     }
 
--- | Incoming leg: account ends in 9713, description names the source card
--- *1440. Posted one second after the outgoing leg.
+-- | Incoming leg: account ends in 2222, description names the source card
+-- *1111. Posted one second after the outgoing leg.
 inLeg :: BankTransaction
 inLeg =
-  (mkSameCurrencyBankTx (unsafeExternalTransactionId "inc") (unsafeExternalAccountId "5168009713") 20000)
-    { description = "Зі своєї картки *1440",
+  (mkSameCurrencyBankTx (unsafeExternalTransactionId "inc") (unsafeExternalAccountId "5168002222") 20000)
+    { description = "Зі своєї картки *1111",
       time = addUTCTime 1 outLeg.time
     }
 
@@ -41,15 +41,15 @@ spec :: Spec
 spec = do
   describe "ownCardCounterpartLast4" $ do
     it "reads the destination card last-4 from a 'На свою картку' row"
-      $ ownCardCounterpartLast4 (outLeg {description = "На свою картку *9713"})
-      `shouldBe` Just "9713"
+      $ ownCardCounterpartLast4 (outLeg {description = "На свою картку *2222"})
+      `shouldBe` Just "2222"
 
     it "reads the source card last-4 from a 'Зі своєї картки' row"
-      $ ownCardCounterpartLast4 (outLeg {description = "Зі своєї картки *1440"})
-      `shouldBe` Just "1440"
+      $ ownCardCounterpartLast4 (outLeg {description = "Зі своєї картки *1111"})
+      `shouldBe` Just "1111"
 
     it "returns Nothing for a normal counterparty row"
-      $ ownCardCounterpartLast4 (outLeg {description = "Сидоренко Р."})
+      $ ownCardCounterpartLast4 (outLeg {description = "Іваненко І."})
       `shouldBe` Nothing
 
     it "returns Nothing for a ФОП own-funds transfer row"
@@ -77,6 +77,6 @@ spec = do
 
     it "rejects a pair where neither leg is self-labeled"
       $ matcher
-        (outLeg {description = "Сидоренко Р."})
+        (outLeg {description = "Іваненко І."})
         (inLeg {description = "Оплата послуг"})
       `shouldBe` False

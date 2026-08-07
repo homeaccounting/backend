@@ -43,8 +43,8 @@ descriptor =
     }
 
 -- | Extract the last-4 digits of the counterpart card named in a PrivatBank
--- self-transfer row's description (e.g. @На свою картку *9713@ or @Зі своєї
--- картки *1440@). 'Nothing' for any row that is not a self-transfer.
+-- self-transfer row's description (e.g. @На свою картку *2222@ or @Зі своєї
+-- картки *1111@). 'Nothing' for any row that is not a self-transfer.
 ownCardCounterpartLast4 :: BankTransaction -> Maybe Text
 ownCardCounterpartLast4 tx =
   listToMaybe

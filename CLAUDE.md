@@ -219,6 +219,16 @@ dead code at the same time, leaving `accountingSchemaRegistry` empty. The
 registry/codec seam is retained so the first post-launch shape change re-activates
 upcast-on-read with no wiring changes.
 
+The provider contact-signal feature (tracker#54) changed further **stored**
+shapes the same way: `ImportInfo.contact`, `TransactionImportReconciled.contact`,
+the new `BankProviderContactMapSet` config event, the
+`configuration_bank_provider_contacts` read-model table, and the DTO. Per the
+alpha escape hatch above, this shipped via the **same one-time event-store DB
+recreate** as the category-signal release, not a second one — both changes land
+before beta-testers' data is ever touched, so a single recreate covers both.
+`accountingSchemaRegistry` stays empty; no upcaster was added or removed for
+this change.
+
 #### Upcaster vs. custom `FromJSON` — the rule
 
 The dividing line is **where the JSON comes from**, not how big the change is:

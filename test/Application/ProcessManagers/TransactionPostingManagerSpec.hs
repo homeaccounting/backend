@@ -125,7 +125,7 @@ mkTransactionPostingInitiatedEventWithLabelsAndExternalId =
             by = unsafeUserId userUuid,
             at = sampleAt,
             transactionType = Transfer,
-            importInfo = Just ImportInfo {externalTransactionIds = unsafeExternalTransactionId "mono:stmt-42" :| [], category = Nothing},
+            importInfo = Just ImportInfo {externalTransactionIds = unsafeExternalTransactionId "mono:stmt-42" :| [], category = Nothing, contact = Nothing},
             labels = Set.fromList [unsafeDictionaryEntryId (UUID.fromWords 10 0 0 1), unsafeDictionaryEntryId (UUID.fromWords 10 0 0 2)],
             contactId = Nothing
           }

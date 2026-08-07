@@ -34,6 +34,7 @@ module Application.Services.ConfigurationService
     setDefaultAccount,
     setDefaultSubtypeAccounts,
     setBankProviderExpenseCategoryMap,
+    setBankProviderContactMap,
     addBankConnection,
     renameBankConnection,
     changeBankConnectionCredential,
@@ -108,6 +109,7 @@ import Domain.Configuration.Commands
     RenameDictionaryEntry (..),
     SetBankConnectionAccountMap (..),
     SetBankConnectionEnabled (..),
+    SetBankProviderContactMap (..),
     SetBankProviderExpenseCategoryMap (..),
     SetDefaultAccount (..),
     SetDefaultExpenseCategory (..),
@@ -128,7 +130,7 @@ import Domain.Configuration.Defaults
 import Domain.Configuration.Dictionary (DictionaryKind (..), EntryRole)
 import Domain.Configuration.Projection
   ( BankConnection (..),
-    BankingConfiguration (bankProviderExpenseCategoryMap, connections),
+    BankingConfiguration (bankProviderContactMap, bankProviderExpenseCategoryMap, connections),
     ConfigurationDefaults (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
@@ -137,8 +139,10 @@ import Domain.Core.Types
     AccountRole (..),
     AccountSubtypeKind,
     BankProviderCategory,
+    BankProviderContact,
     CategoryId,
     ConfigurationId,
+    ContactId,
     CreatedBy (..),
     Currency (..),
     DictionaryEntryId,
@@ -412,6 +416,18 @@ setBankProviderExpenseCategoryMap userId mapping = runExceptT $ do
     (unConfigurationId configId)
     (SetBankProviderExpenseCategoryMapConfigurationCommand SetBankProviderExpenseCategoryMap {mapping = mapping})
   lift $ logInfo "Banking provider-category map set successfully"
+
+-- | Replace the provider-contact-to-contact map wholesale in the user's
+-- configuration. Mirrors 'setBankProviderExpenseCategoryMap'.
+setBankProviderContactMap :: UserId -> Map BankProviderContact ContactId -> AppM (Either DomainError ())
+setBankProviderContactMap userId mapping = runExceptT $ do
+  lift $ logInfo $ "Setting banking provider-contact map for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  runConfigurationCmd
+    translateConfigurationError
+    (unConfigurationId configId)
+    (SetBankProviderContactMapConfigurationCommand SetBankProviderContactMap {mapping = mapping})
+  lift $ logInfo "Banking provider-contact map set successfully"
 
 -- -----------------------------------------------------------------------------
 -- Bank Connections
@@ -1043,6 +1059,15 @@ copyBanking newConfigUuidVal srcBanking = do
     copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
     case copyResult of
       Left err -> logWarn $ "Failed to clone banking.bankProviderExpenseCategoryMap: " <> displayShow err
+      Right _ -> return ()
+
+  unless (Map.null srcBanking.bankProviderContactMap) $ do
+    let cmd =
+          SetBankProviderContactMapConfigurationCommand
+            SetBankProviderContactMap {mapping = srcBanking.bankProviderContactMap}
+    copyResult <- liftIO $ applyConfigurationCommand writer reader enricher newConfigUuidVal cmd
+    case copyResult of
+      Left err -> logWarn $ "Failed to clone banking.bankProviderContactMap: " <> displayShow err
       Right _ -> return ()
 
   -- Clone bank connections. Each connection is re-emitted with its already

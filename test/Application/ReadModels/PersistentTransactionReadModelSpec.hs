@@ -146,7 +146,8 @@ reconciled txId mccVal =
         TransactionImportReconciled
           { transactionId = txId,
             externalTransactionIds = unsafeExternalTransactionId "ext-1" NE.:| [],
-            category = mkByMcc <$> (mccVal >>= parseMcc)
+            category = mkByMcc <$> (mccVal >>= parseMcc),
+            contact = Nothing
           }
     )
 

@@ -136,7 +136,7 @@ per-account `AccountImportResult` can only hold outcomes for rows that resolved 
 mapped local account. Two kinds of row have **no** local account to attribute to: a
 per-row parse failure (`RowError`, C2) and a row whose external account (card) isn't in
 the connection's `accountMap`. These land in the file-level `unresolved` list (human
-readable, e.g. `"row 57: unparseable date"`, `"unmapped card 5169****1440"`) — which also
+readable, e.g. `"row 57: unparseable date"`, `"unmapped card 5169****1111"`) — which also
 serves as the file-import **discovery** mechanism (the user learns unmapped masks and can
 map them). The pull path never populates it (its link contains only mapped accounts), so
 `unresolved` is empty for pull.

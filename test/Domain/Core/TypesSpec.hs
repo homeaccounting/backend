@@ -36,6 +36,7 @@ spec = do
   externalTransactionIdSpec
   mccSpec
   bankProviderCategorySpec
+  bankProviderContactSpec
   transactionTypeSpec
   roleToTextSpec
 
@@ -285,6 +286,35 @@ bankProviderCategorySpec = describe "BankProviderCategory" $ do
   it "bankProviderCategoryMcc extracts only the ByMcc code" $ do
     bankProviderCategoryMcc (mkByMcc (unsafeMcc 5411)) `shouldBe` Just (unsafeMcc 5411)
     (bankProviderCategoryMcc <$> mkByLabel "x") `shouldBe` Just Nothing
+
+-- -----------------------------------------------------------------------------
+-- BankProviderContact Tests
+-- -----------------------------------------------------------------------------
+
+bankProviderContactSpec :: Spec
+bankProviderContactSpec = describe "BankProviderContact" $ do
+  it "trims and rejects a blank token" $ do
+    fmap bankProviderContactText (mkBankProviderContact "  Магазин РЕМОНТІ  ")
+      `shouldBe` Just "Магазин РЕМОНТІ"
+    mkBankProviderContact "   " `shouldBe` Nothing
+    mkBankProviderContact "" `shouldBe` Nothing
+  it "value JSON round-trips as a plain string"
+    $ Aeson.decode (Aeson.encode (unsafeBankProviderContact "Магазин РЕМОНТІ"))
+    `shouldBe` Just (unsafeBankProviderContact "Магазин РЕМОНТІ")
+  it "encodes the value form as a plain string, not a tagged object"
+    $ Aeson.encode (unsafeBankProviderContact "IVAN")
+    `shouldBe` "\"IVAN\""
+  it "map-key JSON round-trips the token verbatim" $ do
+    let cid = unsafeDictionaryEntryId nil
+        m = Map.fromList [(unsafeBankProviderContact "IVAN", cid)] :: Map.Map BankProviderContact DictionaryEntryId
+    Aeson.decode (Aeson.encode m) `shouldBe` Just m
+  it "encodes the map key as the token verbatim, unprefixed" $ do
+    let cid = unsafeDictionaryEntryId nil
+        m = Map.fromList [(unsafeBankProviderContact "IVAN", cid)] :: Map.Map BankProviderContact DictionaryEntryId
+    Aeson.encode m `shouldBe` "{\"IVAN\":\"00000000-0000-0000-0000-000000000000\"}"
+  it "key render/parse round-trips a token containing a colon"
+    $ parseBankProviderContactKey (renderBankProviderContactKey (unsafeBankProviderContact "a:b"))
+    `shouldBe` Just (unsafeBankProviderContact "a:b")
 
 -- -----------------------------------------------------------------------------
 -- TransactionType Tests

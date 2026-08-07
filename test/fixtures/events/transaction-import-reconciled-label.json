@@ -3,6 +3,7 @@
   "contents": {
     "transactionId": "00000000-0000-0000-0000-000100000000",
     "externalTransactionIds": ["privat-xyz789"],
-    "category": { "kind": "label", "value": "eating_out" }
+    "category": { "kind": "label", "value": "eating_out" },
+    "contact": null
   }
 }

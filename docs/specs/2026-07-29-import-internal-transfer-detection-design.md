@@ -244,8 +244,8 @@ A candidate pair requires **all** of:
 
 - the two legs resolve to **different local accounts** (`localX /= localY`) — *engine
   invariant*. This is keyed on the **local** account, not the external id/card: one local
-  account can own **multiple cards** (e.g. a PrivatBank universal card `…9713` and its
-  additional card `…9959` share one balance), so two sibling-card legs map to the *same*
+  account can own **multiple cards** (e.g. a PrivatBank universal card `…2222` and its
+  additional card `…3333` share one balance), so two sibling-card legs map to the *same*
   local account and must **not** be treated as a transfer. Checking the local account
   subsumes the weaker "different card" check (same card → same local; sibling cards → same
   local; both rejected) and correctly rejects a within-account card-to-card move as a
@@ -359,8 +359,8 @@ PrivatBank internal-transfer detection requires both legs in one import batch. T
    set via `ConfigurationService.setBankConnectionAccountMap`). The key is the **card mask**
    exactly as it appears in the file's `Картка` column (that is what the parser stores as
    `externalAccountId`). The map is **many-to-one**: every card of one account maps to that
-   **same** local account (e.g. `…9713` and `…9959` → account B), while a card of a
-   *different* account maps elsewhere (`…1440` → account A). Two accounts that hold a
+   **same** local account (e.g. `…2222` and `…3333` → account B), while a card of a
+   *different* account maps elsewhere (`…1111` → account A). Two accounts that hold a
    genuine transfer between them must therefore map to two **distinct** local accounts —
    but sibling cards of one account must share theirs. A single-entry `accountMap` is a
    trap: `importStatementFileHandler` routes *every* card in the file to the one target, so
@@ -412,7 +412,7 @@ the backend fully supports it. This is out of scope for this (backend) spec.
   internal transfer → a single `Transfer` and correct balances on both accounts.
 - **PrivatBank self-label matcher (unit).** `ownCardCounterpartLast4` extracts `NNNN` from
   both `На свою картку *NNNN` and `Зі своєї картки *NNNN`, and `Nothing` for a normal row.
-  `privatBankTransferMatcher` pairs an outgoing `*9713` leg with the `…9713` card's incoming
+  `privatBankTransferMatcher` pairs an outgoing `*2222` leg with the `…2222` card's incoming
   leg (opposite sign, equal magnitude, same currency), and does **not** pair when the named
   last-4 differs, magnitudes differ, or a leg is a ФОП `Переказ власних коштiв` (no card).
 - **Integration (file / PrivatBank).** A merged multi-account batch (two cards, each mapped

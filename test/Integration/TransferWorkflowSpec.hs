@@ -921,7 +921,7 @@ categorizedTransferSpec =
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
                 transactionType = Transfer,
-                importInfo = Just ImportInfo {externalTransactionIds = extTxId :| [], category = Nothing},
+                importInfo = Just ImportInfo {externalTransactionIds = extTxId :| [], category = Nothing, contact = Nothing},
                 labels = expectedLabels,
                 contactId = Nothing,
                 relation = Nothing

@@ -30,6 +30,7 @@ import Domain.Configuration.Events
     BankConnectionEnabledSet (..),
     BankConnectionRemoved (..),
     BankConnectionRenamed (..),
+    BankProviderContactMapSet (..),
     BankProviderExpenseCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
@@ -74,6 +75,7 @@ configurationDefaultSpec =
       configurationDefault.defaults.account `shouldBe` Nothing
       configurationDefault.defaults.subtypeAccounts `shouldBe` Map.empty
       b.bankProviderExpenseCategoryMap `shouldBe` Map.empty
+      b.bankProviderContactMap `shouldBe` Map.empty
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -516,6 +518,23 @@ bankingProjectionSpec = describe "banking projection" $ do
                   }
             ]
     config.banking.bankProviderExpenseCategoryMap `shouldBe` m2
+
+  it "BankProviderContactMapSet replaces the provider-contact map wholesale" $ do
+    let m1 = Map.singleton (unsafeBankProviderContact "IVAN PETRENKO") testEntryId1
+        m2 = Map.singleton (unsafeBankProviderContact "OKSANA KOVAL") testEntryId2
+        config =
+          applyEvents
+            [ createdEvent,
+              BankProviderContactMapSetConfigurationEvent
+                BankProviderContactMapSet
+                  { mapping = m1
+                  },
+              BankProviderContactMapSetConfigurationEvent
+                BankProviderContactMapSet
+                  { mapping = m2
+                  }
+            ]
+    config.banking.bankProviderContactMap `shouldBe` m2
 
 -- -----------------------------------------------------------------------------
 -- Bank Connection Projection Tests

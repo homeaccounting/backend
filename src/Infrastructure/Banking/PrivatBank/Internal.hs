@@ -12,6 +12,7 @@ module Infrastructure.Banking.PrivatBank.Internal
     parsePrivatBankCsv,
     validateRow,
     parseSignedDecimal,
+    counterpartyToken,
   )
 where
 
@@ -24,7 +25,7 @@ import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import qualified Data.Vector as V
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (currencyNumericCode, mkByLabel, mkExternalTransactionId, parseCurrency)
+import Domain.Core.Types (currencyNumericCode, mkBankProviderContact, mkByLabel, mkExternalTransactionId, parseCurrency)
 import Infrastructure.Banking.Provider
 import RIO
 
@@ -139,12 +140,37 @@ validateRow rowNumber raw =
                   description = raw.rawDescription,
                   hold = False,
                   category = mkByLabel raw.rawCategory,
+                  contact = mkBankProviderContact (counterpartyToken raw.rawDescription),
                   originalAmount = Nothing,
                   notes = Nothing
                 }
   where
     rowErr = Left . RowError rowNumber
     dateFormat = "%d.%m.%Y %H:%M:%S"
+
+-- | Extract the stable counterparty token from a PrivatBank operation
+-- description, for use as the provider contact signal. Strips the trailing
+-- segments that vary per transaction (so the same counterparty maps to one
+-- stable token instead of a new one each time):
+--
+--   * @". Коментар: …"@ — the free-text payment purpose on bank transfers
+--     (carries names, amounts, invoice numbers — different every payment).
+--   * @", ID платежу: …"@ — the per-transaction payment id on some card rows.
+--
+-- Cosmetic-but-stable suffixes (a trailing city, the double-conversion note)
+-- are deliberately left intact: they are constant per merchant, so they never
+-- defeat the map, and stripping them risks over-truncation. The full raw text
+-- is still kept as the transaction 'description' (memo / name-match fallback);
+-- only the 'contact' signal is trimmed. A description with no volatile tail is
+-- returned unchanged (a plain merchant with an internal dot, or a trailing
+-- initial's dot, both survive).
+counterpartyToken :: Text -> Text
+counterpartyToken =
+  T.strip
+    . fst
+    . T.breakOn ", ID платежу:"
+    . fst
+    . T.breakOn ". Коментар:"
 
 -- | Deterministic external id composite: raw date, raw card-currency amount,
 -- and raw running balance, all taken verbatim off the CSV. The running

@@ -101,7 +101,7 @@ determinismSpec = describe "Determinism Properties" $ do
             $ \labels ->
               let transaction = applyEvents []
                   extTxId = unsafeExternalTransactionId extRaw
-                  info = ImportInfo {externalTransactionIds = extTxId :| [], category = Just (mkByMcc (unsafeMcc 5411))}
+                  info = ImportInfo {externalTransactionIds = extTxId :| [], category = Just (mkByMcc (unsafeMcc 5411)), contact = Nothing}
                   command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId amt amt Nothing rsn testUserId mockTime Transfer (Just info) labels Nothing Nothing
                in case handleTransactionCommand transaction command of
                     Right (TransactionPostingInitiatedTransactionEvent initiated : _) ->

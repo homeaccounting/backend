@@ -52,6 +52,7 @@ mkSameCurrencyBankTx eid accId amt =
       description = "test",
       hold = False,
       category = Nothing,
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }

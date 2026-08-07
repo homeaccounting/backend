@@ -34,6 +34,7 @@ module Domain.Configuration.Events
     DefaultAccountSet (..),
     DefaultSubtypeAccountsSet (..),
     BankProviderExpenseCategoryMapSet (..),
+    BankProviderContactMapSet (..),
     BooksClosedThroughSet (..),
     BankConnectionAdded (..),
     BankConnectionRenamed (..),
@@ -59,7 +60,9 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
     BankProviderCategory,
+    BankProviderContact,
     CategoryId,
+    ContactId,
     CreatedBy,
     Currency,
     DictionaryEntryId,
@@ -90,6 +93,7 @@ configurationEvents =
     ''DefaultAccountSet,
     ''DefaultSubtypeAccountsSet,
     ''BankProviderExpenseCategoryMapSet,
+    ''BankProviderContactMapSet,
     ''BooksClosedThroughSet,
     ''BankConnectionAdded,
     ''BankConnectionRenamed,
@@ -206,6 +210,14 @@ data BankProviderExpenseCategoryMapSet = BankProviderExpenseCategoryMapSet
   }
   deriving (Show, Eq)
 
+-- | Event emitted when the banking provider-contact -> contact map is set
+-- (bulk replace). Keys are 'BankProviderContact' values (the name-agnostic
+-- provider token); values are contact ids.
+data BankProviderContactMapSet = BankProviderContactMapSet
+  { mapping :: Map BankProviderContact ContactId
+  }
+  deriving (Show, Eq)
+
 -- | Event emitted when the books-closed-through cutoff is advanced.
 --
 -- The cutoff is advance-only: any attempt to set the cutoff to a value at or
@@ -295,6 +307,7 @@ deriveJSON defaultOptions ''DefaultExpenseCategorySet
 deriveJSON defaultOptions ''DefaultAccountSet
 deriveJSON defaultOptions ''DefaultSubtypeAccountsSet
 deriveJSON defaultOptions ''BankProviderExpenseCategoryMapSet
+deriveJSON defaultOptions ''BankProviderContactMapSet
 deriveJSON defaultOptions ''BooksClosedThroughSet
 deriveJSON defaultOptions ''BankConnectionAdded
 deriveJSON defaultOptions ''BankConnectionRenamed

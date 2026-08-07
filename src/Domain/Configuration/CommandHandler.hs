@@ -20,6 +20,7 @@
 --   - SetDefaultIncomeCategory: Category must exist in income-category dictionary
 --   - SetDefaultExpenseCategory: Category must exist in expense-category dictionary
 --   - SetBankProviderExpenseCategoryMap: All map values must exist in expense-category dictionary
+--   - SetBankProviderContactMap: All map values must exist in contact dictionary
 module Domain.Configuration.CommandHandler
   ( -- * Command Sum Type
     ConfigurationCommand (..),
@@ -56,7 +57,7 @@ import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDic
 import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), DictionaryKind (..), EntryRole (..))
 import Domain.Configuration.Events
 import Domain.Configuration.Projection
-import Domain.Core.Types (AccountId, CategoryId, DictionaryEntryId, EntryName)
+import Domain.Core.Types (AccountId, CategoryId, ContactId, DictionaryEntryId, EntryName)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 
@@ -79,6 +80,7 @@ data ConfigurationError
   | EntryNotInDictionary
   | EntryIsGlobalDefault
   | EntryIsInBankProviderExpenseCategoryMap
+  | EntryIsInBankProviderContactMap
   | -- | An add/move named a parent entry that does not exist in the dictionary.
     ParentEntryNotFound
   | -- | An add/move named a parent that exists but is an item, not a group.
@@ -252,6 +254,10 @@ isGlobalDefault eid config =
 isInBankProviderExpenseCategoryMap :: CategoryId -> Configuration -> Bool
 isInBankProviderExpenseCategoryMap eid config = eid `elem` Map.elems config.banking.bankProviderExpenseCategoryMap
 
+-- | Check if an entry is referenced as a value in the banking provider-contact map.
+isInBankProviderContactMap :: ContactId -> Configuration -> Bool
+isInBankProviderContactMap eid config = eid `elem` Map.elems config.banking.bankProviderContactMap
+
 -- | Reject the command if the targeted bank connection does not exist.
 requireConnection :: BankConnectionId -> Configuration -> Either ConfigurationError ()
 requireConnection connId config
@@ -363,6 +369,7 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
   | not (null (childrenOf entryId (entriesOf dictionaryKind config))) = Left GroupNotEmpty
   | isGlobalDefault entryId config = Left EntryIsGlobalDefault
   | isInBankProviderExpenseCategoryMap entryId config = Left EntryIsInBankProviderExpenseCategoryMap
+  | isInBankProviderContactMap entryId config = Left EntryIsInBankProviderContactMap
   | otherwise =
       Right
         [ DictionaryEntryRemovedConfigurationEvent
@@ -441,6 +448,15 @@ handleConfigurationCommand config (SetBankProviderExpenseCategoryMapConfiguratio
   Right
     [ BankProviderExpenseCategoryMapSetConfigurationEvent
         BankProviderExpenseCategoryMapSet
+          { mapping = mapping
+          }
+    ]
+-- Handle SetBankProviderContactMap command
+handleConfigurationCommand config (SetBankProviderContactMapConfigurationCommand SetBankProviderContactMap {..}) = do
+  mapM_ (\cid -> requireEntryIn ContactKind cid config) (Map.elems mapping)
+  Right
+    [ BankProviderContactMapSetConfigurationEvent
+        BankProviderContactMapSet
           { mapping = mapping
           }
     ]

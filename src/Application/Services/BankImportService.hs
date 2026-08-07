@@ -49,6 +49,10 @@ module Application.Services.BankImportService
     -- * Category resolution (exposed for unit testing)
     resolveCategory,
     CategoryResolution (..),
+
+    -- * Contact resolution (exposed for unit testing)
+    resolveContact,
+    ContactResolution (..),
   )
 where
 
@@ -86,6 +90,7 @@ import Domain.Core.Errors (DomainError (..), renderDomainError)
 import Domain.Core.Types
   ( AccountId,
     BankProviderCategory,
+    BankProviderContact,
     CategoryId,
     ContactId,
     Currency,
@@ -104,6 +109,7 @@ import Domain.Core.Types
     mkMoney,
     moneyCurrency,
     renderBankProviderCategoryKey,
+    renderBankProviderContactKey,
     unEntryName,
     unMoney,
   )
@@ -379,7 +385,7 @@ importTransferPair classify userId accountLink transfer = do
             label = textDisplay dLeg.externalId <> "/" <> textDisplay cLeg.externalId
         candidates <- runDb (findTransferReconciliationCandidates dLocal cLocal money fromT toT)
         result <-
-          attemptReconcile userId label importedLeg candidates (legOf SourceLeg) (dLeg.externalId :| [cLeg.externalId]) Nothing
+          attemptReconcile userId label importedLeg candidates (legOf SourceLeg) (dLeg.externalId :| [cLeg.externalId]) Nothing Nothing
         case result of
           ReconciledOnto tid -> bothLegs (Imported tid)
           ReconcileAmbiguous -> bothLegs (Skipped AmbiguousReconciliation)
@@ -442,7 +448,8 @@ postInternalTransfer userId dLocal cLocal dLeg cLeg =
                   Just
                     ImportInfo
                       { externalTransactionIds = dLeg.externalId :| [cLeg.externalId],
-                        category = Nothing
+                        category = Nothing,
+                        contact = Nothing
                       },
                 labels = Set.empty,
                 contactId = Nothing,
@@ -614,28 +621,67 @@ resolveCategory banking cfg direction maybeCategory =
 -- simply leaves the transaction without a contact (the raw description
 -- remains available as the transaction's memo).
 data ContactResolution
-  = -- | The normalized description matched an existing contact entry.
-    MatchedExisting !ContactId
+  = -- | Resolved via the user's 'bankProviderContactMap' (the provider
+    --   signal). Takes priority over name matching.
+    MatchedByMap !ContactId
+  | -- | Resolved via description name matching against the contact
+    --   dictionary (fallback — see 'matchContact').
+    MatchedByName !ContactId
   | -- | No existing contact entry matched (or contact resolution does not
     --   apply to this transaction's kind).
     NoContactMatch
   deriving (Show, Eq)
 
--- | Resolve an existing contact for a transaction from the user's contact
--- dictionary, by a two-tier (normalized, case-insensitive) match on the bank
--- statement description: exact match first, substring match as a fallback
--- (see 'matchContact'). MATCH-ONLY: never creates a dictionary entry — a
--- non-matching description simply resolves to 'NoContactMatch' and the
--- transaction is left without a contact.
+-- | Resolve a contact for a transaction, layering the user's
+-- 'bankProviderContactMap' (the provider signal) over the description-based
+-- name match ('matchContact'):
+--
+--   1. __Map hit (top priority)__: when @signal@ is present, mapped in
+--      'bankProviderContactMap', and the mapped 'ContactId' still exists in
+--      the contact dictionary, that contact wins — even if the description
+--      would otherwise name-match a /different/ contact.
+--   2. __Name-match fallback__: when there is no signal, the signal is
+--      unmapped, or the mapped id has since been removed from the
+--      dictionary, fall back to 'matchContact' on the description. This is
+--      the only path when 'bankProviderContactMap' is empty, so today's
+--      behaviour is preserved unchanged for providers/users without the map.
+--
+-- MATCH-ONLY: never creates a dictionary entry — an unresolved transaction
+-- simply resolves to 'NoContactMatch' and is left without a contact.
 --
 -- Contact resolution only applies to 'IncomeKind' and 'ExpenseKind'
--- transactions; transfers and adjustments never get a contact.
-resolveContact :: ConfigurationData -> TransactionKind -> Text -> ContactResolution
-resolveContact cfg kind description = case kind of
+-- transactions; transfers and adjustments never get a contact, regardless of
+-- signal.
+resolveContact ::
+  BankingConfiguration ->
+  ConfigurationData ->
+  TransactionKind ->
+  Maybe BankProviderContact ->
+  Text ->
+  ContactResolution
+resolveContact banking cfg kind signal description = case kind of
   TransferKind -> NoContactMatch
   AdjustmentKind -> NoContactMatch
-  IncomeKind -> matchContact cfg description
-  ExpenseKind -> matchContact cfg description
+  IncomeKind -> resolve
+  ExpenseKind -> resolve
+  where
+    resolve = case mapHit of
+      Just cid -> MatchedByMap cid
+      Nothing -> matchContact cfg description
+    -- A map hit only counts when the signal is present, mapped, AND the
+    -- mapped contact is still a dictionary entry (a value removed from the
+    -- dictionary after being mapped must not resolve to a dangling id).
+    mapHit = do
+      sig <- signal
+      cid <- Map.lookup sig banking.bankProviderContactMap
+      if existsInContactDict cfg cid then Just cid else Nothing
+
+-- | Whether a 'ContactId' is still present in the user's contact dictionary.
+-- Mirrors the in-dictionary check 'resolveCategory' performs against the
+-- expense-category dictionary, but against 'ConfigurationService.contactsDictKind'.
+existsInContactDict :: ConfigurationData -> ContactId -> Bool
+existsInContactDict cfg cid =
+  Set.member cid (maybe Set.empty dictionaryItemIds (Map.lookup ConfigurationService.contactsDictKind cfg.dictionaries))
 
 -- | Two-tier, normalized (trimmed, whitespace-collapsed, case-folded) match
 -- of @description@ against the names in the user's contact dictionary:
@@ -656,10 +702,10 @@ matchContact :: ConfigurationData -> Text -> ContactResolution
 matchContact cfg description
   | T.null normalized = NoContactMatch
   | otherwise = case exactMatches of
-      (eid : _) -> MatchedExisting eid
+      (eid : _) -> MatchedByName eid
       [] -> case longestSubstringRanked of
         (eid, topLen) : rest
-          | not (any ((== topLen) . snd) rest) -> MatchedExisting eid
+          | not (any ((== topLen) . snd) rest) -> MatchedByName eid
         _ -> NoContactMatch
   where
     normalized = normalizeName description
@@ -677,9 +723,10 @@ matchContact cfg description
 
 -- | Emit a grep-friendly structured log line recording how (or whether) a
 --   bank transaction was linked to an existing contact: the resolution
---   outcome (matched vs none) and the transaction's raw description, so an
---   operator can grep for @contact=NoContactMatch@ to spot merchants worth
---   adding as contacts.
+--   outcome (map hit vs name match vs none), the provider contact signal (or
+--   @none@), and the transaction's raw description, so an operator can grep
+--   for @resolution=NoMatch@ to spot merchants worth adding as contacts, or
+--   for @contact=…@ to audit individual decisions.
 logContactResolution ::
   BankTransaction ->
   ContactResolution ->
@@ -688,6 +735,8 @@ logContactResolution tx resolution =
   logInfo
     $ "Contact resolved tx="
     <> display tx.externalId
+    <> " contact="
+    <> display contactField
     <> " resolution="
     <> display resolutionTag
     <> " merchant="
@@ -695,8 +744,11 @@ logContactResolution tx resolution =
   where
     resolutionTag :: Text
     resolutionTag = case resolution of
-      MatchedExisting _ -> "MatchedExisting"
-      NoContactMatch -> "NoContactMatch"
+      MatchedByMap _ -> "MapHit"
+      MatchedByName _ -> "NameMatch"
+      NoContactMatch -> "NoMatch"
+    contactField :: Text
+    contactField = maybe "none" renderBankProviderContactKey tx.contact
 
 -- | Emit a grep-friendly structured log line recording how a bank transaction
 --   was categorised: its provider category, the resolution path (map hit vs
@@ -872,7 +924,7 @@ commitImport classify userId userData localAccId tx money = do
           importedLeg = Leg (unMoney money) (moneyCurrency money) tx.time
       candidates <- lift $ runDb (findReconciliationCandidates localAccId legSide money kind fromT toT)
       result <-
-        lift $ attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.category
+        lift $ attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.category tx.contact
       case result of
         ReconciledOnto tid -> pure (Imported tid)
         ReconcileAmbiguous -> pure (Skipped AmbiguousReconciliation)
@@ -899,8 +951,8 @@ data ReconcileResult
 
 -- | The shared reconcile step for both import paths (single transaction and
 -- whole-pair transfer): exclude already-reconciled candidates, run the pure
--- matcher, and on a unique match attach the incoming external id(s) + MCC onto
--- the matched manual transaction. Returns a 'ReconcileResult' the caller turns
+-- matcher, and on a unique match attach the incoming external id(s) + category
+-- + contact onto the matched manual transaction. Returns a 'ReconcileResult' the caller turns
 -- into its own outcome. @label@ is a grep-friendly tag for the log lines (the
 -- transaction's external id, or @"d/c"@ for a transfer pair).
 attemptReconcile ::
@@ -911,8 +963,9 @@ attemptReconcile ::
   (TransactionData -> Leg Currency) ->
   NonEmpty ExternalTransactionId ->
   Maybe BankProviderCategory ->
+  Maybe BankProviderContact ->
   AppM ReconcileResult
-attemptReconcile userId label importedLeg candidates projectLeg extIds category = do
+attemptReconcile userId label importedLeg candidates projectLeg extIds category contact = do
   fresh <- filterM (\(tid, _) -> not <$> runDb (isReconciled tid)) candidates
   case reconcile reconciliationWindow importedLeg [(tid, projectLeg td) | (tid, td) <- fresh] of
     NoMatch -> pure ReconcileNoMatch
@@ -920,7 +973,7 @@ attemptReconcile userId label importedLeg candidates projectLeg extIds category 
       logInfo $ "Ambiguous reconciliation for import " <> display label <> " (" <> displayShow (length tids) <> " candidates); skipping"
       pure ReconcileAmbiguous
     UniqueMatch tid -> do
-      reconResult <- TransactionService.reconcileTransactionImport userId tid extIds category
+      reconResult <- TransactionService.reconcileTransactionImport userId tid extIds category contact
       case reconResult of
         Right _ -> do
           logInfo $ "Reconciled import " <> display label <> " onto manual tx " <> displayShow tid
@@ -972,7 +1025,7 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
       -- 'TransactionKind' rather than 'direction' so it stays restricted to
       -- Income/Expense even if a future call site here ever produces a
       -- Transfer/Adjustment 'TransactionType'.
-      contactResolution = resolveContact cfg (kindOf transactionType) tx.description
+      contactResolution = resolveContact cfg.banking cfg (kindOf transactionType) tx.contact tx.description
   lift $ logContactResolution tx contactResolution
   -- Resolve per-leg amounts and the historical exchange rate exactly like the
   -- manual income/expense flow ('TransactionService.resolveAmounts'). The
@@ -1026,11 +1079,13 @@ commitMatchingCurrencyImport userId externalAccId localAccId tx money direction 
             Just
               ImportInfo
                 { externalTransactionIds = bankTx.externalId :| [],
-                  category = bankTx.category
+                  category = bankTx.category,
+                  contact = bankTx.contact
                 },
           labels = Set.empty,
           contactId = case contactResolution of
-            MatchedExisting cid -> Just cid
+            MatchedByMap cid -> Just cid
+            MatchedByName cid -> Just cid
             NoContactMatch -> Nothing,
           relation = Nothing
         }

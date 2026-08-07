@@ -38,6 +38,7 @@ module Testkit.Helpers
     mockAccountData,
     mockTransactionData,
     mockTransactionDataWithCategory,
+    mockTransactionDataWithContact,
     globalEvent,
 
     -- * Test Assertions
@@ -245,7 +246,8 @@ mockTransactionData src tgt srcAmt tgtAmt rate tt =
       labels = mempty,
       contactId = Nothing,
       relations = [],
-      amendmentCount = 0
+      amendmentCount = 0,
+      providerContact = Nothing
     }
 
 -- | Set the raw provider category signal on a 'TransactionData' fixture.
@@ -255,6 +257,11 @@ mockTransactionData src tgt srcAmt tgtAmt rate tt =
 -- resolves unambiguously to 'TransactionData'.
 mockTransactionDataWithCategory :: Maybe BankProviderCategory -> TransactionData -> TransactionData
 mockTransactionDataWithCategory c td = td {category = c}
+
+-- | Set the raw provider contact signal on a 'TransactionData' fixture.
+-- Mirrors 'mockTransactionDataWithCategory'.
+mockTransactionDataWithContact :: Maybe BankProviderContact -> TransactionData -> TransactionData
+mockTransactionDataWithContact c td = td {providerContact = c}
 
 -- | Wrap an 'AccountingEvent' as a 'GlobalStreamEvent' on the given stream
 -- @UUID@ at a per-stream 'EventVersion' and global 'SequenceNumber' — the

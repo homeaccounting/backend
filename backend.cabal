@@ -349,6 +349,7 @@ test-suite backend-test
       Application.ReadModels.ConfigurationDictionaryDataSpec
       Application.ReadModels.ExchangeRatePropertySpec
       Application.ReadModels.PersistentAccountReadModelSpec
+      Application.ReadModels.PersistentConfigurationReadModelSpec
       Application.ReadModels.PersistentExchangeRateReadModelSpec
       Application.ReadModels.PersistentTransactionReadModelSpec
       Application.ReadModels.PersistentUserReadModelSpec

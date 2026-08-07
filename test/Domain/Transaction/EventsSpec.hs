@@ -25,6 +25,7 @@ import Domain.Core.Types
     TransactionId,
     TransactionType (Transfer),
     mkByMcc,
+    unsafeBankProviderContact,
     unsafeDictionaryEntryId,
     unsafeExternalTransactionId,
     unsafeMcc,
@@ -64,7 +65,22 @@ postingInitiatedSpec = describe "TransactionPostingInitiated JSON" $ do
                 Just
                   ImportInfo
                     { externalTransactionIds = unsafeExternalTransactionId "mono-tx-123" :| [],
-                      category = Just (mkByMcc (unsafeMcc 5411))
+                      category = Just (mkByMcc (unsafeMcc 5411)),
+                      contact = Nothing
+                    }
+            }
+    (eitherDecode (encode evt) :: Either String TransactionPostingInitiated)
+      `shouldBe` Right evt
+
+  it "round-trips TransactionPostingInitiated with Just importInfo carrying a contact" $ do
+    let evt =
+          sampleEvent
+            { importInfo =
+                Just
+                  ImportInfo
+                    { externalTransactionIds = unsafeExternalTransactionId "mono-tx-123" :| [],
+                      category = Nothing,
+                      contact = Just (unsafeBankProviderContact "Магазин РЕМОНТІ")
                     }
             }
     (eitherDecode (encode evt) :: Either String TransactionPostingInitiated)

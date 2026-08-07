@@ -79,6 +79,12 @@ module Domain.Core.Types
     bankProviderCategoryMcc,
     renderBankProviderCategoryKey,
     parseBankProviderCategoryKey,
+    BankProviderContact,
+    mkBankProviderContact,
+    unsafeBankProviderContact,
+    bankProviderContactText,
+    renderBankProviderContactKey,
+    parseBankProviderContactKey,
     EntryName,
     mkEntryName,
     unsafeEntryName,
@@ -161,6 +167,7 @@ module Domain.Core.Types
     ImportInfo (..),
     importInfoExternalTransactionIds,
     importInfoCategory,
+    importInfoContact,
 
     -- * Password Types
     PasswordHash (..),
@@ -823,6 +830,58 @@ instance FromJSONKey BankProviderCategory where
         (fail ("Invalid BankProviderCategory key: " <> T.unpack t))
         pure
         (parseBankProviderCategoryKey t)
+
+-- | The name-agnostic token a provider reports to identify a transaction's
+-- counterparty (a merchant/counterparty descriptor as the provider reports it,
+-- e.g. @MagazinREMONTI@ / @Магазин РЕМОНТІ@, or a more stable id such as a
+-- counterparty IBAN / EDRPOU where a provider exposes one). Persisted verbatim;
+-- the key of the user contact map ('bankProviderContactMap').
+--
+-- Universal keyspace (not provider-scoped): the map is many-to-one, so token
+-- collisions are harmless — colliding tokens simply point at the same contact.
+-- JSON value form is the plain trimmed string; the map-key form is the same
+-- token verbatim.
+newtype BankProviderContact = BankProviderContact Text
+  deriving (Eq, Ord, Show)
+
+-- | Smart constructor: trims surrounding whitespace and rejects a blank token.
+mkBankProviderContact :: Text -> Maybe BankProviderContact
+mkBankProviderContact t
+  | T.null trimmed = Nothing
+  | otherwise = Just (BankProviderContact trimmed)
+  where
+    trimmed = T.strip t
+
+-- | Bypass validation. For known-good literals / tests / wiring only.
+unsafeBankProviderContact :: Text -> BankProviderContact
+unsafeBankProviderContact = BankProviderContact
+
+-- | The underlying token.
+bankProviderContactText :: BankProviderContact -> Text
+bankProviderContactText (BankProviderContact t) = t
+
+-- | Map-key text form. Single case → the token itself.
+renderBankProviderContactKey :: BankProviderContact -> Text
+renderBankProviderContactKey = bankProviderContactText
+
+-- | Parse the map-key text form, re-validating non-blank.
+parseBankProviderContactKey :: Text -> Maybe BankProviderContact
+parseBankProviderContactKey = mkBankProviderContact
+
+instance ToJSON BankProviderContact where
+  toJSON = toJSON . bankProviderContactText
+
+instance FromJSON BankProviderContact where
+  parseJSON = withText "BankProviderContact" $ \t ->
+    maybe (fail "BankProviderContact must not be blank") pure (mkBankProviderContact t)
+
+instance ToJSONKey BankProviderContact where
+  toJSONKey = toJSONKeyText renderBankProviderContactKey
+
+instance FromJSONKey BankProviderContact where
+  fromJSONKey =
+    FromJSONKeyTextParser $ \t ->
+      maybe (fail ("Invalid BankProviderContact key: " <> T.unpack t)) pure (parseBankProviderContactKey t)
 
 -- -----------------------------------------------------------------------------
 -- Entry Name
@@ -1554,13 +1613,15 @@ instance FromJSON ExternalTransactionId where
 -- 'externalTransactionIds' carries one or more external ids: a normal import
 -- carries one, a detected internal transfer carries both legs' ids (so both can
 -- be deduplicated). It is required (every import has at least one; it drives the
--- overdraft-bypass guard and import dedup), while 'mcc' is optional because only
--- some providers supply a provider category (monobank supplies an MCC; PrivatBank
--- supplies a text label). Grouping the import-only fields keeps future provider
--- metadata in one place. Mirrors 'RelationSpec' in shape and role.
+-- overdraft-bypass guard and import dedup), while 'category' and 'contact' are
+-- optional because only some providers supply a provider category (monobank
+-- supplies an MCC; PrivatBank supplies a text label) or a counterparty signal.
+-- Grouping the import-only fields keeps future provider metadata in one place.
+-- Mirrors 'RelationSpec' in shape and role.
 data ImportInfo = ImportInfo
   { externalTransactionIds :: NonEmpty ExternalTransactionId,
-    category :: Maybe BankProviderCategory
+    category :: Maybe BankProviderCategory,
+    contact :: Maybe BankProviderContact
   }
   deriving (Show, Eq, Generic)
 
@@ -1578,6 +1639,10 @@ importInfoExternalTransactionIds ImportInfo {externalTransactionIds = e} = e
 -- | The provider category carried by an import, if the provider supplied one.
 importInfoCategory :: ImportInfo -> Maybe BankProviderCategory
 importInfoCategory ImportInfo {category = c} = c
+
+-- | The provider contact signal carried by an import, if the provider supplied one.
+importInfoContact :: ImportInfo -> Maybe BankProviderContact
+importInfoContact ImportInfo {contact = c} = c
 
 -- -----------------------------------------------------------------------------
 -- Password Types

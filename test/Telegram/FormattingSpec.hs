@@ -50,7 +50,8 @@ sampleTxn tt =
       labels = Set.empty,
       contactId = Nothing,
       relations = [],
-      amendmentCount = 0
+      amendmentCount = 0,
+      providerContact = Nothing
     }
 
 foodCat :: CategoryId

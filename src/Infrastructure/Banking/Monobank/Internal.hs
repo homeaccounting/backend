@@ -19,7 +19,7 @@ import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
 import Data.Ratio ((%))
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Domain.Banking.Types (ExternalAccountId)
-import Domain.Core.Types (mkByMcc, mkExternalTransactionId, mkMcc)
+import Domain.Core.Types (mkBankProviderContact, mkByMcc, mkExternalTransactionId, mkMcc)
 import Infrastructure.Banking.Provider
 import RIO
 
@@ -119,6 +119,7 @@ toProviderTransaction accId ms =
                   if ms.stmtMcc == 0
                     then Nothing
                     else mkByMcc <$> either (const Nothing) Just (mkMcc (fromIntegral ms.stmtMcc)),
+                contact = mkBankProviderContact ms.stmtDescription,
                 originalAmount = maybeOriginal,
                 notes = ms.stmtComment
               }

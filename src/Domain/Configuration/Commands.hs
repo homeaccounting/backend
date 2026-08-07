@@ -27,6 +27,7 @@ module Domain.Configuration.Commands
     SetDefaultAccount (..),
     SetDefaultSubtypeAccounts (..),
     SetBankProviderExpenseCategoryMap (..),
+    SetBankProviderContactMap (..),
     CloseBooksThrough (..),
     AddBankConnection (..),
     RenameBankConnection (..),
@@ -52,7 +53,9 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind,
     BankProviderCategory,
+    BankProviderContact,
     CategoryId,
+    ContactId,
     CreatedBy,
     Currency,
     DictionaryEntryId,
@@ -83,6 +86,7 @@ configurationCommands =
     ''SetDefaultAccount,
     ''SetDefaultSubtypeAccounts,
     ''SetBankProviderExpenseCategoryMap,
+    ''SetBankProviderContactMap,
     ''CloseBooksThrough,
     ''AddBankConnection,
     ''RenameBankConnection,
@@ -219,6 +223,14 @@ data SetBankProviderExpenseCategoryMap = SetBankProviderExpenseCategoryMap
   }
   deriving (Show, Eq)
 
+-- | Command to replace the banking provider-contact -> contact map wholesale.
+-- Keys are 'BankProviderContact' values (the name-agnostic provider token);
+-- values are contact ids.
+data SetBankProviderContactMap = SetBankProviderContactMap
+  { mapping :: Map BankProviderContact ContactId
+  }
+  deriving (Show, Eq)
+
 -- | Command to advance the books-closed-through cutoff.
 --
 -- The cutoff is advance-only: the command handler rejects any value at or
@@ -339,6 +351,7 @@ deriveJSON defaultOptions ''SetDefaultExpenseCategory
 deriveJSON defaultOptions ''SetDefaultAccount
 deriveJSON defaultOptions ''SetDefaultSubtypeAccounts
 deriveJSON defaultOptions ''SetBankProviderExpenseCategoryMap
+deriveJSON defaultOptions ''SetBankProviderContactMap
 deriveJSON defaultOptions ''CloseBooksThrough
 deriveJSON defaultOptions ''AddBankConnection
 deriveJSON defaultOptions ''RenameBankConnection

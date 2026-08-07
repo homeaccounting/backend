@@ -52,12 +52,13 @@ import Test.Hspec.Wai
 import Testkit.AppEnv (mkAppSeeded)
 import Testkit.HspecWai (bearerHeader, getJSONAuth, jsonAuthHeaders, registerAndGetToken)
 import Web.API.ConfigurationAPI
-  ( BankProviderDTO (..),
+  ( AddEntryResponse (..),
+    BankProviderDTO (..),
     BankingConfigurationDTO (..),
     ConfigurationDefaultsDTO (..),
     ConfigurationResponse (..),
   )
-import Web.Types (ErrorResponse (..))
+import Web.Types (ErrorResponse (..), ValidationErrorResponse (..))
 
 -- -----------------------------------------------------------------------------
 -- Well-known deterministic UUIDs from the default seed
@@ -79,6 +80,24 @@ unknownUUID = UUID.fromWords 0xDEAD 0xBEEF 0 1
 -- Request helpers
 -- -----------------------------------------------------------------------------
 
+-- | Add a contact-dictionary item entry via the HTTP API and return its id.
+-- Contacts have no default seed (dictionaries are user-curated), so the
+-- provider-contact-map tests need to create one before they can point a
+-- contact-map value at it.
+addContactEntry :: Text -> Text -> WaiSession st UUID.UUID
+addContactEntry tok name = do
+  resp <-
+    request
+      "POST"
+      "/api/users/me/configuration/dictionaries/contact/entries"
+      (jsonAuthHeaders tok)
+      (encode $ object ["name" .= name, "type" .= ("item" :: Text)])
+  case eitherDecode (simpleBody resp) :: Either String AddEntryResponse of
+    Left err -> do
+      liftIO $ expectationFailure ("addContactEntry: body is not an AddEntryResponse: " <> err)
+      pure UUID.nil
+    Right (AddEntryResponse {id = eid}) -> pure eid
+
 -- -----------------------------------------------------------------------------
 -- Spec entry point
 -- -----------------------------------------------------------------------------
@@ -87,6 +106,7 @@ spec :: Spec
 spec = do
   updateDefaultsSpec
   updateBankingMccMapSpec
+  updateBankingContactMapSpec
   getBankingInResponseSpec
   listProvidersSpec
 
@@ -256,7 +276,7 @@ updateBankingMccMapSpec =
           case eitherDecode (simpleBody getResp) :: Either String ConfigurationResponse of
             Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
             Right cfg ->
-              Map.lookup mcc cfg.banking.bankProviderExpenseCategoryMap `shouldBe` Just expenseOtherUUID
+              Map.lookup mcc cfg.banking.expenseCategoryMap `shouldBe` Just expenseOtherUUID
 
       it "round-trips both MCC and label provider-category keys" $ do
         tok <- registerAndGetToken
@@ -297,8 +317,8 @@ updateBankingMccMapSpec =
           case eitherDecode (simpleBody getResp) :: Either String ConfigurationResponse of
             Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
             Right cfg -> do
-              Map.lookup mccKey cfg.banking.bankProviderExpenseCategoryMap `shouldBe` Just expenseOtherUUID
-              Map.lookup labelKey cfg.banking.bankProviderExpenseCategoryMap `shouldBe` Just expenseOtherUUID
+              Map.lookup mccKey cfg.banking.expenseCategoryMap `shouldBe` Just expenseOtherUUID
+              Map.lookup labelKey cfg.banking.expenseCategoryMap `shouldBe` Just expenseOtherUUID
 
       it "returns 200 and GET shows empty map when {} supplied" $ do
         tok <- registerAndGetToken
@@ -340,6 +360,109 @@ updateBankingMccMapSpec =
             Left err -> expectationFailure $ "400 body is not an ErrorResponse: " <> err
             Right errResp ->
               errResp.code `shouldBe` "CONFIGURATION_ERROR"
+
+-- -----------------------------------------------------------------------------
+-- PUT /api/users/me/configuration/banking — contactMap field
+-- -----------------------------------------------------------------------------
+
+updateBankingContactMapSpec :: Spec
+updateBankingContactMapSpec =
+  describe "PUT /api/users/me/configuration/banking (contactMap)"
+    $ with mkAppSeeded
+    $ do
+      it "returns 200 and GET reflects a single-entry provider-contact map" $ do
+        tok <- registerAndGetToken
+        contactId <- addContactEntry tok "Landlord"
+        let providerToken = "MagazinREMONTI" :: Text
+            body = encode $ object ["contactMap" .= object [Key.fromText providerToken .= contactId]]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            body
+        liftIO $ do
+          simpleStatus resp `shouldBe` status200
+          case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
+            Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
+            Right dto ->
+              Map.lookup providerToken dto.contactMap `shouldBe` Just contactId
+        -- Verify GET also shows the map
+        getResp <-
+          request
+            "GET"
+            "/api/users/me/configuration"
+            [bearerHeader tok]
+            ""
+        liftIO $ do
+          simpleStatus getResp `shouldBe` status200
+          case eitherDecode (simpleBody getResp) :: Either String ConfigurationResponse of
+            Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
+            Right cfg ->
+              Map.lookup providerToken cfg.banking.contactMap `shouldBe` Just contactId
+
+      it "returns 200 and GET shows empty map when {} supplied" $ do
+        tok <- registerAndGetToken
+        contactId <- addContactEntry tok "Landlord"
+        -- First set a map entry
+        let setupBody = encode $ object ["contactMap" .= object ["MagazinREMONTI" .= contactId]]
+        _ <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            setupBody
+        -- Now clear via empty map
+        let clearBody = encode $ object ["contactMap" .= object ([] :: [Pair])]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            clearBody
+        liftIO $ do
+          simpleStatus resp `shouldBe` status200
+          case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
+            Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
+            Right dto ->
+              Map.null dto.contactMap `shouldBe` True
+
+      it "returns 400 when a contact-map UUID value is not in the contact dictionary" $ do
+        tok <- registerAndGetToken
+        let body = encode $ object ["contactMap" .= object ["MagazinREMONTI" .= unknownUUID]]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            body
+        liftIO $ do
+          simpleStatus resp `shouldBe` status400
+          case eitherDecode (simpleBody resp) :: Either String ErrorResponse of
+            Left err -> expectationFailure $ "400 body is not an ErrorResponse: " <> err
+            Right errResp ->
+              errResp.code `shouldBe` "CONFIGURATION_ERROR"
+
+      it "returns 400 when a contact-map key is blank" $ do
+        tok <- registerAndGetToken
+        contactId <- addContactEntry tok "Landlord"
+        let body = encode $ object ["contactMap" .= object ["" .= contactId]]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            body
+        liftIO $ do
+          simpleStatus resp `shouldBe` status400
+          -- Blank-key rejection is a 'validateFieldCtx' failure, which goes
+          -- through 'Web.ErrorMapping' as a 'ValidationErrorResponse'
+          -- (message + fieldErrors), not the generic 'ErrorResponse' envelope
+          -- used for aggregate-level 'ConfigurationError's.
+          case eitherDecode (simpleBody resp) :: Either String ValidationErrorResponse of
+            Left err -> expectationFailure $ "400 body is not a ValidationErrorResponse: " <> err
+            Right env ->
+              Map.lookup "contactMap" env.fieldErrors `shouldSatisfy` isJust
 
 -- -----------------------------------------------------------------------------
 -- GET /api/users/me/configuration shows banking field

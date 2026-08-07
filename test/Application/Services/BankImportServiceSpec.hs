@@ -30,12 +30,14 @@ import Application.Services.AccountService (createAccount)
 import Application.Services.BankImportService
   ( AccountImportResult (..),
     CategoryResolution (..),
+    ContactResolution (..),
     ImportOutcome (..),
     ImportResult (..),
     SkipReason (..),
     importMany,
     importTransaction,
     resolveCategory,
+    resolveContact,
   )
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
@@ -57,7 +59,7 @@ import Domain.Configuration.Defaults
   )
 import Domain.Configuration.Dictionary (DictionaryNode (..), EntryRole (ItemRole))
 import Domain.Configuration.Projection
-  ( BankingConfiguration (bankProviderExpenseCategoryMap),
+  ( BankingConfiguration (bankProviderContactMap, bankProviderExpenseCategoryMap),
     ConfigurationDefaults (..),
     emptyBankingConfiguration,
     emptyConfigurationDefaults,
@@ -72,6 +74,7 @@ import Domain.Core.Types
     ImportInfo (..),
     Money,
     TransactionId,
+    TransactionKind (..),
     TransactionType (..),
     UserId,
     defaultBankAccount,
@@ -80,6 +83,7 @@ import Domain.Core.Types
     mkMoney,
     parseMcc,
     unTransactionId,
+    unsafeBankProviderContact,
     unsafeDictionaryEntryId,
     unsafeEntryName,
     unsafeExternalTransactionId,
@@ -190,6 +194,7 @@ mkTestTransactionWithDescription amount extId desc =
       description = desc,
       hold = False,
       category = Nothing,
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }
@@ -205,6 +210,7 @@ mkTestTransactionWithAccount' acctId amount extId =
       description = "Test transaction",
       hold = False,
       category = Nothing,
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }
@@ -221,6 +227,7 @@ mkHoldTransaction amount extId =
       description = "Hold transaction",
       hold = True,
       category = Nothing,
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }
@@ -341,6 +348,7 @@ mkLeg acctId amount extId desc t =
       description = desc,
       hold = False,
       category = Nothing,
+      contact = Nothing,
       originalAmount = Nothing,
       notes = Nothing
     }
@@ -495,6 +503,87 @@ spec = describe "BankImportService" $ do
           cfg = mkCfg (expenseDict [otherItem]) bankingCfg otherItem
       resolveCategory bankingCfg cfg ClassifiedExpense (Just code)
         `shouldBe` Right (otherItem, DefaultFallback (Just code))
+
+  describe "resolveContact (unit)" $ do
+    let mkCfg dicts bankingCfg =
+          ConfigurationData
+            { baseCurrency = UAH,
+              defaultCurrency = UAH,
+              dictionaries = dicts,
+              banking = bankingCfg,
+              defaults = emptyConfigurationDefaults,
+              booksClosedThrough = Nothing,
+              createdBy = System,
+              version = 0
+            }
+        contactDict entries =
+          Map.singleton
+            ConfigurationService.contactsDictKind
+            (DictionaryData [ItemNode eid (unsafeEntryName name) | (eid, name) <- entries])
+        signal = unsafeBankProviderContact "MERCH123"
+        contactIdN :: Word32 -> DictionaryEntryId
+        contactIdN n = unsafeDictionaryEntryId (UUID.fromWords n 0 0 0)
+
+    it "a map hit wins even when the description name-matches a DIFFERENT contact" $ do
+      let contactA = contactIdN 101
+          contactB = contactIdN 102
+          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal contactA}
+          cfg = mkCfg (contactDict [(contactA, "Contact A"), (contactB, "Netflix")]) bankingCfg
+      -- The description ("Netflix") would name-match contactB on its own, but
+      -- the provider signal maps to contactA — the map hit must win.
+      resolveContact bankingCfg cfg ExpenseKind (Just signal) "Netflix"
+        `shouldBe` MatchedByMap contactA
+
+    it "falls back to name matching when the signal is present but unmapped" $ do
+      let netflixId = contactIdN 103
+          bankingCfg = emptyBankingConfiguration -- bankProviderContactMap is empty
+          cfg = mkCfg (contactDict [(netflixId, "Netflix")]) bankingCfg
+      resolveContact bankingCfg cfg ExpenseKind (Just signal) "Netflix"
+        `shouldBe` MatchedByName netflixId
+
+    it "resolves to NoContactMatch when the signal is unmapped and the description matches nothing" $ do
+      let bankingCfg = emptyBankingConfiguration
+          cfg = mkCfg (contactDict []) bankingCfg
+      resolveContact bankingCfg cfg ExpenseKind (Just signal) "Some Random Shop"
+        `shouldBe` NoContactMatch
+
+    it "falls back to name matching (today's behaviour) when there is no signal at all" $ do
+      let netflixId = contactIdN 104
+          -- The map is non-empty (mapping some other key) to prove the
+          -- absence of a *signal* — not an empty map — drives the fallback.
+          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal netflixId}
+          cfg = mkCfg (contactDict [(netflixId, "Netflix")]) bankingCfg
+      resolveContact bankingCfg cfg ExpenseKind Nothing "Netflix"
+        `shouldBe` MatchedByName netflixId
+
+    it "falls back to name matching when the mapped contact is no longer in the dictionary" $ do
+      let netflixId = contactIdN 105
+          danglingId = contactIdN 106
+          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal danglingId}
+          cfg = mkCfg (contactDict [(netflixId, "Netflix")]) bankingCfg
+      resolveContact bankingCfg cfg ExpenseKind (Just signal) "Netflix"
+        `shouldBe` MatchedByName netflixId
+
+    it "resolves via the map for an income transaction" $ do
+      let employerId = contactIdN 107
+          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal employerId}
+          cfg = mkCfg (contactDict [(employerId, "Employer")]) bankingCfg
+      resolveContact bankingCfg cfg IncomeKind (Just signal) "some description"
+        `shouldBe` MatchedByMap employerId
+
+    it "never resolves a contact for a Transfer transaction, even with a mapped signal" $ do
+      let contactA = contactIdN 108
+          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal contactA}
+          cfg = mkCfg (contactDict [(contactA, "Contact A")]) bankingCfg
+      resolveContact bankingCfg cfg TransferKind (Just signal) "Contact A"
+        `shouldBe` NoContactMatch
+
+    it "never resolves a contact for an Adjustment transaction, even with a mapped signal" $ do
+      let contactA = contactIdN 109
+          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal contactA}
+          cfg = mkCfg (contactDict [(contactA, "Contact A")]) bankingCfg
+      resolveContact bankingCfg cfg AdjustmentKind (Just signal) "Contact A"
+        `shouldBe` NoContactMatch
 
   describe "importTransaction" $ do
     it "imports hold transactions like settled ones (Mono leaves some accounts stuck on hold)" $ do
@@ -678,12 +767,12 @@ spec = describe "BankImportService" $ do
       (env, accA, accB) <- setupTransferTestEnv
       let accountLink :: [(ExternalAccountId, AccountId)]
           accountLink =
-            [ (unsafeExternalAccountId "card-1440", accA),
-              (unsafeExternalAccountId "card-9713", accB),
-              (unsafeExternalAccountId "card-9959", accB)
+            [ (unsafeExternalAccountId "card-1111", accA),
+              (unsafeExternalAccountId "card-2222", accB),
+              (unsafeExternalAccountId "card-3333", accB)
             ]
-          legOut = mkLeg "card-1440" (-20000) "pb-out" "На свою картку *9713" testTime
-          legIn = mkLeg "card-9713" 20000 "pb-in" "Зі своєї картки *1440" (addUTCTime 1 testTime)
+          legOut = mkLeg "card-1111" (-20000) "pb-out" "На свою картку *2222" testTime
+          legIn = mkLeg "card-2222" 20000 "pb-in" "Зі своєї картки *1111" (addUTCTime 1 testTime)
       result <- runAppM env $ importMany privatBankInterpretation testUserId accountLink [legOut, legIn]
       let allSucceeded = concatMap (.succeeded) result.accounts
       length allSucceeded `shouldBe` 2
@@ -1395,7 +1484,7 @@ mkInitiatedEventWithIds txId mExtIds seqNo =
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = testTime,
                   transactionType = Transfer,
-                  importInfo = fmap (\es -> ImportInfo {externalTransactionIds = es, category = Nothing}) mExtIds,
+                  importInfo = fmap (\es -> ImportInfo {externalTransactionIds = es, category = Nothing, contact = Nothing}) mExtIds,
                   labels = Set.empty,
                   contactId = Nothing
                 }
@@ -1419,7 +1508,7 @@ storeInitiatedEvent env txId extId =
               by = mockUserId (UUID.fromWords 9 0 0 0),
               at = testTime,
               transactionType = Transfer,
-              importInfo = Just ImportInfo {externalTransactionIds = extId :| [], category = Nothing},
+              importInfo = Just ImportInfo {externalTransactionIds = extId :| [], category = Nothing, contact = Nothing},
               labels = Set.empty,
               contactId = Nothing
             }
@@ -1444,7 +1533,8 @@ mkReconciledEvent txId extIds seqNo =
               TransactionImportReconciled
                 { transactionId = txId,
                   externalTransactionIds = extIds,
-                  category = Nothing
+                  category = Nothing,
+                  contact = Nothing
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransactionImportReconciled") inner

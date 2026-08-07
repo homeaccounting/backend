@@ -95,8 +95,10 @@ import Domain.Core.Types
     mkDictionaryEntryId,
     mkEntryName,
     parseBankProviderCategoryKey,
+    parseBankProviderContactKey,
     parseCurrency,
     renderBankProviderCategoryKey,
+    renderBankProviderContactKey,
     unAccountId,
     unDictionaryEntryId,
     unEntryName,
@@ -305,9 +307,11 @@ type ConfigurationAPI =
 -- | Projection of BankingConfiguration for wire transport. The
 -- @expenseCategoryMap@ keys are 'BankProviderCategory' key strings
 -- (@"mcc:0742"@ / @"label:…"@); already nested under @banking@, so the field
--- needs no @bankProvider@ prefix.
+-- needs no @bankProvider@ prefix. @contactMap@ keys are 'BankProviderContact'
+-- tokens verbatim (no prefix — a single-case key form).
 data BankingConfigurationDTO = BankingConfigurationDTO
   { expenseCategoryMap :: Map Text UUID,
+    contactMap :: Map Text UUID,
     -- | Configured bank connections (secrets never serialised).
     connections :: [BankConnectionDTO]
   }
@@ -385,6 +389,7 @@ toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
 toBankingDTO b =
   BankingConfigurationDTO
     { expenseCategoryMap = Map.mapKeys renderBankProviderCategoryKey (Map.map unDictionaryEntryId b.bankProviderExpenseCategoryMap),
+      contactMap = Map.mapKeys renderBankProviderContactKey (Map.map unDictionaryEntryId b.bankProviderContactMap),
       connections = map toBankConnectionDTO (Map.elems b.connections)
     }
 
@@ -555,8 +560,9 @@ instance FromJSON MoveEntryRequest
 -- | Partial-update request body for PUT /api/users/me/configuration/banking.
 --
 -- Absent or null fields mean no change; present value sets the field.
-newtype UpdateBankingRequest = UpdateBankingRequest
-  { expenseCategoryMap :: Maybe (Map Text UUID)
+data UpdateBankingRequest = UpdateBankingRequest
+  { expenseCategoryMap :: Maybe (Map Text UUID),
+    contactMap :: Maybe (Map Text UUID)
   }
   deriving (Show, Eq, Generic)
 
@@ -722,6 +728,21 @@ updateBankingHandler user req = do
         cat <- validateFieldCtx "expenseCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid)
         pure (pc, cat)
     result <- ConfigService.setBankProviderExpenseCategoryMap uid newMap
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  forM_ req.contactMap $ \rawMap -> do
+    newMap <-
+      fmap Map.fromList . forM (Map.toList rawMap) $ \(rawKey, uuid) -> do
+        pc <-
+          validateFieldCtx
+            "contactMap"
+            rawKey
+            (maybe (Left ("Invalid provider-contact key: " <> rawKey)) Right (parseBankProviderContactKey rawKey))
+        cid <- validateFieldCtx "contactMap" (tshow uuid) (mkDictionaryEntryId uuid)
+        pure (pc, cid)
+    result <- ConfigService.setBankProviderContactMap uid newMap
     case result of
       Left err -> throwDomainError err
       Right () -> pure ()

@@ -192,15 +192,17 @@ log. Version-skipping (e.g. restoring a v1-era backup into a v3 app) just runs
 more upcaster hops at read time. Stored bytes are never mutated, so a restore is
 non-destructive and re-runnable.
 
-### One-time data reset — provider category-signal release (pre-launch alpha)
+### One-time data reset — provider category/contact-signal release (pre-launch alpha)
 
 > **This release is an exception to the version-independent-restore guarantee
 > above, and only because we are still pre-launch alpha (beta-testers only).** The
-> provider category-signal change altered several stored-event shapes without
-> shipping upcasters (documented alpha escape hatch — see `CLAUDE.md` "Backward
-> compatibility"). Deploying it therefore **requires recreating the event-store
-> DB**; existing beta-tester data is discarded, not migrated. Old dumps taken
-> before this release are **not** readable by this app version.
+> provider category-signal change (tracker#51) and the provider contact-signal
+> change (tracker#54) both altered several stored-event shapes without shipping
+> upcasters (documented alpha escape hatch — see `CLAUDE.md` "Backward
+> compatibility"). Both land as part of the same release, so deploying it
+> **requires recreating the event-store DB once**, not twice; existing
+> beta-tester data is discarded, not migrated. Old dumps taken before this
+> release are **not** readable by this app version.
 >
 > ```bash
 > # stop the app, then drop & recreate the event-store database (destroys data)
