@@ -868,7 +868,7 @@ spec = describe "BankImportService" $ do
 
     it "different currency: exchangeRate is still Nothing in Phase 1" $ do
       -- Local UAH account; Mono tx with amount = 1000 (UAH major units) and
-      -- originalAmount = Just 25 (foreign currency major units). Expect the
+      -- originalAmount = Just 25 (original-currency major units). Expect the
       -- emitted TransactionPostingInitiated to have exchangeRate = Nothing and
       -- sourceAmount == targetAmount (both in account currency). Verify the
       -- import succeeds (rate is logged, not persisted).

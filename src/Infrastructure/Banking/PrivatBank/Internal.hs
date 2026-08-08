@@ -11,22 +11,19 @@ module Infrastructure.Banking.PrivatBank.Internal
   ( PrivatRawRow (..),
     parsePrivatBankCsv,
     validateRow,
-    parseSignedDecimal,
     counterpartyToken,
   )
 where
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
-import Data.Char (isDigit)
 import qualified Data.Csv as Csv
-import Data.Ratio ((%))
 import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
-import qualified Data.Vector as V
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, mkBankProviderContact, mkByLabel, mkExternalTransactionId, parseCurrency)
+import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
 import Infrastructure.Banking.Provider
+import Infrastructure.Banking.Statement (parseSignedDecimal)
 import RIO
 
 -- | One data row of a PrivatBank CSV export, decoded field-for-field with no
@@ -48,20 +45,15 @@ data PrivatRawRow = PrivatRawRow
   deriving (Show, Eq)
 
 -- | Column names as they appear in a PrivatBank CSV header (Cyrillic, UTF-8).
--- Looked up via 'encodeUtf8'd 'Text' keys rather than @OverloadedStrings@
--- 'ByteString' literals directly: the standard 'IsString' instance for
--- 'ByteString' truncates each 'Char' to its low byte (effectively Latin-1),
--- which would corrupt these non-ASCII column names. Going through 'Text'
--- first keeps the literal's Unicode codepoints intact, and 'encodeUtf8'
--- then produces the exact UTF-8 bytes cassava parsed the header into.
+-- Looked up via 'csvColumn' so the non-ASCII codepoints survive the lookup key.
 colDate, colCategory, colCard, colDescription, colAmount, colCurrency, colBalance :: BS.ByteString
-colDate = encodeUtf8 "Дата"
-colCategory = encodeUtf8 "Категорія"
-colCard = encodeUtf8 "Картка"
-colDescription = encodeUtf8 "Опис операції"
-colAmount = encodeUtf8 "Сума в валюті картки"
-colCurrency = encodeUtf8 "Валюта картки"
-colBalance = encodeUtf8 "Залишок на кінець періоду"
+colDate = csvColumn "Дата"
+colCategory = csvColumn "Категорія"
+colCard = csvColumn "Картка"
+colDescription = csvColumn "Опис операції"
+colAmount = csvColumn "Сума в валюті картки"
+colCurrency = csvColumn "Валюта картки"
+colBalance = csvColumn "Залишок на кінець періоду"
 
 instance Csv.FromNamedRecord PrivatRawRow where
   parseNamedRecord m =
@@ -91,17 +83,11 @@ instance Csv.FromNamedRecord PrivatRawRow where
 -- a whole-file 'Left ParseError'. Otherwise every decoded row is separately
 -- validated by 'validateRow', 1-indexed by its position among the data rows.
 parsePrivatBankCsv :: StatementParser
-parsePrivatBankCsv bs =
-  case dropPreambleLine bs of
-    Nothing -> Left (ParseError "PrivatBank CSV: no preamble/header lines found")
-    Just rest ->
-      case Csv.decodeByName (BSL.fromStrict rest) of
-        Left err -> Left (ParseError ("PrivatBank CSV: " <> T.pack err))
-        Right (_header, rows) ->
-          Right
-            [ validateRow rowNumber row
-            | (rowNumber, row) <- zip [1 ..] (V.toList rows)
-            ]
+parsePrivatBankCsv = csvStatementParser "PrivatBank CSV" comma prepare validateRow
+  where
+    prepare bs = case dropPreambleLine bs of
+      Nothing -> Left (ParseError "PrivatBank CSV: no preamble/header lines found")
+      Just rest -> Right rest
 
 -- | Drop the first line (and its line terminator) of a 'ByteString',
 -- treating a bare @\n@ or a @\r\n@ pair as the terminator. 'Nothing' iff the
@@ -180,28 +166,3 @@ counterpartyToken =
 externalIdText :: PrivatRawRow -> Text
 externalIdText raw =
   "privatbank:" <> raw.rawDate <> ":" <> raw.rawAmount <> ":" <> raw.rawBalance
-
--- | Parse a signed decimal amount (e.g. @"-6919.91"@, @"43000"@) into an
--- exact 'Rational', avoiding any intermediate floating-point representation.
-parseSignedDecimal :: Text -> Maybe Rational
-parseSignedDecimal t = case T.stripPrefix "-" t of
-  Just rest -> negate <$> parseUnsignedDecimal rest
-  Nothing -> parseUnsignedDecimal t
-
--- | Parse an unsigned decimal amount, with or without a fractional part.
-parseUnsignedDecimal :: Text -> Maybe Rational
-parseUnsignedDecimal t = case T.splitOn "." t of
-  [intPart] -> (% 1) <$> readDigits intPart
-  [intPart, fracPart] -> do
-    i <- readDigits intPart
-    f <- readDigits fracPart
-    pure (fromInteger i + (fromInteger f % (10 ^ T.length fracPart)))
-  _ -> Nothing
-
--- | Read a non-empty run of decimal digits (per 'isDigit') as an 'Integer'.
--- Total: rejects anything containing a non-digit or the empty string, rather
--- than throwing.
-readDigits :: Text -> Maybe Integer
-readDigits s
-  | not (T.null s) && T.all isDigit s = readMaybe (T.unpack s)
-  | otherwise = Nothing

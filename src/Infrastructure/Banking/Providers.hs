@@ -20,6 +20,9 @@ import qualified Infrastructure.Banking.Monobank as Monobank
 #ifdef PROVIDER_PRIVATBANK
 import qualified Infrastructure.Banking.PrivatBank as PrivatBank
 #endif
+#ifdef PROVIDER_PRIVATBANK_BUSINESS
+import qualified Infrastructure.Banking.PrivatBankBusiness as PrivatBankBusiness
+#endif
 import Network.HTTP.Client (Manager)
 import RIO ((<>))
 
@@ -35,7 +38,8 @@ buildRegistry cfg manager = assembleRegistry cfg (candidates cfg manager)
 -- list plus its own @*Candidates@ definition below — existing providers'
 -- CPP guards are untouched.
 candidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
-candidates cfg manager = monobankCandidates cfg manager <> privatbankCandidates
+candidates cfg manager =
+  monobankCandidates cfg manager <> privatbankCandidates <> privatbankBusinessCandidates
 
 -- | Each compiled-in provider gets its own CPP-guarded candidate list, so
 -- this is the only place that needs a CPP guard per provider.
@@ -53,4 +57,12 @@ privatbankCandidates = [PrivatBank.descriptor]
 #else
 privatbankCandidates :: [BankProviderDescriptor]
 privatbankCandidates = []
+#endif
+
+#ifdef PROVIDER_PRIVATBANK_BUSINESS
+privatbankBusinessCandidates :: [BankProviderDescriptor]
+privatbankBusinessCandidates = [PrivatBankBusiness.descriptor]
+#else
+privatbankBusinessCandidates :: [BankProviderDescriptor]
+privatbankBusinessCandidates = []
 #endif

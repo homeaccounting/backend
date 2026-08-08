@@ -104,6 +104,7 @@ import Domain.Core.Types
     currencyFromNumericCode,
     kindOf,
     mkAllocation,
+    mkExchangeRate,
     mkExpenseAllocations,
     mkIncomeAllocations,
     mkMoney,
@@ -378,6 +379,13 @@ importTransferPair classify userId accountLink transfer = do
       -- Currency/amount resolution failure: let postInternalTransfer produce the
       -- proper Skip (UnsupportedCurrency / InvalidAmount) — don't duplicate that here.
       Left _ -> postFresh
+      -- Reconciliation keys on the DEBIT leg's 'Money' only (matched against a
+      -- manually-entered transfer's source amount, within the window). This is
+      -- deliberately the debit leg alone: a cross-currency conversion still
+      -- reconciles onto a manual transfer whose source (debit) leg matches, and
+      -- otherwise falls through to 'postFresh'. (The candidate query does not
+      -- inspect the credit leg's currency, so the debit-side match is the sole
+      -- reconciliation key regardless of same- vs cross-currency.)
       Right money -> do
         let fromT = addUTCTime (negate reconciliationWindow) dLeg.time
             toT = addUTCTime reconciliationWindow dLeg.time
@@ -394,15 +402,22 @@ importTransferPair classify userId accountLink transfer = do
 -- | Post a fresh internal transfer between two of the user's own local accounts
 -- as a single 'Transfer' (rather than double-booking an income + expense).
 --
--- Both legs share a currency and magnitude (the matcher guaranteed it), so a
--- single 'Money' derived from the debit leg drives both sides of the command.
--- Mirrors the skip/failure vocabulary of the single-transaction path:
--- unsupported currency code → 'Skipped UnsupportedCurrency'; money construction
--- failure → 'Skipped InvalidAmount'; a missing local account → 'Failed NotFound';
--- either local account's currency differing from the leg currency → 'Skipped
--- CurrencyMismatch'. The command carries 'importInfo' with BOTH legs' external
--- ids, which both bypasses the overdraft guard and records the two-leg dedup
--- mapping, so a well-funded transfer between two real accounts posts.
+-- The two legs need NOT share a currency or a magnitude: a currency conversion
+-- (a debit on one account + a credit on another, in different currencies)
+-- posts as an ASYMMETRIC cross-currency 'Transfer' whose @sourceAmount@ is the
+-- debit leg's money, @targetAmount@ is the credit leg's money, and
+-- @exchangeRate@ is the implied rate (target magnitude / source magnitude).
+-- When both legs happen to be the same currency the rate is 'Nothing' and the
+-- two amounts are equal — the original same-currency internal transfer.
+--
+-- Mirrors the skip/failure vocabulary of the single-transaction path, applied
+-- to BOTH legs: an unsupported currency code → 'Skipped UnsupportedCurrency';
+-- money construction failure (or a non-positive implied rate) → 'Skipped
+-- InvalidAmount'; a missing local account → 'Failed NotFound'; a local
+-- account whose currency differs from its OWN leg → 'Skipped CurrencyMismatch'.
+-- The command carries 'importInfo' with BOTH legs' external ids, which both
+-- bypasses the overdraft guard and records the two-leg dedup mapping, so a
+-- well-funded transfer between two real accounts posts.
 --
 -- Note: a currency mismatch on either account skips both legs (not just the
 -- mismatched one); skips are not dedup-recorded, so fixing the account mapping
@@ -419,27 +434,42 @@ postInternalTransfer userId dLocal cLocal dLeg cLeg =
   where
     go :: ExceptT ImportOutcome AppM ImportOutcome
     go = do
-      currency <- case currencyFromNumericCode dLeg.currencyCode of
-        Left err -> do
-          lift $ logWarn $ "Unsupported currency code " <> displayShow dLeg.currencyCode <> ": " <> display err
-          throwE (Skipped (UnsupportedCurrency err))
-        Right c -> pure c
-      money <- case mkMoney currency (abs dLeg.amount) of
-        Left err -> do
-          lift $ logWarn $ "Failed to create money for internal transfer: " <> display err
-          throwE (Skipped (InvalidAmount err))
-        Right m -> pure m
+      srcMoney <- resolveLegMoney dLeg
+      tgtMoney <- resolveLegMoney cLeg
       dData <- loadAccount dLocal
       cData <- loadAccount cLocal
-      guardCurrency dData money
-      guardCurrency cData money
+      -- Each account is guarded against its OWN leg's currency (the source
+      -- account against the debit leg, the target against the credit leg),
+      -- so a cross-currency conversion is valid as long as each side moves in
+      -- its account's currency.
+      guardCurrency dData srcMoney
+      guardCurrency cData tgtMoney
+      let srcCur = moneyCurrency srcMoney
+          tgtCur = moneyCurrency tgtMoney
+          srcMag = abs dLeg.amount
+          tgtMag = abs cLeg.amount
+      -- Same currency → symmetric transfer, no rate. Different currency → the
+      -- implied rate (target magnitude / source magnitude); 'mkExchangeRate'
+      -- rejects a non-positive rate as an invalid amount. The 'srcMag <= 0'
+      -- guard keeps the division total on its own terms (the sign-opposing
+      -- matcher already precludes a zero debit leg, but the function should not
+      -- rely on that caller invariant for totality).
+      rate <-
+        if srcCur == tgtCur
+          then pure Nothing
+          else
+            if srcMag <= 0
+              then throwE (Skipped (InvalidAmount "source leg amount is zero; cannot derive exchange rate"))
+              else case mkExchangeRate srcCur tgtCur (tgtMag / srcMag) of
+                Left e -> throwE (Skipped (InvalidAmount e))
+                Right r -> pure (Just r)
       let cmd =
             InitiateTransactionPosting
               { sourceAccountId = dLocal,
                 targetAccountId = cLocal,
-                sourceAmount = money,
-                targetAmount = money,
-                exchangeRate = Nothing,
+                sourceAmount = srcMoney,
+                targetAmount = tgtMoney,
+                exchangeRate = rate,
                 description = dLeg.description,
                 initiatedBy = userId,
                 at = dLeg.time,
@@ -463,6 +493,20 @@ postInternalTransfer userId dLocal cLocal dLeg cLeg =
         Right (txId, _) -> do
           lift $ logInfo $ "Imported internal transfer " <> display dLeg.externalId <> "/" <> display cLeg.externalId <> " as " <> displayShow txId
           pure (Imported txId)
+
+    -- Resolve a single leg's absolute amount into 'Money' in the leg's own
+    -- currency, reusing the single-transaction path's skip vocabulary.
+    resolveLegMoney leg = do
+      currency <- case currencyFromNumericCode leg.currencyCode of
+        Left err -> do
+          lift $ logWarn $ "Unsupported currency code " <> displayShow leg.currencyCode <> ": " <> display err
+          throwE (Skipped (UnsupportedCurrency err))
+        Right c -> pure c
+      case mkMoney currency (abs leg.amount) of
+        Left err -> do
+          lift $ logWarn $ "Failed to create money for internal transfer: " <> display err
+          throwE (Skipped (InvalidAmount err))
+        Right m -> pure m
 
     loadAccount accId =
       ExceptT $ do

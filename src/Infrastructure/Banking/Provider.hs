@@ -25,6 +25,12 @@ module Infrastructure.Banking.Provider
     defaultInterpretation,
     defaultTransferMatcher,
     defaultTransferPairingWindow,
+
+    -- * FX conversion pairing
+    FxLeg (..),
+    FxSignal,
+    fxTransferMatcher,
+    defaultFxPairingWindow,
   )
 where
 
@@ -33,11 +39,11 @@ import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import Data.Time (NominalDiffTime, UTCTime)
+import Data.Time (NominalDiffTime, UTCTime, diffUTCTime)
 import Domain.Banking.Types (BankProviderCredential, BankProviderId, ExternalAccountId)
 import Domain.Core.Types (BankProviderCategory, BankProviderContact, CategoryId, ExternalTransactionId)
 import Domain.Transaction.Matching.Transfer (TransferDirection (..), TransferLeg (..), isTransferMatch)
-import RIO (Bool, Either, Eq, IO, Int, Maybe, Ord, Rational, Show, abs, isJust, otherwise, ($), (<))
+import RIO (Bool (..), Either, Eq, IO, Int, Maybe (..), Monoid (..), Ord, Rational, Semigroup (..), Show, abs, isJust, otherwise, ($), (&&), (/=), (<), (<=), (==), (||))
 
 -- | Provider-contributed classification hint — direction only.
 -- BankImportService owns the final category decision.
@@ -159,6 +165,16 @@ newtype TransferMatcher = TransferMatcher
   { matchesTransfer :: BankTransaction -> BankTransaction -> Bool
   }
 
+-- | Strategies compose by logical OR: the combined matcher pairs two legs when
+-- /either/ component matcher would. This lets the generic, provider-specific
+-- (e.g. PrivatBank card), and FX strategies coexist on one interpretation.
+instance Semigroup TransferMatcher where
+  TransferMatcher f <> TransferMatcher g = TransferMatcher (\a b -> f a b || g a b)
+
+-- | 'mempty' is the matcher that never pairs — the identity of the OR.
+instance Monoid TransferMatcher where
+  mempty = TransferMatcher (\_ _ -> False)
+
 -- | Provider-contributed interpretation of raw bank transactions: the
 -- direction 'classify' hint, the internal-transfer 'transferMatcher', and the
 -- provider's default label→category map ('labelExpenseCategories'). Groups the
@@ -211,3 +227,39 @@ defaultInterpretation =
       transferMatcher = defaultTransferMatcher defaultTransferPairingWindow,
       labelExpenseCategories = Map.empty
     }
+
+-- | One leg of a currency conversion, carrying the conversion amount both legs
+-- of one conversion state — the value the matcher pairs on. A conversion posts
+-- two legs (a debit in one currency, a credit in another) whose statements
+-- restate the /identical/ amount, so this exact 'Rational' is the pairing key
+-- used by 'fxTransferMatcher'.
+newtype FxLeg = FxLeg {fxAmount :: Rational}
+  deriving (Eq, Show)
+
+-- | Provider hook that recognises a currency-conversion leg and extracts its
+-- conversion amount. 'Nothing' when the transaction is not a conversion leg.
+type FxSignal = BankTransaction -> Maybe FxLeg
+
+-- | Generous window: conversion legs may post minutes/hours apart the same day;
+-- the EXACT shared conversion amount is the real discriminator, so a wide window
+-- adds negligible false-positive risk.
+defaultFxPairingWindow :: NominalDiffTime
+defaultFxPairingWindow = 86400 -- 1 day
+
+-- | Generic FX transfer matcher: two legs pair as one cross-currency conversion
+-- when both carry an 'FxSignal' conversion amount, are in different currencies,
+-- carry opposite signs, fall within @window@ of each other, and restate the
+-- exact same conversion amount.
+fxTransferMatcher :: FxSignal -> NominalDiffTime -> TransferMatcher
+fxTransferMatcher signal window = TransferMatcher $ \a b ->
+  case (signal a, signal b) of
+    (Just la, Just lb) ->
+      a.currencyCode
+        /= b.currencyCode
+        && (a.amount < 0)
+        /= (b.amount < 0)
+        && abs (diffUTCTime a.time b.time)
+        <= window
+        && la.fxAmount
+        == lb.fxAmount
+    _ -> False

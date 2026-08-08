@@ -1,5 +1,5 @@
 name: backend
-version: 0.11.0
+version: 0.12.0
 synopsis: Accounting system backend with CQRS and Event Sourcing
 description: |
   A REST API for an accounting system built with CQRS and Event Sourcing patterns
@@ -112,6 +112,10 @@ flags:
     description: Compile the PrivatBank (UA) bank provider
     manual: true
     default: true
+  privatbank-business:
+    description: Compile the PrivatBank (UA) business statement-file provider
+    manual: true
+    default: true
 
 default-extensions:
   - NoFieldSelectors
@@ -148,8 +152,22 @@ library:
       exposed-modules:
         - Infrastructure.Banking.PrivatBank
         - Infrastructure.Banking.PrivatBank.Internal
+    - condition: flag(privatbank)
+      exposed-modules:
+        - Infrastructure.Banking.Csv
       dependencies:
         - cassava >= 0.5 && < 0.6
+        - vector >= 0.12 && < 0.14
+    - condition: flag(privatbank-business)
+      cpp-options: -DPROVIDER_PRIVATBANK_BUSINESS
+      exposed-modules:
+        - Infrastructure.Banking.PrivatBankBusiness
+        - Infrastructure.Banking.PrivatBankBusiness.Internal
+    - condition: flag(privatbank-business)
+      exposed-modules:
+        - Infrastructure.Banking.Xlsx
+      dependencies:
+        - zip-archive >= 0.4 && < 0.5
         - vector >= 0.12 && < 0.14
 
 executables:
@@ -208,6 +226,8 @@ tests:
       # SQLite-backed harness for persistent read-model tests (in-memory DB).
       - eventium-sqlite >= 0.6.0 && < 0.7.0
       - persistent-sqlite >= 2.13 && < 2.15
+      - cassava >= 0.5 && < 0.6
       - vector >= 0.12 && < 0.14
+      - zip-archive >= 0.4 && < 0.5
     build-tools:
       - hspec-discover

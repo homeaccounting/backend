@@ -127,7 +127,7 @@ data StubControls = StubControls
     -- | The env, exposed so a test can seed historical rates into the
     -- persistent @exchange_rates@ read model. The user's auto-created External
     -- account is denominated in the configuration base currency (USD), so
-    -- importing a foreign-currency (e.g. UAH) bank transaction now requires a
+    -- importing a bank transaction in a currency other than the account's (e.g. UAH) now requires a
     -- published rate for the pair — see 'Application.Services.BankImportService'.
     stubEnv :: !AppEnv
   }

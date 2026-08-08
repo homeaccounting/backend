@@ -93,6 +93,8 @@ banking:
       api_base_url: "http://localhost:0"
     privatbank:
       enabled: false
+    privatbank-business:
+      enabled: false
 
 # LLM provider (OpenAI-compatible) for natural-language transaction prompting
 llm:

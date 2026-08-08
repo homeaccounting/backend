@@ -88,6 +88,8 @@ banking:
       api_base_url: "${BANKING_MONOBANK_API_BASE_URL:-https://api.monobank.ua}"
     privatbank:
       enabled: ${BANKING_PRIVATBANK_ENABLED:-true}
+    privatbank-business:
+      enabled: ${BANKING_PRIVATBANK_BUSINESS_ENABLED:-true}
 
 # LLM provider (OpenAI-compatible) for natural-language transaction prompting
 llm:

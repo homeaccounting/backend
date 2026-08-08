@@ -13,6 +13,24 @@
 -- 'Application.Services.BankImport.TransferPairing' enforces "different local
 -- accounts" outside the pure matcher; here the pure layer owns the
 -- magnitude/currency/window predicate and the unique-vs-ambiguous decision.
+--
+-- __Extension point (deliberately not built yet).__ The matching rule is
+-- currently fixed: 'isReconciliationMatch' = 'sameMovement' (exact
+-- magnitude+currency, windowed time), with all per-call variation living in the
+-- candidate-selection query and the effectful @attemptReconcile@ closure
+-- (@Application.Services.BankImportService@). If a provider ever needs a
+-- different reconciliation rule, a per-provider @ReconciliationMatcher@ seam
+-- would slot in HERE — parameterizing the leg projection and/or the
+-- magnitude/window tolerance, and threaded into @attemptReconcile@ like the
+-- provider 'Infrastructure.Banking.Provider.TransferMatcher' is threaded into
+-- @pairInternalTransfers@. It is intentionally NOT defined now: reconciliation
+-- has a different shape from the boolean pairwise 'TransferMatcher' (it decides
+-- over a candidate SET with an unambiguity guard, see 'ReconciliationOutcome'),
+-- so the right interface is unknown absent a concrete requirement, and 'reconcile'
+-- is already polymorphic in the currency token + parameterized on the window —
+-- adding the rule is a small, local change when a real need appears. Design the
+-- seam against that need, not speculatively. See the tracker#46 Phase-2 spec
+-- (@docs/specs/2026-08-07-composable-transfer-matchers-fx-conversion-design.md@).
 module Domain.Transaction.Matching.Reconciliation
   ( ReconciliationOutcome (..),
     isReconciliationMatch,

@@ -10,7 +10,7 @@
 module Testkit.BankingHelpers
   ( mkTestBankAccount,
     mkSameCurrencyBankTx,
-    mkForeignCurrencyBankTx,
+    mkCrossCurrencyBankTx,
     sampleBankTransaction,
   )
 where
@@ -58,16 +58,16 @@ mkSameCurrencyBankTx eid accId amt =
     }
 
 -- | Construct a cross-currency 'BankTransaction'. The @accountAmt@ is the
--- amount in the account currency; @foreignAmt@ is the amount in the
+-- amount in the account currency; @originalAmt@ is the amount in the
 -- transaction's original currency.
-mkForeignCurrencyBankTx ::
+mkCrossCurrencyBankTx ::
   ExternalTransactionId ->
   ExternalAccountId ->
   Rational ->
   Rational ->
   BankTransaction
-mkForeignCurrencyBankTx eid accId accountAmt foreignAmt =
-  (mkSameCurrencyBankTx eid accId accountAmt) {originalAmount = Just foreignAmt}
+mkCrossCurrencyBankTx eid accId accountAmt originalAmt =
+  (mkSameCurrencyBankTx eid accId accountAmt) {originalAmount = Just originalAmt}
 
 -- | Construct a minimal valid 'BankTransaction' with the given signed
 -- @amount@, for tests that only care about amount-driven behaviour (e.g.
