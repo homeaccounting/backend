@@ -34,6 +34,7 @@ module Domain.Configuration.Events
     DefaultAccountSet (..),
     DefaultSubtypeAccountsSet (..),
     BankProviderExpenseCategoryMapSet (..),
+    BankProviderIncomeCategoryMapSet (..),
     BankProviderContactMapSet (..),
     BooksClosedThroughSet (..),
     BankConnectionAdded (..),
@@ -93,6 +94,7 @@ configurationEvents =
     ''DefaultAccountSet,
     ''DefaultSubtypeAccountsSet,
     ''BankProviderExpenseCategoryMapSet,
+    ''BankProviderIncomeCategoryMapSet,
     ''BankProviderContactMapSet,
     ''BooksClosedThroughSet,
     ''BankConnectionAdded,
@@ -210,6 +212,14 @@ data BankProviderExpenseCategoryMapSet = BankProviderExpenseCategoryMapSet
   }
   deriving (Show, Eq)
 
+-- | Event emitted when the banking provider-category -> income category map is
+-- set (bulk replace). Keys are 'BankProviderCategory' values (an MCC or a provider
+-- text label); values are income category ids.
+data BankProviderIncomeCategoryMapSet = BankProviderIncomeCategoryMapSet
+  { mapping :: Map BankProviderCategory CategoryId
+  }
+  deriving (Show, Eq)
+
 -- | Event emitted when the banking provider-contact -> contact map is set
 -- (bulk replace). Keys are 'BankProviderContact' values (the name-agnostic
 -- provider token); values are contact ids.
@@ -307,6 +317,7 @@ deriveJSON defaultOptions ''DefaultExpenseCategorySet
 deriveJSON defaultOptions ''DefaultAccountSet
 deriveJSON defaultOptions ''DefaultSubtypeAccountsSet
 deriveJSON defaultOptions ''BankProviderExpenseCategoryMapSet
+deriveJSON defaultOptions ''BankProviderIncomeCategoryMapSet
 deriveJSON defaultOptions ''BankProviderContactMapSet
 deriveJSON defaultOptions ''BooksClosedThroughSet
 deriveJSON defaultOptions ''BankConnectionAdded

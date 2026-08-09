@@ -23,13 +23,14 @@ import Application.Services.ConfigurationService
     getDecryptedConnectionCredential,
     seedDefaultConfiguration,
     setBankConnectionAccountMap,
+    setBankProviderIncomeCategoryMap,
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
 import Domain.Banking.Types (BankProviderCredential (..), unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
-import Domain.Configuration.Commands (AddBankConnection (..))
+import Domain.Configuration.Commands (AddBankConnection (..), SetBankProviderIncomeCategoryMap (..))
 import Domain.Configuration.Defaults
   ( DefaultEntry (entryId),
     ExpenseDefaults (other),
@@ -64,6 +65,7 @@ import Infrastructure.Eventium (applyConfigurationCommand)
 import RIO
 import Test.Hspec
 import Testkit.AppEnv (newStubControls, stubFileOnlyDescriptor, stubPullDescriptor)
+import Testkit.BankingHelpers (byCounterparty)
 import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
 
 spec :: Spec
@@ -72,6 +74,7 @@ spec = describe "ConfigurationService banking" $ do
   cloneBankingDefaultsSpec
   addBankConnectionSpec
   setBankConnectionAccountMapSpec
+  setBankProviderIncomeCategoryMapSpec
   getConnectionFileImportSpec
 
 -- -----------------------------------------------------------------------------
@@ -92,7 +95,7 @@ seedBankingDefaultsSpec =
           let ConfigurationDefaults {incomeCategory = mInc, expenseCategory = mExp} = cfg.defaults
           mInc `shouldBe` Just income.other.entryId
           mExp `shouldBe` Just expense.other.entryId
-          cfg.banking.bankProviderExpenseCategoryMap
+          cfg.banking.expenseCategoryMap
             `shouldBe` defaultBankProviderExpenseCategoryMap
 
 -- -----------------------------------------------------------------------------
@@ -132,7 +135,7 @@ cloneBankingDefaultsSpec =
                   let ConfigurationDefaults {incomeCategory = mInc, expenseCategory = mExp} = clonedCfg.defaults
                   mInc `shouldBe` Just income.other.entryId
                   mExp `shouldBe` Just expense.other.entryId
-                  clonedCfg.banking.bankProviderExpenseCategoryMap
+                  clonedCfg.banking.expenseCategoryMap
                     `shouldBe` defaultBankProviderExpenseCategoryMap
 
                   -- Confirm it is a ClonedBy config (not System)
@@ -346,6 +349,69 @@ setBankConnectionAccountMapSpec =
                       case Map.lookup connId cfg.banking.connections of
                         Nothing -> expectationFailure "Connection not found"
                         Just conn -> conn.accountMap `shouldBe` Map.singleton (unsafeExternalAccountId "ext-1") ownedAcc
+
+-- -----------------------------------------------------------------------------
+-- setBankProviderIncomeCategoryMap persists and clones the income map
+-- -----------------------------------------------------------------------------
+
+setBankProviderIncomeCategoryMapSpec :: Spec
+setBankProviderIncomeCategoryMapSpec =
+  describe "setBankProviderIncomeCategoryMap" $ do
+    it "persists a counterparty-keyed income map that reloads from the configuration" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "incomemap@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+              key = byCounterparty "12345678"
+              mapping = Map.singleton key income.other.entryId
+          result <- runRIO env $ setBankProviderIncomeCategoryMap userId mapping
+          result `shouldSatisfy` isRight
+
+          maybeUser <- runDbIn env (getUser userId)
+          case maybeUser of
+            Nothing -> expectationFailure "User not found after setting income map"
+            Just userData -> do
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
+              case maybeCfg of
+                Nothing -> expectationFailure "Configuration not found"
+                Just cfg ->
+                  cfg.banking.incomeCategoryMap `shouldBe` mapping
+
+    it "carries a non-empty income map forward on clone-on-write" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      let key = byCounterparty "87654321"
+          mapping = Map.singleton key income.other.entryId
+          setCmd =
+            SetBankProviderIncomeCategoryMapConfigurationCommand
+              SetBankProviderIncomeCategoryMap {mapping = mapping}
+      _ <-
+        runRIO env $ do
+          writer <- view eventStoreWriterL
+          reader <- view eventStoreReaderL
+          liftIO $ applyConfigurationCommand writer reader id (unConfigurationId defaultConfigurationId) setCmd
+
+      regResult <- runRIO env $ register "incomeclone@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          changeRes <- runRIO env $ changeDefaultCurrency userId GBP
+          changeRes `shouldSatisfy` isRight
+
+          maybeUser <- runDbIn env (getUser userId)
+          case maybeUser of
+            Nothing -> expectationFailure "User not found after clone"
+            Just userData -> do
+              userData.configurationId `shouldNotBe` defaultConfigurationId
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
+              case maybeCfg of
+                Nothing -> expectationFailure "Cloned configuration not found"
+                Just cfg ->
+                  cfg.banking.incomeCategoryMap `shouldBe` mapping
 
 -- -----------------------------------------------------------------------------
 -- getConnectionFileImport resolves a connection's file-import transport

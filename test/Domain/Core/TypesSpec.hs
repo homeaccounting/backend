@@ -36,6 +36,7 @@ spec = do
   externalTransactionIdSpec
   mccSpec
   bankProviderCategorySpec
+  bankProviderCategoryByCounterpartySpec
   bankProviderContactSpec
   transactionTypeSpec
   roleToTextSpec
@@ -280,12 +281,38 @@ bankProviderCategorySpec = describe "BankProviderCategory" $ do
   it "mkByLabel rejects empty and whitespace-only labels" $ do
     mkByLabel "" `shouldSatisfy` isNothing
     mkByLabel "   " `shouldSatisfy` isNothing
-  it "bankProviderCategory folds over both cases" $ do
-    bankProviderCategory (const True) (const False) (mkByMcc (unsafeMcc 742)) `shouldBe` True
-    (bankProviderCategory (const True) (const False) <$> mkByLabel "x") `shouldBe` Just False
+  it "bankProviderCategory folds over all cases" $ do
+    bankProviderCategory (const True) (const False) (const False) (mkByMcc (unsafeMcc 742)) `shouldBe` True
+    (bankProviderCategory (const 'm') (const 'l') (const 'c') <$> mkByLabel "x") `shouldBe` Just 'l'
+    (bankProviderCategory (const 'm') (const 'l') (const 'c') <$> mkByCounterparty "12345678") `shouldBe` Just 'c'
   it "bankProviderCategoryMcc extracts only the ByMcc code" $ do
     bankProviderCategoryMcc (mkByMcc (unsafeMcc 5411)) `shouldBe` Just (unsafeMcc 5411)
     (bankProviderCategoryMcc <$> mkByLabel "x") `shouldBe` Just Nothing
+
+-- -----------------------------------------------------------------------------
+-- BankProviderCategory ByCounterparty Tests
+-- -----------------------------------------------------------------------------
+
+bankProviderCategoryByCounterpartySpec :: Spec
+bankProviderCategoryByCounterpartySpec = describe "BankProviderCategory ByCounterparty" $ do
+  it "mkByCounterparty trims and rejects blank" $ do
+    renderBankProviderCategoryKey <$> mkByCounterparty "  12345678 "
+      `shouldBe` Just "counterparty:12345678"
+    mkByCounterparty "   " `shouldBe` Nothing
+
+  it "key form round-trips (including a token containing a colon)"
+    $ case mkByCounterparty "UA:1234" of
+      Nothing -> expectationFailure "mkByCounterparty rejected a valid token"
+      Just pc -> parseBankProviderCategoryKey (renderBankProviderCategoryKey pc) `shouldBe` Just pc
+
+  it "value JSON round-trips"
+    $ case mkByCounterparty "12345678" of
+      Nothing -> expectationFailure "mkByCounterparty rejected a valid token"
+      Just pc -> Aeson.decode (Aeson.encode pc) `shouldBe` Just pc
+
+  it "value JSON is the tagged counterparty object"
+    $ (Aeson.encode <$> mkByCounterparty "12345678")
+    `shouldBe` Just "{\"kind\":\"counterparty\",\"value\":\"12345678\"}"
 
 -- -----------------------------------------------------------------------------
 -- BankProviderContact Tests

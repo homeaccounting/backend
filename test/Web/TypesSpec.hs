@@ -23,6 +23,7 @@ import Domain.Core.Types
   ( Currency (USD),
     TransactionType (Transfer),
     mkBankProviderContact,
+    mkByCounterparty,
     mkByLabel,
     mkByMcc,
     unsafeMcc,
@@ -30,6 +31,7 @@ import Domain.Core.Types
   )
 import RIO
 import Test.Hspec
+import Testkit.BankingHelpers (byCounterparty)
 import Testkit.Helpers
   ( mockAccountId,
     mockTransactionData,
@@ -149,6 +151,16 @@ spec = do
       bankProviderCategoryField td
         `shouldBe` Just
           (object ["kind" .= ("label" :: Text), "value" .= ("eating_out" :: Text)])
+
+    it "surfaces a counterparty-based category as a tagged object" $ do
+      let td = mockTransactionDataWithCategory (mkByCounterparty "12345678") baseTd
+      bankProviderCategoryField td
+        `shouldBe` Just
+          (object ["kind" .= ("counterparty" :: Text), "value" .= ("12345678" :: Text)])
+
+    it "round-trips a counterparty category through encode/decode" $ do
+      let cat = byCounterparty "12345678"
+      Aeson.decode (Aeson.encode cat) `shouldBe` Just cat
 
     it "encodes an absent category as null" $ do
       let td = mockTransactionDataWithCategory Nothing baseTd

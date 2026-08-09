@@ -80,6 +80,7 @@ data ConfigurationError
   | EntryNotInDictionary
   | EntryIsGlobalDefault
   | EntryIsInBankProviderExpenseCategoryMap
+  | EntryIsInBankProviderIncomeCategoryMap
   | EntryIsInBankProviderContactMap
   | -- | An add/move named a parent entry that does not exist in the dictionary.
     ParentEntryNotFound
@@ -252,11 +253,15 @@ isGlobalDefault eid config =
 
 -- | Check if an entry is referenced as a value in the banking provider-category map.
 isInBankProviderExpenseCategoryMap :: CategoryId -> Configuration -> Bool
-isInBankProviderExpenseCategoryMap eid config = eid `elem` Map.elems config.banking.bankProviderExpenseCategoryMap
+isInBankProviderExpenseCategoryMap eid config = eid `elem` Map.elems config.banking.expenseCategoryMap
+
+-- | Check if an entry is referenced as a value in the banking provider-income-category map.
+isInBankProviderIncomeCategoryMap :: CategoryId -> Configuration -> Bool
+isInBankProviderIncomeCategoryMap eid config = eid `elem` Map.elems config.banking.incomeCategoryMap
 
 -- | Check if an entry is referenced as a value in the banking provider-contact map.
 isInBankProviderContactMap :: ContactId -> Configuration -> Bool
-isInBankProviderContactMap eid config = eid `elem` Map.elems config.banking.bankProviderContactMap
+isInBankProviderContactMap eid config = eid `elem` Map.elems config.banking.contactMap
 
 -- | Reject the command if the targeted bank connection does not exist.
 requireConnection :: BankConnectionId -> Configuration -> Either ConfigurationError ()
@@ -369,6 +374,7 @@ handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand Rem
   | not (null (childrenOf entryId (entriesOf dictionaryKind config))) = Left GroupNotEmpty
   | isGlobalDefault entryId config = Left EntryIsGlobalDefault
   | isInBankProviderExpenseCategoryMap entryId config = Left EntryIsInBankProviderExpenseCategoryMap
+  | isInBankProviderIncomeCategoryMap entryId config = Left EntryIsInBankProviderIncomeCategoryMap
   | isInBankProviderContactMap entryId config = Left EntryIsInBankProviderContactMap
   | otherwise =
       Right
@@ -448,6 +454,15 @@ handleConfigurationCommand config (SetBankProviderExpenseCategoryMapConfiguratio
   Right
     [ BankProviderExpenseCategoryMapSetConfigurationEvent
         BankProviderExpenseCategoryMapSet
+          { mapping = mapping
+          }
+    ]
+-- Handle SetBankProviderIncomeCategoryMap command
+handleConfigurationCommand config (SetBankProviderIncomeCategoryMapConfigurationCommand SetBankProviderIncomeCategoryMap {..}) = do
+  mapM_ (\cid -> requireEntryIn incomeCategoryDictKind cid config) (Map.elems mapping)
+  Right
+    [ BankProviderIncomeCategoryMapSetConfigurationEvent
+        BankProviderIncomeCategoryMapSet
           { mapping = mapping
           }
     ]

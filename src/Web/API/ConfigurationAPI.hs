@@ -311,6 +311,7 @@ type ConfigurationAPI =
 -- tokens verbatim (no prefix — a single-case key form).
 data BankingConfigurationDTO = BankingConfigurationDTO
   { expenseCategoryMap :: Map Text UUID,
+    incomeCategoryMap :: Map Text UUID,
     contactMap :: Map Text UUID,
     -- | Configured bank connections (secrets never serialised).
     connections :: [BankConnectionDTO]
@@ -388,8 +389,9 @@ toBankConnectionDTO c =
 toBankingDTO :: BankingConfiguration -> BankingConfigurationDTO
 toBankingDTO b =
   BankingConfigurationDTO
-    { expenseCategoryMap = Map.mapKeys renderBankProviderCategoryKey (Map.map unDictionaryEntryId b.bankProviderExpenseCategoryMap),
-      contactMap = Map.mapKeys renderBankProviderContactKey (Map.map unDictionaryEntryId b.bankProviderContactMap),
+    { expenseCategoryMap = Map.mapKeys renderBankProviderCategoryKey (Map.map unDictionaryEntryId b.expenseCategoryMap),
+      incomeCategoryMap = Map.mapKeys renderBankProviderCategoryKey (Map.map unDictionaryEntryId b.incomeCategoryMap),
+      contactMap = Map.mapKeys renderBankProviderContactKey (Map.map unDictionaryEntryId b.contactMap),
       connections = map toBankConnectionDTO (Map.elems b.connections)
     }
 
@@ -562,6 +564,7 @@ instance FromJSON MoveEntryRequest
 -- Absent or null fields mean no change; present value sets the field.
 data UpdateBankingRequest = UpdateBankingRequest
   { expenseCategoryMap :: Maybe (Map Text UUID),
+    incomeCategoryMap :: Maybe (Map Text UUID),
     contactMap :: Maybe (Map Text UUID)
   }
   deriving (Show, Eq, Generic)
@@ -728,6 +731,21 @@ updateBankingHandler user req = do
         cat <- validateFieldCtx "expenseCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid)
         pure (pc, cat)
     result <- ConfigService.setBankProviderExpenseCategoryMap uid newMap
+    case result of
+      Left err -> throwDomainError err
+      Right () -> pure ()
+
+  forM_ req.incomeCategoryMap $ \rawMap -> do
+    newMap <-
+      fmap Map.fromList . forM (Map.toList rawMap) $ \(rawKey, uuid) -> do
+        pc <-
+          validateFieldCtx
+            "incomeCategoryMap"
+            rawKey
+            (maybe (Left ("Invalid provider-category key: " <> rawKey)) Right (parseBankProviderCategoryKey rawKey))
+        cat <- validateFieldCtx "incomeCategoryMap" (tshow uuid) (mkDictionaryEntryId uuid)
+        pure (pc, cat)
+    result <- ConfigService.setBankProviderIncomeCategoryMap uid newMap
     case result of
       Left err -> throwDomainError err
       Right () -> pure ()

@@ -8,7 +8,7 @@ import qualified Data.Map.Strict as Map
 import Data.Ratio ((%))
 import Data.Time (TimeOfDay (..), UTCTime (..), addUTCTime, fromGregorian, timeOfDayToTime)
 import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
-import Domain.Core.Types (mkBankProviderContact, unExternalTransactionId, unsafeExternalTransactionId)
+import Domain.Core.Types (mkBankProviderContact, mkByCounterparty, unExternalTransactionId, unsafeExternalTransactionId)
 import Infrastructure.Banking.PrivatBankBusiness (descriptor)
 import Infrastructure.Banking.PrivatBankBusiness.Internal (fxSignal, parsePrivatBankBusinessXlsx)
 import Infrastructure.Banking.Provider
@@ -121,7 +121,7 @@ spec = describe "Infrastructure.Banking.PrivatBankBusiness" $ do
           tx.time `shouldBe` UTCTime (fromGregorian 2026 8 5) (timeOfDayToTime (TimeOfDay 13 45 30))
           tx.externalAccountId `shouldBe` unsafeExternalAccountId "UA-ACC-1"
           tx.contact `shouldBe` mkBankProviderContact "12345678"
-          tx.category `shouldBe` Nothing
+          tx.category `shouldBe` mkByCounterparty "12345678"
           unExternalTransactionId tx.externalId `shouldBe` "REF-UAH-1"
           tx.description `shouldBe` "ACME LLC — Payment for services"
         other -> expectationFailure ("expected the UAH row to parse, got: " <> show (fmap (map isRight) other))
@@ -133,6 +133,7 @@ spec = describe "Infrastructure.Banking.PrivatBankBusiness" $ do
           tx.currencyCode `shouldBe` 840
           tx.externalAccountId `shouldBe` unsafeExternalAccountId "UA-ACC-2"
           tx.contact `shouldBe` Nothing
+          tx.category `shouldBe` Nothing
           unExternalTransactionId tx.externalId `shouldBe` "REF-USD-1"
         other -> expectationFailure ("expected the USD row to parse, got: " <> show (fmap (map isRight) other))
 

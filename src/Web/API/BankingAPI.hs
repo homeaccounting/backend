@@ -177,7 +177,7 @@ bankingAPI = Proxy
 -- The Monobank token is read from the connection's encrypted store, not the
 -- request, so it never appears in request-body logs or traces. Category
 -- resolution is performed server-side from the user's banking configuration
--- (bankProviderExpenseCategoryMap + default income/expense categories).
+-- (expenseCategoryMap + default income/expense categories).
 data ConnectionImportRequest = ConnectionImportRequest
   { -- | Start of the date range to import
     from :: UTCTime,

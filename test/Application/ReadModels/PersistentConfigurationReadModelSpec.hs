@@ -12,7 +12,7 @@
 -- 'applyConfigurationEvent' (no test-only insertion hole):
 --
 --   * __Round-trip__ — after a 'BankProviderContactMapSet' event, the loaded
---     'bankProviderContactMap' equals the emitted mapping.
+--     'contactMap' equals the emitted mapping.
 --   * __Full replace__ — a subsequent 'BankProviderContactMapSet' with a
 --     different map fully replaces the rows (bulk-replace semantics, mirroring
 --     the shipped provider-expense-category map).
@@ -27,6 +27,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
 import Domain.Configuration.Events
   ( BankProviderContactMapSet (..),
+    BankProviderIncomeCategoryMapSet (..),
     ConfigurationCreated (..),
   )
 import Domain.Configuration.Projection (BankingConfiguration (..))
@@ -42,6 +43,7 @@ import qualified Eventium
 import Infrastructure.App (AppEnv)
 import RIO
 import Test.Hspec
+import Testkit.BankingHelpers (byCounterparty)
 import Testkit.Helpers (globalEvent, mockConfigurationId, mockDictionaryEntryId)
 import Testkit.InMemoryEventStore (runDbIn, seedGlobals)
 
@@ -88,6 +90,21 @@ contactMapSet cid entries ver =
           }
     )
 
+incomeCategoryMapSet :: ConfigurationId -> [(Text, Word32)] -> Eventium.EventVersion -> Eventium.SequenceNumber -> Eventium.GlobalStreamEvent AccountingEvent
+incomeCategoryMapSet cid entries ver =
+  configGlobal
+    cid
+    ver
+    ( BankProviderIncomeCategoryMapSetEvent
+        BankProviderIncomeCategoryMapSet
+          { mapping =
+              Map.fromList
+                [ (byCounterparty token, mockDictionaryEntryId (UUID.fromWords n 0 0 0))
+                | (token, n) <- entries
+                ]
+          }
+    )
+
 seedEnv :: [Eventium.GlobalStreamEvent AccountingEvent] -> IO AppEnv
 seedEnv = seedGlobals applyConfigurationEvent
 
@@ -110,7 +127,7 @@ spec = describe "Persistent Configuration read model" $ do
               ]
       case cfg of
         Nothing -> expectationFailure "Configuration not found in read model"
-        Just c -> c.banking.bankProviderContactMap `shouldBe` expected
+        Just c -> c.banking.contactMap `shouldBe` expected
 
     it "fully replaces the map on a subsequent Set (bulk-replace, not merge)" $ do
       let cid = config 2
@@ -130,4 +147,21 @@ spec = describe "Persistent Configuration read model" $ do
               ]
       case cfg of
         Nothing -> expectationFailure "Configuration not found in read model"
-        Just c -> c.banking.bankProviderContactMap `shouldBe` expected
+        Just c -> c.banking.contactMap `shouldBe` expected
+
+  describe "bank-provider-income-category map (configuration_bank_provider_income_categories)" $ do
+    it "round-trips a BankProviderIncomeCategoryMapSet mapping through getConfiguration and leaves the expense map empty" $ do
+      let cid = config 3
+          entries = [("12345678", 30), ("UA9876543210", 31)]
+      env <- seedEnv [created cid 0 0, incomeCategoryMapSet cid entries 1 1]
+      cfg <- runDbIn env (getConfiguration cid)
+      let expected =
+            Map.fromList
+              [ (byCounterparty token, mockDictionaryEntryId (UUID.fromWords n 0 0 0))
+              | (token, n) <- entries
+              ]
+      case cfg of
+        Nothing -> expectationFailure "Configuration not found in read model"
+        Just c -> do
+          c.banking.incomeCategoryMap `shouldBe` expected
+          c.banking.expenseCategoryMap `shouldBe` Map.empty

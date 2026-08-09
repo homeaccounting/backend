@@ -27,6 +27,7 @@ module Domain.Configuration.Commands
     SetDefaultAccount (..),
     SetDefaultSubtypeAccounts (..),
     SetBankProviderExpenseCategoryMap (..),
+    SetBankProviderIncomeCategoryMap (..),
     SetBankProviderContactMap (..),
     CloseBooksThrough (..),
     AddBankConnection (..),
@@ -86,6 +87,7 @@ configurationCommands =
     ''SetDefaultAccount,
     ''SetDefaultSubtypeAccounts,
     ''SetBankProviderExpenseCategoryMap,
+    ''SetBankProviderIncomeCategoryMap,
     ''SetBankProviderContactMap,
     ''CloseBooksThrough,
     ''AddBankConnection,
@@ -223,6 +225,14 @@ data SetBankProviderExpenseCategoryMap = SetBankProviderExpenseCategoryMap
   }
   deriving (Show, Eq)
 
+-- | Command to replace the banking provider-category -> income category map
+-- wholesale. Keys are 'BankProviderCategory' values (an MCC or a provider text
+-- label); values are income category ids.
+data SetBankProviderIncomeCategoryMap = SetBankProviderIncomeCategoryMap
+  { mapping :: Map BankProviderCategory CategoryId
+  }
+  deriving (Show, Eq)
+
 -- | Command to replace the banking provider-contact -> contact map wholesale.
 -- Keys are 'BankProviderContact' values (the name-agnostic provider token);
 -- values are contact ids.
@@ -351,6 +361,7 @@ deriveJSON defaultOptions ''SetDefaultExpenseCategory
 deriveJSON defaultOptions ''SetDefaultAccount
 deriveJSON defaultOptions ''SetDefaultSubtypeAccounts
 deriveJSON defaultOptions ''SetBankProviderExpenseCategoryMap
+deriveJSON defaultOptions ''SetBankProviderIncomeCategoryMap
 deriveJSON defaultOptions ''SetBankProviderContactMap
 deriveJSON defaultOptions ''CloseBooksThrough
 deriveJSON defaultOptions ''AddBankConnection

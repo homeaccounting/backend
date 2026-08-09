@@ -21,7 +21,7 @@ import qualified Data.Text as T
 import Data.Time (Day, TimeOfDay, UTCTime (..), timeOfDayToTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (currencyNumericCode, mkBankProviderContact, mkExternalTransactionId, parseCurrency)
+import Domain.Core.Types (currencyNumericCode, mkBankProviderContact, mkByCounterparty, mkExternalTransactionId, parseCurrency)
 import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, parseSignedDecimal, stripTrailingComma)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
@@ -78,7 +78,7 @@ validateRow col rowNumber =
                             currencyCode = currCode,
                             description = describe (col "Назва контрагента") (col "Призначення платежу"),
                             hold = False,
-                            category = Nothing,
+                            category = mkByCounterparty (fromMaybe "" (col "ЄДРПОУ")),
                             contact = mkBankProviderContact (fromMaybe "" (col "ЄДРПОУ")),
                             originalAmount = Nothing,
                             notes = Nothing

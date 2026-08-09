@@ -32,6 +32,7 @@ import Domain.Configuration.Events
     BankConnectionRenamed (..),
     BankProviderContactMapSet (..),
     BankProviderExpenseCategoryMapSet (..),
+    BankProviderIncomeCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
     DefaultExpenseCategorySet (..),
@@ -60,6 +61,7 @@ spec = do
   setDefaultAccountSpec
   setDefaultSubtypeAccountsSpec
   setBankProviderExpenseCategoryMapSpec
+  setBankProviderIncomeCategoryMapSpec
   setBankProviderContactMapSpec
   removeDictionaryEntryBankingGuardSpec
   addTreeGuardSpec
@@ -250,6 +252,34 @@ configWithTwoExpenseEntries =
           }
     ]
 
+-- | A created configuration with two income-category entries (testCategoryId1, testCategoryId2)
+configWithTwoIncomeEntries :: Configuration
+configWithTwoIncomeEntries =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = incomeCategoryDictKind,
+            entryId = testCategoryId1,
+            name = mockEntryName "Salary",
+            role = ItemRole,
+            parentId = Nothing
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = incomeCategoryDictKind,
+            entryId = testCategoryId2,
+            name = mockEntryName "Dividends",
+            role = ItemRole,
+            parentId = Nothing
+          }
+    ]
+
 -- | Config with two income entries, defaultIncomeCategory set to testCategoryId1.
 -- Two entries ensure CannotRemoveLastEntry does not fire before the banking guard.
 configWithDefaultIncomeCategory :: Configuration
@@ -345,6 +375,39 @@ configWithMccMapEntry =
           },
       BankProviderExpenseCategoryMapSetConfigurationEvent
         BankProviderExpenseCategoryMapSet
+          { mapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testCategoryId1)]
+          }
+    ]
+
+-- | Config with two income entries, income map referencing testCategoryId1.
+-- Two entries ensure CannotRemoveLastEntry does not fire before the banking guard.
+configWithIncomeMapEntry :: Configuration
+configWithIncomeMapEntry =
+  applyEvents
+    [ ConfigurationCreatedConfigurationEvent
+        ConfigurationCreated
+          { baseCurrency = UAH,
+            defaultCurrency = UAH,
+            createdBy = System
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = incomeCategoryDictKind,
+            entryId = testCategoryId1,
+            name = mockEntryName "Salary",
+            role = ItemRole,
+            parentId = Nothing
+          },
+      DictionaryEntryAddedConfigurationEvent
+        DictionaryEntryAdded
+          { dictionaryKind = incomeCategoryDictKind,
+            entryId = testCategoryId2,
+            name = mockEntryName "Dividends",
+            role = ItemRole,
+            parentId = Nothing
+          },
+      BankProviderIncomeCategoryMapSetConfigurationEvent
+        BankProviderIncomeCategoryMapSet
           { mapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testCategoryId1)]
           }
     ]
@@ -1087,6 +1150,66 @@ setBankProviderExpenseCategoryMapSpec = describe "SetBankProviderExpenseCategory
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
 -- -----------------------------------------------------------------------------
+-- SetBankProviderIncomeCategoryMap Tests
+-- -----------------------------------------------------------------------------
+
+setBankProviderIncomeCategoryMapSpec :: Spec
+setBankProviderIncomeCategoryMapSpec = describe "SetBankProviderIncomeCategoryMap Command" $ do
+  context "Given map referencing a CategoryId in the EXPENSE (wrong) dictionary" $ do
+    describe "When issuing SetBankProviderIncomeCategoryMap" $ do
+      it "Then returns an error" $ do
+        let config = configWithExpenseEntry -- testCategoryId1 in expense dict, NOT income
+        let command =
+              SetBankProviderIncomeCategoryMapConfigurationCommand
+                SetBankProviderIncomeCategoryMap
+                  { mapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testCategoryId1)]
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldSatisfy` isLeft
+
+  context "Given map whose values are all in income-category dictionary" $ do
+    describe "When issuing SetBankProviderIncomeCategoryMap" $ do
+      it "Then emits BankProviderIncomeCategoryMapSet event" $ do
+        let config = configWithTwoIncomeEntries
+        let testMapping = Map.fromList [(mkByMcc (unsafeMcc 5411), testCategoryId1), (mkByMcc (unsafeMcc 4111), testCategoryId2)]
+        let command =
+              SetBankProviderIncomeCategoryMapConfigurationCommand
+                SetBankProviderIncomeCategoryMap
+                  { mapping = testMapping
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankProviderIncomeCategoryMapSetConfigurationEvent evt ->
+                evt.mapping `shouldBe` testMapping
+              _ -> expectationFailure "Expected BankProviderIncomeCategoryMapSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+  context "Given an empty map" $ do
+    describe "When issuing SetBankProviderIncomeCategoryMap" $ do
+      it "Then accepts empty map (signals cleared)" $ do
+        let config = configWithIncomeEntry
+        let command =
+              SetBankProviderIncomeCategoryMapConfigurationCommand
+                SetBankProviderIncomeCategoryMap
+                  { mapping = Map.empty
+                  }
+        let result = handleConfigurationCommand config command
+
+        case result of
+          Right events -> do
+            length events `shouldBe` 1
+            case head events of
+              BankProviderIncomeCategoryMapSetConfigurationEvent evt ->
+                evt.mapping `shouldBe` Map.empty
+              _ -> expectationFailure "Expected BankProviderIncomeCategoryMapSet event"
+          Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+-- -----------------------------------------------------------------------------
 -- SetBankProviderContactMap Tests
 -- -----------------------------------------------------------------------------
 
@@ -1198,7 +1321,21 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
 
         result `shouldSatisfy` isLeft
 
-  context "Given entry referenced in banking.bankProviderContactMap" $ do
+  context "Given entry referenced in banking.incomeCategoryMap" $ do
+    describe "When removing that entry" $ do
+      it "Then returns EntryIsInBankProviderIncomeCategoryMap" $ do
+        let config = configWithIncomeMapEntry
+        let command =
+              RemoveDictionaryEntryConfigurationCommand
+                RemoveDictionaryEntry
+                  { dictionaryKind = incomeCategoryDictKind,
+                    entryId = testCategoryId1
+                  }
+        let result = handleConfigurationCommand config command
+
+        result `shouldBe` Left EntryIsInBankProviderIncomeCategoryMap
+
+  context "Given entry referenced in banking.contactMap" $ do
     describe "When removing that entry" $ do
       it "Then returns EntryIsInBankProviderContactMap" $ do
         let config = configWithContactMapEntry

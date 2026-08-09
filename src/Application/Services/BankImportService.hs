@@ -606,23 +606,22 @@ data CategoryResolution
 
 -- | Resolve the category for a transaction from the user's banking configuration.
 --
--- The provider-category → category matching is EXPENSE-ONLY: only
--- 'ClassifiedExpense' transactions consult 'bankProviderExpenseCategoryMap'. Income
--- never performs this matching — an income transaction (even one carrying a
--- provider category on its 'ImportInfo', e.g. @ByLabel "Зарахування"@) resolves
--- straight to the income default. This mirrors the map's name and the seed data:
--- provider label defaults cover only expense labels (income labels are omitted).
+-- The provider-category → category matching is PER-DIRECTION: income consults
+-- 'incomeCategoryMap' and expense consults
+-- 'expenseCategoryMap'. Each direction looks up the transaction's
+-- own provider category (MCC / label / counterparty) in its own map, so the
+-- same signal can map to different categories depending on money direction.
 --
--- Resolution is otherwise a SINGLE lookup: provider label defaults are baked
--- into the user's 'bankProviderExpenseCategoryMap' at configuration-seed time, so
--- the resolver needs only the transaction's own provider category.
+-- Resolution is a SINGLE lookup: provider label defaults are baked into the
+-- user's direction map at configuration-seed time, so the resolver needs only
+-- the transaction's own provider category.
 --
--- Resolution order:
---   1. Expenses only: look up tx.category in 'bankProviderExpenseCategoryMap' and
---      verify the hit is an assignable item in the expense dictionary.
---   2. Fall back to the direction-appropriate banking default category — this is
---      the ONLY path for income, an unmapped/absent category, or a hit whose
---      target is not in the dictionary.
+-- Resolution ladder (per direction):
+--   1. Look up tx.category in the direction's category map and verify the hit is
+--      an assignable item in the direction's dictionary. A future
+--      description-keyword matcher slots in as an additional rung here.
+--   2. Fall back to the direction-appropriate banking default category — for an
+--      unmapped/absent category, or a hit whose target is not in the dictionary.
 --   3. If no default is configured, return a 'BankingError'.
 resolveCategory ::
   BankingConfiguration ->
@@ -632,16 +631,15 @@ resolveCategory ::
   Either DomainError (CategoryId, CategoryResolution)
 resolveCategory banking cfg direction maybeCategory =
   let ConfigurationDefaults {incomeCategory = mIncomeDefault, expenseCategory = mExpenseDefault} = cfg.defaults
-      (dictKind, deflt) = case direction of
-        ClassifiedIncome -> (incomeCategoryDictKind, mIncomeDefault)
-        ClassifiedExpense -> (expenseCategoryDictKind, mExpenseDefault)
+      (dictKind, deflt, directionMap) = case direction of
+        ClassifiedIncome -> (incomeCategoryDictKind, mIncomeDefault, banking.incomeCategoryMap)
+        ClassifiedExpense -> (expenseCategoryDictKind, mExpenseDefault, banking.expenseCategoryMap)
       dictItemIds =
         maybe Set.empty dictionaryItemIds (Map.lookup dictKind cfg.dictionaries)
-      -- EXPENSE-ONLY: income deliberately never consults the map (it stays
-      -- 'Nothing' here) and falls through to the income default below.
-      mapHit = case direction of
-        ClassifiedExpense -> maybeCategory >>= \pc -> (pc,) <$> Map.lookup pc banking.bankProviderExpenseCategoryMap
-        ClassifiedIncome -> Nothing
+      -- Rung 1: the provider signal (MCC / label / counterparty) mapped in the
+      -- direction's category map. A future description-keyword matcher slots in
+      -- as an additional rung between here and the default fallback.
+      mapHit = maybeCategory >>= \pc -> (pc,) <$> Map.lookup pc directionMap
       existsInDict eid = Set.member eid dictItemIds
    in case mapHit of
         Just (pc, eid) | existsInDict eid -> Right (eid, MapHit pc)
@@ -665,7 +663,7 @@ resolveCategory banking cfg direction maybeCategory =
 -- simply leaves the transaction without a contact (the raw description
 -- remains available as the transaction's memo).
 data ContactResolution
-  = -- | Resolved via the user's 'bankProviderContactMap' (the provider
+  = -- | Resolved via the user's 'contactMap' (the provider
     --   signal). Takes priority over name matching.
     MatchedByMap !ContactId
   | -- | Resolved via description name matching against the contact
@@ -677,17 +675,17 @@ data ContactResolution
   deriving (Show, Eq)
 
 -- | Resolve a contact for a transaction, layering the user's
--- 'bankProviderContactMap' (the provider signal) over the description-based
+-- 'contactMap' (the provider signal) over the description-based
 -- name match ('matchContact'):
 --
 --   1. __Map hit (top priority)__: when @signal@ is present, mapped in
---      'bankProviderContactMap', and the mapped 'ContactId' still exists in
+--      'contactMap', and the mapped 'ContactId' still exists in
 --      the contact dictionary, that contact wins — even if the description
 --      would otherwise name-match a /different/ contact.
 --   2. __Name-match fallback__: when there is no signal, the signal is
 --      unmapped, or the mapped id has since been removed from the
 --      dictionary, fall back to 'matchContact' on the description. This is
---      the only path when 'bankProviderContactMap' is empty, so today's
+--      the only path when 'contactMap' is empty, so today's
 --      behaviour is preserved unchanged for providers/users without the map.
 --
 -- MATCH-ONLY: never creates a dictionary entry — an unresolved transaction
@@ -717,7 +715,7 @@ resolveContact banking cfg kind signal description = case kind of
     -- dictionary after being mapped must not resolve to a dangling id).
     mapHit = do
       sig <- signal
-      cid <- Map.lookup sig banking.bankProviderContactMap
+      cid <- Map.lookup sig banking.contactMap
       if existsInContactDict cfg cid then Just cid else Nothing
 
 -- | Whether a 'ContactId' is still present in the user's contact dictionary.

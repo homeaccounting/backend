@@ -75,6 +75,7 @@ module Domain.Core.Types
     BankProviderCategory,
     mkByMcc,
     mkByLabel,
+    mkByCounterparty,
     bankProviderCategory,
     bankProviderCategoryMcc,
     renderBankProviderCategoryKey,
@@ -739,20 +740,24 @@ instance Display MCC where
 
 -- | A provider-supplied category signal attached to an imported transaction.
 --
--- Bank providers surface a category hint in one of two mutually exclusive
--- forms: a numeric ISO 18245 merchant category code ('ByMcc', e.g. PrivatBank)
--- or a free-text provider label ('ByLabel', e.g. Monzo/Monzo-style enum words
--- such as @\"eating_out\"@). This type unifies both so downstream category
+-- Bank providers surface a category hint in one of three mutually exclusive
+-- forms: a numeric ISO 18245 merchant category code ('ByMcc', e.g. PrivatBank),
+-- a free-text provider label ('ByLabel', e.g. Monzo/Monzo-style enum words
+-- such as @\"eating_out\"@), or a universal counterparty token
+-- ('ByCounterparty', an EDRPOU/IBAN/stable descriptor — the same signal used
+-- for contact resolution). This type unifies them so downstream category
 -- mapping can key on a single value.
 --
 -- The value JSON form is a tagged object
--- @{ \"kind\": \"mcc\" | \"label\", \"value\": \<string\> }@ (the mcc value is
--- the zero-padded 'renderMcc' text). The map-key JSON form is the tagged text
--- @\"mcc:0742\"@ / @\"label:eating_out\"@ (split on the first @\':\'@ only, so
--- labels containing colons survive).
+-- @{ \"kind\": \"mcc\" | \"label\" | \"counterparty\", \"value\": \<string\> }@
+-- (the mcc value is the zero-padded 'renderMcc' text). The map-key JSON form is
+-- the tagged text @\"mcc:0742\"@ / @\"label:eating_out\"@ /
+-- @\"counterparty:12345678\"@ (split on the first @\':\'@ only, so values
+-- containing colons survive).
 data BankProviderCategory
   = ByMcc MCC
   | ByLabel Text
+  | ByCounterparty Text -- universal counterparty token (EDRPOU / IBAN / stable descriptor)
   deriving (Eq, Ord, Show)
 
 -- | Build a 'BankProviderCategory' from a validated merchant category code.
@@ -768,21 +773,34 @@ mkByLabel t
   where
     trimmed = T.strip t
 
--- | Fold over the two cases of a 'BankProviderCategory'.
-bankProviderCategory :: (MCC -> a) -> (Text -> a) -> BankProviderCategory -> a
-bankProviderCategory onMcc _ (ByMcc m) = onMcc m
-bankProviderCategory _ onLabel (ByLabel t) = onLabel t
+-- | Smart constructor for a counterparty-token 'BankProviderCategory'. Trims and
+-- rejects blank. The token is the same universal counterparty signal used for
+-- contact resolution (an EDRPOU/IBAN); it is persisted verbatim.
+mkByCounterparty :: Text -> Maybe BankProviderCategory
+mkByCounterparty t
+  | T.null trimmed = Nothing
+  | otherwise = Just (ByCounterparty trimmed)
+  where
+    trimmed = T.strip t
+
+-- | Fold over the cases of a 'BankProviderCategory'.
+bankProviderCategory :: (MCC -> a) -> (Text -> a) -> (Text -> a) -> BankProviderCategory -> a
+bankProviderCategory onMcc _ _ (ByMcc m) = onMcc m
+bankProviderCategory _ onLabel _ (ByLabel t) = onLabel t
+bankProviderCategory _ _ onCounterparty (ByCounterparty t) = onCounterparty t
 
 -- | Extract the merchant category code, if this is an mcc-based category.
 bankProviderCategoryMcc :: BankProviderCategory -> Maybe MCC
-bankProviderCategoryMcc = bankProviderCategory Just (const Nothing)
+bankProviderCategoryMcc = bankProviderCategory Just (const Nothing) (const Nothing)
 
--- | Tagged text key form: @\"mcc:0742\"@ / @\"label:eating_out\"@.
+-- | Tagged text key form: @\"mcc:0742\"@ / @\"label:eating_out\"@ /
+-- @\"counterparty:12345678\"@.
 renderBankProviderCategoryKey :: BankProviderCategory -> Text
 renderBankProviderCategoryKey =
   bankProviderCategory
     (\m -> "mcc:" <> renderMcc m)
     ("label:" <>)
+    ("counterparty:" <>)
 
 -- | Parse the tagged text key form, splitting on the first @\':\'@ only so that
 -- labels containing colons round-trip.
@@ -792,6 +810,7 @@ parseBankProviderCategoryKey t =
     Just suffix -> case prefix of
       "mcc" -> mkByMcc <$> parseMcc suffix
       "label" -> mkByLabel suffix
+      "counterparty" -> mkByCounterparty suffix
       _ -> Nothing
     Nothing -> Nothing
   where
@@ -802,6 +821,7 @@ instance ToJSON BankProviderCategory where
     bankProviderCategory
       (\m -> object ["kind" .= ("mcc" :: Text), "value" .= renderMcc m])
       (\t -> object ["kind" .= ("label" :: Text), "value" .= t])
+      (\t -> object ["kind" .= ("counterparty" :: Text), "value" .= t])
 
 instance FromJSON BankProviderCategory where
   parseJSON = withObject "BankProviderCategory" $ \o -> do
@@ -818,6 +838,11 @@ instance FromJSON BankProviderCategory where
           (fail "BankProviderCategory label must not be blank")
           pure
           (mkByLabel value)
+      "counterparty" ->
+        maybe
+          (fail "BankProviderCategory counterparty must not be blank")
+          pure
+          (mkByCounterparty value)
       other -> fail ("Unknown BankProviderCategory kind: " <> T.unpack other)
 
 instance ToJSONKey BankProviderCategory where
@@ -835,7 +860,7 @@ instance FromJSONKey BankProviderCategory where
 -- counterparty (a merchant/counterparty descriptor as the provider reports it,
 -- e.g. @MagazinREMONTI@ / @Магазин РЕМОНТІ@, or a more stable id such as a
 -- counterparty IBAN / EDRPOU where a provider exposes one). Persisted verbatim;
--- the key of the user contact map ('bankProviderContactMap').
+-- the key of the user contact map ('contactMap').
 --
 -- Universal keyspace (not provider-scoped): the map is many-to-one, so token
 -- collisions are harmless — colliding tokens simply point at the same contact.

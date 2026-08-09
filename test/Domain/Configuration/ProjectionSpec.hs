@@ -32,6 +32,7 @@ import Domain.Configuration.Events
     BankConnectionRenamed (..),
     BankProviderContactMapSet (..),
     BankProviderExpenseCategoryMapSet (..),
+    BankProviderIncomeCategoryMapSet (..),
     ConfigurationCreated (..),
     DefaultAccountSet (..),
     DefaultExpenseCategorySet (..),
@@ -74,8 +75,8 @@ configurationDefaultSpec =
       configurationDefault.defaults.expenseCategory `shouldBe` Nothing
       configurationDefault.defaults.account `shouldBe` Nothing
       configurationDefault.defaults.subtypeAccounts `shouldBe` Map.empty
-      b.bankProviderExpenseCategoryMap `shouldBe` Map.empty
-      b.bankProviderContactMap `shouldBe` Map.empty
+      b.expenseCategoryMap `shouldBe` Map.empty
+      b.contactMap `shouldBe` Map.empty
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -517,7 +518,25 @@ bankingProjectionSpec = describe "banking projection" $ do
                   { mapping = m2
                   }
             ]
-    config.banking.bankProviderExpenseCategoryMap `shouldBe` m2
+    config.banking.expenseCategoryMap `shouldBe` m2
+
+  it "BankProviderIncomeCategoryMapSet replaces the income provider-category map and leaves the expense map untouched" $ do
+    let expenseMap = Map.singleton (mkByMcc (unsafeMcc 5411)) testEntryId1
+        incomeMap = Map.singleton (mkByMcc (unsafeMcc 6011)) testEntryId2
+        config =
+          applyEvents
+            [ createdEvent,
+              BankProviderExpenseCategoryMapSetConfigurationEvent
+                BankProviderExpenseCategoryMapSet
+                  { mapping = expenseMap
+                  },
+              BankProviderIncomeCategoryMapSetConfigurationEvent
+                BankProviderIncomeCategoryMapSet
+                  { mapping = incomeMap
+                  }
+            ]
+    config.banking.incomeCategoryMap `shouldBe` incomeMap
+    config.banking.expenseCategoryMap `shouldBe` expenseMap
 
   it "BankProviderContactMapSet replaces the provider-contact map wholesale" $ do
     let m1 = Map.singleton (unsafeBankProviderContact "IVAN PETRENKO") testEntryId1
@@ -534,7 +553,7 @@ bankingProjectionSpec = describe "banking projection" $ do
                   { mapping = m2
                   }
             ]
-    config.banking.bankProviderContactMap `shouldBe` m2
+    config.banking.contactMap `shouldBe` m2
 
 -- -----------------------------------------------------------------------------
 -- Bank Connection Projection Tests

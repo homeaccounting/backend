@@ -12,17 +12,26 @@ module Testkit.BankingHelpers
     mkSameCurrencyBankTx,
     mkCrossCurrencyBankTx,
     sampleBankTransaction,
+    byLabel,
+    byCounterparty,
   )
 where
 
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
-import Domain.Core.Types (ExternalTransactionId, unsafeExternalTransactionId)
+import Domain.Core.Types
+  ( BankProviderCategory,
+    ExternalTransactionId,
+    mkByCounterparty,
+    mkByLabel,
+    unsafeExternalTransactionId,
+  )
 import Infrastructure.Banking.Provider
   ( BankAccount (..),
     BankTransaction (..),
   )
 import RIO
+import qualified RIO.Text as T
 
 -- | Construct a test 'BankAccount'.
 mkTestBankAccount :: ExternalAccountId -> Text -> Int -> BankAccount
@@ -75,3 +84,19 @@ mkCrossCurrencyBankTx eid accId accountAmt originalAmt =
 sampleBankTransaction :: Rational -> BankTransaction
 sampleBankTransaction =
   mkSameCurrencyBankTx (unsafeExternalTransactionId "sample-tx") (unsafeExternalAccountId "sample-account")
+
+-- | Total test-only 'BankProviderCategory' constructors for a known-valid
+-- label / counterparty token. 'mkByLabel' / 'mkByCounterparty' return 'Maybe'
+-- (they trim and reject blank), so a spec with a statically-valid literal would
+-- otherwise carry a @case … Nothing -> expectationFailure@ dance at every use
+-- site. These unwrap it once, failing loudly (with a call stack) on the
+-- can't-happen blank case. Pure, so they work in both IO specs and pure
+-- contexts (@shouldBe@, list comprehensions). Constructor-validation tests that
+-- assert the blank/trim behaviour should keep using 'mkByLabel' /
+-- 'mkByCounterparty' directly. ('mkByMcc' needs no sibling — it is already total
+-- over a parsed 'MCC'.)
+byLabel :: (HasCallStack) => Text -> BankProviderCategory
+byLabel t = fromMaybe (error ("byLabel: invalid label " <> T.unpack t)) (mkByLabel t)
+
+byCounterparty :: (HasCallStack) => Text -> BankProviderCategory
+byCounterparty t = fromMaybe (error ("byCounterparty: invalid token " <> T.unpack t)) (mkByCounterparty t)

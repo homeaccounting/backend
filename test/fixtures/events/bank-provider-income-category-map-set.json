@@ -1,0 +1,8 @@
+{
+  "tag": "BankProviderIncomeCategoryMapSet",
+  "contents": {
+    "mapping": {
+      "counterparty:12345678": "00000000-0000-0003-0000-000000000000"
+    }
+  }
+}

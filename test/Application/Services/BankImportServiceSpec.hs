@@ -56,10 +56,11 @@ import Domain.Configuration.Defaults
     expense,
     expenseCategoryDictKind,
     income,
+    incomeCategoryDictKind,
   )
 import Domain.Configuration.Dictionary (DictionaryNode (..), EntryRole (ItemRole))
 import Domain.Configuration.Projection
-  ( BankingConfiguration (bankProviderContactMap, bankProviderExpenseCategoryMap),
+  ( BankingConfiguration (contactMap, expenseCategoryMap, incomeCategoryMap),
     ConfigurationDefaults (..),
     emptyBankingConfiguration,
     emptyConfigurationDefaults,
@@ -125,6 +126,7 @@ import Testkit.Helpers
     singletonExpense,
     singletonIncome,
   )
+import Testkit.BankingHelpers (byCounterparty)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------
@@ -483,12 +485,28 @@ spec = describe "BankImportService" $ do
             }
         expenseDict items =
           Map.singleton expenseCategoryDictKind (DictionaryData [ItemNode i (unsafeEntryName "cat") | i <- items])
+        mkCfgIncome dicts bankingCfg defaultIncome =
+          ConfigurationData
+            { baseCurrency = UAH,
+              defaultCurrency = UAH,
+              dictionaries = dicts,
+              banking = bankingCfg,
+              defaults = emptyConfigurationDefaults {incomeCategory = Just defaultIncome},
+              booksClosedThrough = Nothing,
+              createdBy = System,
+              version = 0
+            }
+        incomeDict items =
+          Map.singleton incomeCategoryDictKind (DictionaryData [ItemNode i (unsafeEntryName "cat") | i <- items])
         code = mkByMcc (unsafeMcc 5411)
         otherItem = expense.other.entryId
         groceriesItem = expense.groceries.entryId
+        rentExpenseItem = expense.rent.entryId
+        salaryIncomeItem = income.salary.entryId
+        otherIncomeItem = income.other.entryId
 
     it "returns the mapped category when the hit is an assignable dictionary item" $ do
-      let bankingCfg = emptyBankingConfiguration {bankProviderExpenseCategoryMap = Map.singleton code groceriesItem}
+      let bankingCfg = emptyBankingConfiguration {expenseCategoryMap = Map.singleton code groceriesItem}
           cfg = mkCfg (expenseDict [groceriesItem, otherItem]) bankingCfg otherItem
       resolveCategory bankingCfg cfg ClassifiedExpense (Just code)
         `shouldBe` Right (groceriesItem, MapHit code)
@@ -499,10 +517,41 @@ spec = describe "BankImportService" $ do
       -- categories; an id not among the dictionary items is rejected and the
       -- direction default wins.
       let bogus = unsafeDictionaryEntryId UUID.nil
-          bankingCfg = emptyBankingConfiguration {bankProviderExpenseCategoryMap = Map.singleton code bogus}
+          bankingCfg = emptyBankingConfiguration {expenseCategoryMap = Map.singleton code bogus}
           cfg = mkCfg (expenseDict [otherItem]) bankingCfg otherItem
       resolveCategory bankingCfg cfg ClassifiedExpense (Just code)
         `shouldBe` Right (otherItem, DefaultFallback (Just code))
+
+    it "resolves an income counterparty hit via the income map" $ do
+      let pc = byCounterparty "12345678"
+          bankingCfg = emptyBankingConfiguration {incomeCategoryMap = Map.singleton pc salaryIncomeItem}
+          cfg = mkCfgIncome (incomeDict [salaryIncomeItem, otherIncomeItem]) bankingCfg otherIncomeItem
+      resolveCategory bankingCfg cfg ClassifiedIncome (Just pc) `shouldBe` Right (salaryIncomeItem, MapHit pc)
+
+    it "resolves the same counterparty independently per direction" $ do
+      let pc = byCounterparty "12345678"
+          bankingCfg =
+            emptyBankingConfiguration
+              { incomeCategoryMap = Map.singleton pc salaryIncomeItem,
+                expenseCategoryMap = Map.singleton pc rentExpenseItem
+              }
+      resolveCategory bankingCfg (mkCfgIncome (incomeDict [salaryIncomeItem]) bankingCfg otherIncomeItem) ClassifiedIncome (Just pc)
+        `shouldBe` Right (salaryIncomeItem, MapHit pc)
+      resolveCategory bankingCfg (mkCfg (expenseDict [rentExpenseItem]) bankingCfg otherItem) ClassifiedExpense (Just pc)
+        `shouldBe` Right (rentExpenseItem, MapHit pc)
+
+    it "income with no mapping falls back to the income default" $ do
+      let cfg = mkCfgIncome (incomeDict [otherIncomeItem]) emptyBankingConfiguration otherIncomeItem
+      resolveCategory emptyBankingConfiguration cfg ClassifiedIncome Nothing
+        `shouldBe` Right (otherIncomeItem, DefaultFallback Nothing)
+
+    it "income map hit absent from the dictionary falls back to the income default (staleness)" $ do
+      let pc = byCounterparty "12345678"
+          bogus = unsafeDictionaryEntryId UUID.nil
+          bankingCfg = emptyBankingConfiguration {incomeCategoryMap = Map.singleton pc bogus}
+          cfg = mkCfgIncome (incomeDict [otherIncomeItem]) bankingCfg otherIncomeItem
+      resolveCategory bankingCfg cfg ClassifiedIncome (Just pc)
+        `shouldBe` Right (otherIncomeItem, DefaultFallback (Just pc))
 
   describe "resolveContact (unit)" $ do
     let mkCfg dicts bankingCfg =
@@ -527,7 +576,7 @@ spec = describe "BankImportService" $ do
     it "a map hit wins even when the description name-matches a DIFFERENT contact" $ do
       let contactA = contactIdN 101
           contactB = contactIdN 102
-          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal contactA}
+          bankingCfg = emptyBankingConfiguration {contactMap = Map.singleton signal contactA}
           cfg = mkCfg (contactDict [(contactA, "Contact A"), (contactB, "Netflix")]) bankingCfg
       -- The description ("Netflix") would name-match contactB on its own, but
       -- the provider signal maps to contactA — the map hit must win.
@@ -536,7 +585,7 @@ spec = describe "BankImportService" $ do
 
     it "falls back to name matching when the signal is present but unmapped" $ do
       let netflixId = contactIdN 103
-          bankingCfg = emptyBankingConfiguration -- bankProviderContactMap is empty
+          bankingCfg = emptyBankingConfiguration -- contactMap is empty
           cfg = mkCfg (contactDict [(netflixId, "Netflix")]) bankingCfg
       resolveContact bankingCfg cfg ExpenseKind (Just signal) "Netflix"
         `shouldBe` MatchedByName netflixId
@@ -551,7 +600,7 @@ spec = describe "BankImportService" $ do
       let netflixId = contactIdN 104
           -- The map is non-empty (mapping some other key) to prove the
           -- absence of a *signal* — not an empty map — drives the fallback.
-          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal netflixId}
+          bankingCfg = emptyBankingConfiguration {contactMap = Map.singleton signal netflixId}
           cfg = mkCfg (contactDict [(netflixId, "Netflix")]) bankingCfg
       resolveContact bankingCfg cfg ExpenseKind Nothing "Netflix"
         `shouldBe` MatchedByName netflixId
@@ -559,28 +608,28 @@ spec = describe "BankImportService" $ do
     it "falls back to name matching when the mapped contact is no longer in the dictionary" $ do
       let netflixId = contactIdN 105
           danglingId = contactIdN 106
-          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal danglingId}
+          bankingCfg = emptyBankingConfiguration {contactMap = Map.singleton signal danglingId}
           cfg = mkCfg (contactDict [(netflixId, "Netflix")]) bankingCfg
       resolveContact bankingCfg cfg ExpenseKind (Just signal) "Netflix"
         `shouldBe` MatchedByName netflixId
 
     it "resolves via the map for an income transaction" $ do
       let employerId = contactIdN 107
-          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal employerId}
+          bankingCfg = emptyBankingConfiguration {contactMap = Map.singleton signal employerId}
           cfg = mkCfg (contactDict [(employerId, "Employer")]) bankingCfg
       resolveContact bankingCfg cfg IncomeKind (Just signal) "some description"
         `shouldBe` MatchedByMap employerId
 
     it "never resolves a contact for a Transfer transaction, even with a mapped signal" $ do
       let contactA = contactIdN 108
-          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal contactA}
+          bankingCfg = emptyBankingConfiguration {contactMap = Map.singleton signal contactA}
           cfg = mkCfg (contactDict [(contactA, "Contact A")]) bankingCfg
       resolveContact bankingCfg cfg TransferKind (Just signal) "Contact A"
         `shouldBe` NoContactMatch
 
     it "never resolves a contact for an Adjustment transaction, even with a mapped signal" $ do
       let contactA = contactIdN 109
-          bankingCfg = emptyBankingConfiguration {bankProviderContactMap = Map.singleton signal contactA}
+          bankingCfg = emptyBankingConfiguration {contactMap = Map.singleton signal contactA}
           cfg = mkCfg (contactDict [(contactA, "Contact A")]) bankingCfg
       resolveContact bankingCfg cfg AdjustmentKind (Just signal) "Contact A"
         `shouldBe` NoContactMatch

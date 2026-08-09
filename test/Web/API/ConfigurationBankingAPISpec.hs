@@ -106,6 +106,7 @@ spec :: Spec
 spec = do
   updateDefaultsSpec
   updateBankingMccMapSpec
+  updateBankingIncomeMapSpec
   updateBankingContactMapSpec
   getBankingInResponseSpec
   listProvidersSpec
@@ -348,6 +349,86 @@ updateBankingMccMapSpec =
       it "returns 400 when a map UUID value is not in the expense-category dictionary" $ do
         tok <- registerAndGetToken
         let body = encode $ object ["expenseCategoryMap" .= object ["mcc:5411" .= unknownUUID]]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            body
+        liftIO $ do
+          simpleStatus resp `shouldBe` status400
+          case eitherDecode (simpleBody resp) :: Either String ErrorResponse of
+            Left err -> expectationFailure $ "400 body is not an ErrorResponse: " <> err
+            Right errResp ->
+              errResp.code `shouldBe` "CONFIGURATION_ERROR"
+
+-- -----------------------------------------------------------------------------
+-- PUT /api/users/me/configuration/banking — incomeCategoryMap field
+-- -----------------------------------------------------------------------------
+
+updateBankingIncomeMapSpec :: Spec
+updateBankingIncomeMapSpec =
+  describe "PUT /api/users/me/configuration/banking (incomeCategoryMap)"
+    $ with mkAppSeeded
+    $ do
+      it "returns 200 and GET reflects a single-entry counterparty income-category map" $ do
+        tok <- registerAndGetToken
+        let counterparty = "counterparty:12345678" :: Text
+            body = encode $ object ["incomeCategoryMap" .= object [Key.fromText counterparty .= incomeOtherUUID]]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            body
+        liftIO $ do
+          simpleStatus resp `shouldBe` status200
+          case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
+            Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
+            Right dto ->
+              Map.lookup counterparty dto.incomeCategoryMap `shouldBe` Just incomeOtherUUID
+        -- Verify GET also shows the map
+        getResp <-
+          request
+            "GET"
+            "/api/users/me/configuration"
+            [bearerHeader tok]
+            ""
+        liftIO $ do
+          simpleStatus getResp `shouldBe` status200
+          case eitherDecode (simpleBody getResp) :: Either String ConfigurationResponse of
+            Left err -> expectationFailure $ "body is not a ConfigurationResponse: " <> err
+            Right cfg ->
+              Map.lookup counterparty cfg.banking.incomeCategoryMap `shouldBe` Just incomeOtherUUID
+
+      it "returns 200 and GET shows empty map when {} supplied" $ do
+        tok <- registerAndGetToken
+        -- First set a map entry
+        let setupBody = encode $ object ["incomeCategoryMap" .= object ["counterparty:12345678" .= incomeOtherUUID]]
+        _ <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            setupBody
+        -- Now clear via empty map
+        let clearBody = encode $ object ["incomeCategoryMap" .= object ([] :: [Pair])]
+        resp <-
+          request
+            "PUT"
+            "/api/users/me/configuration/banking"
+            (jsonAuthHeaders tok)
+            clearBody
+        liftIO $ do
+          simpleStatus resp `shouldBe` status200
+          case eitherDecode (simpleBody resp) :: Either String BankingConfigurationDTO of
+            Left err -> expectationFailure $ "body is not a BankingConfigurationDTO: " <> err
+            Right dto ->
+              Map.null dto.incomeCategoryMap `shouldBe` True
+
+      it "returns 400 when a map UUID value is not in the income-category dictionary" $ do
+        tok <- registerAndGetToken
+        let body = encode $ object ["incomeCategoryMap" .= object ["counterparty:12345678" .= unknownUUID]]
         resp <-
           request
             "PUT"

@@ -43,16 +43,26 @@ import Data.Ratio ((%))
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.UUID as UUID
+import Domain.Configuration.Defaults
+  ( DefaultEntry (..),
+    IncomeDefaults (..),
+    income,
+  )
 import Domain.Core.Page (mkPage)
 import Domain.Core.Types
   ( AccountId,
+    Allocation (..),
     Currency (..),
+    DictionaryEntryId,
     TransactionType (Transfer),
+    allAllocations,
+    allocationsOf,
     exchangeRateSource,
     exchangeRateTarget,
     exchangeRateValue,
     mkAccountId,
     moneyCurrency,
+    unDictionaryEntryId,
     unMoney,
   )
 import qualified Infrastructure.Banking.PrivatBankBusiness as PrivatBankBusiness
@@ -226,6 +236,90 @@ sameCurrencyBytes =
     ]
 
 -- -----------------------------------------------------------------------------
+-- Synthetic INCOME fixture for provider counterparty categorization (tracker#55)
+-- -----------------------------------------------------------------------------
+
+-- Synthetic counterparty code + name (no real legal-entity data). The parser
+-- reads @ЄДРПОУ@ verbatim into @category = ByCounterparty "12345678"@, whose
+-- income-map key form is @"counterparty:12345678"@.
+incomeEdrpou :: Text
+incomeEdrpou = "12345678"
+
+incomeCounterparty :: Text
+incomeCounterparty = "ACME LLC"
+
+-- | The income provider-category map key for 'incomeEdrpou'.
+incomeCounterpartyKey :: Text
+incomeCounterpartyKey = "counterparty:" <> incomeEdrpou
+
+-- Synthetic IBAN-shaped external account id for the lone income account.
+incomeExtAcc :: Text
+incomeExtAcc = "UA00INCOME0000000000000000000000"
+
+-- | A lone INCOME row: a positive USD amount (matching the base/External
+-- currency, so no rate is needed) whose @ЄДРПОУ@ column carries the synthetic
+-- counterparty code and whose purpose is ordinary (no @Продаж <CUR>@ marker, so
+-- 'fxSignal' does not fire and it stays a standalone income rather than a
+-- conversion leg).
+incomeBytes :: ByteString
+incomeBytes =
+  buildBusinessXlsx
+    [ [ "REF-INC-1",
+        incomeExtAcc,
+        "05.08.2026",
+        "14:00:00",
+        "5000.00",
+        "USD",
+        incomeEdrpou,
+        incomeCounterparty,
+        "Оплата за послуги"
+      ]
+    ]
+
+-- | Replace the whole income provider-category map via
+-- @PUT /api/users/me/configuration/banking@ (a partial update: only
+-- @incomeCategoryMap@ is sent, leaving every other banking field untouched).
+setIncomeCategoryMap :: Text -> [(Text, Text)] -> WaiSession st ()
+setIncomeCategoryMap tok entries = do
+  let body =
+        encode
+          $ object ["incomeCategoryMap" .= object [Key.fromText k .= v | (k, v) <- entries]]
+  r <- request "PUT" "/api/users/me/configuration/banking" (jsonAuthHeaders tok) body
+  liftIO $ simpleStatus r `shouldBe` status200
+
+-- | The seeded income-dictionary "Salary" category id, in the UUID text form
+-- the banking PUT expects as a map value.
+salaryCategoryIdText :: Text
+salaryCategoryIdText = UUID.toText (unDictionaryEntryId income.salary.entryId)
+
+-- | Import 'incomeBytes' over a freshly-set-up business connection (income
+-- external account mapped to a USD local account) and return the resulting
+-- income transaction's allocation category ids from the read model. Fails the
+-- expectation unless exactly one categorised income transaction landed.
+importIncomeAllocationCategories :: StubControls -> Text -> WaiSession st [DictionaryEntryId]
+importIncomeAllocationCategories controls tok = do
+  accUsd <- createAccountWith tok "USD income account" "USD"
+  connId <- addBusinessConnection tok "Business"
+  setAccountMapMany tok connId [(incomeExtAcc, accUsd)]
+  resp <- uploadStatement tok connId "xlsx" incomeBytes
+  liftIO $ do
+    simpleStatus resp `shouldBe` status200
+    txCount <- runDbIn controls.stubEnv TransactionRM.countTransactions
+    txCount `shouldBe` 1
+    accountIdUsd <- resolveAccountId accUsd
+    page <- either (throwString . T.unpack) pure (mkPage Nothing Nothing)
+    (total, rows) <-
+      runDbIn
+        controls.stubEnv
+        (TransactionRM.listTransactions (Set.singleton accountIdUsd) TransactionRM.emptyTransactionFilter page)
+    total `shouldBe` 1
+    case rows of
+      [(_, txData)] -> case allocationsOf txData.transactionType of
+        Just allocs -> pure [cid | Allocation cid _ _ <- allAllocations allocs]
+        Nothing -> throwString "expected a categorised income transaction, got a transfer/adjustment"
+      other -> throwString ("expected exactly one income row, got " <> show (length other))
+
+-- -----------------------------------------------------------------------------
 -- Spec
 -- -----------------------------------------------------------------------------
 
@@ -233,6 +327,8 @@ spec :: Spec
 spec = do
   crossCurrencySpec
   sameCurrencySpec
+  incomeMappedCategorySpec
+  incomeDefaultCategorySpec
 
 -- | A conversion pair (USD debit on account A, UAH credit on account B) posts
 -- as ONE cross-currency 'Transfer' with per-leg amounts and the implied rate.
@@ -318,6 +414,37 @@ sameCurrencySpec =
             moneyCurrency txData.targetAmount `shouldBe` UAH
             txData.exchangeRate `shouldBe` Nothing
           other -> expectationFailure $ "expected exactly one transfer row, got " <> show (length other)
+
+-- | A PrivatBank-business INCOME row whose counterparty (@ЄДРПОУ@) is mapped in
+-- the user's income provider-category map lands its income allocation in the
+-- MAPPED income category — not the income direction-default.
+incomeMappedCategorySpec :: Spec
+incomeMappedCategorySpec =
+  describe "POST /api/banking/connections/:id/import/file (income counterparty category, mapped)"
+    $ withState mkApp
+    $ it "categorizes a mapped income counterparty into the mapped income category"
+    $ do
+      controls <- getState
+      tok <- registerAndGetToken
+      -- Map the synthetic counterparty code to the seeded "Salary" income
+      -- category (distinct from the income default "Other").
+      setIncomeCategoryMap tok [(incomeCounterpartyKey, salaryCategoryIdText)]
+      categories <- importIncomeAllocationCategories controls tok
+      liftIO $ categories `shouldBe` [income.salary.entryId]
+
+-- | With NO income mapping for the counterparty, the same import falls through
+-- to the income direction-default category ("Other").
+incomeDefaultCategorySpec :: Spec
+incomeDefaultCategorySpec =
+  describe "POST /api/banking/connections/:id/import/file (income counterparty category, unmapped)"
+    $ withState mkApp
+    $ it "falls back to the income default category when the counterparty is unmapped"
+    $ do
+      controls <- getState
+      tok <- registerAndGetToken
+      -- Deliberately set no income mapping for the counterparty.
+      categories <- importIncomeAllocationCategories controls tok
+      liftIO $ categories `shouldBe` [income.other.entryId]
 
 -- | 'mkAppBankingEnabledSeededWithFileProvider' specialised to the REAL
 -- 'PrivatBankBusiness.descriptor' (keyed @"privatbank-business"@).

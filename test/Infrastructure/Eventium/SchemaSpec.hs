@@ -15,7 +15,7 @@ module Infrastructure.Eventium.SchemaSpec (spec) where
 import Data.Aeson (Value (..), decodeStrict, toJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Map.Strict as Map
-import Domain.Configuration.Events (BankProviderContactMapSet (..), BankProviderExpenseCategoryMapSet (..))
+import Domain.Configuration.Events (BankProviderContactMapSet (..), BankProviderExpenseCategoryMapSet (..), BankProviderIncomeCategoryMapSet (..))
 import Domain.Core.Types
   ( BankProviderCategory,
     BankProviderContact,
@@ -42,6 +42,7 @@ import Eventium.Store.Types (eventTypeName)
 import Infrastructure.Eventium.Schema (accountingEventCodec)
 import RIO
 import Test.Hspec
+import Testkit.BankingHelpers (byCounterparty, byLabel)
 import Testkit.Helpers
   ( mockAccountIdN,
     mockCategoryIdN,
@@ -183,21 +184,19 @@ spec = describe "accountingEventCodec (schema evolution)" $ do
   -- form of a 'BankProviderCategory'. Reads a committed fixture, confirms both key
   -- kinds parse back, and confirms round-trip stability.
   it "decodes a BankProviderExpenseCategoryMapSet fixture with tagged category keys and round-trips it" $ do
-    case mkByLabel "eating_out" of
-      Nothing -> expectationFailure "mkByLabel unexpectedly rejected a valid label"
-      Just labelKey -> do
-        let expected =
-              BankProviderExpenseCategoryMapSetEvent
-                BankProviderExpenseCategoryMapSet
-                  { mapping =
-                      Map.fromList
-                        [ (mkByMcc (unsafeMcc 742), mockCategoryIdN 1),
-                          (labelKey, mockCategoryIdN 2)
-                        ]
-                  }
-        stored <- loadStoredEvent "test/fixtures/events/bank-provider-expense-category-map-set.json"
-        accountingEventCodec.decode stored `shouldBe` Just expected
-        accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
+    let labelKey = byLabel "eating_out"
+        expected =
+          BankProviderExpenseCategoryMapSetEvent
+            BankProviderExpenseCategoryMapSet
+              { mapping =
+                  Map.fromList
+                    [ (mkByMcc (unsafeMcc 742), mockCategoryIdN 1),
+                      (labelKey, mockCategoryIdN 2)
+                    ]
+              }
+    stored <- loadStoredEvent "test/fixtures/events/bank-provider-expense-category-map-set.json"
+    accountingEventCodec.decode stored `shouldBe` Just expected
+    accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
 
   -- 'BankProviderContactMapSet' serialises its 'BankProviderContact' map keys as
   -- the PLAIN provider token verbatim (no @mcc:@/@label:@ prefix, unlike
@@ -214,6 +213,25 @@ spec = describe "accountingEventCodec (schema evolution)" $ do
                     ]
               }
     stored <- loadStoredEvent "test/fixtures/events/bank-provider-contact-map-set.json"
+    accountingEventCodec.decode stored `shouldBe` Just expected
+    accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
+
+  -- 'BankProviderIncomeCategoryMapSet' is the income-side sibling of
+  -- 'BankProviderExpenseCategoryMapSet'; it serialises its 'BankProviderCategory'
+  -- map keys in the same tagged KEY form (here a @"counterparty:..."@ token).
+  -- Reads a committed fixture, confirms the key parses back, and confirms
+  -- round-trip stability.
+  it "decodes a BankProviderIncomeCategoryMapSet fixture with a counterparty category key and round-trips it" $ do
+    let counterpartyKey = byCounterparty "12345678"
+        expected =
+          BankProviderIncomeCategoryMapSetEvent
+            BankProviderIncomeCategoryMapSet
+              { mapping =
+                  Map.fromList
+                    [ (counterpartyKey, mockCategoryIdN 3)
+                    ]
+              }
+    stored <- loadStoredEvent "test/fixtures/events/bank-provider-income-category-map-set.json"
     accountingEventCodec.decode stored `shouldBe` Just expected
     accountingEventCodec.decode (accountingEventCodec.encode expected) `shouldBe` Just expected
 
