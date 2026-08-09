@@ -5,8 +5,8 @@
 module Infrastructure.Banking.PrivatBankTransferSpec (spec) where
 
 import Data.Time (addUTCTime)
+import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (unsafeExternalTransactionId)
 import Infrastructure.Banking.PrivatBank (ownCardCounterpartLast4, privatBankTransferMatcher)
 import Infrastructure.Banking.Provider
   ( BankTransaction (..),

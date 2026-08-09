@@ -31,17 +31,8 @@ import Domain.Account.Events
   ( AccountCredited (..),
     AccountDebited (..),
   )
-import Domain.Core.Types
-  ( Currency (..),
-    ImportInfo (..),
-    TransactionType (..),
-    unsafeAccountId,
-    unsafeDictionaryEntryId,
-    unsafeExternalTransactionId,
-    unsafeMoney,
-    unsafeTransactionId,
-    unsafeUserId,
-  )
+import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
+import Domain.Core.Types (Currency (..), TransactionType (..), unsafeAccountId, unsafeDictionaryEntryId, unsafeMoney, unsafeTransactionId, unsafeUserId)
 import Domain.Models
   ( AccountingCommand (..),
     AccountingEvent (..),

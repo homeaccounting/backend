@@ -35,6 +35,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUIDv4
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Banking.Import (ExternalTransactionId, unsafeExternalTransactionId)
 import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
 import Domain.Configuration.CommandHandler (ConfigurationCommand (..))
 import Domain.Configuration.Commands (AddDictionaryEntry (..))
@@ -46,24 +47,7 @@ import Domain.Configuration.Defaults
     income,
   )
 import Domain.Configuration.Dictionary (EntryRole (ItemRole))
-import Domain.Core.Types
-  ( AccountId,
-    AccountType (..),
-    Currency (..),
-    DictionaryEntryId,
-    ExternalTransactionId,
-    Money,
-    TransactionType (Transfer),
-    UserId,
-    defaultBankAccount,
-    defaultConfigurationId,
-    mkMoney,
-    moneyCurrency,
-    unConfigurationId,
-    unsafeDictionaryEntryId,
-    unsafeEntryName,
-    unsafeExternalTransactionId,
-  )
+import Domain.Core.Types (AccountId, AccountType (..), Currency (..), DictionaryEntryId, Money, TransactionType (Transfer), UserId, defaultBankAccount, defaultConfigurationId, mkMoney, moneyCurrency, unConfigurationId, unsafeDictionaryEntryId, unsafeEntryName)
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Projection (TransactionStatus (Completed))

@@ -19,8 +19,10 @@ import qualified Data.ByteString as BS
 import qualified Data.Csv as Csv
 import qualified Data.Text as T
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Domain.Banking.Import (mkExternalTransactionId)
+import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (currencyNumericCode, mkBankProviderContact, mkByLabel, mkExternalTransactionId, parseCurrency)
+import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
 import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Statement (parseSignedDecimal)

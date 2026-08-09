@@ -34,8 +34,9 @@ import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime (..), fromGregorian, getCurrentTime, secondsToDiffTime, utctDay)
 import qualified Data.UUID as UUID0
 import qualified Data.UUID.V4 as UUID
+import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (Currency (..), unsafeExternalTransactionId)
+import Domain.Core.Types (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)

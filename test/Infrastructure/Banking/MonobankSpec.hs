@@ -6,8 +6,9 @@ module Infrastructure.Banking.MonobankSpec (spec) where
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Domain.Banking.Import (unsafeExternalTransactionId)
+import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty, mkByMcc, parseMcc)
 import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
-import Domain.Core.Types (mkBankProviderContact, mkByCounterparty, mkByMcc, parseMcc, unsafeExternalTransactionId)
 import Infrastructure.Banking.Monobank (descriptor)
 import Infrastructure.Banking.Monobank.Internal
   ( MonoAccount (..),

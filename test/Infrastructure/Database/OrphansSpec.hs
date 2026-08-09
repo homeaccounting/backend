@@ -14,25 +14,8 @@ import Data.Aeson (Value, encode, object, (.=))
 import qualified Data.Map.Strict as Map
 import Data.UUID (fromWords)
 import Database.Persist (PersistField (..), PersistValue (..))
-import Domain.Core.Types
-  ( AccountRole (..),
-    AccountStatus (..),
-    AccountSubtypeKind (..),
-    AccountType (..),
-    Allocation (..),
-    Allocations (..),
-    Currency (..),
-    DefaultSubtypeAccounts (..),
-    ExternalTransactionId,
-    TransactionType (..),
-    defaultBankAccount,
-    mkAllocation,
-    mkAllocations,
-    mkIncome,
-    unsafeDictionaryEntryId,
-    unsafeExternalTransactionId,
-    unsafeMoney,
-  )
+import Domain.Banking.Import (ExternalTransactionId, unsafeExternalTransactionId)
+import Domain.Core.Types (AccountRole (..), AccountStatus (..), AccountSubtypeKind (..), AccountType (..), Allocation (..), Allocations (..), Currency (..), DefaultSubtypeAccounts (..), TransactionType (..), defaultBankAccount, mkAllocation, mkAllocations, mkIncome, unsafeDictionaryEntryId, unsafeMoney)
 import Domain.ExchangeRate.Events (Provider (..))
 import Domain.Transaction.Projection (StatusKind (..))
 import Infrastructure.Database.Orphans ()

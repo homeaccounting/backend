@@ -38,25 +38,10 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Database.Persist.Sql (Single (..), rawSql)
+import Domain.Banking.Import (unsafeExternalTransactionId)
+import Domain.Banking.Signal (mkByMcc, parseMcc, unsafeMcc)
 import Domain.Core.Page (Page (..), defaultLimit)
-import Domain.Core.Types
-  ( AccountId,
-    Allocation (..),
-    CategoryId,
-    ContactId,
-    Currency (..),
-    LabelId,
-    Money,
-    TransactionId,
-    TransactionKind (..),
-    TransactionType (..),
-    mkByMcc,
-    mkExpenseAllocations,
-    parseMcc,
-    unsafeExternalTransactionId,
-    unsafeMcc,
-    unsafeMoney,
-  )
+import Domain.Core.Types (AccountId, Allocation (..), CategoryId, ContactId, Currency (..), LabelId, Money, TransactionId, TransactionKind (..), TransactionType (..), mkExpenseAllocations, unsafeMoney)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),

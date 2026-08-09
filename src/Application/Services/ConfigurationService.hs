@@ -84,6 +84,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (ChangeAccountCurrency (..))
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Banking.Types
   ( BankConnectionId,
     BankConnectionName,
@@ -132,34 +133,11 @@ import Domain.Configuration.Defaults
 import Domain.Configuration.Dictionary (DictionaryKind (..), EntryRole)
 import Domain.Configuration.Projection
   ( BankConnection (..),
-    BankingConfiguration (contactMap, expenseCategoryMap, incomeCategoryMap, connections),
+    BankingConfiguration (connections, contactMap, expenseCategoryMap, incomeCategoryMap),
     ConfigurationDefaults (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Domain.Core.Types
-  ( AccountId,
-    AccountRole (..),
-    AccountSubtypeKind,
-    BankProviderCategory,
-    BankProviderContact,
-    CategoryId,
-    ConfigurationId,
-    ContactId,
-    CreatedBy (..),
-    Currency (..),
-    DictionaryEntryId,
-    EntryName,
-    UserId,
-    defaultConfigurationId,
-    isRegular,
-    mkConfigurationId,
-    unAccountId,
-    unConfigurationId,
-    unDictionaryEntryId,
-    unUserId,
-    unsafeDictionaryEntryId,
-    unsafeEntryName,
-  )
+import Domain.Core.Types (AccountId, AccountRole (..), AccountSubtypeKind, CategoryId, ConfigurationId, ContactId, CreatedBy (..), Currency (..), DictionaryEntryId, EntryName, UserId, defaultConfigurationId, isRegular, mkConfigurationId, unAccountId, unConfigurationId, unDictionaryEntryId, unUserId, unsafeDictionaryEntryId, unsafeEntryName)
 import Domain.User.CommandHandler (UserCommand (..))
 import Domain.User.Commands (AssignConfiguration (..))
 import Eventium (CommandHandlerError (..))

@@ -92,6 +92,7 @@ import Database.Persist
   )
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
+import Domain.Banking.Signal (parseBankProviderCategoryKey, parseBankProviderContactKey, renderBankProviderCategoryKey, renderBankProviderContactKey)
 import Domain.Banking.Types (BankConnectionId, BankProviderId, unExternalAccountId, unsafeExternalAccountId)
 import Domain.Configuration.Dictionary (DictionaryEntry (..), DictionaryKind, DictionaryNode (..), EntryRole (..), ItemPath, buildDictionaryTree, groupItemFallbacks, itemPaths)
 import Domain.Configuration.Events
@@ -123,21 +124,7 @@ import Domain.Configuration.Projection
     ConfigurationDefaults (..),
     emptyBankingConfiguration,
   )
-import Domain.Core.Types
-  ( AccountId,
-    ConfigurationId,
-    CreatedBy,
-    Currency,
-    DefaultSubtypeAccounts (..),
-    DictionaryEntryId,
-    EntryName,
-    mkConfigurationIdSafe,
-    parseBankProviderCategoryKey,
-    parseBankProviderContactKey,
-    renderBankProviderCategoryKey,
-    renderBankProviderContactKey,
-    unDefaultSubtypeAccounts,
-  )
+import Domain.Core.Types (AccountId, ConfigurationId, CreatedBy, Currency, DefaultSubtypeAccounts (..), DictionaryEntryId, EntryName, mkConfigurationIdSafe, unDefaultSubtypeAccounts)
 import Domain.Models (AccountingEvent (..))
 import Eventium
   ( EventHandler (..),

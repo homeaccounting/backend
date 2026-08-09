@@ -43,6 +43,7 @@ import Data.Aeson.TH (defaultOptions, deriveJSON)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
 import Data.Time (UTCTime)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Banking.Types
   ( BankConnectionId,
     BankConnectionName,
@@ -50,18 +51,7 @@ import Domain.Banking.Types
     ExternalAccountId,
   )
 import Domain.Configuration.Dictionary (DictionaryKind, EntryRole)
-import Domain.Core.Types
-  ( AccountId,
-    AccountSubtypeKind,
-    BankProviderCategory,
-    BankProviderContact,
-    CategoryId,
-    ContactId,
-    CreatedBy,
-    Currency,
-    DictionaryEntryId,
-    EntryName,
-  )
+import Domain.Core.Types (AccountId, AccountSubtypeKind, CategoryId, ContactId, CreatedBy, Currency, DictionaryEntryId, EntryName)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import Language.Haskell.TH (Name)
 

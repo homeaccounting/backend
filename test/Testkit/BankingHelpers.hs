@@ -18,14 +18,9 @@ module Testkit.BankingHelpers
 where
 
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Domain.Banking.Import (ExternalTransactionId, unsafeExternalTransactionId)
+import Domain.Banking.Signal (BankProviderCategory, mkByCounterparty, mkByLabel)
 import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
-import Domain.Core.Types
-  ( BankProviderCategory,
-    ExternalTransactionId,
-    mkByCounterparty,
-    mkByLabel,
-    unsafeExternalTransactionId,
-  )
 import Infrastructure.Banking.Provider
   ( BankAccount (..),
     BankTransaction (..),

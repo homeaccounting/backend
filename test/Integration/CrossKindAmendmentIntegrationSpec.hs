@@ -26,17 +26,8 @@ import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as Set
 import Data.Time (getCurrentTime)
-import Domain.Core.Types
-  ( AccountId,
-    ImportInfo (..),
-    TransactionId,
-    mkIncome,
-    unAccountId,
-    unDictionaryEntryId,
-    unTransactionId,
-    unsafeExternalTransactionId,
-    unsafeMoney,
-  )
+import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
+import Domain.Core.Types (AccountId, TransactionId, mkIncome, unAccountId, unDictionaryEntryId, unTransactionId, unsafeMoney)
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Infrastructure.App (runAppM)

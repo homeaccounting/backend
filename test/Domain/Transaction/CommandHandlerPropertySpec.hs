@@ -21,6 +21,8 @@ import Data.List.NonEmpty (nonEmpty)
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian)
+import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
+import Domain.Banking.Signal (mkByMcc, unsafeMcc)
 import Domain.Core.Types
 import Domain.Transaction
 import Eventium (latestProjection)

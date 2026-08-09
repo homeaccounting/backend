@@ -21,53 +21,10 @@ import Data.Aeson.Types (Parser, parseEither)
 import Data.UUID (UUID)
 import Database.Persist (PersistField (..), PersistValue (..))
 import Database.Persist.Sql (PersistFieldSql (..), SqlType (SqlString))
+import Domain.Banking.Import (ExternalTransactionId, mkExternalTransactionId, unExternalTransactionId)
 import Domain.Banking.Types (BankConnectionId, BankProviderId)
 import Domain.Configuration.Dictionary (DictionaryKind, EntryRole (..), dictionaryKindSlug, parseDictionaryKind)
-import Domain.Core.Types
-  ( AccountId,
-    AccountRole,
-    AccountStatus,
-    AccountSubtypeKind,
-    AccountType,
-    Allocation (..),
-    Allocations (..),
-    ConfigurationId,
-    CreatedBy,
-    Currency,
-    DefaultSubtypeAccounts,
-    DictionaryEntryId,
-    EntryName,
-    ExchangeRate,
-    ExternalTransactionId,
-    Money,
-    OAuthProvider,
-    RelationKind,
-    TelegramId (..),
-    TransactionId,
-    TransactionType (..),
-    UserId,
-    exchangeRateSource,
-    exchangeRateTarget,
-    exchangeRateValue,
-    mkAccountIdSafe,
-    mkConfigurationIdSafe,
-    mkDictionaryEntryId,
-    mkExchangeRate,
-    mkExternalTransactionId,
-    mkMoney,
-    mkTransactionIdSafe,
-    mkUserIdSafe,
-    moneyCurrency,
-    parseRelationKind,
-    renderRelationKind,
-    unAccountId,
-    unConfigurationId,
-    unDictionaryEntryId,
-    unExternalTransactionId,
-    unMoney,
-    unTransactionId,
-    unUserId,
-  )
+import Domain.Core.Types (AccountId, AccountRole, AccountStatus, AccountSubtypeKind, AccountType, Allocation (..), Allocations (..), ConfigurationId, CreatedBy, Currency, DefaultSubtypeAccounts, DictionaryEntryId, EntryName, ExchangeRate, Money, OAuthProvider, RelationKind, TelegramId (..), TransactionId, TransactionType (..), UserId, exchangeRateSource, exchangeRateTarget, exchangeRateValue, mkAccountIdSafe, mkConfigurationIdSafe, mkDictionaryEntryId, mkExchangeRate, mkMoney, mkTransactionIdSafe, mkUserIdSafe, moneyCurrency, parseRelationKind, renderRelationKind, unAccountId, unConfigurationId, unDictionaryEntryId, unMoney, unTransactionId, unUserId)
 import Domain.ExchangeRate.Events (Provider (..), unProvider)
 import Domain.Transaction.Projection (StatusKind, parseStatusKind, renderStatusKind)
 import Eventium.Store.Sql.Orphans ()

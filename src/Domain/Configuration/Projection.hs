@@ -41,6 +41,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time (UTCTime)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Banking.Types
   ( BankConnectionId,
     BankConnectionName,
@@ -72,17 +73,7 @@ import Domain.Configuration.Events
     DictionaryEntryRenamed (..),
     configurationEvents,
   )
-import Domain.Core.Types
-  ( AccountId,
-    AccountSubtypeKind,
-    BankProviderCategory,
-    BankProviderContact,
-    CategoryId,
-    ContactId,
-    CreatedBy (..),
-    Currency (..),
-    EntryName,
-  )
+import Domain.Core.Types (AccountId, AccountSubtypeKind, CategoryId, ContactId, CreatedBy (..), Currency (..), EntryName)
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (..), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)

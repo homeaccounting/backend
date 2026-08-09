@@ -129,7 +129,8 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), BankProviderCategory, BankProviderContact, CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
+import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))

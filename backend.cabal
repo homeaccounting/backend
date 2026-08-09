@@ -82,6 +82,8 @@ library
       Domain.Account.Errors
       Domain.Account.Events
       Domain.Account.Projection
+      Domain.Banking.Import
+      Domain.Banking.Signal
       Domain.Banking.Types
       Domain.Commands
       Domain.Configuration

@@ -64,6 +64,7 @@ import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Data.ByteString as BS
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Core.Types
 import Domain.Models (AccountingEvent)
 import Domain.Transaction.Projection (TransactionStatus (..))

@@ -5,8 +5,8 @@
 module Infrastructure.Banking.TransferMatcherSpec (spec) where
 
 import Data.Time (addUTCTime)
+import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (unsafeExternalTransactionId)
 import Infrastructure.Banking.Provider
   ( BankTransaction (..),
     TransferMatcher (..),

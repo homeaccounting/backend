@@ -14,6 +14,8 @@ module Domain.Transaction.ReconciliationCommandHandlerSpec (spec) where
 
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
+import Domain.Banking.Import (ExternalTransactionId, unsafeExternalTransactionId)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, mkByMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Core.Types
 import Domain.Transaction
 import Eventium (latestProjection)

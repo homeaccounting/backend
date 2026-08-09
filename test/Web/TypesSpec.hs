@@ -19,16 +19,8 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.UUID as UUID
-import Domain.Core.Types
-  ( Currency (USD),
-    TransactionType (Transfer),
-    mkBankProviderContact,
-    mkByCounterparty,
-    mkByLabel,
-    mkByMcc,
-    unsafeMcc,
-    unsafeMoney,
-  )
+import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty, mkByLabel, mkByMcc, unsafeMcc)
+import Domain.Core.Types (Currency (USD), TransactionType (Transfer), unsafeMoney)
 import RIO
 import Test.Hspec
 import Testkit.BankingHelpers (byCounterparty)

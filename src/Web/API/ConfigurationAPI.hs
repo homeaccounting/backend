@@ -69,6 +69,7 @@ import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:), (.:?), 
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
+import Domain.Banking.Signal (parseBankProviderCategoryKey, parseBankProviderContactKey, renderBankProviderCategoryKey, renderBankProviderContactKey)
 import Domain.Banking.Types
   ( BankConnectionId,
     BankProviderCredential (..),
@@ -87,22 +88,7 @@ import Domain.Configuration.Projection
     ConfigurationDefaults (..),
   )
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types
-  ( AccountSubtypeKind,
-    DictionaryEntryId,
-    UserId,
-    mkAccountId,
-    mkDictionaryEntryId,
-    mkEntryName,
-    parseBankProviderCategoryKey,
-    parseBankProviderContactKey,
-    parseCurrency,
-    renderBankProviderCategoryKey,
-    renderBankProviderContactKey,
-    unAccountId,
-    unDictionaryEntryId,
-    unEntryName,
-  )
+import Domain.Core.Types (AccountSubtypeKind, DictionaryEntryId, UserId, mkAccountId, mkDictionaryEntryId, mkEntryName, parseCurrency, unAccountId, unDictionaryEntryId, unEntryName)
 import Infrastructure.App (AppM, HasBankProviderRegistry (..), bankingFeatureEnabled, runDb)
 import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),

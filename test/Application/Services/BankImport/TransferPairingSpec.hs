@@ -10,8 +10,9 @@ import Application.Services.BankImport.TransferPairing
     pairInternalTransfers,
   )
 import Data.Time (addUTCTime)
+import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
-import Domain.Core.Types (AccountId, unsafeExternalTransactionId)
+import Domain.Core.Types (AccountId)
 import Infrastructure.Banking.Provider
   ( BankTransaction (..),
     TransferMatcher,

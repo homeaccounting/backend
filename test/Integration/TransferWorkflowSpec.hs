@@ -47,22 +47,8 @@ import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (CreateAccountAccountCommand))
 import Domain.Account.Commands (CreateAccount (..))
-import Domain.Core.Types
-  ( AccountAccess (..),
-    AccountRole (..),
-    AccountType (..),
-    Currency (..),
-    DictionaryEntryId,
-    ImportInfo (..),
-    TransactionType (..),
-    defaultCash,
-    unsafeAccountId,
-    unsafeDictionaryEntryId,
-    unsafeExternalTransactionId,
-    unsafeMoney,
-    unsafeTransactionId,
-    unsafeUserId,
-  )
+import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
+import Domain.Core.Types (AccountAccess (..), AccountRole (..), AccountType (..), Currency (..), DictionaryEntryId, TransactionType (..), defaultCash, unsafeAccountId, unsafeDictionaryEntryId, unsafeMoney, unsafeTransactionId, unsafeUserId)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.CommandHandler
   ( TransactionCommand

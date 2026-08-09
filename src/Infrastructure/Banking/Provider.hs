@@ -40,8 +40,10 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time (NominalDiffTime, UTCTime, diffUTCTime)
+import Domain.Banking.Import (ExternalTransactionId)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Banking.Types (BankProviderCredential, BankProviderId, ExternalAccountId)
-import Domain.Core.Types (BankProviderCategory, BankProviderContact, CategoryId, ExternalTransactionId)
+import Domain.Core.Types (CategoryId)
 import Domain.Transaction.Matching.Transfer (TransferDirection (..), TransferLeg (..), isTransferMatch)
 import RIO (Bool (..), Either, Eq, IO, Int, Maybe (..), Monoid (..), Ord, Rational, Semigroup (..), Show, abs, isJust, otherwise, ($), (&&), (/=), (<), (<=), (==), (||))
 

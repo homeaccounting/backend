@@ -5,8 +5,8 @@ module Infrastructure.Banking.CsvSpec (spec) where
 
 import qualified Data.Csv as Csv
 import Data.Time (UTCTime (..), fromGregorian)
+import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (unsafeExternalTransactionId)
 import Infrastructure.Banking.Csv (comma, csvStatementParser)
 import Infrastructure.Banking.Provider (BankTransaction (..), ParseError (..), RowError (..))
 import RIO

@@ -94,34 +94,11 @@ import Database.Persist
   )
 import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationSilent)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
+import Domain.Banking.Import (importInfoCategory, importInfoContact)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, parseBankProviderCategoryKey, parseBankProviderContactKey, renderBankProviderCategoryKey, renderBankProviderContactKey)
 import Domain.Core.Page (Page (..))
 import Domain.Core.Range (Range (..))
-import Domain.Core.Types
-  ( AccountId,
-    Allocation (..),
-    BankProviderCategory,
-    BankProviderContact,
-    ContactId,
-    DictionaryEntryId,
-    ExchangeRate,
-    LabelId,
-    Money,
-    RelationKind (..),
-    TransactionId,
-    TransactionKind (..),
-    TransactionType,
-    allAllocations,
-    allocationsOf,
-    importInfoCategory,
-    importInfoContact,
-    kindOf,
-    mkTransactionIdSafe,
-    parseBankProviderCategoryKey,
-    parseBankProviderContactKey,
-    renderBankProviderCategoryKey,
-    renderBankProviderContactKey,
-    replaceAllocations,
-  )
+import Domain.Core.Types (AccountId, Allocation (..), ContactId, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), TransactionId, TransactionKind (..), TransactionType, allAllocations, allocationsOf, kindOf, mkTransactionIdSafe, replaceAllocations)
 -- Event record types imported with @(..)@ so their field labels are in scope —
 -- 'OverloadedRecordDot' (@evt.sourceAccountId@ etc.) needs the label visible
 -- under @DuplicateRecordFields@, since 'TransactionData' shares some names.

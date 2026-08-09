@@ -25,19 +25,14 @@ import Application.ReadModels.Configuration
   )
 import qualified Data.Map.Strict as Map
 import qualified Data.UUID as UUID
+import Domain.Banking.Signal (unsafeBankProviderContact)
 import Domain.Configuration.Events
   ( BankProviderContactMapSet (..),
     BankProviderIncomeCategoryMapSet (..),
     ConfigurationCreated (..),
   )
 import Domain.Configuration.Projection (BankingConfiguration (..))
-import Domain.Core.Types
-  ( ConfigurationId,
-    CreatedBy (..),
-    Currency (..),
-    unConfigurationId,
-    unsafeBankProviderContact,
-  )
+import Domain.Core.Types (ConfigurationId, CreatedBy (..), Currency (..), unConfigurationId)
 import Domain.Models (AccountingEvent (..))
 import qualified Eventium
 import Infrastructure.App (AppEnv)

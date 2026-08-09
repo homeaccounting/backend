@@ -84,44 +84,12 @@ import qualified Data.Set as Set
 import Data.Time (Day, NominalDiffTime, UTCTime, getCurrentTime, utctDay)
 import Data.UUID (UUID)
 import qualified Data.UUID.V4 as UUID
+import Domain.Banking.Import (ExternalTransactionId)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Page (Page)
-import Domain.Core.Types
-  ( AccountId,
-    AccountType (..),
-    Allocation (..),
-    Allocations (..),
-    BankProviderCategory,
-    BankProviderContact,
-    ContactId,
-    Currency,
-    DictionaryEntryId,
-    ExchangeRate,
-    ExternalTransactionId,
-    LabelId,
-    Money,
-    RelationKind (..),
-    RelationSpec (..),
-    TransactionId,
-    TransactionKind (..),
-    TransactionType (..),
-    UserId,
-    allocationsOf,
-    convert,
-    deriveTransactionKind,
-    exchangeRateValue,
-    kindOf,
-    mkExchangeRate,
-    mkExpense,
-    mkIncome,
-    mkMoney,
-    mkTransactionId,
-    moneyCurrency,
-    unDictionaryEntryId,
-    unMoney,
-    unTransactionId,
-  )
+import Domain.Core.Types (AccountId, AccountType (..), Allocation (..), Allocations (..), ContactId, Currency, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), RelationSpec (..), TransactionId, TransactionKind (..), TransactionType (..), UserId, allocationsOf, convert, deriveTransactionKind, exchangeRateValue, kindOf, mkExchangeRate, mkExpense, mkIncome, mkMoney, mkTransactionId, moneyCurrency, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Models
   ( AccountingEvent
       ( TransactionAmendmentCompletedEvent,

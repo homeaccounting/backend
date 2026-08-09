@@ -83,37 +83,13 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text.Match (normalizeName)
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, utctDay)
+import Domain.Banking.Import (ExternalTransactionId, ImportInfo (..))
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, renderBankProviderCategoryKey, renderBankProviderContactKey)
 import Domain.Banking.Types (ExternalAccountId, unExternalAccountId)
 import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
 import Domain.Configuration.Projection (BankingConfiguration (..), ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..), renderDomainError)
-import Domain.Core.Types
-  ( AccountId,
-    BankProviderCategory,
-    BankProviderContact,
-    CategoryId,
-    ContactId,
-    Currency,
-    ExternalTransactionId,
-    ImportInfo (..),
-    Money,
-    TransactionId,
-    TransactionKind (..),
-    TransactionType (..),
-    UserId,
-    currencyFromNumericCode,
-    kindOf,
-    mkAllocation,
-    mkExchangeRate,
-    mkExpenseAllocations,
-    mkIncomeAllocations,
-    mkMoney,
-    moneyCurrency,
-    renderBankProviderCategoryKey,
-    renderBankProviderContactKey,
-    unEntryName,
-    unMoney,
-  )
+import Domain.Core.Types (AccountId, CategoryId, ContactId, Currency, Money, TransactionId, TransactionKind (..), TransactionType (..), UserId, currencyFromNumericCode, kindOf, mkAllocation, mkExchangeRate, mkExpenseAllocations, mkIncomeAllocations, mkMoney, moneyCurrency, unEntryName, unMoney)
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Domain.Transaction.Matching.Leg (Leg (..))
 import Domain.Transaction.Matching.Reconciliation (ReconciliationOutcome (..), reconcile)

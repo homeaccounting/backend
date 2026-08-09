@@ -19,18 +19,9 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
-import Domain.Core.Types
-  ( ImportInfo (..),
-    RelationKind (..),
-    TransactionId,
-    TransactionType (Transfer),
-    mkByMcc,
-    unsafeBankProviderContact,
-    unsafeDictionaryEntryId,
-    unsafeExternalTransactionId,
-    unsafeMcc,
-    unsafeTransactionId,
-  )
+import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
+import Domain.Banking.Signal (mkByMcc, unsafeBankProviderContact, unsafeMcc)
+import Domain.Core.Types (RelationKind (..), TransactionId, TransactionType (Transfer), unsafeDictionaryEntryId, unsafeTransactionId)
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
     TransactionAmendmentInitiated (..),

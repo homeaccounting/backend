@@ -22,15 +22,9 @@ module Infrastructure.Banking.CategoryDefaults
 where
 
 import qualified Data.Map.Strict as Map
+import Domain.Banking.Signal (BankProviderCategory, MCC, mkByLabel, mkByMcc, unsafeMcc)
 import Domain.Configuration.Defaults (DefaultEntry (entryId), ExpenseDefaults (..), expense)
-import Domain.Core.Types
-  ( BankProviderCategory,
-    CategoryId,
-    MCC,
-    mkByLabel,
-    mkByMcc,
-    unsafeMcc,
-  )
+import Domain.Core.Types (CategoryId)
 #ifdef PROVIDER_PRIVATBANK
 import qualified Infrastructure.Banking.PrivatBank as PrivatBank
 #endif

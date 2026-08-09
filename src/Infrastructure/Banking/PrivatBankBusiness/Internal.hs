@@ -20,8 +20,10 @@ where
 import qualified Data.Text as T
 import Data.Time (Day, TimeOfDay, UTCTime (..), timeOfDayToTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Domain.Banking.Import (mkExternalTransactionId)
+import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (currencyNumericCode, mkBankProviderContact, mkByCounterparty, mkExternalTransactionId, parseCurrency)
+import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, parseSignedDecimal, stripTrailingComma)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)

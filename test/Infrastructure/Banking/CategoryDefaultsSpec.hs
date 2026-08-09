@@ -6,13 +6,13 @@ module Infrastructure.Banking.CategoryDefaultsSpec (spec) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import Domain.Banking.Signal (mkByLabel, mkByMcc, renderMcc, unsafeMcc)
 import Domain.Configuration.Defaults
   ( DefaultEntry (entryId),
     ExpenseDefaults (beauty, dining, electronics, foodAndDining, groceries, healthWellness, household, housing, leisureTravel, pets, shopping, shoppingGoods, utilities),
     defaultExpenseCategories,
     expense,
   )
-import Domain.Core.Types (mkByLabel, mkByMcc, renderMcc, unsafeMcc)
 import Infrastructure.Banking.CategoryDefaults (defaultBankProviderExpenseCategoryMap, defaultMccExpenseCategoryMap)
 import qualified Infrastructure.Banking.PrivatBank as PrivatBank
 import RIO

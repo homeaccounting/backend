@@ -18,8 +18,9 @@ where
 import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
 import Data.Ratio ((%))
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Domain.Banking.Import (mkExternalTransactionId)
+import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty, mkByMcc, mkMcc)
 import Domain.Banking.Types (ExternalAccountId)
-import Domain.Core.Types (mkBankProviderContact, mkByCounterparty, mkByMcc, mkExternalTransactionId, mkMcc)
 import Infrastructure.Banking.Provider
 import RIO
 

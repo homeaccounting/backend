@@ -30,17 +30,10 @@ import Application.Services.TransactionService
   )
 import qualified Data.Set as Set
 import qualified Data.UUID as UUID
+import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types
-  ( TransactionId,
-    defaultCash,
-    unTransactionId,
-    unsafeEntryName,
-    unsafeExternalTransactionId,
-    unsafeMoney,
-    unsafeTransactionId,
-  )
+import Domain.Core.Types (TransactionId, defaultCash, unTransactionId, unsafeEntryName, unsafeMoney, unsafeTransactionId)
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction
   ( ReconcileTransactionImport (..),

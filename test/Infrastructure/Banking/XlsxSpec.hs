@@ -7,8 +7,8 @@ import qualified Codec.Archive.Zip as Zip
 import qualified Data.ByteString.Lazy as BSL
 import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.Vector as V
+import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Types (unsafeExternalAccountId)
-import Domain.Core.Types (unsafeExternalTransactionId)
 import Infrastructure.Banking.Provider (BankTransaction (..), ParseError (..), RowError (..))
 import Infrastructure.Banking.Xlsx
   ( colRefIndex,

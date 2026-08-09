@@ -58,7 +58,8 @@ import Database.Persist.TH
     share,
     sqlSettings,
   )
-import Domain.Core.Types (ExternalTransactionId, TransactionId, importInfoExternalTransactionIds, mkTransactionIdSafe)
+import Domain.Banking.Import (ExternalTransactionId, importInfoExternalTransactionIds)
+import Domain.Core.Types (TransactionId, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransactionImportReconciled (..), TransactionPostingInitiated (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, ReadModel (..))

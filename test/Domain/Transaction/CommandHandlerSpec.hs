@@ -19,6 +19,7 @@ module Domain.Transaction.CommandHandlerSpec (spec) where
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID.V4 as UUID
+import Domain.Banking.Import (ImportInfo (..), importInfoExternalTransactionIds, unsafeExternalTransactionId)
 import Domain.Core.Types
 import Domain.Transaction
 import Eventium (latestProjection)

@@ -15,21 +15,10 @@ module Infrastructure.Eventium.SchemaSpec (spec) where
 import Data.Aeson (Value (..), decodeStrict, toJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Map.Strict as Map
+import Domain.Banking.Import (ExternalTransactionId, importInfoCategory, importInfoContact, importInfoExternalTransactionIds, unsafeExternalTransactionId)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, mkByLabel, mkByMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Configuration.Events (BankProviderContactMapSet (..), BankProviderExpenseCategoryMapSet (..), BankProviderIncomeCategoryMapSet (..))
-import Domain.Core.Types
-  ( BankProviderCategory,
-    BankProviderContact,
-    ExternalTransactionId,
-    TransactionType (..),
-    importInfoCategory,
-    importInfoContact,
-    importInfoExternalTransactionIds,
-    mkByLabel,
-    mkByMcc,
-    unsafeBankProviderContact,
-    unsafeExternalTransactionId,
-    unsafeMcc,
-  )
+import Domain.Core.Types (TransactionType (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentInitiated (..),

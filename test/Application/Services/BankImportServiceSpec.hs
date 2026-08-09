@@ -48,6 +48,8 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Database.Persist (insert_)
 import Domain.Account.Commands (CreateAccount (..))
+import Domain.Banking.Import (ExternalTransactionId, ImportInfo (..), unsafeExternalTransactionId)
+import Domain.Banking.Signal (mkByLabel, mkByMcc, parseMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
 import Domain.Configuration.Defaults
   ( DefaultEntry (..),
@@ -65,31 +67,7 @@ import Domain.Configuration.Projection
     emptyBankingConfiguration,
     emptyConfigurationDefaults,
   )
-import Domain.Core.Types
-  ( AccountId,
-    AccountType (..),
-    CreatedBy (..),
-    Currency (..),
-    DictionaryEntryId,
-    ExternalTransactionId,
-    ImportInfo (..),
-    Money,
-    TransactionId,
-    TransactionKind (..),
-    TransactionType (..),
-    UserId,
-    defaultBankAccount,
-    mkByLabel,
-    mkByMcc,
-    mkMoney,
-    parseMcc,
-    unTransactionId,
-    unsafeBankProviderContact,
-    unsafeDictionaryEntryId,
-    unsafeEntryName,
-    unsafeExternalTransactionId,
-    unsafeMcc,
-  )
+import Domain.Core.Types (AccountId, AccountType (..), CreatedBy (..), Currency (..), DictionaryEntryId, Money, TransactionId, TransactionKind (..), TransactionType (..), UserId, defaultBankAccount, mkMoney, unTransactionId, unsafeDictionaryEntryId, unsafeEntryName)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionImportReconciled (..),
@@ -114,6 +92,7 @@ import Infrastructure.Eventium (accountingGlobalEventStoreReader)
 import RIO
 import RIO.List (find)
 import Test.Hspec
+import Testkit.BankingHelpers (byCounterparty)
 import qualified Testkit.Fixtures as Fixtures
 import Testkit.Helpers
   ( expenseSingletonAllocation,
@@ -126,7 +105,6 @@ import Testkit.Helpers
     singletonExpense,
     singletonIncome,
   )
-import Testkit.BankingHelpers (byCounterparty)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
 -- -----------------------------------------------------------------------------

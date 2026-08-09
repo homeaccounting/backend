@@ -18,6 +18,7 @@
 module Domain.Configuration.CommandHandlerSpec (spec) where
 
 import qualified Data.Map.Strict as Map
+import Domain.Banking.Signal (mkByMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Banking.Types (BankConnectionId, unsafeBankConnectionId, unsafeBankProviderId, unsafeExternalAccountId)
 import Domain.Configuration
 import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)

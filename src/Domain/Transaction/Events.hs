@@ -52,7 +52,9 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Domain.Core.Types (AccountId, Allocations, BankProviderCategory, BankProviderContact, ContactId, ExchangeRate, ExternalTransactionId, ImportInfo, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
+import Domain.Banking.Import (ExternalTransactionId, ImportInfo)
+import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
+import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------

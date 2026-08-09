@@ -7,8 +7,9 @@ module Infrastructure.Banking.PrivatBankBusinessSpec (spec) where
 import qualified Data.Map.Strict as Map
 import Data.Ratio ((%))
 import Data.Time (TimeOfDay (..), UTCTime (..), addUTCTime, fromGregorian, timeOfDayToTime)
+import Domain.Banking.Import (unExternalTransactionId, unsafeExternalTransactionId)
+import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty)
 import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
-import Domain.Core.Types (mkBankProviderContact, mkByCounterparty, unExternalTransactionId, unsafeExternalTransactionId)
 import Infrastructure.Banking.PrivatBankBusiness (descriptor)
 import Infrastructure.Banking.PrivatBankBusiness.Internal (fxSignal, parsePrivatBankBusinessXlsx)
 import Infrastructure.Banking.Provider

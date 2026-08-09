@@ -5,8 +5,8 @@ module Infrastructure.Banking.PrivatBankSpec (spec) where
 
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
+import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unBankProviderId)
-import Domain.Core.Types (mkBankProviderContact, mkByLabel)
 import Infrastructure.Banking.PrivatBank (descriptor)
 import Infrastructure.Banking.PrivatBank.Internal (counterpartyToken, parsePrivatBankCsv)
 import Infrastructure.Banking.Provider
