@@ -150,14 +150,6 @@ resolveAccountId accId = do
   uuid <- maybe (throwString "invalid account id") pure (UUID.fromText accId)
   either (throwString . T.unpack) pure (mkAccountId uuid)
 
--- | 'Money' amounts and 'ExchangeRate' values serialize through 'Double' (see
--- their 'Data.Aeson.ToJSON'/'FromJSON' in 'Domain.Core.Types'), so a value
--- read back from the event store is the nearest 'Double' to the exact decimal.
--- Assertions on queried amounts/rates compare against the same round-trip so
--- they pin the real value rather than an unreachable exact rational.
-viaDouble :: Rational -> Rational
-viaDouble = toRational . (fromRational :: Rational -> Double)
-
 -- -----------------------------------------------------------------------------
 -- Synthetic XLSX fixtures (no real IBANs, names, tax ids, or purposes)
 -- -----------------------------------------------------------------------------
@@ -365,12 +357,13 @@ crossCurrencySpec =
             -- Debit (USD, negative) leg is the source; credit (UAH) is target.
             txData.sourceAccountId `shouldBe` accountIdUsd
             txData.targetAccountId `shouldBe` accountIdUah
-            unMoney txData.sourceAmount `shouldBe` viaDouble (91899 % 100)
+            unMoney txData.sourceAmount `shouldBe` (91899 % 100)
             moneyCurrency txData.sourceAmount `shouldBe` USD
-            unMoney txData.targetAmount `shouldBe` viaDouble (4105128 % 100)
+            unMoney txData.targetAmount `shouldBe` (4105128 % 100)
             moneyCurrency txData.targetAmount `shouldBe` UAH
-            -- Implied rate = target magnitude / source magnitude ≈ 44.67.
-            fmap exchangeRateValue txData.exchangeRate `shouldBe` Just (viaDouble (4105128 % 91899))
+            -- Implied rate = target magnitude / source magnitude ≈ 44.67. The
+            -- rate is a non-terminating decimal, preserved exactly end-to-end.
+            fmap exchangeRateValue txData.exchangeRate `shouldBe` Just (4105128 % 91899)
             fmap exchangeRateSource txData.exchangeRate `shouldBe` Just USD
             fmap exchangeRateTarget txData.exchangeRate `shouldBe` Just UAH
           other -> expectationFailure $ "expected exactly one transfer row, got " <> show (length other)
@@ -408,8 +401,8 @@ sameCurrencySpec =
             txData.transactionType `shouldBe` Transfer
             txData.sourceAccountId `shouldBe` accountIdA
             txData.targetAccountId `shouldBe` accountIdB
-            unMoney txData.sourceAmount `shouldBe` viaDouble (50000 % 100)
-            unMoney txData.targetAmount `shouldBe` viaDouble (50000 % 100)
+            unMoney txData.sourceAmount `shouldBe` (50000 % 100)
+            unMoney txData.targetAmount `shouldBe` (50000 % 100)
             moneyCurrency txData.sourceAmount `shouldBe` UAH
             moneyCurrency txData.targetAmount `shouldBe` UAH
             txData.exchangeRate `shouldBe` Nothing

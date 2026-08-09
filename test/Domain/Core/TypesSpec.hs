@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -17,6 +18,7 @@ module Domain.Core.TypesSpec (spec) where
 import Data.Aeson (Result (..), fromJSON, toJSON)
 import qualified Data.Aeson as Aeson
 import qualified Data.Map.Strict as Map
+import Data.Ratio ((%))
 import Data.Text (isInfixOf)
 import qualified Data.Text as T
 import Data.UUID (nil)
@@ -27,12 +29,13 @@ import Domain.Core.Types
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
-import Test.QuickCheck (NonEmptyList (..))
+import Test.QuickCheck (NonEmptyList (..), (===))
 import Testkit.Helpers
 
 spec :: Spec
 spec = do
   moneySpec
+  exchangeRateSpec
   accountIdSpec
   transactionIdSpec
   externalTransactionIdSpec
@@ -158,6 +161,33 @@ moneySpec = describe "Money" $ do
       forM_ currencies $ \cur -> do
         let encoded = toJSON cur
         fromJSON encoded `shouldBe` Success cur
+
+  describe "JSON" $ do
+    it "round-trips a non-Double-representable amount exactly" $ do
+      -- 918.99 is not a dyadic rational, so a Double hop would corrupt it.
+      let m = unsafeMoney USD (91899 % 100)
+      Aeson.decode (Aeson.encode m) `shouldBe` Just m
+
+    prop "round-trips any amount exactly" $ \(n :: Integer) (d :: Integer) ->
+      let m = unsafeMoney UAH (n % (abs d + 1))
+       in Aeson.decode (Aeson.encode m) === Just m
+
+-- -----------------------------------------------------------------------------
+-- ExchangeRate Tests
+-- -----------------------------------------------------------------------------
+
+exchangeRateSpec :: Spec
+exchangeRateSpec = describe "ExchangeRate" $ do
+  describe "JSON" $ do
+    it "round-trips a non-terminating-decimal rate exactly" $ do
+      -- 4105128 % 91899 is a repeating decimal, unrepresentable as Double
+      -- or as a finite decimal string.
+      let er = unsafeExchangeRate UAH USD (4105128 % 91899)
+      Aeson.decode (Aeson.encode er) `shouldBe` Just er
+
+    prop "round-trips any positive rate exactly" $ \(n :: Integer) (d :: Integer) ->
+      let er = unsafeExchangeRate UAH USD ((abs n + 1) % (abs d + 1))
+       in Aeson.decode (Aeson.encode er) === Just er
 
 -- -----------------------------------------------------------------------------
 -- AccountId Tests

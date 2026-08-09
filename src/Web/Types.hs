@@ -94,6 +94,11 @@ module Web.Types
     toAccountSubtype,
 
     -- ** From Domain Types
+    MoneyDTO (..),
+    toMoneyDTO,
+    AllocationsDTO (..),
+    toAllocationsDTO,
+    fromAllocationsDTO,
     fromAccountData,
     fromTransaction,
     fromTransactionData,
@@ -498,7 +503,7 @@ instance FromJSON SetTransactionContactRequest
 -- the categorised currency. The transaction's kind (Income vs Expense)
 -- is structurally preserved — only the allocation breakdown changes.
 newtype ChangeTransactionAllocationsRequest = ChangeTransactionAllocationsRequest
-  { newAllocations :: Allocations
+  { newAllocations :: AllocationsDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -570,7 +575,7 @@ data AmendTransactionRequest = AmendTransactionRequest
     targetAmount :: Double,
     targetCurrency :: Text,
     exchangeRate :: Maybe Double,
-    newAllocations :: Maybe Allocations,
+    newAllocations :: Maybe AllocationsDTO,
     contactId :: Maybe UUID
   }
   deriving (Show, Eq, Generic)
@@ -591,7 +596,7 @@ instance FromJSON AmendTransactionRequest
 -- (@{ "amount": <number>, "currency": <text> }@).
 data AllocationResponse = AllocationResponse
   { categoryId :: Text,
-    amount :: Money,
+    amount :: MoneyDTO,
     comment :: Maybe Text
   }
   deriving (Show, Eq, Generic)
@@ -787,7 +792,7 @@ instance FromJSON TransactionStatusResponse
 -- base currency. May be <= 0 when reimbursements exceed spend.
 data CategorySpend = CategorySpend
   { categoryId :: Text,
-    total :: Money
+    total :: MoneyDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -798,7 +803,7 @@ instance FromJSON CategorySpend
 -- | GET /api/reports/spending-by-category
 data SpendingByCategoryResponse = SpendingByCategoryResponse
   { categories :: [CategorySpend],
-    total :: Money
+    total :: MoneyDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -808,9 +813,9 @@ instance FromJSON SpendingByCategoryResponse
 
 -- | GET /api/reports/income-vs-expense (all amounts in base currency)
 data IncomeVsExpenseResponse = IncomeVsExpenseResponse
-  { income :: Money,
-    expense :: Money,
-    net :: Money
+  { income :: MoneyDTO,
+    expense :: MoneyDTO,
+    net :: MoneyDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -821,8 +826,8 @@ instance FromJSON IncomeVsExpenseResponse
 -- | One owned account's contribution to net worth.
 data AccountNetWorth = AccountNetWorth
   { accountId :: UUID,
-    balance :: Money,
-    baseBalance :: Money
+    balance :: MoneyDTO,
+    baseBalance :: MoneyDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -833,7 +838,7 @@ instance FromJSON AccountNetWorth
 -- | GET /api/reports/net-worth
 data NetWorthResponse = NetWorthResponse
   { accounts :: [AccountNetWorth],
-    total :: Money
+    total :: MoneyDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -929,6 +934,83 @@ toDomainMoney cur d = case mkMoney cur (toRational d) of
 -- 100.0
 fromDomainMoney :: Money -> Double
 fromDomainMoney = fromRational . unMoney
+
+-- | The public-API projection of a domain 'Money'.
+--
+-- Serializes as @{ "amount": <number>, "currency": <text> }@ with the amount
+-- as a JSON number ('Double') — the historical, client-facing wire shape.
+--
+-- This is deliberately distinct from the domain 'Money' JSON instance, which
+-- now encodes the /exact/ 'Rational' (see 'Domain.Core.Types'). The split
+-- keeps two contracts honest at once: the event store persists the exact
+-- value, while the API keeps its stable numeric shape for existing clients.
+-- As a boundary DTO the 'Double' hop is a display projection (safe today for
+-- 2-decimal currencies). Introducing a precise money wire format (e.g. a
+-- decimal string or integer minor units with a per-currency rounding policy)
+-- for >2-decimal currencies is a future, additive, versioned change — and one
+-- de-risked by the exact event store, since no stored data would migrate.
+newtype MoneyDTO = MoneyDTO Money
+  deriving (Show, Eq, Generic)
+
+-- | Wrap a domain 'Money' as its public-API projection.
+toMoneyDTO :: Money -> MoneyDTO
+toMoneyDTO = MoneyDTO
+
+instance ToJSON MoneyDTO where
+  toJSON (MoneyDTO m) =
+    object
+      [ "amount" .= fromDomainMoney m,
+        "currency" .= moneyCurrency m
+      ]
+
+instance FromJSON MoneyDTO where
+  parseJSON = withObject "MoneyDTO" $ \o -> do
+    d <- o .: "amount"
+    cur <- o .: "currency"
+    pure (MoneyDTO (toDomainMoney cur d))
+
+-- | The public-API view of a domain 'Allocations'.
+--
+-- Structurally identical to the domain type — two buckets of category slices —
+-- but each slice's @amount@ serializes through 'MoneyDTO' (a numeric JSON
+-- @{ "amount": <number>, "currency": <text> }@), preserving the historical
+-- client wire shape. This exists for the same reason as 'MoneyDTO': the
+-- domain 'Allocations' / 'Money' JSON instances are now exact (for the event
+-- store), so request/response DTOs that carry allocations project through this
+-- numeric view instead of leaking the exact stored shape onto the API.
+newtype AllocationsDTO = AllocationsDTO Allocations
+  deriving (Show, Eq, Generic)
+
+-- | Project a domain 'Allocations' to its public-API view.
+toAllocationsDTO :: Allocations -> AllocationsDTO
+toAllocationsDTO = AllocationsDTO
+
+-- | Recover the domain 'Allocations' from its public-API view.
+fromAllocationsDTO :: AllocationsDTO -> Allocations
+fromAllocationsDTO (AllocationsDTO a) = a
+
+instance ToJSON AllocationsDTO where
+  toJSON (AllocationsDTO (Allocations incs exps)) =
+    object ["incomes" .= map allocView incs, "expenses" .= map allocView exps]
+    where
+      allocView (Allocation cid amt cmt) =
+        object
+          [ "categoryId" .= cid,
+            "amount" .= toMoneyDTO amt,
+            "comment" .= cmt
+          ]
+
+instance FromJSON AllocationsDTO where
+  parseJSON = withObject "AllocationsDTO" $ \o -> do
+    incs <- o .: "incomes" >>= traverse parseAlloc
+    exps <- o .: "expenses" >>= traverse parseAlloc
+    pure (AllocationsDTO (Allocations incs exps))
+    where
+      parseAlloc = withObject "Allocation" $ \o -> do
+        cid <- o .: "categoryId"
+        MoneyDTO m <- o .: "amount"
+        cmt <- o .:? "comment"
+        pure (Allocation cid m cmt)
 
 -- | Converts CreateAccountRequest to Domain CreateAccount command.
 --
@@ -1257,7 +1339,7 @@ allocationsResponseOf tt = case allocationsOf tt of
     toAllocationResponse (Allocation cid amt cmt) =
       AllocationResponse
         { categoryId = T.pack $ UUID.toString $ unDictionaryEntryId cid,
-          amount = amt,
+          amount = toMoneyDTO amt,
           comment = cmt
         }
 

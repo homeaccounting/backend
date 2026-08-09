@@ -52,6 +52,7 @@ import Web.Types
     IncomeVsExpenseResponse (..),
     NetWorthResponse (..),
     SpendingByCategoryResponse (..),
+    toMoneyDTO,
   )
 
 -- -----------------------------------------------------------------------------
@@ -117,10 +118,10 @@ spendingByCategoryHandler user mFrom mTo = do
   pure
     SpendingByCategoryResponse
       { categories =
-          [ CategorySpend {categoryId = renderCategoryId cid, total = m}
+          [ CategorySpend {categoryId = renderCategoryId cid, total = toMoneyDTO m}
           | (cid, m) <- cats
           ],
-        total = total
+        total = toMoneyDTO total
       }
 
 -- | Handler for GET /api/reports/income-vs-expense.
@@ -131,7 +132,12 @@ incomeVsExpenseHandler ::
   AppM IncomeVsExpenseResponse
 incomeVsExpenseHandler user mFrom mTo = do
   (income, expense, net) <- ReportingService.incomeVsExpense user.userId mFrom mTo
-  pure IncomeVsExpenseResponse {income = income, expense = expense, net = net}
+  pure
+    IncomeVsExpenseResponse
+      { income = toMoneyDTO income,
+        expense = toMoneyDTO expense,
+        net = toMoneyDTO net
+      }
 
 -- | Handler for GET /api/reports/net-worth.
 netWorthHandler :: AuthenticatedUser -> AppM NetWorthResponse
@@ -141,10 +147,14 @@ netWorthHandler user = do
   pure
     NetWorthResponse
       { accounts =
-          [ AccountNetWorth {accountId = renderAccountId aid, balance = bal, baseBalance = bb}
+          [ AccountNetWorth
+              { accountId = renderAccountId aid,
+                balance = toMoneyDTO bal,
+                baseBalance = toMoneyDTO bb
+              }
           | (aid, bal, bb) <- rows
           ],
-        total = total
+        total = toMoneyDTO total
       }
 
 -- | Render a category id as the dictionary entry UUID in text form. Mirrors

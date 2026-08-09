@@ -102,6 +102,7 @@ import Web.Types
     TransactionResponse,
     TransferRequest (..),
     ValidationErrorResponse (..),
+    fromAllocationsDTO,
     fromTransactionData,
     parseContactId,
     parseLabelIds,
@@ -414,7 +415,7 @@ setAllocationsHandler ::
   AppM TransactionResponse
 setAllocationsHandler user rawId req = do
   transactionId <- validateField "id" $ mkTransactionId rawId
-  result <- TransactionService.setTransactionAllocations user.userId transactionId req.newAllocations
+  result <- TransactionService.setTransactionAllocations user.userId transactionId (fromAllocationsDTO req.newAllocations)
   case result of
     Right td -> pure $ fromTransactionData transactionId td
     Left err -> throwDomainError err
@@ -479,7 +480,7 @@ amendTransactionHandler user rawId req = do
             newSourceAmount = srcMoney,
             newTargetAmount = tgtMoney,
             newExchangeRate = maybeRate,
-            newAllocations = req.newAllocations,
+            newAllocations = fromAllocationsDTO <$> req.newAllocations,
             -- Placeholder; overwritten by synthesiseAmendmentTransactionType
             -- in TransactionService.amendTransaction before dispatch. The
             -- DTO does not expose this field; it's service-internal.

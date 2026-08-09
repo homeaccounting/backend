@@ -160,6 +160,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import GHC.Generics (Generic)
+import Text.Read (readMaybe)
 
 -- -----------------------------------------------------------------------------
 -- Currency Type
@@ -243,21 +244,28 @@ moneyCurrency :: Money -> Currency
 moneyCurrency (Money _ c) = c
 
 -- | JSON serialization for Money.
--- Serializes as an object with amount and currency fields.
+--
+-- Serializes as an object with amount and currency fields. The amount is
+-- encoded as the exact 'Rational' rendered via 'show' (e.g. @"91899 % 100"@),
+-- /not/ as a lossy 'Double'. This is what makes the persisted event-store
+-- shape honour the type's exact-arithmetic invariant: an amount round-trips
+-- through JSON with no floating-point precision loss, for any precision.
 instance ToJSON Money where
   toJSON (Money rat cur) =
     object
-      [ "amount" .= (fromRational rat :: Double),
+      [ "amount" .= show rat,
         "currency" .= cur
       ]
 
 -- | JSON deserialization for Money.
--- Accepts an object with amount and currency fields.
+-- Accepts an object with amount and currency fields, where the amount is the
+-- exact 'Rational' rendered by 'show' (see 'ToJSON').
 instance FromJSON Money where
   parseJSON = withObject "Money" $ \o -> do
-    (d :: Double) <- o .: "amount"
+    amt <- o .: "amount"
+    rat <- maybe (fail "Invalid Money amount") pure (readMaybe amt)
     cur <- o .: "currency"
-    case mkMoney cur (toRational d) of
+    case mkMoney cur rat of
       Right money -> pure money
       Left err -> fail (T.unpack err)
 
@@ -337,16 +345,21 @@ data ExchangeRate = ExchangeRate
   }
   deriving (Show, Eq, Generic)
 
+-- | The rate is encoded as the exact 'Rational' rendered via 'show' (e.g.
+-- @"4105128 % 91899"@), /not/ as a lossy 'Double'. A derived cross-currency
+-- rate is frequently a non-terminating decimal, so only the rational form
+-- round-trips it without precision loss.
 instance ToJSON ExchangeRate where
   toJSON (ExchangeRate s t r) =
-    object ["source" .= s, "target" .= t, "rate" .= (fromRational r :: Double)]
+    object ["source" .= s, "target" .= t, "rate" .= show r]
 
 instance FromJSON ExchangeRate where
   parseJSON = withObject "ExchangeRate" $ \o -> do
     s <- o .: "source"
     t <- o .: "target"
-    (d :: Double) <- o .: "rate"
-    case mkExchangeRate s t (toRational d) of
+    rs <- o .: "rate"
+    r <- maybe (fail "Invalid ExchangeRate rate") pure (readMaybe rs)
+    case mkExchangeRate s t r of
       Right er -> pure er
       Left err -> fail (T.unpack err)
 

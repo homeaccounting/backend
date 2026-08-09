@@ -63,12 +63,17 @@ import Web.Types
     AllocationsResponse (..),
     ErrorResponse (..),
     TransactionResponse (..),
+    toAllocationsDTO,
   )
 
 -- | Build a PATCH /allocations body from a non-empty allocation list.
--- The wire shape is @{ "newAllocations": [<Allocation>, ...] }@.
+--
+-- Encoded through the Web layer's 'AllocationsDTO' so the amounts take the
+-- numeric client wire shape (@{ "amount": <number>, "currency": <text> }@) —
+-- the domain 'Allocations' JSON is now the exact stored form and is not the
+-- API contract.
 mkAllocBody :: Allocations -> LBS.ByteString
-mkAllocBody allocs = encode $ object ["newAllocations" .= toJSON allocs]
+mkAllocBody allocs = encode $ object ["newAllocations" .= toJSON (toAllocationsDTO allocs)]
 
 -- | Decode a response body into a raw Aeson 'Value' (object).
 decodeObject :: SResponse -> IO (KeyMap.KeyMap Value)

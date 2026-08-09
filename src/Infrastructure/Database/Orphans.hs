@@ -170,9 +170,11 @@ instance PersistFieldSql DictionaryEntryId where
   sqlType _ = sqlType (Proxy :: Proxy UUID)
 
 -- | Exact JSON for a 'Money' amount: the 'Rational' is serialized via
--- 'show'/'readMaybe' (not the domain's lossy 'Double' JSON), so amounts stored
--- inside 'ExchangeRate'/'TransactionType' columns round-trip exactly — matching
--- the standalone 'Money' column encoding above.
+-- 'show'/'readMaybe' as a compact @[amountString, currency]@ pair, so amounts
+-- stored inside 'ExchangeRate'/'TransactionType' columns round-trip exactly.
+-- The domain 'Money' JSON instance is likewise exact (it renders the same
+-- 'Rational' via 'show'); this read-model encoding keeps its own compact array
+-- shape independent of the domain object shape.
 moneyToValue :: Money -> Value
 moneyToValue m = toJSON (show (unMoney m), moneyCurrency m)
 
@@ -220,8 +222,8 @@ transactionTypeParser = withObject "TransactionType" $ \o -> do
     other -> fail ("Unknown TransactionType kind: " <> T.unpack other)
 
 -- | 'ExchangeRate' stored as JSON @[source, target, rateString]@ with the
--- 'Rational' rate shown exactly (the domain JSON renders it as a lossy
--- 'Double').
+-- 'Rational' rate shown exactly. The domain JSON instance is likewise exact;
+-- this read-model encoding keeps its own compact array shape.
 instance PersistField ExchangeRate where
   toPersistValue er = jsonToPersist (exchangeRateSource er, exchangeRateTarget er, show (exchangeRateValue er))
   fromPersistValue v = do

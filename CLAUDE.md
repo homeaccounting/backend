@@ -229,6 +229,32 @@ before beta-testers' data is ever touched, so a single recreate covers both.
 `accountingSchemaRegistry` stays empty; no upcaster was added or removed for
 this change.
 
+##### Recorded exception — Money/ExchangeRate exact JSON (backend#157)
+
+`Money` and `ExchangeRate` were documented as exact (`Rational`) but their JSON
+instances round-tripped `amount`/`rate` through `Double`, so every stored event
+persisted the nearest `Double`, not the exact decimal. The fix makes the domain
+`Data.Aeson` instances encode the `Rational` exactly via `show`/`readMaybe`
+(`{"amount":"91899 % 100", …}`, `{"rate":"4105128 % 91899", …}`) — the same
+convention the read-model columns already use in `Infrastructure.Database.Orphans`.
+This is a **stored-event shape change** (`Money` nests in nearly every event —
+amounts, balances, allocations via `TransactionType`), with no clean per-event
+upcaster seam, so per the alpha escape hatch it ships via the **same one-time
+event-store DB recreate** as the two signal releases above — no upcaster.
+`accountingSchemaRegistry` stays empty. The committed stored-JSON fixture
+`test/fixtures/events/transaction-posting-initiated-import.json` was updated to
+the new string-amount shape.
+
+The public **API** wire shape is deliberately unchanged: the Web layer projects
+domain money through `Web.Types.MoneyDTO` / `AllocationsDTO` (numeric
+`{"amount":<number>,"currency":…}`), so response DTOs and the
+amendment/change-allocations request DTOs keep their historical numeric JSON
+while the event store is exact. **Persistence is precision-agnostic** — a
+`Rational` stores any minor-unit precision losslessly, so supporting a >2-decimal
+currency later needs **no storage change/migration**; only boundary work
+(currency set + a precise API money representation with a per-currency rounding
+policy) — a future additive/versioned change de-risked by this fix.
+
 #### Upcaster vs. custom `FromJSON` — the rule
 
 The dividing line is **where the JSON comes from**, not how big the change is:

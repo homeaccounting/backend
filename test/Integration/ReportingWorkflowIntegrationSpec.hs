@@ -66,7 +66,7 @@ import Testkit.Helpers (mockExchangeRate, singletonExpense, singletonIncome)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Web.API.ReportingAPI (incomeVsExpenseHandler)
 import Web.Middleware.Auth (AuthenticatedUser (..))
-import Web.Types (IncomeVsExpenseResponse (..))
+import Web.Types (IncomeVsExpenseResponse (..), toMoneyDTO)
 
 -- | Fixed business time used for reporting fixtures.
 mockTime :: UTCTime
@@ -297,9 +297,9 @@ spec = describe "Reporting Workflow Integration" $ do
     -- Exercise the HTTP handler path end-to-end (handler -> service -> DTO).
     let authUser = AuthenticatedUser {userId = userId, email = "reporter@example.com"}
     resp <- runRIO env (incomeVsExpenseHandler authUser Nothing Nothing)
-    resp.income `shouldBe` unsafeMoney USD 500
-    resp.expense `shouldBe` unsafeMoney USD 200
-    resp.net `shouldBe` unsafeMoney USD 300
+    resp.income `shouldBe` toMoneyDTO (unsafeMoney USD 500)
+    resp.expense `shouldBe` toMoneyDTO (unsafeMoney USD 200)
+    resp.net `shouldBe` toMoneyDTO (unsafeMoney USD 300)
 
   it "spendingByCategory totals the expense category in base currency" $ do
     (env, userUuid, extUuid, regUuid) <- setupReportingEnv
