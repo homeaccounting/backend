@@ -5,11 +5,16 @@
 -- __XLSX__ export (the default Автоклієнт format). Depend on
 -- 'Infrastructure.Banking.PrivatBankBusiness' from production code.
 --
--- One statement file spans several of the business's accounts and currencies:
--- each row carries its own @Ваш рахунок@ (account IBAN) and @Валюта@, so the
--- 'BankTransaction.externalAccountId' is taken per row rather than assumed
--- constant. Amounts are read verbatim from the cell string and kept as an exact
--- 'Rational' — no numeric round-trip.
+-- PrivatBank emits two layouts of this export. The __multi-account__ statement
+-- (@Виписка по декількох рахунках@) spans several of the business's accounts and
+-- currencies: each row carries its own @Ваш рахунок@ (account IBAN) and @Валюта@,
+-- so the 'BankTransaction.externalAccountId' is taken per row. The
+-- __single-account__ statement (@Заключна виписка@) omits that column entirely
+-- and states the one account once in the preamble
+-- (@Поточний рахунок № \<IBAN\>@); 'extractPreambleAccount' recovers it and it
+-- serves as the account for every row. @Валюта@ is per-row in both. Amounts are
+-- read verbatim from the cell string and kept as an exact 'Rational' — no
+-- numeric round-trip.
 module Infrastructure.Banking.PrivatBankBusiness.Internal
   ( parsePrivatBankBusinessXlsx,
     validateRow,
@@ -48,14 +53,18 @@ parsePrivatBankBusinessXlsx =
 -- short, yields 'Nothing'); @rowNumber@ is the 1-based position among the data
 -- rows, used to identify the row in a 'RowError'. A missing required column, or
 -- an unparsable date/time/amount/currency/reference, is a per-row 'RowError'.
-validateRow :: (Text -> Maybe Text) -> Int -> Either RowError BankTransaction
-validateRow col rowNumber =
+validateRow :: [[Text]] -> (Text -> Maybe Text) -> Int -> Either RowError BankTransaction
+validateRow preamble col rowNumber =
   case col "Референс" of
     Nothing -> rowErr "missing column: Референс"
     Just refText -> case mkExternalTransactionId refText of
       Left err -> rowErr ("invalid external id: " <> err)
-      Right extId -> case col "Ваш рахунок" of
-        Nothing -> rowErr "missing column: Ваш рахунок"
+      -- Multi-account exports carry the account per row in @Ваш рахунок@;
+      -- single-account exports omit that column and state the account once in
+      -- the preamble ('extractPreambleAccount'). Prefer the per-row column, fall
+      -- back to the preamble; a RowError only when neither supplies it.
+      Right extId -> case col "Ваш рахунок" <|> preambleAccount of
+        Nothing -> rowErr "missing account: no 'Ваш рахунок' column and no 'Поточний рахунок №' preamble line"
         Just accText -> case (col "Дата проводки", col "Час проводки") of
           (Just dateText, Just timeText) -> case combineDateTime dateText timeText of
             Nothing -> rowErr ("invalid date/time: " <> dateText <> " " <> timeText)
@@ -88,6 +97,26 @@ validateRow col rowNumber =
           _ -> rowErr "missing column: Дата проводки / Час проводки"
   where
     rowErr = Left . RowError rowNumber
+    preambleAccount = extractPreambleAccount preamble
+
+-- | Source the statement account from a single-account ("Заключна виписка")
+-- export's preamble. Such exports omit the per-row @Ваш рахунок@ column and
+-- state the account once above the table as
+-- @Поточний рахунок № \<IBAN\>, валюта \<CUR\>/\<code\>@. Returns the first such
+-- IBAN (the text after @№@, up to the comma), or 'Nothing' when no such line is
+-- present — as in a multi-account export, whose rows carry @Ваш рахунок@
+-- instead. Pure + total.
+extractPreambleAccount :: [[Text]] -> Maybe Text
+extractPreambleAccount preamble =
+  listToMaybe
+    [ iban
+    | row <- preamble,
+      cell <- row,
+      "Поточний рахунок" `T.isInfixOf` cell,
+      let afterMark = T.drop 1 (T.dropWhile (/= '№') cell),
+      let iban = T.strip (fst (T.breakOn "," afterMark)),
+      not (T.null iban)
+    ]
 
 -- | Recognise a PrivatBank-business currency-conversion leg and extract the
 -- conversion amount stated before a currency code, shared by both legs. Gated on

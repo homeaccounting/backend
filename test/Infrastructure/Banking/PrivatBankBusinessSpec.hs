@@ -104,6 +104,47 @@ statementBytes =
       badAmountRow
     ]
 
+-- | The single-account ("Заключна виписка") export omits the per-row @Ваш
+-- рахунок@ column entirely — the whole statement is for one account, stated once
+-- in the preamble as @Поточний рахунок № <IBAN>, валюта <CUR>/<code>@. The
+-- parser must source the account from that line instead. Synthetic throughout.
+singleAccountHeader :: [Text]
+singleAccountHeader =
+  [ "Референс",
+    "Дата проводки",
+    "Час проводки",
+    "Сума",
+    "Валюта",
+    "ЄДРПОУ",
+    "Назва контрагента",
+    "Призначення платежу"
+  ]
+
+singleAccountRow :: [Text]
+singleAccountRow =
+  [ "REF-SINGLE-1",
+    "05.08.2026",
+    "13:45:30",
+    "41051.28",
+    "UAH",
+    "12345678",
+    "ACME LLC",
+    "Payment for services"
+  ]
+
+-- | A single-account statement: a preamble carrying the account IBAN, then the
+-- 'Ваш рахунок'-less header and one data row.
+singleAccountBytes :: ByteString
+singleAccountBytes =
+  buildXlsx
+    [ ["АТ КБ ПРИВАТБАНК"],
+      ["Клієнт TEST FOP"],
+      ["Поточний рахунок № UA-SINGLE-1, валюта UAH/980"],
+      ["Заключна виписка за період з01.08.2026 по 11.08.2026"],
+      singleAccountHeader,
+      singleAccountRow
+    ]
+
 spec :: Spec
 spec = describe "Infrastructure.Banking.PrivatBankBusiness" $ do
   describe "parsePrivatBankBusinessXlsx" $ do
@@ -162,6 +203,15 @@ spec = describe "Infrastructure.Banking.PrivatBankBusiness" $ do
          in case parsePrivatBankBusinessXlsx bytes of
               Right (Left (RowError n _) : _) -> n `shouldBe` 1
               other -> expectationFailure ("expected a RowError for the missing-column row, got: " <> show (fmap (map isRight) other))
+
+    it "resolves the account from the preamble when the statement has no per-row 'Ваш рахунок' column"
+      $ case parsePrivatBankBusinessXlsx singleAccountBytes of
+        Right [Right tx] -> do
+          tx.externalAccountId `shouldBe` unsafeExternalAccountId "UA-SINGLE-1"
+          tx.amount `shouldBe` (4105128 % 100)
+          tx.currencyCode `shouldBe` 980
+          unExternalTransactionId tx.externalId `shouldBe` "REF-SINGLE-1"
+        other -> expectationFailure ("expected the single-account row to parse onto the preamble account, got: " <> show (fmap (map isRight) other))
 
     it "returns a whole-file ParseError when no header row is present"
       $ case parsePrivatBankBusinessXlsx (buildXlsx [["just"], ["a"], ["preamble"]]) of

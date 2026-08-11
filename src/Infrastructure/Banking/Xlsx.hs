@@ -133,28 +133,34 @@ readXlsxSheet bs =
       "xl/worksheets/sheet" `L.isPrefixOf` p && ".xml" `L.isSuffixOf` p
 
 -- | Build a 'StatementParser' from a label, a header-row predicate, and a
--- 1-indexed per-row validator. Reads the sheet ('readXlsxSheet'), locates the
--- first row satisfying the predicate as the header (whole-file 'ParseError' if
--- none), maps header names to column indices (a duplicated header name resolves
--- to its last column), and runs the validator over each subsequent non-empty
--- row. The validator receives a total by-name column accessor (name absent from
--- the header, or row too short, → 'Nothing') and the 1-based data-row number.
--- All indexing is via 'Map' + 'Safe.atMay'; no partial lookup.
+-- 1-indexed per-row validator /factory/. Reads the sheet ('readXlsxSheet'),
+-- locates the first row satisfying the predicate as the header (whole-file
+-- 'ParseError' if none), maps header names to column indices (a duplicated
+-- header name resolves to its last column), and runs the validator over each
+-- subsequent non-empty row.
+--
+-- The validator is a factory applied once to the __preamble__ — the rows before
+-- the header — so a format can derive file-level context (e.g. the account IBAN
+-- or currency stated once above the table) and close over it before validating
+-- rows. The resulting per-row validator receives a total by-name column accessor
+-- (name absent from the header, or row too short, → 'Nothing') and the 1-based
+-- data-row number. All indexing is via 'Map' + 'Safe.atMay'; no partial lookup.
 xlsxStatementParser ::
   Text ->
   ([Text] -> Bool) ->
-  ((Text -> Maybe Text) -> Int -> Either RowError BankTransaction) ->
+  ([[Text]] -> (Text -> Maybe Text) -> Int -> Either RowError BankTransaction) ->
   StatementParser
 xlsxStatementParser label isHeaderRow validate bs =
   case readXlsxSheet bs of
     Left e -> Left e
     Right rows ->
       case break isHeaderRow rows of
-        (_, header : dataRows) ->
+        (preamble, header : dataRows) ->
           let hdr = Map.fromList (zip header [0 ..])
               col row name = Map.lookup name hdr >>= atMay row
+              validateRow = validate preamble
            in Right
-                [ validate (col row) n
+                [ validateRow (col row) n
                 | (n, row) <- zip [1 ..] dataRows,
                   not (all T.null row)
                 ]

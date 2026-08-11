@@ -122,7 +122,7 @@ spec = do
 
   describe "xlsxStatementParser" $ do
     let isHeaderRow cells = "L" `elem` cells
-        validate col n
+        validate _preamble col n
           | even n = Left (RowError n ("even: " <> fromMaybe "" (col "L")))
           | otherwise = Right (stubTx (fromMaybe "" (col "L")))
         parser = xlsxStatementParser "XLSX" isHeaderRow validate
@@ -145,12 +145,31 @@ spec = do
       $ case parser "not a zip archive" of
         Left (ParseError _) -> pure () :: IO ()
         other -> expectationFailure ("expected ParseError, got " <> show other)
+    it "applies the validator factory to the pre-header rows (the preamble)" $ do
+      -- The factory captures the preamble and encodes its first cell into every
+      -- row's transaction, so a passing result proves the driver forwarded the
+      -- rows above the header rather than discarding them.
+      let isHdr cells = "L" `elem` cells
+          capture preamble _col n =
+            case preamble of
+              ((firstCell : _) : _) -> Right (stubTx firstCell)
+              _ -> Left (RowError n "empty preamble")
+          preambledRows =
+            [ ["Statement preamble"],
+              ["Account 12345"],
+              ["L", "amount"],
+              ["r1", "10.00"]
+            ]
+      case xlsxStatementParser "XLSX" isHdr capture (buildXlsx preambledRows) of
+        Right [Right tx] -> tx.description `shouldBe` "Statement preamble"
+        other -> expectationFailure ("expected the preamble to reach the validator, got: " <> show other)
+
     it "gives the accessor Nothing for a missing column or a short row" $ do
       -- Header has two columns; the sole data row has only one cell, so "H2"
       -- (present in the header, absent from the row) and "NoSuchCol" (absent
       -- from the header) both resolve to Nothing.
       let isHdr cells = "H1" `elem` cells
-          check col _ =
+          check _preamble col _ =
             if isNothing (col "H2") && isNothing (col "NoSuchCol")
               then Right (stubTx "ok")
               else Left (RowError 1 "expected Nothing lookups")
