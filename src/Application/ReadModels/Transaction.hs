@@ -47,6 +47,7 @@ module Application.ReadModels.Transaction
 
     -- * Queries (run via 'runDb')
     getTransaction,
+    transactionAccounts,
     listTransactions,
     transactionDatesForAccount,
     findReferencingTransactions,
@@ -127,6 +128,7 @@ import Eventium
 import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
 import GHC.Generics (Generic)
 import Infrastructure.Database.Orphans ()
+import RIO.List (nub)
 
 -- -----------------------------------------------------------------------------
 -- Query result type
@@ -480,6 +482,21 @@ getTransaction txId = do
       ls <- loadLabels txId
       rels <- relationsFrom txId
       pure (Just (entToData e ls rels))
+
+-- | Distinct accounts a transaction posts to (source + target), or @[]@ when
+-- the transaction id is unknown. Used by the change-signal read model to
+-- attribute an edit event that carries only a 'TransactionId' (label/contact/
+-- allocation edits — see the event handlers above) to the accounts whose
+-- users must be signalled. The dedup is defensive: the command layer's
+-- @TransferToSameAccount@ guard means source and target are never equal on a
+-- row produced through normal command handling, but this helper does not rely
+-- on that invariant holding for every possible stored row.
+transactionAccounts :: (MonadIO m) => TransactionId -> SqlPersistT m [AccountId]
+transactionAccounts txId = do
+  mEnt <- getBy (UniqueTransactionId txId)
+  pure $ case mEnt of
+    Nothing -> []
+    Just (Entity _ e) -> nub [e.transactionEntitySourceAccountId, e.transactionEntityTargetAccountId]
 
 -- | List transactions visible to the caller (touching at least one account in
 -- @visible@ on either leg), filtered by 'TransactionFilter' and paginated by

@@ -28,6 +28,7 @@ where
 import Application.ReadModels.Account (accountProjectionName, accountReadModel)
 import Application.ReadModels.BankImportReadModel (bankImportProjectionName, bankImportReadModel)
 import Application.ReadModels.Configuration (configurationProjectionName, configurationReadModel)
+import Application.ReadModels.DataVersion (dataVersionProjectionName, dataVersionReadModel)
 import Application.ReadModels.ExchangeRate (exchangeRateProjectionName, exchangeRateReadModel)
 import Application.ReadModels.Transaction (transactionProjectionName, transactionReadModel)
 import Application.ReadModels.User (userProjectionName, userReadModel)
@@ -52,6 +53,10 @@ persistentReadModels =
   [ (unCheckpointName bankImportProjectionName, bankImportReadModel),
     (unCheckpointName accountProjectionName, accountReadModel),
     (unCheckpointName transactionProjectionName, transactionReadModel),
+    -- Must run AFTER account + transaction so account_access and the
+    -- transaction rows reflect the just-applied event when it resolves the
+    -- users to signal (matters for grant/revoke and transactionId-only edits).
+    (unCheckpointName dataVersionProjectionName, dataVersionReadModel),
     (unCheckpointName userProjectionName, userReadModel),
     (unCheckpointName exchangeRateProjectionName, exchangeRateReadModel),
     (unCheckpointName configurationProjectionName, configurationReadModel)

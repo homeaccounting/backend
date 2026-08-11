@@ -82,6 +82,9 @@ module Web.Types
     AccountNetWorth (..),
     NetWorthResponse (..),
 
+    -- * Sync Response DTOs
+    SyncVersionResponse (..),
+
     -- * Error Response DTOs
     ErrorResponse (..),
     ValidationErrorResponse (..),
@@ -133,6 +136,7 @@ import Data.Time.Calendar (Day)
 import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
+import Data.Word (Word64)
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), Allocation (..), Allocations (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, TransactionType (..), UserId, allocationsOf, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
@@ -845,6 +849,23 @@ data NetWorthResponse = NetWorthResponse
 instance ToJSON NetWorthResponse
 
 instance FromJSON NetWorthResponse
+
+-- -----------------------------------------------------------------------------
+-- Sync Response DTOs
+-- -----------------------------------------------------------------------------
+
+-- | GET /api/sync/version — the caller's per-user data-version counter
+-- (tracker#45). Clients poll this to know when to refetch; the number itself
+-- is opaque, only its monotonic increase matters. Stays well under 2^53 so it
+-- round-trips exactly through JS's IEEE-754 doubles.
+newtype SyncVersionResponse = SyncVersionResponse
+  { version :: Word64
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SyncVersionResponse
+
+instance FromJSON SyncVersionResponse
 
 -- -----------------------------------------------------------------------------
 -- Error Response DTOs

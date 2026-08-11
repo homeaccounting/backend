@@ -48,6 +48,7 @@ module Application.ReadModels.Account
     getRegularAccounts,
     countRegularAccounts,
     accountExists,
+    loadAccessLists,
 
     -- * Temporal balance (event-store fold)
     balanceAsOf,

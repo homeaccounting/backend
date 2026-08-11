@@ -51,6 +51,7 @@ library
       Application.ReadModels.Account
       Application.ReadModels.BankImportReadModel
       Application.ReadModels.Configuration
+      Application.ReadModels.DataVersion
       Application.ReadModels.ExchangeRate
       Application.ReadModels.Persist
       Application.ReadModels.Transaction
@@ -161,6 +162,7 @@ library
       Web.API.InfoAPI
       Web.API.PromptAPI
       Web.API.ReportingAPI
+      Web.API.SyncAPI
       Web.API.TelegramWebhookAPI
       Web.API.TransactionAPI
       Web.API.UserAPI
@@ -369,6 +371,8 @@ test-suite backend-test
       Application.ReadModels.AmendmentBalanceSpec
       Application.ReadModels.BalanceAsOfJoinSpec
       Application.ReadModels.ConfigurationDictionaryDataSpec
+      Application.ReadModels.DataVersionIntegrationSpec
+      Application.ReadModels.DataVersionSpec
       Application.ReadModels.ExchangeRatePropertySpec
       Application.ReadModels.PersistentAccountReadModelSpec
       Application.ReadModels.PersistentConfigurationReadModelSpec
@@ -527,6 +531,7 @@ test-suite backend-test
       Web.API.ConfigurationBankingAPISpec
       Web.API.ConfigurationDictionaryTreeSpec
       Web.API.PromptAPISpec
+      Web.API.SyncAPIIntegrationSpec
       Web.API.TransactionAllocationsAPISpec
       Web.API.TransactionAPISpec
       Web.API.TransactionContactAPISpec

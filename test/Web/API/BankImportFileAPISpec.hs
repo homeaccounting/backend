@@ -60,7 +60,7 @@ import Testkit.AppEnv
 import Testkit.Helpers (mockExchangeRate)
 import Testkit.HspecWai (IdResponse (..), bearerHeader, createAccountWith, jsonAuthHeaders, registerAndGetToken)
 import Testkit.InMemoryEventStore (runDbIn)
-import Web.Types (ErrorResponse (..))
+import Web.Types (ErrorResponse (..), SyncVersionResponse (..))
 
 -- -----------------------------------------------------------------------------
 -- Fixtures + small helpers (mirrors BankingAPISpec / BankConnectionAPISpec)
@@ -222,6 +222,16 @@ resolveAccountId :: Text -> IO AccountId
 resolveAccountId accId = do
   uuid <- maybe (throwString "invalid account id") pure (UUID.fromText accId)
   either (throwString . T.unpack) pure (mkAccountId uuid)
+
+-- | GET \/api\/sync\/version for the caller, decoded to its Word64 counter —
+-- used to prove a bank import bumps the importer's "data changed" signal
+-- (tracker#45), mirroring 'Web.API.SyncAPIIntegrationSpec.bumpsAfterWriteSpec'.
+getSyncVersion :: Text -> WaiSession st Word64
+getSyncVersion tok = do
+  resp <- request "GET" "/api/sync/version" [bearerHeader tok] ""
+  case eitherDecode (simpleBody resp) :: Either String SyncVersionResponse of
+    Left err -> liftIO $ throwString $ "getSyncVersion: " <> err
+    Right r -> pure r.version
 
 -- | Decode an error envelope from a response body.
 decodeError :: SResponse -> IO ErrorResponse
@@ -388,6 +398,7 @@ badDateRow =
 spec :: Spec
 spec = do
   singleAccountImportSpec
+  dataVersionBumpSpec
   scopedRoutingSpec
   multiFileTransferSpec
   sameBatchDuplicateSpec
@@ -445,6 +456,39 @@ singleAccountImportSpec =
             controls.stubEnv
             (TransactionRM.listTransactions (Set.singleton accountId) TransactionRM.emptyTransactionFilter page)
         referencing `shouldBe` 103
+
+-- | Bank import is the HEADLINE case for the "data changed" signal
+-- (tracker#45): the importing user never touches the ordinary
+-- account\/transaction HTTP write handlers, so this is the one entry point the
+-- signal's other tests don't cover. Mirrors 'singleAccountImportSpec'\'s setup
+-- (real PrivatBank fixture, single mapped account, 103 rows) and additionally
+-- reads @GET \/api\/sync\/version@ for the importing user immediately before
+-- and after the upload — asserting strictly-greater (not an exact delta),
+-- since a single import of N transactions may bump the counter by any amount
+-- >= 1.
+dataVersionBumpSpec :: Spec
+dataVersionBumpSpec =
+  describe "POST /api/banking/connections/:id/import/file (data-version signal)"
+    $ withState mkAppBankingEnabledSeededWithFileProviderPrivatBank
+    $ it "strictly bumps the importer's sync data-version counter"
+    $ do
+      controls <- getState
+      liftIO $ seedRate controls
+      tok <- registerAndGetToken
+      accId <- createAccountWith tok "PrivatCard" "UAH"
+      connId <- addPrivatConnection tok "Privat"
+      setAccountMap tok connId fixtureCard accId
+      bytes <- liftIO loadFixtureBytes
+      before <- getSyncVersion tok
+      resp <- uploadStatement tok connId "csv" bytes
+      after <- getSyncVersion tok
+      liftIO $ do
+        simpleStatus resp `shouldBe` status200
+        o <- asObject resp
+        case accountRow o fixtureCard of
+          Nothing -> expectationFailure $ "expected an account row for " <> T.unpack fixtureCard
+          Just row -> KeyMap.lookup "importedCount" row `shouldBe` Just (Number 103)
+        (before, after) `shouldSatisfy` (\(b, a) -> a > b)
 
 -- | A single-entry accountMap routes each card by its REAL external id, not
 -- everything-to-the-one-account. Uploading a file with rows for the mapped

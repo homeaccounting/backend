@@ -23,6 +23,7 @@ module Application.ReadModels.PersistentTransactionReadModelSpec (spec) where
 import Application.ReadModels.Transaction
   ( LegSide (..),
     TransactionData (..),
+    TransactionEntity (..),
     applyTransactionEvent,
     countTransactions,
     emptyTransactionFilter,
@@ -32,16 +33,19 @@ import Application.ReadModels.Transaction
     getTransaction,
     listTransactions,
     reportableTransactions,
+    transactionAccounts,
   )
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Set as Set
+import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
+import Database.Persist (insert)
 import Database.Persist.Sql (Single (..), rawSql)
 import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Signal (mkByMcc, parseMcc, unsafeMcc)
 import Domain.Core.Page (Page (..), defaultLimit)
-import Domain.Core.Types (AccountId, Allocation (..), CategoryId, ContactId, Currency (..), LabelId, Money, TransactionId, TransactionKind (..), TransactionType (..), mkExpenseAllocations, unsafeMoney)
+import Domain.Core.Types (AccountId, Allocation (..), CategoryId, ContactId, Currency (..), LabelId, Money, TransactionId, TransactionKind (..), TransactionType (..), mkExpenseAllocations, mkTransactionId, unsafeMoney)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
@@ -51,6 +55,7 @@ import Domain.Transaction.Events
     TransactionPostingCompleted (..),
     TransactionPostingFailed (..),
   )
+import Domain.Transaction.Projection (StatusKind (..))
 import qualified Eventium
 import Infrastructure.App (AppEnv)
 import RIO
@@ -270,6 +275,55 @@ spec = describe "Persistent Transaction read model" $ do
           ]
       mTd <- runDbIn env (getTransaction (tx 1))
       (.contactId) <$> mTd `shouldBe` Just (Just (contact 9))
+
+  describe "transactionAccounts (change-signal attribution)" $ do
+    it "returns both distinct accounts for a transfer transaction, order-insensitive" $ do
+      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      accs <- runDbIn env (transactionAccounts (tx 1))
+      accs `shouldMatchList` [acctA, acctB]
+
+    -- Income/expense rows are indistinguishable from a transfer at this
+    -- layer: 'initiateIncome'/'initiateExpense' just put the user's External
+    -- sentinel account on the other leg (Application.Services.TransactionService),
+    -- so the stored row still has two distinct 'AccountId' columns — there is
+    -- no genuine single-account row the command layer can produce (the
+    -- 'TransferToSameAccount' guard forbids source == target). The dedup in
+    -- 'transactionAccounts' is therefore purely defensive; prove it directly
+    -- against a hand-built row that coincides source/target on the same
+    -- account, bypassing the command layer entirely.
+    it "dedupes to a single account when a stored row has source == target" $ do
+      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      _ <-
+        runDbIn env
+          $ insert
+            TransactionEntity
+              { transactionEntityTransactionId = tx 2,
+                transactionEntitySourceAccountId = acctA,
+                transactionEntityTargetAccountId = acctA,
+                transactionEntitySourceAmount = m100,
+                transactionEntityTargetAmount = m100,
+                transactionEntityExchangeRate = Nothing,
+                transactionEntityDescription = "same-account row (test-only, unreachable via commands)",
+                transactionEntityStatusKind = PendingKind,
+                transactionEntityFailureReason = Nothing,
+                transactionEntityTransactionType = Transfer,
+                transactionEntityDate = day,
+                transactionEntityBankProviderCategory = Nothing,
+                transactionEntityBankProviderContact = Nothing,
+                transactionEntityContactId = Nothing,
+                transactionEntityAmendmentCount = 0,
+                transactionEntityVersion = Eventium.EventVersion 0
+              }
+      accs <- runDbIn env (transactionAccounts (tx 2))
+      accs `shouldBe` [acctA]
+
+    it "returns [] for an unknown transaction id" $ do
+      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      case mkTransactionId (UUID.fromWords 999 0 0 0) of
+        Left err -> expectationFailure (T.unpack err)
+        Right unknown -> do
+          accs <- runDbIn env (transactionAccounts unknown)
+          accs `shouldBe` []
 
   describe "findReferencingTransactions (in-use guard)" $ do
     it "counts a label reference from a cancelled transaction, but not from a failed one, and counts allocation categories" $ do
