@@ -127,6 +127,7 @@ import Data.Coerce (coerce)
 import Data.List (sort)
 import Data.Map.Strict (Map)
 import Data.Maybe (catMaybes, fromMaybe)
+import Data.Scientific (Scientific)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -170,9 +171,9 @@ import GHC.Generics (Generic)
 data CreateAccountRequest
   = CreateAccountRequest
   { name :: Text,
-    initialBalance :: Double,
+    initialBalance :: Scientific,
     currency :: Text,
-    overdraftLimit :: Maybe Double,
+    overdraftLimit :: Maybe Scientific,
     subtype :: Maybe AccountSubtypeRequest
   }
   deriving (Show, Eq, Generic)
@@ -362,7 +363,7 @@ instance FromJSON AccountListResponse
 -- rest of the create DTOs).
 data CategoryAmount = CategoryAmount
   { category :: UUID,
-    amount :: Double,
+    amount :: Scientific,
     comment :: Maybe Text
   }
   deriving (Show, Eq, Generic)
@@ -446,7 +447,7 @@ instance FromJSON ExpenseRequest
 -- is reconciling to, so there is no sensible default. Do not relax this to
 -- @Maybe UTCTime@ without first revisiting the service-layer contract.
 data AdjustBalanceRequest = AdjustBalanceRequest
-  { targetBalance :: Double,
+  { targetBalance :: Scientific,
     currency :: Text,
     date :: UTCTime,
     -- Stored as the synthetic adjustment transaction's description. Named
@@ -464,10 +465,10 @@ data TransferRequest
   = TransferRequest
   { sourceAccountId :: UUID,
     targetAccountId :: UUID,
-    amount :: Double,
+    amount :: Scientific,
     currency :: Text,
     description :: Text,
-    exchangeRate :: Maybe Double,
+    exchangeRate :: Maybe Scientific,
     date :: Maybe UTCTime,
     labels :: Maybe [UUID]
   }
@@ -574,11 +575,11 @@ instance FromJSON MergeTransactionRequest
 data AmendTransactionRequest = AmendTransactionRequest
   { sourceAccountId :: UUID,
     targetAccountId :: UUID,
-    sourceAmount :: Double,
+    sourceAmount :: Scientific,
     sourceCurrency :: Text,
-    targetAmount :: Double,
+    targetAmount :: Scientific,
     targetCurrency :: Text,
-    exchangeRate :: Maybe Double,
+    exchangeRate :: Maybe Scientific,
     newAllocations :: Maybe AllocationsDTO,
     contactId :: Maybe UUID
   }
@@ -929,7 +930,17 @@ instance FromJSON ValidationErrorResponse
 -- Conversion Functions: Request DTOs → Domain Commands
 -- -----------------------------------------------------------------------------
 
--- | Converts a Double to Domain Money type.
+-- | Converts an inbound API amount to Domain Money.
+--
+-- The amount is a 'Scientific' — Aeson's exact decimal number type — *not* a
+-- 'Double'. This is deliberate and load-bearing: the event store now holds
+-- money as an exact decimal 'Rational' (@91899 % 100@), and @toRational@ on a
+-- 'Double' yields the /binary/ fraction of the nearest representable value
+-- (@4041760763239465 % 4398046511104@ for @918.99@), not the decimal. Routing
+-- ingress through 'Double' therefore made edited allocations fail the exact
+-- sum-against-total invariant (@AllocationsDoNotSumToTotal@). 'Scientific'
+-- carries the decimal digits the client actually sent, so @toRational@ is the
+-- exact decimal. (Same rationale as 'Resolve.parseAmount'.)
 --
 -- Total: Money values can be negative (overdraft enforcement is at the
 -- account level — see Domain/Account/CommandHandler.hs), and 'mkMoney' is
@@ -941,7 +952,7 @@ instance FromJSON ValidationErrorResponse
 --
 -- >>> toDomainMoney USD (-50.0)
 -- Money ((-50) % 1) USD
-toDomainMoney :: Currency -> Double -> Money
+toDomainMoney :: Currency -> Scientific -> Money
 toDomainMoney cur d = case mkMoney cur (toRational d) of
   Right m -> m
   -- 'mkMoney' is total today; this branch is unreachable. Once mkMoney
@@ -965,11 +976,17 @@ fromDomainMoney = fromRational . unMoney
 -- now encodes the /exact/ 'Rational' (see 'Domain.Core.Types'). The split
 -- keeps two contracts honest at once: the event store persists the exact
 -- value, while the API keeps its stable numeric shape for existing clients.
--- As a boundary DTO the 'Double' hop is a display projection (safe today for
--- 2-decimal currencies). Introducing a precise money wire format (e.g. a
--- decimal string or integer minor units with a per-currency rounding policy)
--- for >2-decimal currencies is a future, additive, versioned change — and one
--- de-risked by the exact event store, since no stored data would migrate.
+--
+-- Decoding is /exact/: the amount is parsed as 'Scientific' (see
+-- 'toDomainMoney'), so a client's @918.99@ becomes @91899 % 100@, matching the
+-- stored total. Encoding is still a lossy 'Double' /display/ projection (safe
+-- today for 2-decimal currencies), so @decode . encode@ is not identity for a
+-- non-Double-exact decimal — only 'FromJSON' must be exact, since that is the
+-- side compared against the exact stored value. Introducing a precise money
+-- wire format (e.g. a decimal string or integer minor units with a per-currency
+-- rounding policy) for >2-decimal currencies is a future, additive, versioned
+-- change — and one de-risked by the exact event store, since no stored data
+-- would migrate.
 newtype MoneyDTO = MoneyDTO Money
   deriving (Show, Eq, Generic)
 
@@ -1392,12 +1409,18 @@ parseContactId Nothing = Right Nothing
 parseContactId (Just u) =
   Just <$> first ("Invalid contact id: " <>) (mkDictionaryEntryId u)
 
--- | Parse an optional exchange-rate Double into a domain 'ExchangeRate'
+-- | Parse an optional inbound exchange rate into a domain 'ExchangeRate'
 -- for the (src, tgt) currency pair. 'Nothing' yields 'Nothing'.
+--
+-- The rate is a 'Scientific' — not a 'Double' — for the same reason as
+-- 'toDomainMoney': the stored 'ExchangeRate' is an exact 'Rational', so a
+-- client's @0.025@ must become @1 % 40@, not the binary fraction of the
+-- nearest 'Double'. 'Scientific' carries the decimal the client sent, so
+-- @toRational@ is exact.
 parseOptionalExchangeRate ::
   Currency ->
   Currency ->
-  Maybe Double ->
+  Maybe Scientific ->
   Either Text (Maybe ExchangeRate)
 parseOptionalExchangeRate _ _ Nothing = Right Nothing
 parseOptionalExchangeRate src tgt (Just d) =

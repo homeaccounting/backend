@@ -21,7 +21,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Ratio ((%))
 import qualified Data.UUID as UUID
 import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty, mkByLabel, mkByMcc, unsafeMcc)
-import Domain.Core.Types (Allocation (..), Currency (USD), TransactionType (Transfer), allAllocations, unMoney, unsafeMoney)
+import Domain.Core.Types (Allocation (..), Currency (UAH, USD), TransactionType (Transfer), allAllocations, exchangeRateValue, unMoney, unsafeMoney)
 import RIO
 import Test.Hspec
 import Testkit.BankingHelpers (byCounterparty)
@@ -42,6 +42,7 @@ import Web.Types
     TransactionRelationsResponse (..),
     fromAllocationsDTO,
     fromTransactionData,
+    parseOptionalExchangeRate,
     toMoneyDTO,
   )
 
@@ -79,6 +80,36 @@ spec = do
           case allAllocations (fromAllocationsDTO req.newAllocations) of
             [Allocation _ m _] -> unMoney m `shouldBe` 150
             _ -> expectationFailure "expected exactly one income allocation"
+
+    -- Regression (prod: AllocationsDoNotSumToTotal when editing an imported
+    -- transaction's category): a non-Double-exact decimal amount must decode
+    -- to the exact decimal Rational, not the binary fraction of its Double.
+    -- The event store holds the total as an exact decimal (91899 % 100 etc.),
+    -- so an allocation laundered through Double no longer sums to it.
+    it "parses allocation amounts as exact decimals, not via Double" $ do
+      let json :: LBS.ByteString
+          json =
+            "{\"newAllocations\":{\"incomes\":[],\"expenses\":[{\"categoryId\":\"00000001-0000-0000-0000-000000000000\""
+              <> ",\"amount\":{\"amount\":4178.08,\"currency\":\"USD\"}}]}}"
+      case Aeson.eitherDecode json :: Either String ChangeTransactionAllocationsRequest of
+        Left err -> expectationFailure ("decode failed: " <> err)
+        Right req ->
+          case allAllocations (fromAllocationsDTO req.newAllocations) of
+            [Allocation _ m _] -> unMoney m `shouldBe` (104452 % 25)
+            _ -> expectationFailure "expected exactly one expense allocation"
+
+  describe "parseOptionalExchangeRate" $ do
+    -- Same class as the money ingress: an inbound rate must become the exact
+    -- decimal Rational the client sent, not the binary fraction of its Double.
+    -- The stored ExchangeRate is an exact Rational, so 0.025 must be 1 % 40,
+    -- not 3602879701896397 % 144115188075855872.
+    it "parses a decimal rate exactly, not via Double" $ do
+      fmap (fmap exchangeRateValue) (parseOptionalExchangeRate UAH USD (Just 0.025))
+        `shouldBe` Right (Just (1 % 40))
+
+    it "yields Nothing for an absent rate"
+      $ fmap (fmap exchangeRateValue) (parseOptionalExchangeRate UAH USD Nothing)
+      `shouldBe` Right Nothing
 
   describe "IncomeVsExpenseResponse JSON" $ do
     it "surfaces money amounts as JSON numbers (stable public shape)" $ do
