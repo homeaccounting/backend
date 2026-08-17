@@ -17,7 +17,7 @@ import Domain.Banking.Types (unExternalAccountId)
 import qualified Domain.Banking.Types as Domain
 import Domain.Configuration.Defaults (DefaultEntry (entryId), ExpenseDefaults (..), expense)
 import Domain.Core.Types (CategoryId)
-import Infrastructure.Banking.PrivatBank.Internal (parsePrivatBankCsv)
+import Infrastructure.Banking.PrivatBank.Internal (parsePrivatBankCsv, parsePrivatBankXlsx)
 import Infrastructure.Banking.Provider
 import RIO
 import RIO.Char (isDigit)
@@ -25,9 +25,10 @@ import qualified RIO.Text as T
 
 -- | Expose PrivatBank as a 'BankProviderDescriptor' with a file-import-only
 -- transport: PrivatBank has no public statement API, so 'pull' is 'Nothing'
--- and 'fileImport' wraps the CSV parser under 'StatementCsv'. Unlike
--- Monobank, there is no config/manager to thread through — the descriptor is
--- a pure value.
+-- and 'fileImport' offers both export formats of the same @Історія операцій@
+-- statement — the CSV parser under 'StatementCsv' and the native (default) XLSX
+-- parser under 'StatementXlsx'. Unlike Monobank, there is no config/manager to
+-- thread through — the descriptor is a pure value.
 descriptor :: BankProviderDescriptor
 descriptor =
   BankProviderDescriptor
@@ -38,7 +39,11 @@ descriptor =
       fileImport =
         Just
           FileImportCapability
-            { parsers = Map.singleton StatementCsv parsePrivatBankCsv
+            { parsers =
+                Map.fromList
+                  [ (StatementCsv, parsePrivatBankCsv),
+                    (StatementXlsx, parsePrivatBankXlsx)
+                  ]
             }
     }
 

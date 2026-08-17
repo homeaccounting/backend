@@ -14,6 +14,7 @@
 -- API surface.
 module Infrastructure.Banking.Statement
   ( parseSignedDecimal,
+    canonicalDecimal,
     isNumericToken,
     assembleNumber,
     stripTrailingComma,
@@ -31,6 +32,15 @@ parseSignedDecimal :: Text -> Maybe Rational
 parseSignedDecimal t = case T.stripPrefix "-" t of
   Just rest -> negate <$> parseUnsignedDecimal rest
   Nothing -> parseUnsignedDecimal t
+
+-- | Canonicalise a decimal amount string to a single format-independent form,
+-- for building a stable identity out of it. Parses the string to an exact
+-- 'Rational' and renders that reduced fraction with 'show' (e.g.
+-- @"91899 % 100"@) — so two textual spellings of the same value collapse to one
+-- key (@"510"@, @"510.0"@ and @"510.00"@ all become @"510 % 1"@). An unparsable
+-- string falls back to its stripped self, keeping the function total.
+canonicalDecimal :: Text -> Text
+canonicalDecimal t = maybe (T.strip t) (T.pack . show) (parseSignedDecimal t)
 
 -- | A token that could be part of a (possibly space/NBSP-grouped) decimal
 -- amount: digits, a decimal point, a comma, or a grouping space (regular or

@@ -4,15 +4,17 @@
 module Infrastructure.Banking.PrivatBankSpec (spec) where
 
 import qualified Data.ByteString as BS
+import Data.Ratio ((%))
 import qualified Data.Text as T
 import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
-import Domain.Banking.Types (unBankProviderId)
+import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
 import Infrastructure.Banking.PrivatBank (descriptor)
-import Infrastructure.Banking.PrivatBank.Internal (counterpartyToken, parsePrivatBankCsv)
+import Infrastructure.Banking.PrivatBank.Internal (counterpartyToken, parsePrivatBankCsv, parsePrivatBankXlsx)
 import Infrastructure.Banking.Provider
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
+import Testkit.Xlsx (buildXlsx)
 
 -- | The committed real-world PrivatBank export: 1 title preamble line, 1
 -- header line, then 103 data rows.
@@ -116,6 +118,48 @@ badDateRow =
       "1000.00",
       "UAH"
     ]
+
+-- XLSX -----------------------------------------------------------------------
+--
+-- The personal Privat24 XLSX export is the same "Історія операцій" statement as
+-- the CSV, in an XLSX container: a merged title row, the identical header, then
+-- data rows whose amount/balance cells are numeric. All values below are
+-- synthetic placeholders — never paste real cards/merchants/ids here.
+
+-- | The title preamble (row 1, a single merged cell in real exports).
+xlsxPreamble :: [Text]
+xlsxPreamble = ["Історія операцій за період 17.07.2026 - 17.08.2026"]
+
+-- | The tabular header (row 2), byte-identical to the CSV header.
+xlsxHeader :: [Text]
+xlsxHeader =
+  [ "Дата",
+    "Категорія",
+    "Картка",
+    "Опис операції",
+    "Сума в валюті картки",
+    "Валюта картки",
+    "Сума в валюті транзакції",
+    "Валюта транзакції",
+    "Залишок на кінець періоду",
+    "Валюта залишку"
+  ]
+
+-- | A well-formed XLSX data row. Amount and balance are bare decimals so
+-- 'buildXlsx' emits them as numeric cells, as real exports do.
+xlsxRow :: Text -> Text -> Text -> Text -> [Text]
+xlsxRow category description amount balance =
+  [ "10.08.2026 12:11:23",
+    category,
+    "0000 **** **** 0000",
+    description,
+    amount,
+    "UAH",
+    amount,
+    "UAH",
+    balance,
+    "UAH"
+  ]
 
 spec :: Spec
 spec = describe "Infrastructure.Banking.PrivatBank" $ do
@@ -259,13 +303,60 @@ spec = describe "Infrastructure.Banking.PrivatBank" $ do
         Left (ParseError _msg) -> pure ()
         Right _ -> expectationFailure "expected a structural ParseError for the renamed column"
 
+  describe "parsePrivatBankXlsx" $ do
+    it "maps a well-formed row exactly (amount, currency, account, category, contact)"
+      $ case parsePrivatBankXlsx (buildXlsx [xlsxPreamble, xlsxHeader, xlsxRow "Цифрові товари" "ACME STORE, KYIV" "-214.99" "35873.45"]) of
+        Right [Right tx] -> do
+          tx.amount `shouldBe` ((-21499) % 100)
+          tx.currencyCode `shouldBe` 980
+          tx.externalAccountId `shouldBe` unsafeExternalAccountId "0000 **** **** 0000"
+          tx.category `shouldBe` mkByLabel "Цифрові товари"
+          tx.contact `shouldBe` mkBankProviderContact "ACME STORE, KYIV"
+        other -> expectationFailure ("expected one parsed row, got: " <> show (fmap (map isRight) other))
+
+    it "skips the title preamble and reads the header row"
+      $ case parsePrivatBankXlsx (buildXlsx [xlsxPreamble, xlsxHeader, xlsxRow "Перекази" "Переказ коштів" "40000" "88518.60"]) of
+        Right [Right tx] -> do
+          tx.amount `shouldBe` 40000
+          defaultClassify tx `shouldBe` ClassifiedIncome
+        other -> expectationFailure ("expected one parsed row, got: " <> show (fmap (map isRight) other))
+
+    it "isolates a corrupted-date row while a sibling row parses"
+      $ let badRow = ["not-a-date", "Категорія", "0000 **** **** 0000", "Опис", "-100", "UAH", "100", "UAH", "500.00", "UAH"]
+            goodXlsxRow = xlsxRow "Категорія" "Опис" "-281" "1000.00"
+         in case parsePrivatBankXlsx (buildXlsx [xlsxPreamble, xlsxHeader, badRow, goodXlsxRow]) of
+              Right [Left (RowError n _), Right _] -> n `shouldBe` 1
+              other -> expectationFailure ("expected [RowError 1, Right], got: " <> show (fmap (map isRight) other))
+
+    it "returns a whole-file ParseError when no header row is present"
+      $ case parsePrivatBankXlsx (buildXlsx [["just"], ["a preamble"]]) of
+        Left (ParseError _) -> pure ()
+        other -> expectationFailure ("expected a header ParseError, got: " <> show (fmap (map isRight) other))
+
+    it "derives the same externalId as the CSV export for the same row, despite differing numeric text"
+      -- Normalization: the id is built from the parsed decimal value, so CSV
+      -- "510"/"1000.00" and XLSX "510.0"/"1000.0" (same amounts, different text)
+      -- yield one id — importing a statement as either format dedups identically.
+      $ let date = "10.07.2026 03:30:50"
+            csvR = T.intercalate "," [date, "Перекази", "0000 **** **** 0000", "Переказ", "510", "UAH", "510", "UAH", "1000.00", "UAH"]
+            xlsxR = [date, "Перекази", "0000 **** **** 0000", "Переказ", "510.0", "UAH", "510.0", "UAH", "1000.0", "UAH"]
+         in case (parsePrivatBankCsv (mkCsv [csvR]), parsePrivatBankXlsx (buildXlsx [xlsxPreamble, xlsxHeader, xlsxR])) of
+              (Right [Right c], Right [Right x]) -> c.externalId `shouldBe` x.externalId
+              (csvResult, xlsxResult) ->
+                expectationFailure
+                  ( "expected one parsed row from each format, got csv="
+                      <> show (fmap (map isRight) csvResult)
+                      <> " xlsx="
+                      <> show (fmap (map isRight) xlsxResult)
+                  )
+
   describe "descriptor" $ do
     it "has the privatbank id and display name" $ do
       unBankProviderId descriptor.providerId `shouldBe` "privatbank"
       descriptor.displayName `shouldBe` "PrivatBank"
 
-    it "supports file import (CSV) and not the pull transport" $ do
+    it "supports file import (CSV and XLSX) and not the pull transport" $ do
       isNothing descriptor.pull `shouldBe` True
       case descriptor.fileImport of
         Nothing -> expectationFailure "expected fileImport to be present"
-        Just cap -> Map.keys cap.parsers `shouldBe` [StatementCsv]
+        Just cap -> Map.keys cap.parsers `shouldBe` [StatementCsv, StatementXlsx]

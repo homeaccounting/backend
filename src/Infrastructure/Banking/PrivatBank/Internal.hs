@@ -10,6 +10,7 @@
 module Infrastructure.Banking.PrivatBank.Internal
   ( PrivatRawRow (..),
     parsePrivatBankCsv,
+    parsePrivatBankXlsx,
     validateRow,
     counterpartyToken,
   )
@@ -25,7 +26,8 @@ import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
 import Infrastructure.Banking.Provider
-import Infrastructure.Banking.Statement (parseSignedDecimal)
+import Infrastructure.Banking.Statement (canonicalDecimal, parseSignedDecimal)
+import Infrastructure.Banking.Xlsx (xlsxStatementParser)
 import RIO
 
 -- | One data row of a PrivatBank CSV export, decoded field-for-field with no
@@ -90,6 +92,41 @@ parsePrivatBankCsv = csvStatementParser "PrivatBank CSV" comma prepare validateR
     prepare bs = case dropPreambleLine bs of
       Nothing -> Left (ParseError "PrivatBank CSV: no preamble/header lines found")
       Just rest -> Right rest
+
+-- | Parse a PrivatBank __XLSX__ statement export — the native (default) Privat24
+-- export, the same @Історія операцій@ statement as the CSV in an OOXML container.
+--
+-- The sheet opens with a merged title row; the tabular header is the first row
+-- carrying both @Дата@ and @Сума в валюті картки@ (a whole-file 'ParseError' if
+-- no such row exists). Each subsequent non-empty row's columns are read by
+-- (Cyrillic) header name into the same 'PrivatRawRow' the CSV path decodes, then
+-- validated by the shared 'validateRow' — so a statement imported as XLSX or CSV
+-- yields identical 'BankTransaction's (including a matching 'externalId', which
+-- 'validateRow' derives from the amount/balance's exact value, not their textual
+-- spelling). A malformed row becomes a 'RowError' without failing the file.
+parsePrivatBankXlsx :: StatementParser
+parsePrivatBankXlsx =
+  xlsxStatementParser "PrivatBank XLSX" isHeaderRow (\_preamble col rowNumber -> validateRow rowNumber (rowFromColumns col))
+  where
+    isHeaderRow cells = "Дата" `elem` cells && "Сума в валюті картки" `elem` cells
+
+-- | Assemble a 'PrivatRawRow' from an XLSX by-name column accessor, mirroring the
+-- CSV 'Csv.FromNamedRecord' decode field-for-field. A column absent from the
+-- header (accessor returns 'Nothing') becomes @""@, which 'validateRow' then
+-- rejects per-row exactly as it would an empty CSV cell.
+rowFromColumns :: (Text -> Maybe Text) -> PrivatRawRow
+rowFromColumns col =
+  PrivatRawRow
+    { rawDate = get "Дата",
+      rawCategory = get "Категорія",
+      rawCard = get "Картка",
+      rawDescription = get "Опис операції",
+      rawAmount = get "Сума в валюті картки",
+      rawCurrency = get "Валюта картки",
+      rawBalance = get "Залишок на кінець періоду"
+    }
+  where
+    get name = fromMaybe "" (col name)
 
 -- | Drop the first line (and its line terminator) of a 'ByteString',
 -- treating a bare @\n@ or a @\r\n@ pair as the terminator. 'Nothing' iff the
@@ -160,11 +197,14 @@ counterpartyToken =
     . fst
     . T.breakOn ". Коментар:"
 
--- | Deterministic external id composite: raw date, raw card-currency amount,
--- and raw running balance, all taken verbatim off the CSV. The running
--- balance makes each row unique even when date+amount repeat (e.g. two
--- identical top-ups); parsing the same file bytes always yields the same
--- text, and hence the same id.
+-- | Deterministic external id composite: the row's date verbatim plus its
+-- card-currency amount and running balance in canonical decimal form
+-- ('canonicalDecimal'). The running balance makes each row unique even when
+-- date+amount repeat (e.g. two identical top-ups). Canonicalising amount and
+-- balance by exact value rather than textual spelling makes the id
+-- format-independent, so the same statement imported as CSV (@"510"@) or XLSX
+-- (@"510.0"@) yields one id and dedups identically; parsing the same file bytes
+-- still always yields the same id.
 externalIdText :: PrivatRawRow -> Text
 externalIdText raw =
-  "privatbank:" <> raw.rawDate <> ":" <> raw.rawAmount <> ":" <> raw.rawBalance
+  "privatbank:" <> raw.rawDate <> ":" <> canonicalDecimal raw.rawAmount <> ":" <> canonicalDecimal raw.rawBalance
