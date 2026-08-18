@@ -23,6 +23,7 @@ import Application.Services.AuthService (AuthResult (..), register)
 import Application.Services.ConfigurationService
   ( addDictionaryEntry,
     changeBaseCurrency,
+    changeCountry,
     changeDefaultCurrency,
     expenseCategoryDictKind,
     incomeCategoryDictKind,
@@ -59,6 +60,8 @@ import Domain.Core.Types
     unsafeMoney,
     unsafeTransactionId,
   )
+import Domain.Localization.Country (unsafeCountry)
+import Domain.Localization.Language (Language (..))
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand)
 import RIO
@@ -73,6 +76,7 @@ spec = describe "ConfigurationService" $ do
   seedDefaultConfigurationSpec
   cloneOnWriteSpec
   changeBaseCurrencySpec
+  changeCountrySpec
   dictionaryCRUDSpec
   registrationAssignsDefaultConfigSpec
   defaultAccountsSpec
@@ -307,6 +311,73 @@ changeBaseCurrencySpec =
               -- Now try to change base currency again - should fail
               result2 <- runRIO env $ changeBaseCurrency userId GBP
               result2 `shouldSatisfy` isLeft
+
+-- -----------------------------------------------------------------------------
+-- changeCountry (two-leg preset)
+-- -----------------------------------------------------------------------------
+
+changeCountrySpec :: Spec
+changeCountrySpec =
+  describe "changeCountry" $ do
+    it "applies the full UA preset (country, language, both currencies) on a fresh user" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "country-ua@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          result <- runRIO env $ changeCountry userId (unsafeCountry "UA")
+          result `shouldSatisfy` isRight
+          maybeUser <- runDbIn env (getUser userId)
+          case maybeUser of
+            Nothing -> expectationFailure "User not found"
+            Just userData -> do
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
+              case maybeCfg of
+                Nothing -> expectationFailure "Config not found"
+                Just cfg -> do
+                  cfg.country `shouldBe` Just (unsafeCountry "UA")
+                  cfg.language `shouldBe` Uk
+                  cfg.defaultCurrency `shouldBe` UAH
+                  -- leg 2: base currency editable (no transactions) -> applied
+                  cfg.baseCurrency `shouldBe` UAH
+
+    it "leaves base currency unchanged when the External account already has transactions" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "country-locked@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          maybeUser0 <- runDbIn env (getUser userId)
+          case maybeUser0 of
+            Nothing -> expectationFailure "User not found"
+            Just userData0 -> do
+              -- Mark the External account as having transactions (base currency locked)
+              let extAcctUuid = unAccountId userData0.externalAccountId
+                  txId = unsafeTransactionId (UUID.fromWords 998 0 0 1)
+              _ <-
+                applyAccountCommand env.eventStoreWriter env.eventStoreReader id extAcctUuid
+                  $ CreditAccountAccountCommand
+                    CreditAccount {amount = unsafeMoney USD 100, transactionId = txId}
+              result <- runRIO env $ changeCountry userId (unsafeCountry "UA")
+              result `shouldSatisfy` isRight
+              maybeUser <- runDbIn env (getUser userId)
+              case maybeUser of
+                Nothing -> expectationFailure "User not found"
+                Just userData -> do
+                  maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
+                  case maybeCfg of
+                    Nothing -> expectationFailure "Config not found"
+                    Just cfg -> do
+                      -- leg 1 still applies country/language/default currency
+                      cfg.country `shouldBe` Just (unsafeCountry "UA")
+                      cfg.language `shouldBe` Uk
+                      cfg.defaultCurrency `shouldBe` UAH
+                      -- leg 2 skipped: base currency stays at the original USD
+                      cfg.baseCurrency `shouldBe` USD
 
 -- -----------------------------------------------------------------------------
 -- Dictionary CRUD

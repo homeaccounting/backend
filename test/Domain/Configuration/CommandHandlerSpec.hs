@@ -35,12 +35,16 @@ import Domain.Configuration.Events
     BankProviderExpenseCategoryMapSet (..),
     BankProviderIncomeCategoryMapSet (..),
     ConfigurationCreated (..),
+    CountryChanged (..),
     DefaultAccountSet (..),
     DefaultExpenseCategorySet (..),
     DefaultIncomeCategorySet (..),
     DefaultSubtypeAccountsSet (..),
+    LanguageChanged (..),
   )
 import Domain.Core.Types
+import Domain.Localization.Country (unsafeCountry)
+import Domain.Localization.Language (Language (..))
 import Eventium (latestProjection)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret (..))
 import RIO
@@ -54,6 +58,8 @@ spec = do
   createConfigurationSpec
   changeBaseCurrencySpec
   changeDefaultCurrencySpec
+  changeLanguageSpec
+  changeCountrySpec
   addDictionaryEntrySpec
   renameDictionaryEntrySpec
   removeDictionaryEntrySpec
@@ -133,6 +139,8 @@ createdConfig =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           }
     ]
@@ -145,6 +153,8 @@ configWithOneEntry =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -165,6 +175,8 @@ configWithTwoEntries =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -193,6 +205,8 @@ configWithIncomeEntry =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -213,6 +227,8 @@ configWithExpenseEntry =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -233,6 +249,8 @@ configWithTwoExpenseEntries =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -261,6 +279,8 @@ configWithTwoIncomeEntries =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -290,6 +310,8 @@ configWithDefaultIncomeCategory =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -323,6 +345,8 @@ configWithDefaultExpenseCategory =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -356,6 +380,8 @@ configWithMccMapEntry =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -389,6 +415,8 @@ configWithIncomeMapEntry =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -421,6 +449,8 @@ configWithContactEntry =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -441,6 +471,8 @@ configWithTwoContactEntries =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -470,6 +502,8 @@ configWithContactMapEntry =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       DictionaryEntryAddedConfigurationEvent
@@ -639,6 +673,56 @@ changeDefaultCurrencySpec = describe "ChangeDefaultCurrency Command" $ do
         result `shouldBe` Left ConfigurationNotCreated
 
 -- -----------------------------------------------------------------------------
+-- ChangeLanguage Tests
+-- -----------------------------------------------------------------------------
+
+changeLanguageSpec :: Spec
+changeLanguageSpec = describe "ChangeLanguage Command" $ do
+  context "Given created configuration" $ do
+    it "Then emits a single LanguageChanged event" $ do
+      let result = handleConfigurationCommand createdConfig (ChangeLanguageConfigurationCommand (ChangeLanguage {language = Uk}))
+      case result of
+        Right events -> do
+          length events `shouldBe` 1
+          case head events of
+            LanguageChangedConfigurationEvent changed -> changed.language `shouldBe` Uk
+            _ -> expectationFailure "Expected LanguageChanged event"
+        Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
+
+  context "Given uncreated aggregate" $ do
+    it "Then returns ConfigurationNotCreated error"
+      $ handleConfigurationCommand configurationDefault (ChangeLanguageConfigurationCommand (ChangeLanguage {language = Uk}))
+      `shouldBe` Left ConfigurationNotCreated
+
+-- -----------------------------------------------------------------------------
+-- ChangeCountry Tests (leg-1 preset bundle)
+-- -----------------------------------------------------------------------------
+
+changeCountrySpec :: Spec
+changeCountrySpec = describe "ChangeCountry Command" $ do
+  context "Given created configuration" $ do
+    it "Then UA emits CountryChanged + LanguageChanged uk + DefaultCurrencyChanged UAH (no BaseCurrencyChanged)"
+      $ handleConfigurationCommand createdConfig (ChangeCountryConfigurationCommand (ChangeCountry {country = unsafeCountry "UA"}))
+      `shouldBe` Right
+        [ CountryChangedConfigurationEvent (CountryChanged {country = unsafeCountry "UA"}),
+          LanguageChangedConfigurationEvent (LanguageChanged {language = Uk}),
+          DefaultCurrencyChangedConfigurationEvent (DefaultCurrencyChanged {defaultCurrency = UAH})
+        ]
+
+    it "Then a euro-area country emits LanguageChanged en + DefaultCurrencyChanged EUR"
+      $ handleConfigurationCommand createdConfig (ChangeCountryConfigurationCommand (ChangeCountry {country = unsafeCountry "DE"}))
+      `shouldBe` Right
+        [ CountryChangedConfigurationEvent (CountryChanged {country = unsafeCountry "DE"}),
+          LanguageChangedConfigurationEvent (LanguageChanged {language = En}),
+          DefaultCurrencyChangedConfigurationEvent (DefaultCurrencyChanged {defaultCurrency = EUR})
+        ]
+
+  context "Given uncreated aggregate" $ do
+    it "Then returns ConfigurationNotCreated error"
+      $ handleConfigurationCommand configurationDefault (ChangeCountryConfigurationCommand (ChangeCountry {country = unsafeCountry "UA"}))
+      `shouldBe` Left ConfigurationNotCreated
+
+-- -----------------------------------------------------------------------------
 -- AddDictionaryEntry Tests
 -- -----------------------------------------------------------------------------
 
@@ -676,6 +760,8 @@ addDictionaryEntrySpec = describe "AddDictionaryEntry Command" $ do
                   ConfigurationCreated
                     { baseCurrency = UAH,
                       defaultCurrency = UAH,
+                      language = En,
+                      country = Nothing,
                       createdBy = System
                     }
               ]
@@ -724,6 +810,8 @@ addDictionaryEntrySpec = describe "AddDictionaryEntry Command" $ do
                 ConfigurationCreated
                   { baseCurrency = UAH,
                     defaultCurrency = UAH,
+                    language = En,
+                    country = Nothing,
                     createdBy = System
                   },
               DictionaryEntryAddedConfigurationEvent
@@ -1360,6 +1448,8 @@ removeDictionaryEntryBankingGuardSpec = describe "RemoveDictionaryEntry banking 
                     ConfigurationCreated
                       { baseCurrency = UAH,
                         defaultCurrency = UAH,
+                        language = En,
+                        country = Nothing,
                         createdBy = System
                       },
                   DictionaryEntryAddedConfigurationEvent
@@ -1423,6 +1513,8 @@ treeConfig =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           }
         : map
@@ -1591,6 +1683,8 @@ moveTreeGuardSpec = describe "MoveDictionaryEntry tree guards" $ do
                     ConfigurationCreated
                       { baseCurrency = UAH,
                         defaultCurrency = UAH,
+                        language = En,
+                        country = Nothing,
                         createdBy = System
                       }
                     : map
@@ -1687,6 +1781,8 @@ configWithConnection =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       BankConnectionAddedConfigurationEvent
@@ -1709,6 +1805,8 @@ configWithTwoConnections =
         ConfigurationCreated
           { baseCurrency = UAH,
             defaultCurrency = UAH,
+            language = En,
+            country = Nothing,
             createdBy = System
           },
       BankConnectionAddedConfigurationEvent
@@ -1776,6 +1874,8 @@ addBankConnectionSpec = describe "AddBankConnection Command" $ do
                   ConfigurationCreated
                     { baseCurrency = UAH,
                       defaultCurrency = UAH,
+                      language = En,
+                      country = Nothing,
                       createdBy = System
                     }
               ]

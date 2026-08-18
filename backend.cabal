@@ -102,6 +102,9 @@ library
       Domain.Core.Types
       Domain.Events
       Domain.ExchangeRate.Events
+      Domain.Localization.Country
+      Domain.Localization.Language
+      Domain.Localization.Preset
       Domain.Models
       Domain.Transaction
       Domain.Transaction.CommandHandler
@@ -439,6 +442,9 @@ test-suite backend-test
       Domain.Core.TransactionTypePropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
+      Domain.Localization.CountrySpec
+      Domain.Localization.LanguageSpec
+      Domain.Localization.PresetSpec
       Domain.Transaction.AllocationsSpec
       Domain.Transaction.AmendmentCommandHandlerSpec
       Domain.Transaction.AmendmentPropertySpec
@@ -530,6 +536,7 @@ test-suite backend-test
       Web.API.BankingAPISpec
       Web.API.ConfigurationBankingAPISpec
       Web.API.ConfigurationDictionaryTreeSpec
+      Web.API.ConfigurationLocalizationAPISpec
       Web.API.PromptAPISpec
       Web.API.SyncAPIIntegrationSpec
       Web.API.TransactionAllocationsAPISpec

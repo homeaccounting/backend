@@ -25,6 +25,9 @@ module Application.Services.ConfigurationService
     getConfigurationForUser,
     changeBaseCurrency,
     changeDefaultCurrency,
+    changeLanguage,
+    changeCountry,
+    baseCurrencyEditable,
     addDictionaryEntry,
     renameDictionaryEntry,
     removeDictionaryEntry,
@@ -56,7 +59,7 @@ module Application.Services.ConfigurationService
   )
 where
 
-import Application.ReadModels.Account (AccountData (..), getAccounts)
+import Application.ReadModels.Account (AccountData (..), getAccount, getAccounts)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..), dictionaryEntriesParentFirst, getConfiguration)
 import Application.ReadModels.Transaction (findReferencingTransactions)
 import Application.ReadModels.User (UserData (..))
@@ -101,7 +104,9 @@ import Domain.Configuration.Commands
     AddDictionaryEntry (..),
     ChangeBankConnectionCredential (..),
     ChangeBaseCurrency (..),
+    ChangeCountry (..),
     ChangeDefaultCurrency (..),
+    ChangeLanguage (..),
     CloseBooksThrough (..),
     CreateConfiguration (..),
     MoveDictionaryEntry (..),
@@ -138,6 +143,9 @@ import Domain.Configuration.Projection
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Types (AccountId, AccountRole (..), AccountSubtypeKind, CategoryId, ConfigurationId, ContactId, CreatedBy (..), Currency (..), DictionaryEntryId, EntryName, UserId, defaultConfigurationId, isRegular, mkConfigurationId, unAccountId, unConfigurationId, unDictionaryEntryId, unUserId, unsafeDictionaryEntryId, unsafeEntryName)
+import Domain.Localization.Country (Country, unCountry)
+import Domain.Localization.Language (Language, languageCode)
+import Domain.Localization.Preset (CountryPreset (..), presetFor)
 import Domain.User.CommandHandler (UserCommand (..))
 import Domain.User.Commands (AssignConfiguration (..))
 import Eventium (CommandHandlerError (..))
@@ -221,6 +229,57 @@ changeDefaultCurrency userId newCurrency = runExceptT $ do
     (unConfigurationId configId)
     (ChangeDefaultCurrencyConfigurationCommand ChangeDefaultCurrency {defaultCurrency = newCurrency})
   lift $ logInfo "Default currency changed successfully"
+
+-- | Whether the user's base/reporting currency can still change: true when the
+-- user has no External account, or that account has no transactions. This is the
+-- Application-layer home of the rule the Web layer used to compute inline (which
+-- now delegates here). Also the guard for the country preset's base-currency leg.
+baseCurrencyEditable :: UserId -> AppM Bool
+baseCurrencyEditable uid = do
+  extResult <- runExceptT (getUserExternalAccountId uid)
+  case extResult of
+    Left _ -> pure True
+    Right extAccId -> do
+      mAccount <- runDb (getAccount extAccId)
+      pure $ maybe True (not . (.hasTransactions)) mAccount
+
+-- | Change the UI language for a user's configuration.
+changeLanguage :: UserId -> Language -> AppM (Either DomainError ())
+changeLanguage userId newLanguage = runExceptT $ do
+  lift $ logInfo $ "Changing language to " <> displayShow (languageCode newLanguage) <> " for user " <> displayShow userId
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  runConfigurationCmd
+    translateConfigurationError
+    (unConfigurationId configId)
+    (ChangeLanguageConfigurationCommand ChangeLanguage {language = newLanguage})
+  lift $ logInfo "Language changed successfully"
+
+-- | Change the user country, applying the regional preset in two legs:
+--
+--   * Leg 1 — one atomic Configuration command ('ChangeCountry') emits country +
+--     language + default-currency, derived from the pure preset.
+--   * Leg 2 — base currency, which also updates the External account, is applied
+--     via 'changeBaseCurrency' /only/ when it is still editable and the preset
+--     specifies one. Base currency cannot ride leg 1 because it spans the Account
+--     aggregate; this is the same account-then-config non-atomicity
+--     'changeBaseCurrency' already has.
+changeCountry :: UserId -> Country -> AppM (Either DomainError ())
+changeCountry userId newCountry = runExceptT $ do
+  lift $ logInfo $ "Changing country to " <> displayShow (unCountry newCountry) <> " for user " <> displayShow userId
+  -- Destructure the preset (not record-dot) to avoid the DuplicateRecordFields
+  -- ambiguity on the shared field name.
+  let CountryPreset {baseCurrency = presetBaseCurrency} = presetFor newCountry
+  configId <- ExceptT (ensureClonedConfiguration userId)
+  runConfigurationCmd
+    translateConfigurationError
+    (unConfigurationId configId)
+    (ChangeCountryConfigurationCommand ChangeCountry {country = newCountry})
+  editable <- lift (baseCurrencyEditable userId)
+  when editable
+    $ forM_ presetBaseCurrency
+    $ \c ->
+      ExceptT (changeBaseCurrency userId c)
+  lift $ logInfo "Country changed successfully"
 
 -- | Add a new entry to a dictionary in the user's configuration.
 addDictionaryEntry :: UserId -> DictionaryKind -> EntryName -> EntryRole -> Maybe DictionaryEntryId -> AppM (Either DomainError DictionaryEntryId)
@@ -952,6 +1011,12 @@ cloneConfiguration userId sourceConfigId configData = runExceptT $ do
   --
   -- Note: booksClosedThrough is intentionally not propagated. It is a per-user
   -- bookkeeping decision; clones start from an open ledger.
+  --
+  -- language/country are likewise intentionally NOT propagated: the clone-on-write
+  -- source is always the System seed config (language=En, country=Nothing), so the
+  -- CreateConfiguration defaults above already produce the correct values. A clone
+  -- starts from the language/country defaults and the user re-selects country (which
+  -- re-applies the preset) — mirroring the booksClosedThrough reset above.
   lift (copyDictionaries newConfigUuidVal configData.dictionaries)
   lift (copyDefaults newConfigUuidVal configData)
   lift (copyBanking newConfigUuidVal configData.banking)

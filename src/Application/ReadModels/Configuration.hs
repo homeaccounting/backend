@@ -108,6 +108,7 @@ import Domain.Configuration.Events
     BaseCurrencyChanged (..),
     BooksClosedThroughSet (..),
     ConfigurationCreated (..),
+    CountryChanged (..),
     DefaultAccountSet (..),
     DefaultCurrencyChanged (..),
     DefaultExpenseCategorySet (..),
@@ -117,6 +118,7 @@ import Domain.Configuration.Events
     DictionaryEntryMoved (..),
     DictionaryEntryRemoved (..),
     DictionaryEntryRenamed (..),
+    LanguageChanged (..),
   )
 import Domain.Configuration.Projection
   ( BankConnection (..),
@@ -125,6 +127,8 @@ import Domain.Configuration.Projection
     emptyBankingConfiguration,
   )
 import Domain.Core.Types (AccountId, ConfigurationId, CreatedBy, Currency, DefaultSubtypeAccounts (..), DictionaryEntryId, EntryName, mkConfigurationIdSafe, unDefaultSubtypeAccounts)
+import Domain.Localization.Country (Country)
+import Domain.Localization.Language (Language)
 import Domain.Models (AccountingEvent (..))
 import Eventium
   ( EventHandler (..),
@@ -149,6 +153,10 @@ data ConfigurationData = ConfigurationData
     baseCurrency :: Currency,
     -- | Default currency for new accounts
     defaultCurrency :: Currency,
+    -- | UI language.
+    language :: Language,
+    -- | User country, if set.
+    country :: Maybe Country,
     -- | Dictionaries with their entries
     dictionaries :: Map DictionaryKind DictionaryData,
     -- | Banking-specific configuration
@@ -228,6 +236,8 @@ ConfigurationEntity sql=configurations
     configId ConfigurationId
     baseCurrency Currency
     defaultCurrency Currency
+    language Language default='en'
+    country Country Maybe
     defaultIncomeCategory DictionaryEntryId Maybe
     defaultExpenseCategory DictionaryEntryId Maybe
     defaultAccount AccountId Maybe
@@ -332,6 +342,8 @@ applyConfigurationEvent globalEvent =
                   { configurationEntityConfigId = configId,
                     configurationEntityBaseCurrency = evt.baseCurrency,
                     configurationEntityDefaultCurrency = evt.defaultCurrency,
+                    configurationEntityLanguage = evt.language,
+                    configurationEntityCountry = evt.country,
                     configurationEntityDefaultIncomeCategory = Nothing,
                     configurationEntityDefaultExpenseCategory = Nothing,
                     configurationEntityDefaultAccount = Nothing,
@@ -344,6 +356,10 @@ applyConfigurationEvent globalEvent =
             modifyConfig configId (\e -> e {configurationEntityBaseCurrency = evt.baseCurrency, configurationEntityVersion = ver})
           DefaultCurrencyChangedEvent evt ->
             modifyConfig configId (\e -> e {configurationEntityDefaultCurrency = evt.defaultCurrency, configurationEntityVersion = ver})
+          LanguageChangedEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityLanguage = evt.language, configurationEntityVersion = ver})
+          CountryChangedEvent evt ->
+            modifyConfig configId (\e -> e {configurationEntityCountry = Just evt.country, configurationEntityVersion = ver})
           DefaultIncomeCategorySetEvent evt ->
             modifyConfig configId (\e -> e {configurationEntityDefaultIncomeCategory = Just evt.categoryId, configurationEntityVersion = ver})
           DefaultExpenseCategorySetEvent evt ->
@@ -504,6 +520,8 @@ getConfiguration configId = do
           ConfigurationData
             { baseCurrency = e.configurationEntityBaseCurrency,
               defaultCurrency = e.configurationEntityDefaultCurrency,
+              language = e.configurationEntityLanguage,
+              country = e.configurationEntityCountry,
               dictionaries = dicts,
               banking = bankingCfg,
               defaults =

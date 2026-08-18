@@ -191,7 +191,9 @@ src/
 
 ### Configuration Aggregate (`Domain.Configuration`)
 
-**Responsibility**: Per-user configuration — base/default currency, bank connections, and the **dictionaries** (categories, labels, contacts) used to classify transactions.
+**Responsibility**: Per-user configuration — base/default currency, **UI language + country** (the personalization/localization signals), bank connections, and the **dictionaries** (categories, labels, contacts) used to classify transactions.
+
+**Personalization signals**: `language` (`Domain.Localization.Language`, a closed `En | Uk` sum) and `country` (`Domain.Localization.Country`, an ISO 3166-1 alpha-2 newtype over a launch-scoped supported set). These value types live in a shared `Domain.Localization` namespace (parallel to `Domain.Banking`), not under any aggregate, since many features read them. Changing country applies a **regional preset** (`Domain.Localization.Preset`, US/EU/UA profiles) in two legs: an atomic `ChangeCountry` Configuration bundle (`CountryChanged` + `LanguageChanged` + `DefaultCurrencyChanged`), and a service-orchestrated base-currency change (which also updates the External account) applied only when base currency is still editable. See `docs/specs/2026-08-11-p13n-country-language-signal-design.md`.
 
 **Dictionaries** are a closed, code-defined set keyed by `DictionaryKind` (`IncomeKind`, `ExpenseKind`, `LabelKind`, `ContactKind`) — a sum type, not a free-text id — held as `Map DictionaryKind Dictionary`. There is no user-created dictionary. Entries form a **tree** via an adjacency list: each `DictionaryEntry` carries a `parentId :: Maybe DictionaryEntryId` (`Nothing` = root). A "group" is emergent — any node that has children — not a distinct type. `groupsSelectable :: DictionaryKind -> Bool` is a pure per-kind policy (never stored), and `entryAssignable` derives from it whether a given node may be attached to a transaction.
 
@@ -445,6 +447,11 @@ instances. See the *Upcaster vs. custom `FromJSON`* rule in `CLAUDE.md`.
 
 Pre-envelope events (written before schema versioning existed) carry no
 `schemaVersion` and are read as version 1 automatically.
+
+The registry currently holds **one live hop**: `configurationCreatedV1toV2`
+(`ConfigurationCreated` v1→v2, defaulting the personalization `language` (`"en"`)
+and `country` (`null`) fields). It is the first entry after the pre-launch DB
+recreate cleared the registry, re-activating upcast-on-read for real.
 
 ### Read Models (In-Memory)
 

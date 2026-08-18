@@ -54,6 +54,7 @@ import Domain.Core.Types
     unUserId,
     unsafeMoney,
   )
+import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransactionLabelsSet (..), TransactionPostingCompleted (..))
 import Infrastructure.App (AppEnv, runAppM)
@@ -234,7 +235,7 @@ spec = do
               (UUID.fromWords 999 0 0 0)
               0
               ( ConfigurationCreatedEvent
-                  ConfigurationCreated {baseCurrency = USD, defaultCurrency = USD, createdBy = System}
+                  ConfigurationCreated {baseCurrency = USD, defaultCurrency = USD, language = En, country = Nothing, createdBy = System}
               )
               1
       -- No seeding here, so no user rows exist; both events classify to the

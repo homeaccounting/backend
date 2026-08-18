@@ -68,6 +68,7 @@ import Domain.Configuration.Projection
     emptyConfigurationDefaults,
   )
 import Domain.Core.Types (AccountId, AccountType (..), CreatedBy (..), Currency (..), DictionaryEntryId, Money, TransactionId, TransactionKind (..), TransactionType (..), UserId, defaultBankAccount, mkMoney, unTransactionId, unsafeDictionaryEntryId, unsafeEntryName)
+import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionImportReconciled (..),
@@ -454,6 +455,8 @@ spec = describe "BankImportService" $ do
           ConfigurationData
             { baseCurrency = UAH,
               defaultCurrency = UAH,
+              language = En,
+              country = Nothing,
               dictionaries = dicts,
               banking = bankingCfg,
               defaults = emptyConfigurationDefaults {expenseCategory = Just defaultExpense},
@@ -467,6 +470,8 @@ spec = describe "BankImportService" $ do
           ConfigurationData
             { baseCurrency = UAH,
               defaultCurrency = UAH,
+              language = En,
+              country = Nothing,
               dictionaries = dicts,
               banking = bankingCfg,
               defaults = emptyConfigurationDefaults {incomeCategory = Just defaultIncome},
@@ -536,6 +541,8 @@ spec = describe "BankImportService" $ do
           ConfigurationData
             { baseCurrency = UAH,
               defaultCurrency = UAH,
+              language = En,
+              country = Nothing,
               dictionaries = dicts,
               banking = bankingCfg,
               defaults = emptyConfigurationDefaults,

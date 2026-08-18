@@ -33,6 +33,7 @@ import Domain.Configuration.Events
   )
 import Domain.Configuration.Projection (BankingConfiguration (..))
 import Domain.Core.Types (ConfigurationId, CreatedBy (..), Currency (..), unConfigurationId)
+import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import qualified Eventium
 import Infrastructure.App (AppEnv)
@@ -66,6 +67,8 @@ created cid ver =
         ConfigurationCreated
           { baseCurrency = USD,
             defaultCurrency = USD,
+            language = En,
+            country = Nothing,
             createdBy = System
           }
     )

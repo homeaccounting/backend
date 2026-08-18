@@ -41,6 +41,7 @@ import Domain.Configuration.Events
     DefaultSubtypeAccountsSet (..),
   )
 import Domain.Core.Types
+import Domain.Localization.Language (Language (..))
 import Eventium (latestProjection)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret (..))
 import RIO
@@ -119,6 +120,8 @@ createdEvent =
     ConfigurationCreated
       { baseCurrency = UAH,
         defaultCurrency = UAH,
+        language = En,
+        country = Nothing,
         createdBy = System
       }
 
@@ -154,6 +157,8 @@ configurationCreatedSpec = describe "ConfigurationCreated event" $ do
             ConfigurationCreated
               { baseCurrency = USD,
                 defaultCurrency = EUR,
+                language = En,
+                country = Nothing,
                 createdBy = ClonedBy testUserId testConfigId
               }
     let config = applyEvents [event]

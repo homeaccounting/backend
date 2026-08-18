@@ -39,6 +39,9 @@ module Web.API.ConfigurationAPI
     DictionaryResponse (..),
     DictionaryEntryNode (..),
     ChangeCurrencyRequest (..),
+    ChangeLanguageRequest (..),
+    ChangeCountryRequest (..),
+    LocalizationOptionsResponse (..),
     UpdateBankingRequest (..),
     UpdateDefaultsRequest (..),
     CloseBooksThroughRequest (..),
@@ -60,13 +63,11 @@ module Web.API.ConfigurationAPI
   )
 where
 
-import Application.ReadModels.Account (AccountData (..), getAccount)
 import Application.ReadModels.Configuration (ConfigurationData (..), DictionaryData (..))
 import qualified Application.Services.ConfigurationService as ConfigService
-import Application.Services.Internal (getUserExternalAccountId)
-import Control.Monad.Except (runExceptT)
 import Data.Aeson (FromJSON (..), ToJSON (..), object, withObject, (.:), (.:?), (.=))
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Domain.Banking.Signal (parseBankProviderCategoryKey, parseBankProviderContactKey, renderBankProviderCategoryKey, renderBankProviderContactKey)
@@ -89,7 +90,9 @@ import Domain.Configuration.Projection
   )
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (AccountSubtypeKind, DictionaryEntryId, UserId, mkAccountId, mkDictionaryEntryId, mkEntryName, parseCurrency, unAccountId, unDictionaryEntryId, unEntryName)
-import Infrastructure.App (AppM, HasBankProviderRegistry (..), bankingFeatureEnabled, runDb)
+import Domain.Localization.Country (mkCountry, supportedCountries, unCountry)
+import Domain.Localization.Language (Language (..), languageCode, parseLanguage)
+import Infrastructure.App (AppM, HasBankProviderRegistry (..), bankingFeatureEnabled)
 import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),
     providerSupportsFile,
@@ -134,6 +137,32 @@ type ConfigurationAPI =
       :> "default-currency"
       :> ReqBody '[JSON] ChangeCurrencyRequest
       :> Put '[JSON] NoContent
+    -- PUT /api/users/me/configuration/language - Update UI language
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "language"
+      :> ReqBody '[JSON] ChangeLanguageRequest
+      :> Put '[JSON] NoContent
+    -- PUT /api/users/me/configuration/country - Update user country (applies regional preset)
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "country"
+      :> ReqBody '[JSON] ChangeCountryRequest
+      :> Put '[JSON] NoContent
+    -- GET /api/users/me/configuration/localization-options - Supported locales + countries
+    :<|> AuthProtect "jwt"
+      :> "api"
+      :> "users"
+      :> "me"
+      :> "configuration"
+      :> "localization-options"
+      :> Get '[JSON] LocalizationOptionsResponse
     -- PUT /api/users/me/configuration/banking - Update banking defaults (partial)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -403,6 +432,10 @@ instance FromJSON ConfigurationDefaultsDTO
 data ConfigurationResponse = ConfigurationResponse
   { baseCurrency :: Text,
     defaultCurrency :: Text,
+    -- | Active UI language code (ISO 639-1, e.g. "en"/"uk"). Always present.
+    language :: Text,
+    -- | User country (ISO 3166-1 alpha-2), or 'Nothing' when unset.
+    country :: Maybe Text,
     dictionaries :: Map Text DictionaryResponse,
     banking :: BankingConfigurationDTO,
     -- | All per-configuration defaults (categories + accounts), grouped.
@@ -482,6 +515,39 @@ data ChangeCurrencyRequest = ChangeCurrencyRequest
 instance ToJSON ChangeCurrencyRequest
 
 instance FromJSON ChangeCurrencyRequest
+
+-- | Request to change the UI language.
+newtype ChangeLanguageRequest = ChangeLanguageRequest
+  { language :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ChangeLanguageRequest
+
+instance FromJSON ChangeLanguageRequest
+
+-- | Request to change the user country.
+newtype ChangeCountryRequest = ChangeCountryRequest
+  { country :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ChangeCountryRequest
+
+instance FromJSON ChangeCountryRequest
+
+-- | Supported localization options, so the web renders selectors from one
+-- backend-authoritative source (ISO 639-1 language codes; supported ISO 3166-1
+-- alpha-2 country codes).
+data LocalizationOptionsResponse = LocalizationOptionsResponse
+  { languages :: [Text],
+    countries :: [Text]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON LocalizationOptionsResponse
+
+instance FromJSON LocalizationOptionsResponse
 
 -- | Request to add a dictionary entry.
 data AddEntryRequest = AddEntryRequest
@@ -650,6 +716,9 @@ configurationServer =
   getConfigurationHandler
     :<|> changeBaseCurrencyHandler
     :<|> changeDefaultCurrencyHandler
+    :<|> changeLanguageHandler
+    :<|> changeCountryHandler
+    :<|> localizationOptionsHandler
     :<|> updateBankingHandler
     :<|> updateDefaultsHandler
     :<|> closeBooksThroughHandler
@@ -697,6 +766,35 @@ changeDefaultCurrencyHandler user req = do
   case result of
     Left err -> throwDomainError err
     Right () -> return NoContent
+
+-- | Handler for PUT /api/users/me/configuration/language
+changeLanguageHandler :: AuthenticatedUser -> ChangeLanguageRequest -> AppM NoContent
+changeLanguageHandler user req = do
+  lang <- validateFieldCtx "language" req.language $ parseLanguage req.language
+  result <- ConfigService.changeLanguage user.userId lang
+  case result of
+    Left err -> throwDomainError err
+    Right () -> return NoContent
+
+-- | Handler for PUT /api/users/me/configuration/country. Applies the regional
+-- preset (language + currencies) in the service.
+changeCountryHandler :: AuthenticatedUser -> ChangeCountryRequest -> AppM NoContent
+changeCountryHandler user req = do
+  ctry <- validateFieldCtx "country" req.country $ mkCountry req.country
+  result <- ConfigService.changeCountry user.userId ctry
+  case result of
+    Left err -> throwDomainError err
+    Right () -> return NoContent
+
+-- | Handler for GET /api/users/me/configuration/localization-options. The
+-- backend is the single source of truth the web renders selectors from.
+localizationOptionsHandler :: AuthenticatedUser -> AppM LocalizationOptionsResponse
+localizationOptionsHandler _ =
+  return
+    LocalizationOptionsResponse
+      { languages = [languageCode En, languageCode Uk],
+        countries = Set.toList supportedCountries
+      }
 
 -- | Handler for PUT /api/users/me/configuration/banking
 --
@@ -1051,6 +1149,8 @@ toConfigurationResponse editable featureEnabled configData =
    in ConfigurationResponse
         { baseCurrency = tshow configData.baseCurrency,
           defaultCurrency = tshow configData.defaultCurrency,
+          language = languageCode configData.language,
+          country = unCountry <$> configData.country,
           dictionaries =
             Map.mapKeys dictionaryKindSlug
               $ Map.map buildDictionaryResponse configData.dictionaries,
@@ -1071,19 +1171,13 @@ computeBankingFeatureEnabled = bankingFeatureEnabled
 
 -- | Compute whether the user's base currency can still be changed.
 --
+-- Delegates to the Application-layer 'ConfigService.baseCurrencyEditable' (the
+-- single home of this rule, also used by the country-preset base-currency leg).
 -- Returns 'False' once the user's External account has been touched by any
--- posted transaction (which is what the domain command handler uses to
--- reject 'ChangeAccountCurrency' with 'AccountCurrencyLocked'). Defaults to
--- 'True' if the External account can't be located in the read model — the
+-- posted transaction; 'True' if the External account can't be located — the
 -- domain layer remains authoritative and will still reject a stale request.
 computeBaseCurrencyEditable :: UserId -> AppM Bool
-computeBaseCurrencyEditable uid = do
-  extResult <- runExceptT (getUserExternalAccountId uid)
-  case extResult of
-    Left _ -> pure True
-    Right extAccId -> do
-      mAccount <- runDb (getAccount extAccId)
-      pure $ maybe True (not . (.hasTransactions)) mAccount
+computeBaseCurrencyEditable = ConfigService.baseCurrencyEditable
 
 -- | Map the read-model's already-materialised dictionary tree onto the nested
 -- tree DTO. Each node carries its role explicitly ("group" / "item"); an item

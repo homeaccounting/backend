@@ -1,0 +1,10 @@
+{
+  "tag": "ConfigurationCreated",
+  "contents": {
+    "baseCurrency": "USD",
+    "defaultCurrency": "USD",
+    "createdBy": {
+      "tag": "System"
+    }
+  }
+}

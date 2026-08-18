@@ -58,6 +58,8 @@ import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), D
 import Domain.Configuration.Events
 import Domain.Configuration.Projection
 import Domain.Core.Types (AccountId, CategoryId, ContactId, DictionaryEntryId, EntryName)
+import Domain.Localization.Language (Language (..))
+import Domain.Localization.Preset (CountryPreset (..), presetFor)
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 
@@ -304,6 +306,8 @@ handleConfigurationCommand config (CreateConfigurationConfigurationCommand Creat
             ConfigurationCreated
               { baseCurrency = baseCurrency,
                 defaultCurrency = defaultCurrency,
+                language = En,
+                country = Nothing,
                 createdBy = createdBy
               }
         ]
@@ -327,6 +331,30 @@ handleConfigurationCommand config (ChangeDefaultCurrencyConfigurationCommand Cha
               { defaultCurrency = defaultCurrency
               }
         ]
+-- Handle ChangeLanguage command
+handleConfigurationCommand config (ChangeLanguageConfigurationCommand ChangeLanguage {..})
+  | not config.isCreated = Left ConfigurationNotCreated
+  | otherwise =
+      Right
+        [ LanguageChangedConfigurationEvent
+            LanguageChanged {language = language}
+        ]
+-- Handle ChangeCountry command (leg 1: the atomic Configuration bundle).
+-- Base currency spans the Account aggregate, so it is NOT emitted here — the
+-- service applies it (leg 2) via 'changeBaseCurrency'.
+handleConfigurationCommand config (ChangeCountryConfigurationCommand ChangeCountry {..})
+  | not config.isCreated = Left ConfigurationNotCreated
+  | otherwise =
+      -- Destructure the preset via its constructor (not record-dot) to avoid the
+      -- DuplicateRecordFields/HasField ambiguity on the shared field names.
+      let CountryPreset {language = presetLanguage, defaultCurrency = presetDefaultCurrency} = presetFor country
+       in Right $
+            [ CountryChangedConfigurationEvent (CountryChanged {country = country}),
+              LanguageChangedConfigurationEvent (LanguageChanged {language = presetLanguage})
+            ]
+              ++ [ DefaultCurrencyChangedConfigurationEvent (DefaultCurrencyChanged {defaultCurrency = c})
+                 | Just c <- [presetDefaultCurrency]
+                 ]
 -- Handle AddDictionaryEntry command
 handleConfigurationCommand config (AddDictionaryEntryConfigurationCommand AddDictionaryEntry {..})
   | not config.isCreated = Left ConfigurationNotCreated

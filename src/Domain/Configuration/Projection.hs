@@ -281,6 +281,11 @@ handleConfigurationEvent Configuration {..} (DefaultCurrencyChangedConfiguration
       booksClosedThrough = booksClosedThrough,
       defaults = defaults
     }
+-- Language and country are not tracked on the aggregate (no command validates
+-- against them); these equations exist only for pattern exhaustiveness. The
+-- read model is where language/country materialize.
+handleConfigurationEvent config (LanguageChangedConfigurationEvent _) = config
+handleConfigurationEvent config (CountryChangedConfigurationEvent _) = config
 handleConfigurationEvent config (DictionaryEntryAddedConfigurationEvent DictionaryEntryAdded {..}) =
   let newEntry = DictionaryEntry {entryId = entryId, name = name, role = role, parentId = parentId}
       updatedDicts =

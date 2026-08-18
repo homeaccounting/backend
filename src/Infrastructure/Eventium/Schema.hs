@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
@@ -34,11 +35,13 @@ where
 
 import Data.Aeson (Value (..))
 import qualified Data.Aeson.KeyMap as KeyMap
+import Domain.Configuration.Events (ConfigurationCreated)
 import Domain.Models (AccountingEvent)
 import Eventium.Codec (Codec)
-import Eventium.SchemaEvolution.Types (SchemaRegistry, emptyRegistry)
+import Eventium.SchemaEvolution.Json (addFieldIfAbsent, atKey)
+import Eventium.SchemaEvolution.Types (SchemaRegistry, emptyRegistry, registerUpcasters)
 import Eventium.Store.Postgresql (JSONString, upcastingJsonStringCodec)
-import Eventium.Store.Types (EventTypeName)
+import Eventium.Store.Types (EventTypeName, eventTypeName)
 import RIO
 
 -- | Read the event-type name from a stored payload: the top-level @tag@ field
@@ -49,20 +52,29 @@ accountingEventTypeOf (Object o) = case KeyMap.lookup "tag" o of
   _ -> Nothing
 accountingEventTypeOf _ = Nothing
 
+-- | v1→v2 upcaster for 'ConfigurationCreated': the event gained a @language@
+-- field (default @"en"@) and a @country@ field (default @null@) when the
+-- personalization signal foundation landed. Legacy rows lack both; inject them.
+--
+-- Transforms under @contents@ (the app's @{tag, contents}@ envelope).
+-- @addFieldIfAbsent@ is idempotent and never clobbers an existing value, so a
+-- re-encoded v2 event passes through unchanged. @country@ injection is strictly
+-- optional (an absent @Maybe@ decodes as 'Nothing'), but is written explicitly
+-- for a self-describing v2 shape.
+configurationCreatedV1toV2 :: Value -> Value
+configurationCreatedV1toV2 =
+  atKey "contents" (addFieldIfAbsent "language" (String "en") . addFieldIfAbsent "country" Null)
+
 -- | The registry of single-hop upcasters keyed by 'AccountingEvent' tag.
 --
--- Currently empty. Every stored-shape change made so far was cleared by a
--- one-time pre-launch DB recreate (the documented alpha exception in
--- @CLAUDE.md@ "Backward compatibility"), so no live migrations exist. The two
--- historical upcasters that used to live here (the @TransactionAmendmentInitiated@
--- @allowOverdraft@ default and the @TransactionPostingInitiated@
--- @externalTransactionId@ scalar→list widening) were removed with that recreate.
---
--- The seam is retained deliberately: a post-launch shape change registers its
--- @v(N)→v(N+1)@ upcaster here (keyed by @eventTypeName \@T@) with no other wiring
--- changes, restoring the standing upcast-on-read policy.
+-- Holds the 'ConfigurationCreated' @v1→v2@ chain — the first live entry, which
+-- re-activates the upcast-on-read seam that a one-time pre-launch DB recreate had
+-- left empty (see @CLAUDE.md@ "Backward compatibility"). Register further
+-- @v(N)→v(N+1)@ upcasters here (keyed by @eventTypeName \@T@) with no other
+-- wiring changes.
 accountingSchemaRegistry :: SchemaRegistry Value
-accountingSchemaRegistry = emptyRegistry
+accountingSchemaRegistry =
+  registerUpcasters (eventTypeName @ConfigurationCreated) [configurationCreatedV1toV2] emptyRegistry
 
 -- | The event codec for the accounting store: schema-evolving drop-in for
 -- @jsonStringCodec@. Reads normalize older stored events to the current shape;

@@ -26,6 +26,8 @@ import Domain.Banking.Types (BankConnectionId, BankProviderId)
 import Domain.Configuration.Dictionary (DictionaryKind, EntryRole (..), dictionaryKindSlug, parseDictionaryKind)
 import Domain.Core.Types (AccountId, AccountRole, AccountStatus, AccountSubtypeKind, AccountType, Allocation (..), Allocations (..), ConfigurationId, CreatedBy, Currency, DefaultSubtypeAccounts, DictionaryEntryId, EntryName, ExchangeRate, Money, OAuthProvider, RelationKind, TelegramId (..), TransactionId, TransactionType (..), UserId, exchangeRateSource, exchangeRateTarget, exchangeRateValue, mkAccountIdSafe, mkConfigurationIdSafe, mkDictionaryEntryId, mkExchangeRate, mkMoney, mkTransactionIdSafe, mkUserIdSafe, moneyCurrency, parseRelationKind, renderRelationKind, unAccountId, unConfigurationId, unDictionaryEntryId, unMoney, unTransactionId, unUserId)
 import Domain.ExchangeRate.Events (Provider (..), unProvider)
+import Domain.Localization.Country (Country, unCountry, unsafeCountry)
+import Domain.Localization.Language (Language, languageCode, parseLanguage)
 import Domain.Transaction.Projection (StatusKind, parseStatusKind, renderStatusKind)
 import Eventium.Store.Sql.Orphans ()
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)
@@ -285,6 +287,26 @@ instance PersistField Provider where
   fromPersistValue v = Provider <$> fromPersistValue v
 
 instance PersistFieldSql Provider where
+  sqlType _ = SqlString
+
+-- | 'Country' wraps an alpha-2 'Text' code; stored as the bare code (mirrors
+-- 'Provider'). Reads use 'unsafeCountry' — stored values were validated on
+-- write, so re-validating against the (possibly-narrowing) supported set on read
+-- would be wrong.
+instance PersistField Country where
+  toPersistValue = toPersistValue . unCountry
+  fromPersistValue v = unsafeCountry <$> fromPersistValue v
+
+instance PersistFieldSql Country where
+  sqlType _ = SqlString
+
+-- | 'Language' stored as its lowercase code token (mirrors 'StatusKind'), the
+-- @configurations.language@ column.
+instance PersistField Language where
+  toPersistValue = PersistText . languageCode
+  fromPersistValue v = fromPersistValue v >>= parseLanguage
+
+instance PersistFieldSql Language where
   sqlType _ = SqlString
 
 -- Configuration read-model column types. The configuration projection is only

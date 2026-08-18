@@ -23,6 +23,7 @@ import Domain.Configuration.Dictionary (DictionaryEntry (..), EntryRole (..))
 import qualified Domain.Configuration.Dictionary as DictKind
 import Domain.Configuration.Events (ConfigurationCreated (..))
 import Domain.Core.Types
+import Domain.Localization.Language (Language (..))
 import Eventium (latestProjection)
 import RIO
 import Test.Hspec
@@ -52,6 +53,8 @@ buildEvents entries =
     ConfigurationCreated
       { baseCurrency = UAH,
         defaultCurrency = UAH,
+        language = En,
+        country = Nothing,
         createdBy = System
       }
     : map added entries

@@ -17,8 +17,9 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Map.Strict as Map
 import Domain.Banking.Import (ExternalTransactionId, importInfoCategory, importInfoContact, importInfoExternalTransactionIds, unsafeExternalTransactionId)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, mkByLabel, mkByMcc, unsafeBankProviderContact, unsafeMcc)
-import Domain.Configuration.Events (BankProviderContactMapSet (..), BankProviderExpenseCategoryMapSet (..), BankProviderIncomeCategoryMapSet (..))
+import Domain.Configuration.Events (BankProviderContactMapSet (..), BankProviderExpenseCategoryMapSet (..), BankProviderIncomeCategoryMapSet (..), ConfigurationCreated (..))
 import Domain.Core.Types (TransactionType (..))
+import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentInitiated (..),
@@ -89,6 +90,21 @@ postingImportContact _ = Nothing
 
 spec :: Spec
 spec = describe "accountingEventCodec (schema evolution)" $ do
+  -- Legacy-shape decode: a 'ConfigurationCreated' stored before the p13n signal
+  -- foundation lacked 'language'/'country'. The v1->v2 upcaster injects
+  -- language="en"/country=null; decoding must yield En/Nothing and round-trip.
+  it "upcasts a v1 ConfigurationCreated (no language/country) to En/Nothing and round-trips" $ do
+    stored <- loadStoredEvent "test/fixtures/events/configuration-created-v1.json"
+    case accountingEventCodec.decode stored of
+      Nothing -> expectationFailure "v1 ConfigurationCreated failed to decode"
+      Just event -> do
+        case event of
+          ConfigurationCreatedEvent (ConfigurationCreated {language = lang, country = ctry}) -> do
+            lang `shouldBe` En
+            ctry `shouldBe` Nothing
+          _ -> expectationFailure "decoded to the wrong event constructor"
+        accountingEventCodec.decode (accountingEventCodec.encode event) `shouldBe` Just event
+
   it "round-trips a current amendment event, preserving allowOverdraft = True" $ do
     let ev = amendEvent True
     accountingEventCodec.decode (accountingEventCodec.encode ev) `shouldBe` Just ev

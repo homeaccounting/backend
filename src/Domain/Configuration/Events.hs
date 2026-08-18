@@ -25,6 +25,8 @@ module Domain.Configuration.Events
     ConfigurationCreated (..),
     BaseCurrencyChanged (..),
     DefaultCurrencyChanged (..),
+    LanguageChanged (..),
+    CountryChanged (..),
     DictionaryEntryAdded (..),
     DictionaryEntryRenamed (..),
     DictionaryEntryRemoved (..),
@@ -59,6 +61,8 @@ import Domain.Banking.Types
   )
 import Domain.Configuration.Dictionary (DictionaryKind, EntryRole)
 import Domain.Core.Types (AccountId, AccountSubtypeKind, CategoryId, ContactId, CreatedBy, Currency, DictionaryEntryId, EntryName)
+import Domain.Localization.Country (Country)
+import Domain.Localization.Language (Language)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import Language.Haskell.TH (Name)
 
@@ -75,6 +79,8 @@ configurationEvents =
   [ ''ConfigurationCreated,
     ''BaseCurrencyChanged,
     ''DefaultCurrencyChanged,
+    ''LanguageChanged,
+    ''CountryChanged,
     ''DictionaryEntryAdded,
     ''DictionaryEntryRenamed,
     ''DictionaryEntryRemoved,
@@ -105,6 +111,10 @@ data ConfigurationCreated = ConfigurationCreated
     baseCurrency :: Currency,
     -- | Default currency for new accounts
     defaultCurrency :: Currency,
+    -- | UI language at creation. Defaults to 'En'.
+    language :: Language,
+    -- | User country, if known at creation. Defaults to 'Nothing'.
+    country :: Maybe Country,
     -- | Who created this configuration
     createdBy :: CreatedBy
   }
@@ -121,6 +131,20 @@ data BaseCurrencyChanged = BaseCurrencyChanged
 data DefaultCurrencyChanged = DefaultCurrencyChanged
   { -- | New default currency
     defaultCurrency :: Currency
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the UI language is changed.
+newtype LanguageChanged = LanguageChanged
+  { -- | New UI language
+    language :: Language
+  }
+  deriving (Show, Eq)
+
+-- | Event emitted when the user country is changed.
+newtype CountryChanged = CountryChanged
+  { -- | New user country
+    country :: Country
   }
   deriving (Show, Eq)
 
@@ -298,6 +322,8 @@ newtype BankConnectionRemoved = BankConnectionRemoved
 deriveJSON defaultOptions ''ConfigurationCreated
 deriveJSON defaultOptions ''BaseCurrencyChanged
 deriveJSON defaultOptions ''DefaultCurrencyChanged
+deriveJSON defaultOptions ''LanguageChanged
+deriveJSON defaultOptions ''CountryChanged
 deriveJSON defaultOptions ''DictionaryEntryAdded
 deriveJSON defaultOptions ''DictionaryEntryRenamed
 deriveJSON defaultOptions ''DictionaryEntryRemoved

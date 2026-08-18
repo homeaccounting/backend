@@ -215,6 +215,24 @@ non-destructive and re-runnable.
 > This is a one-off tied to alpha. Once launched, the standing upcast-on-read
 > policy applies and restores become version-independent again.
 
+### Personalization signal foundation (country + language) — no reset needed
+
+The country/language signal foundation (tracker#48/#47/#35) is the **first
+stored-event shape change shipped via an upcaster, not a recreate** — it
+re-activates upcast-on-read after the reset above cleared the registry. Deploying
+it needs **no** event-store reset and old dumps remain readable:
+
+- **Event log:** `ConfigurationCreated` gained `language`/`country`, migrated by
+  the registered `configurationCreatedV1toV2` hop (defaults `language="en"`,
+  `country=null`). Stored bytes are untouched.
+- **Read model:** `configurations` gains a `language` column (NOT NULL, SQL
+  `DEFAULT 'en'` so it backfills existing rows) and a nullable `country` column —
+  a purely additive migration `runMigrationSilent` applies on boot. No read-model
+  rebuild required.
+- **API:** additive (`ConfigurationResponse.language`/`country`, new PUT
+  language/country + GET localization-options endpoints); existing clients
+  unaffected.
+
 ## Observability (metrics & logs)
 
 The backend provides two **operator seams**; the observability *stack* that

@@ -18,6 +18,8 @@ module Domain.Configuration.Commands
     CreateConfiguration (..),
     ChangeBaseCurrency (..),
     ChangeDefaultCurrency (..),
+    ChangeLanguage (..),
+    ChangeCountry (..),
     AddDictionaryEntry (..),
     RenameDictionaryEntry (..),
     RemoveDictionaryEntry (..),
@@ -52,6 +54,8 @@ import Domain.Banking.Types
   )
 import Domain.Configuration.Dictionary (DictionaryKind, EntryRole)
 import Domain.Core.Types (AccountId, AccountSubtypeKind, CategoryId, ContactId, CreatedBy, Currency, DictionaryEntryId, EntryName)
+import Domain.Localization.Country (Country)
+import Domain.Localization.Language (Language)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import Language.Haskell.TH (Name)
 
@@ -68,6 +72,8 @@ configurationCommands =
   [ ''CreateConfiguration,
     ''ChangeBaseCurrency,
     ''ChangeDefaultCurrency,
+    ''ChangeLanguage,
+    ''ChangeCountry,
     ''AddDictionaryEntry,
     ''RenameDictionaryEntry,
     ''RemoveDictionaryEntry,
@@ -120,6 +126,24 @@ data ChangeBaseCurrency = ChangeBaseCurrency
 data ChangeDefaultCurrency = ChangeDefaultCurrency
   { -- | New default currency
     defaultCurrency :: Currency
+  }
+  deriving (Show, Eq)
+
+-- | Command to change the UI language. Produces a 'LanguageChanged' event.
+newtype ChangeLanguage = ChangeLanguage
+  { -- | New UI language
+    language :: Language
+  }
+  deriving (Show, Eq)
+
+-- | Command to change the user country. Produces (leg 1) a 'CountryChanged' +
+-- 'LanguageChanged' + optionally a 'DefaultCurrencyChanged' event, derived from
+-- the pure 'Domain.Localization.Preset.presetFor'. Base currency (leg 2) is
+-- applied separately in the service because it also updates the External
+-- account.
+newtype ChangeCountry = ChangeCountry
+  { -- | New user country
+    country :: Country
   }
   deriving (Show, Eq)
 
@@ -342,6 +366,8 @@ newtype RemoveBankConnection = RemoveBankConnection
 deriveJSON defaultOptions ''CreateConfiguration
 deriveJSON defaultOptions ''ChangeBaseCurrency
 deriveJSON defaultOptions ''ChangeDefaultCurrency
+deriveJSON defaultOptions ''ChangeLanguage
+deriveJSON defaultOptions ''ChangeCountry
 deriveJSON defaultOptions ''AddDictionaryEntry
 deriveJSON defaultOptions ''RenameDictionaryEntry
 deriveJSON defaultOptions ''RemoveDictionaryEntry
