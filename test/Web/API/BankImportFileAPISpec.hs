@@ -56,6 +56,7 @@ import Test.Hspec.Wai
 import Testkit.AppEnv
   ( StubControls (..),
     mkAppBankingEnabledSeededWithFileProvider,
+    stubFileOnlyDescriptor,
   )
 import Testkit.Helpers (mockExchangeRate)
 import Testkit.HspecWai (IdResponse (..), bearerHeader, createAccountWith, jsonAuthHeaders, registerAndGetToken)
@@ -711,12 +712,15 @@ noFilePartSpec =
         e <- decodeError resp
         e.code `shouldBe` "STATEMENT_PARSE_ERROR"
 
--- | @?format=xlsx@ is rejected with 422: the real PrivatBank descriptor has
--- no xlsx parser registered (only 'Infrastructure.Banking.Provider.StatementCsv').
+-- | A format the provider does not support is rejected with 422
+-- @UNSUPPORTED_STATEMENT_FORMAT@. Backed by 'stubFileOnlyDescriptor', which
+-- registers only a 'Infrastructure.Banking.Provider.StatementCsv' parser, so
+-- @?format=xlsx@ is unsupported. (The real PrivatBank descriptor now supports
+-- both CSV and XLSX, so it can no longer exercise this path.)
 unsupportedFormatSpec :: Spec
 unsupportedFormatSpec =
   describe "POST /api/banking/connections/:id/import/file (unsupported format)"
-    $ withState mkAppBankingEnabledSeededWithFileProviderPrivatBank
+    $ withState (mkAppBankingEnabledSeededWithFileProvider stubFileOnlyDescriptor)
     $ it "returns 422 for ?format=xlsx"
     $ do
       tok <- registerAndGetToken
@@ -725,7 +729,10 @@ unsupportedFormatSpec =
       setAccountMap tok connId fixtureCard accId
       bytes <- liftIO loadFixtureBytes
       resp <- uploadStatement tok connId "xlsx" bytes
-      liftIO $ simpleStatus resp `shouldBe` status422
+      liftIO $ do
+        simpleStatus resp `shouldBe` status422
+        e <- decodeError resp
+        e.code `shouldBe` "UNSUPPORTED_STATEMENT_FORMAT"
 
 -- | An unknown connection id 404s, exactly like the pull endpoint.
 notFoundSpec :: Spec
@@ -805,13 +812,15 @@ discoverAccountsSpec =
         txCount <- runDbIn controls.stubEnv TransactionRM.countTransactions
         txCount `shouldBe` 0
 
--- | @?format=xlsx@ is rejected with 422 on the discovery endpoint too: the
--- real PrivatBank descriptor registers only a CSV parser, exactly like the
--- import endpoint's 'unsupportedFormatSpec'.
+-- | An unsupported format is rejected with 422 @UNSUPPORTED_STATEMENT_FORMAT@
+-- on the discovery endpoint too. Backed by 'stubFileOnlyDescriptor' (CSV-only),
+-- exactly like the import endpoint's 'unsupportedFormatSpec' — the real
+-- PrivatBank descriptor now registers both CSV and XLSX parsers, so it can no
+-- longer exercise the unsupported path.
 discoverAccountsUnsupportedFormatSpec :: Spec
 discoverAccountsUnsupportedFormatSpec =
   describe "POST /api/banking/connections/:id/external-accounts/from-file (unsupported format)"
-    $ withState mkAppBankingEnabledSeededWithFileProviderPrivatBank
+    $ withState (mkAppBankingEnabledSeededWithFileProvider stubFileOnlyDescriptor)
     $ it "returns 422 for ?format=xlsx"
     $ do
       tok <- registerAndGetToken

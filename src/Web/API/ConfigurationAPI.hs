@@ -90,11 +90,13 @@ import Domain.Configuration.Projection
   )
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (AccountSubtypeKind, DictionaryEntryId, UserId, mkAccountId, mkDictionaryEntryId, mkEntryName, parseCurrency, unAccountId, unDictionaryEntryId, unEntryName)
-import Domain.Localization.Country (mkCountry, supportedCountries, unCountry)
+import Domain.Localization.Country (Country, mkCountry, supportedCountries, unCountry)
 import Domain.Localization.Language (Language (..), languageCode, parseLanguage)
 import Infrastructure.App (AppM, HasBankProviderRegistry (..), bankingFeatureEnabled)
 import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),
+    coverageCountries,
+    providerInCountry,
     providerSupportsFile,
     providerSupportsPull,
   )
@@ -367,7 +369,13 @@ data BankProviderDTO = BankProviderDTO
   { id :: Text,
     displayName :: Text,
     supportsPull :: Bool,
-    supportsFile :: Bool
+    supportsFile :: Bool,
+    -- | ISO 3166-1 alpha-2 codes this provider serves; @[]@ means global (no
+    -- country restriction).
+    countries :: [Text],
+    -- | Soft curation flag: whether this provider is in the caller's country.
+    -- A caller with no country set sees everything as in-country.
+    inUserCountry :: Bool
   }
   deriving (Show, Eq, Generic)
 
@@ -375,14 +383,19 @@ instance ToJSON BankProviderDTO
 
 instance FromJSON BankProviderDTO
 
--- | Convert a registered 'BankProviderDescriptor' to its wire DTO.
-toBankProviderDTO :: BankProviderDescriptor -> BankProviderDTO
-toBankProviderDTO d =
+-- | Convert a registered 'BankProviderDescriptor' to its wire DTO, annotating
+-- its coverage relative to the caller's country. This is annotate-not-filter:
+-- the full registry is always returned; 'inUserCountry' merely lets the client
+-- curate.
+toBankProviderDTO :: Maybe Country -> BankProviderDescriptor -> BankProviderDTO
+toBankProviderDTO userCountry d =
   BankProviderDTO
     { id = unBankProviderId d.providerId,
       displayName = d.displayName,
       supportsPull = providerSupportsPull d,
-      supportsFile = providerSupportsFile d
+      supportsFile = providerSupportsFile d,
+      countries = coverageCountries d.coverage,
+      inUserCountry = providerInCountry userCountry d.coverage
     }
 
 -- | Convert a domain 'BankConnection' to its wire DTO. The token is omitted;
@@ -1103,9 +1116,13 @@ setConnectionAccountsHandler user connUuid req = do
 -- it's just names/capabilities, and the account-creation UI needs this
 -- regardless of whether banking sync is globally on.
 listProvidersHandler :: AuthenticatedUser -> AppM [BankProviderDTO]
-listProvidersHandler _user = do
+listProvidersHandler user = do
   reg <- view bankProviderRegistryL
-  pure $ map toBankProviderDTO (Map.elems reg)
+  configResult <- ConfigService.getConfigurationForUser user.userId
+  case configResult of
+    Left err -> throwDomainError err
+    Right configData ->
+      pure $ map (toBankProviderDTO configData.country) (Map.elems reg)
 
 -- | Load a single bank connection for the user, or 'BankConnectionNotFound'.
 loadConnection :: UserId -> BankConnectionId -> AppM BankConnection

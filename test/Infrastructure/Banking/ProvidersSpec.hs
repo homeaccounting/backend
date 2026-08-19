@@ -8,6 +8,11 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Domain.Banking.Types (unsafeBankProviderId)
+import Domain.Localization.Country (unsafeCountry)
+import qualified Infrastructure.Banking.Monobank as Monobank
+import qualified Infrastructure.Banking.PrivatBank as PrivatBank
+import qualified Infrastructure.Banking.PrivatBankBusiness as PrivatBankBusiness
+import Infrastructure.Banking.Provider (BankProviderDescriptor (..), ProviderCoverage (..))
 import Infrastructure.Banking.Providers (buildRegistry)
 import Infrastructure.Banking.Registry (lookupProvider, registryBankProviderIds)
 import Infrastructure.Config (BankingConfig (..), ProviderSettings (..))
@@ -54,3 +59,15 @@ spec = describe "Infrastructure.Banking.Providers" $ do
       let cfg = BankingConfig {enabled = True, providers = Map.empty, tokenEncKey = ""}
           reg = buildRegistry cfg unusedManager
       registryBankProviderIds reg `shouldBe` Set.empty
+
+  describe "provider coverage tags" $ do
+    let ua = RegionalCoverage (Set.singleton (unsafeCountry "UA"))
+    it "monobank is UA-regional" $ do
+      let monobank = Monobank.descriptorFromConfig (bankingConfigWith True KM.empty) unusedManager
+      monobank.coverage `shouldBe` ua
+    it "privatbank is UA-regional"
+      $ PrivatBank.descriptor.coverage
+      `shouldBe` ua
+    it "privatbank-business is UA-regional"
+      $ PrivatBankBusiness.descriptor.coverage
+      `shouldBe` ua

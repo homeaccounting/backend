@@ -13,6 +13,9 @@ module Infrastructure.Banking.Provider
 
     -- * Descriptor + capabilities
     BankProviderDescriptor (..),
+    ProviderCoverage (..),
+    providerInCountry,
+    coverageCountries,
     PullCapability (..),
     FileImportCapability (..),
     StatementFormat (..),
@@ -36,16 +39,20 @@ where
 
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
+import Data.List (sort)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Time (NominalDiffTime, UTCTime, diffUTCTime)
 import Domain.Banking.Import (ExternalTransactionId)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Banking.Types (BankProviderCredential, BankProviderId, ExternalAccountId)
 import Domain.Core.Types (CategoryId)
+import Domain.Localization.Country (Country, unCountry)
 import Domain.Transaction.Matching.Transfer (TransferDirection (..), TransferLeg (..), isTransferMatch)
-import RIO (Bool (..), Either, Eq, IO, Int, Maybe (..), Monoid (..), Ord, Rational, Semigroup (..), Show, abs, isJust, otherwise, ($), (&&), (/=), (<), (<=), (==), (||))
+import RIO (Bool (..), Either, Eq, IO, Int, Maybe (..), Monoid (..), Ord, Rational, Semigroup (..), Show, abs, isJust, map, maybe, otherwise, ($), (&&), (/=), (<), (<=), (==), (||))
 
 -- | Provider-contributed classification hint — direction only.
 -- BankImportService owns the final category decision.
@@ -102,6 +109,7 @@ data BankTransaction = BankTransaction
 data BankProviderDescriptor = BankProviderDescriptor
   { providerId :: !BankProviderId,
     displayName :: !Text,
+    coverage :: !ProviderCoverage,
     interpretation :: TransactionInterpretation,
     pull :: !(Maybe (BankProviderCredential -> PullCapability)),
     fileImport :: !(Maybe FileImportCapability)
@@ -115,6 +123,31 @@ providerSupportsPull d = isJust d.pull
 -- transport.
 providerSupportsFile :: BankProviderDescriptor -> Bool
 providerSupportsFile d = isJust d.fileImport
+
+-- | A provider's country coverage. 'GlobalCoverage' is country-agnostic (shown
+-- to everyone); 'RegionalCoverage' serves exactly the given countries. An
+-- explicit sum (rather than a bare 'Set Country' with empty = global) so a
+-- provider that forgets to declare coverage is a compile error, not a silent
+-- everyone-sees-it default.
+data ProviderCoverage
+  = GlobalCoverage
+  | RegionalCoverage (Set Country)
+  deriving (Show, Eq)
+
+-- | Is a provider with this coverage in the given user's country? A soft
+-- curation predicate, not a gate. 'GlobalCoverage' is always in-country; a
+-- 'RegionalCoverage' matches when the user's country is a member; an unset
+-- country ('Nothing') shows everything (nothing to curate against).
+providerInCountry :: Maybe Country -> ProviderCoverage -> Bool
+providerInCountry _ GlobalCoverage = True
+providerInCountry mUserCty (RegionalCoverage cs) =
+  maybe True (`Set.member` cs) mUserCty
+
+-- | Project coverage to sorted ISO alpha-2 codes for the wire DTO. 'GlobalCoverage'
+-- is the empty list (no restriction).
+coverageCountries :: ProviderCoverage -> [Text]
+coverageCountries GlobalCoverage = []
+coverageCountries (RegionalCoverage cs) = sort (map unCountry (Set.toList cs))
 
 -- | Live bank-API capability, constructed from a decrypted user credential.
 -- Carries the per-request request closures; the provider name and classifier

@@ -4,10 +4,12 @@
 module Infrastructure.Banking.PrivatBankBusiness (descriptor) where
 
 import qualified Domain.Banking.Types as Domain
+import Domain.Localization.Country (unsafeCountry)
 import Infrastructure.Banking.PrivatBankBusiness.Internal (fxSignal, parsePrivatBankBusinessXlsx)
 import Infrastructure.Banking.Provider
 import RIO
 import qualified RIO.Map as Map
+import qualified RIO.Set as Set
 
 -- | PrivatBank business statement-file provider: file-import only (no public
 -- pull API in this increment), XLSX format (the default Автоклієнт export),
@@ -20,6 +22,7 @@ descriptor =
   BankProviderDescriptor
     { providerId = Domain.unsafeBankProviderId "privatbank-business",
       displayName = "PrivatBank (Business)",
+      coverage = RegionalCoverage (Set.singleton (unsafeCountry "UA")),
       interpretation =
         TransactionInterpretation
           { classify = defaultClassify,

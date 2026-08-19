@@ -17,6 +17,7 @@ import qualified Data.Text.IO as TIO
 import Data.Time (UTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import qualified Domain.Banking.Types as Domain
+import Domain.Localization.Country (unsafeCountry)
 import Infrastructure.Banking.Monobank.Internal
   ( MonoAccount (..),
     MonoClientInfo (..),
@@ -39,6 +40,7 @@ import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
 import RIO
 import qualified RIO.Map as Map
+import qualified RIO.Set as Set
 
 -- | Upstream Monobank API base URL, used as the fallback when no override is
 -- supplied under the @api_base_url@ key of @banking.providers.monobank@. This
@@ -59,6 +61,7 @@ descriptor apiBaseUrl manager =
   BankProviderDescriptor
     { providerId = Domain.unsafeBankProviderId "monobank",
       displayName = "Monobank",
+      coverage = RegionalCoverage (Set.singleton (unsafeCountry "UA")),
       -- 'defaultClassify' treats non-negative amounts as income and negative
       -- amounts as expense, which is exactly Monobank's sign convention:
       -- outgoing transactions have negative amounts, incoming positive. Category

@@ -37,6 +37,7 @@ import Infrastructure.Banking.Provider
     BankProviderDescriptor (..),
     BankTransaction (..),
     FileImportCapability (..),
+    ProviderCoverage (..),
     PullCapability (..),
     StatementFormat (..),
     defaultInterpretation,
@@ -149,6 +150,7 @@ stubPullDescriptor controls =
   BankProviderDescriptor
     { providerId = unsafeBankProviderId "monobank",
       displayName = "Stub",
+      coverage = GlobalCoverage,
       interpretation = defaultInterpretation,
       pull = Just $ \_token ->
         PullCapability
@@ -173,6 +175,7 @@ stubFileOnlyDescriptor =
   BankProviderDescriptor
     { providerId = unsafeBankProviderId "privatbank",
       displayName = "Stub File-Only",
+      coverage = GlobalCoverage,
       interpretation = defaultInterpretation,
       pull = Nothing,
       fileImport =

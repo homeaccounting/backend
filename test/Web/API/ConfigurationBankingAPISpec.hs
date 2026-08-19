@@ -110,6 +110,7 @@ spec = do
   updateBankingContactMapSpec
   getBankingInResponseSpec
   listProvidersSpec
+  listProvidersCountryAnnotationSpec
 
 -- -----------------------------------------------------------------------------
 -- PUT /api/users/me/configuration/defaults
@@ -601,10 +602,80 @@ listProvidersSpec =
                                { id = "monobank",
                                  displayName = "Monobank",
                                  supportsPull = True,
-                                 supportsFile = False
+                                 supportsFile = False,
+                                 countries = ["UA"],
+                                 inUserCountry = True
                                }
                            ]
 
       it "returns 401 when no JWT is provided" $ do
         resp <- request "GET" "/api/users/me/configuration/banking/providers" [(hContentType, "application/json")] ""
         liftIO $ simpleStatus resp `shouldBe` status401
+
+-- -----------------------------------------------------------------------------
+-- GET /api/users/me/configuration/banking/providers — country annotation
+-- -----------------------------------------------------------------------------
+
+-- | Set the caller's country via the P1 endpoint.
+putCountry :: Text -> Text -> WaiSession st SResponse
+putCountry tok code =
+  request
+    "PUT"
+    "/api/users/me/configuration/country"
+    (jsonAuthHeaders tok)
+    (encode $ object ["country" .= code])
+
+-- | GET the provider list for a token and decode it, failing the test on a
+-- non-200 or a body that is not a @[BankProviderDTO]@.
+getProviders :: Text -> WaiSession st [BankProviderDTO]
+getProviders tok = do
+  resp <- getJSONAuth "/api/users/me/configuration/banking/providers" tok
+  liftIO $ simpleStatus resp `shouldBe` status200
+  case eitherDecode (simpleBody resp) :: Either String [BankProviderDTO] of
+    Left err -> do
+      liftIO $ expectationFailure $ "body is not a [BankProviderDTO]: " <> err
+      pure []
+    Right providers -> pure providers
+
+listProvidersCountryAnnotationSpec :: Spec
+listProvidersCountryAnnotationSpec =
+  describe "GET banking providers"
+    $ describe "country annotation"
+    $ with mkAppSeeded
+    $ do
+      it "annotates providers as in-country for a UA user" $ do
+        tok <- registerAndGetToken
+        _ <- putCountry tok "UA"
+        providers <- getProviders tok
+        liftIO $ do
+          providers `shouldSatisfy` (not . null)
+          providers `shouldSatisfy` all (.inUserCountry)
+          providers `shouldSatisfy` all (\p -> p.countries == ["UA"])
+
+      it "still lists UA providers for a US user but flags them out-of-country" $ do
+        -- Same seeded app, two users: a US caller and a UA caller. The registry
+        -- is user-independent, so both must see the SAME providers — proving the
+        -- endpoint annotates rather than filters — differing only in the
+        -- 'inUserCountry' flag.
+        usTok <- registerAndGetToken
+        _ <- putCountry usTok "US"
+        uaTok <- registerAndGetToken
+        _ <- putCountry uaTok "UA"
+        usProviders <- getProviders usTok
+        uaProviders <- getProviders uaTok
+        liftIO $ do
+          usProviders `shouldSatisfy` (not . null)
+          -- Same providers returned to both callers (registry is
+          -- user-independent; 'Map.elems' is ascending by key, so order matches)
+          -- — proves annotate-not-filter, not merely equal counts.
+          map (.id) usProviders `shouldBe` map (.id) uaProviders
+          usProviders `shouldSatisfy` all (\p -> not p.inUserCountry)
+          usProviders `shouldSatisfy` all (\p -> p.countries == ["UA"])
+          uaProviders `shouldSatisfy` all (.inUserCountry)
+
+      it "treats every provider as in-country when the user has no country set" $ do
+        tok <- registerAndGetToken
+        providers <- getProviders tok
+        liftIO $ do
+          providers `shouldSatisfy` (not . null)
+          providers `shouldSatisfy` all (.inUserCountry)

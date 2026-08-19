@@ -12,11 +12,13 @@ module Infrastructure.Banking.PrivatBank
 where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Time (NominalDiffTime)
 import Domain.Banking.Types (unExternalAccountId)
 import qualified Domain.Banking.Types as Domain
 import Domain.Configuration.Defaults (DefaultEntry (entryId), ExpenseDefaults (..), expense)
 import Domain.Core.Types (CategoryId)
+import Domain.Localization.Country (unsafeCountry)
 import Infrastructure.Banking.PrivatBank.Internal (parsePrivatBankCsv, parsePrivatBankXlsx)
 import Infrastructure.Banking.Provider
 import RIO
@@ -34,6 +36,7 @@ descriptor =
   BankProviderDescriptor
     { providerId = Domain.unsafeBankProviderId "privatbank",
       displayName = "PrivatBank",
+      coverage = RegionalCoverage (Set.singleton (unsafeCountry "UA")),
       interpretation = privatBankInterpretation,
       pull = Nothing,
       fileImport =

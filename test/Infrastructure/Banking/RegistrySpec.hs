@@ -8,6 +8,7 @@ import qualified Data.Set as Set
 import Domain.Banking.Types (unsafeBankProviderId)
 import Infrastructure.Banking.Provider
   ( BankProviderDescriptor (..),
+    ProviderCoverage (..),
     TransactionClassification (..),
     defaultClassify,
     defaultInterpretation,
@@ -30,6 +31,7 @@ mkDescriptor slug =
   BankProviderDescriptor
     { providerId = unsafeBankProviderId slug,
       displayName = slug,
+      coverage = GlobalCoverage,
       interpretation = defaultInterpretation,
       pull = Nothing,
       fileImport = Nothing
@@ -55,6 +57,7 @@ spec = do
         BankProviderDescriptor
           { providerId = unsafeBankProviderId "monobank",
             displayName = "Monobank",
+            coverage = GlobalCoverage,
             interpretation = defaultInterpretation,
             pull = Nothing,
             fileImport = Nothing
