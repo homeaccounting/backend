@@ -1,0 +1,20 @@
+{
+  "cancelled": "Operation cancelled.",
+  "nothingToCancel": "Nothing to cancel.",
+  "selectionCleared": "Selection cleared.",
+  "noAccountWasSelected": "No account was selected.",
+  "tapButtonOrCancel": "Please tap one of the buttons above, or /cancel to start over.",
+  "unknownCommand": "Unknown command: {command}. Use /help to see available commands.",
+  "confirmButton": "Confirm",
+  "cancelButton": "Cancel",
+  "clearSelectionButton": "Clear selection",
+  "linkedSuccess": "Done — this Telegram is now linked to your account. Send /help to get started.",
+  "linkInvalid": "That link is no longer valid. Generate a new one in the web app under \"Link Telegram\".",
+  "unrecognisedAccount": "I don't recognise this Telegram account.\n\nTo use it with your existing account, open the web app and tap \"Link Telegram\".\nTo create a brand-new account, send /signup.\n",
+  "welcomeNew": "Welcome to HomeAccounting Bot!\n\nYour account has been created successfully.",
+  "welcomeBack": "Welcome back to HomeAccounting Bot!",
+  "welcomeTip": "💬 Just type what you spent or earned — e.g. “coffee 4.50” or “salary 5000” — and I'll record it. Pick an account with /accounts to file it there.",
+  "availableCommands": "Available commands:",
+  "helpHeader": "HomeAccounting Bot Commands:",
+  "loginPrompt": "To link your Telegram account, please log in at our website and use the 'Link Telegram' option."
+}

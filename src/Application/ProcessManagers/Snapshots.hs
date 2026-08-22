@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -12,6 +15,7 @@ module Application.ProcessManagers.Snapshots
   )
 where
 
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Time (UTCTime)
 import Domain.Core.Types (AccountId, Money, TransactionId, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..), TransactionAmendmentCompleted (..), TransactionPostingInitiated (..))
@@ -28,7 +32,8 @@ data TransferPostings = TransferPostings
     targetAmount :: Money,
     at :: UTCTime
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 makeFieldLabelsNoPrefix ''TransferPostings
 

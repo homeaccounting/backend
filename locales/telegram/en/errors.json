@@ -1,0 +1,9 @@
+{
+  "invalidButtonData": "Invalid button data.",
+  "unexpectedInput": "Unexpected input. Use /cancel to start over.",
+  "couldNotFindUserAccount": "Could not find your user account. Use /start first.",
+  "couldNotFindAccounts": "Could not find your accounts.",
+  "accountNotFound": "Account not found.",
+  "failedToCreateYourAccount": "Failed to create your account. Please try again later.",
+  "failedToListTransactions": "Failed to list transactions. Please try again."
+}

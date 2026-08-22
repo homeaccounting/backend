@@ -25,8 +25,10 @@ import Application.Services.ConfigurationService
     changeBaseCurrency,
     changeCountry,
     changeDefaultCurrency,
+    changeLanguage,
     expenseCategoryDictKind,
     incomeCategoryDictKind,
+    relocalizeDefaultDictionaries,
     removeDictionaryEntry,
     renameDictionaryEntry,
     seedDefaultConfiguration,
@@ -39,12 +41,12 @@ import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreditAccount (..))
 import Domain.Configuration.Defaults
   ( DefaultEntry (entryId, entryName, parentId),
-    ExpenseDefaults (household, housing),
+    ExpenseDefaults (groceries, household, housing),
     defaultExpenseCategories,
     defaultIncomeCategories,
     expense,
   )
-import Domain.Configuration.Dictionary (EntryRole (..))
+import Domain.Configuration.Dictionary (DictionaryKind, EntryRole (..))
 import Domain.Configuration.Projection (ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
@@ -53,6 +55,7 @@ import Domain.Core.Types
     Currency (..),
     DictionaryEntryId,
     EntryName,
+    UserId,
     defaultCash,
     defaultConfigurationId,
     unAccountId,
@@ -77,6 +80,7 @@ spec = describe "ConfigurationService" $ do
   cloneOnWriteSpec
   changeBaseCurrencySpec
   changeCountrySpec
+  relocalizeDefaultDictionariesSpec
   dictionaryCRUDSpec
   registrationAssignsDefaultConfigSpec
   defaultAccountsSpec
@@ -378,6 +382,131 @@ changeCountrySpec =
                       cfg.defaultCurrency `shouldBe` UAH
                       -- leg 2 skipped: base currency stays at the original USD
                       cfg.baseCurrency `shouldBe` USD
+
+-- -----------------------------------------------------------------------------
+-- Default-category localization (relocalizeDefaultDictionaries)
+-- -----------------------------------------------------------------------------
+
+-- | Every entry name (groups and leaves) in @dictKind@ of the user's current
+-- configuration. Uses 'dictionaryEntriesParentFirst' so group nodes are
+-- included alongside leaves.
+allEntryNames :: AppEnv -> UserId -> DictionaryKind -> IO [EntryName]
+allEntryNames env userId dictKind = do
+  maybeUser <- runDbIn env (getUser userId)
+  case maybeUser of
+    Nothing -> do expectationFailure "User not found"; pure []
+    Just userData -> do
+      maybeConfig <- runDbIn env (getConfiguration userData.configurationId)
+      case maybeConfig of
+        Nothing -> do expectationFailure "Config not found"; pure []
+        Just config -> case Map.lookup dictKind config.dictionaries of
+          Nothing -> do expectationFailure "Dictionary not found"; pure []
+          Just dict -> pure [nm | (_, nm, _, _) <- dictionaryEntriesParentFirst dict]
+
+relocalizeDefaultDictionariesSpec :: Spec
+relocalizeDefaultDictionariesSpec =
+  describe "default-category localization" $ do
+    it "renames untouched default categories to Ukrainian on locale change" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "relocalize-ua@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          -- Task 4 wires this into changeCountry; call it directly here so the
+          -- test is self-contained.
+          runRIO env $ relocalizeDefaultDictionaries userId Uk
+          names <- allEntryNames env userId expenseCategoryDictKind
+          -- Leaf item and group node both translated.
+          names `shouldSatisfy` elem (unsafeEntryName "Продукти")
+          names `shouldSatisfy` elem (unsafeEntryName "Їжа")
+          -- English canonicals no longer present.
+          names `shouldSatisfy` notElem (unsafeEntryName "Groceries")
+          names `shouldSatisfy` notElem (unsafeEntryName "Food")
+
+    it "leaves a user-renamed default untouched when locale changes" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "relocalize-renamed@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          -- Rename the "Groceries" default away from any canonical name (this
+          -- also triggers clone-on-write onto the user's own config).
+          renameResult <-
+            runRIO env
+              $ renameDictionaryEntry
+                userId
+                expenseCategoryDictKind
+                expense.groceries.entryId
+                (unsafeEntryName "My Food")
+          renameResult `shouldSatisfy` isRight
+          runRIO env $ relocalizeDefaultDictionaries userId Uk
+          names <- allEntryNames env userId expenseCategoryDictKind
+          -- The user-renamed entry is preserved verbatim, not translated.
+          names `shouldSatisfy` elem (unsafeEntryName "My Food")
+          names `shouldSatisfy` notElem (unsafeEntryName "Продукти")
+          -- Other untouched defaults still become Ukrainian.
+          names `shouldSatisfy` elem (unsafeEntryName "Кафе та ресторани")
+
+    it "leaves user-created categories untouched" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "relocalize-created@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          -- Add a user-created category (random id, not a default id); this also
+          -- triggers clone-on-write.
+          addResult <-
+            runRIO env
+              $ addDictionaryEntry userId expenseCategoryDictKind (unsafeEntryName "Coffee") ItemRole Nothing
+          addResult `shouldSatisfy` isRight
+          runRIO env $ relocalizeDefaultDictionaries userId Uk
+          names <- allEntryNames env userId expenseCategoryDictKind
+          -- The user-created entry is preserved verbatim.
+          names `shouldSatisfy` elem (unsafeEntryName "Coffee")
+          -- Untouched defaults were still localized.
+          names `shouldSatisfy` elem (unsafeEntryName "Продукти")
+
+    it "changeLanguage localizes untouched default categories" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "changelang-uk@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          result <- runRIO env $ changeLanguage userId Uk
+          result `shouldSatisfy` isRight
+          names <- allEntryNames env userId expenseCategoryDictKind
+          names `shouldSatisfy` elem (unsafeEntryName "Продукти")
+          names `shouldSatisfy` notElem (unsafeEntryName "Groceries")
+
+    it "changeCountry to Ukraine localizes untouched default categories" $ do
+      env <- createTestAppEnv
+      runRIO env seedDefaultConfiguration
+      regResult <- runRIO env $ register "changecountry-ua@test.com" "password123"
+      case regResult of
+        Left err -> expectationFailure $ "Registration failed: " <> show err
+        Right authResult -> do
+          let userId = authResult.userId
+          result <- runRIO env $ changeCountry userId (unsafeCountry "UA")
+          result `shouldSatisfy` isRight
+          names <- allEntryNames env userId expenseCategoryDictKind
+          names `shouldSatisfy` elem (unsafeEntryName "Продукти")
+          names `shouldSatisfy` notElem (unsafeEntryName "Groceries")
+          maybeUser <- runDbIn env (getUser userId)
+          case maybeUser of
+            Nothing -> expectationFailure "User not found"
+            Just userData -> do
+              maybeCfg <- runDbIn env (getConfiguration userData.configurationId)
+              case maybeCfg of
+                Nothing -> expectationFailure "Config not found"
+                Just cfg -> cfg.language `shouldBe` Uk
 
 -- -----------------------------------------------------------------------------
 -- Dictionary CRUD

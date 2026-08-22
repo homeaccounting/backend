@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -53,6 +56,7 @@ module Application.ProcessManagers.TransactionMergeManager
   )
 where
 
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Domain.Core.Types
@@ -100,7 +104,8 @@ import RIO.List (find)
 data MergePhase
   = MergeAwaitingAmend
   | MergeAwaitingCancellations (Set TransactionId)
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Per-merge tracking. Carries the fully-resolved amend payload (so the saga
 -- can issue 'InitiateTransactionAmendment' without touching the read model) plus the
@@ -121,13 +126,15 @@ data TransactionMergeData = TransactionMergeData
     by :: UserId,
     phase :: MergePhase
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Saga state: the in-flight merge registry keyed by target id.
 newtype TransactionMergeManager = TransactionMergeManager
   { merges :: Map TransactionId TransactionMergeData
   }
-  deriving (Show)
+  deriving stock (Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 makeFieldLabelsNoPrefix ''TransactionMergeManager
 

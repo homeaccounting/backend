@@ -27,7 +27,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.UUID as UUID
 import Domain.Core.Types (AccountId, DictionaryEntryId, EntryName, Money, moneyCurrency, unAccountId, unDictionaryEntryId, unEntryName)
+import Domain.Localization.Language (Language)
 import Telegram.Formatting (formatMoney, showCurrency)
+import Telegram.I18n (CommonStrings (..), TelegramStrings (..), telegramStrings)
 
 -- -----------------------------------------------------------------------------
 -- Types
@@ -55,6 +57,8 @@ data InlineButton = InlineButton
 -- Each account is displayed as a button with name and balance.
 -- Callback data contains the account ID and context.
 accountSelectionKeyboard ::
+  -- | Language for static button labels (Clear/Cancel)
+  Language ->
   -- | List of (AccountId, Name, Balance)
   [(AccountId, Text, Money)] ->
   -- | Currently-selected account (marked with a check); Nothing = none
@@ -62,12 +66,12 @@ accountSelectionKeyboard ::
   -- | Context (e.g., "transfer_src", "transfer_tgt", "select")
   Text ->
   InlineKeyboard
-accountSelectionKeyboard accounts selected context =
+accountSelectionKeyboard lang accounts selected context =
   InlineKeyboard
     { rows =
         map makeAccountButton accounts
           ++ clearRow
-          ++ [[cancelButton]]
+          ++ [[cancelButton lang]]
     }
   where
     makeAccountButton (accountId, name, balance) =
@@ -83,51 +87,54 @@ accountSelectionKeyboard accounts selected context =
       | inSelectContext, selected == Just accountId = "\x2713 "
       | otherwise = ""
     clearRow =
-      [[InlineButton "Clear selection" "unselect"] | inSelectContext, isJust selected]
+      [[InlineButton (telegramStrings lang).common.clearSelectionButton "unselect"] | inSelectContext, isJust selected]
     shortId accountId = T.take 8 $ T.pack $ UUID.toString $ unAccountId accountId
     showMoney m = formatMoney m <> " " <> showCurrency (moneyCurrency m)
 
 -- | Build a confirm/cancel keyboard.
-confirmCancelKeyboard :: InlineKeyboard
-confirmCancelKeyboard =
+confirmCancelKeyboard :: Language -> InlineKeyboard
+confirmCancelKeyboard lang =
   InlineKeyboard
     { rows =
-        [ [ InlineButton "Confirm" "confirm",
-            InlineButton "Cancel" "cancel"
+        [ [ InlineButton (telegramStrings lang).common.confirmButton "confirm",
+            InlineButton (telegramStrings lang).common.cancelButton "cancel"
           ]
         ]
     }
 
 -- | Build a cancel-only keyboard.
-cancelKeyboard :: InlineKeyboard
-cancelKeyboard =
+cancelKeyboard :: Language -> InlineKeyboard
+cancelKeyboard lang =
   InlineKeyboard
-    { rows = [[cancelButton]]
+    { rows = [[cancelButton lang]]
     }
 
--- | Currency selection keyboard (2x2 grid + cancel).
-currencyKeyboard :: InlineKeyboard
-currencyKeyboard =
+-- | Currency selection keyboard (2x2 grid + cancel). Currency codes are not
+-- localized; only the trailing cancel button is.
+currencyKeyboard :: Language -> InlineKeyboard
+currencyKeyboard lang =
   InlineKeyboard
     { rows =
         [ [InlineButton "UAH" "cur:UAH", InlineButton "USD" "cur:USD"],
           [InlineButton "EUR" "cur:EUR", InlineButton "GBP" "cur:GBP"],
-          [cancelButton]
+          [cancelButton lang]
         ]
     }
 
 -- | Dynamic category keyboard built from dictionary entries.
 --
 -- Each entry becomes a button with the entry name as label and the
--- DictionaryEntryId UUID as callback data (prefixed with "cat:").
-categoryKeyboard :: [(DictionaryEntryId, EntryName)] -> InlineKeyboard
-categoryKeyboard entries =
+-- DictionaryEntryId UUID as callback data (prefixed with "cat:"). Entry names
+-- are user/config content and are not localized; only the trailing cancel
+-- button is.
+categoryKeyboard :: Language -> [(DictionaryEntryId, EntryName)] -> InlineKeyboard
+categoryKeyboard lang entries =
   InlineKeyboard
     { rows =
         map (\(eid, name) -> [InlineButton (unEntryName name) ("cat:" <> T.pack (UUID.toString (unDictionaryEntryId eid)))]) entries
-          ++ [[cancelButton]]
+          ++ [[cancelButton lang]]
     }
 
--- | Cancel button.
-cancelButton :: InlineButton
-cancelButton = InlineButton "Cancel" "cancel"
+-- | Cancel button, localized.
+cancelButton :: Language -> InlineButton
+cancelButton lang = InlineButton (telegramStrings lang).common.cancelButton "cancel"

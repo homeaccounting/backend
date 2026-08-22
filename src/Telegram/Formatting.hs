@@ -53,8 +53,10 @@ import Domain.Core.Types
     unAccountId,
     unMoney,
   )
+import Domain.Localization.Language (Language)
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Numeric (showFFloat)
+import Telegram.I18n (TelegramStrings (..), TransactionStrings (..), telegramStrings)
 import Telegram.Types (botCommands)
 
 -- -----------------------------------------------------------------------------
@@ -94,9 +96,11 @@ formatDate = T.pack . formatTime defaultTimeLocale "%Y-%m-%d %H:%M"
 -- is redundant. Pending and Failed rows still carry a trailing
 -- @[Pending]@ / @[Failed: reason]@ marker so atypical states stay
 -- visible.
-formatTransactionLine :: Map DictionaryEntryId Text -> (TransactionId, TransactionData) -> Text
-formatTransactionLine entryNames (_txId, td) =
-  let dateStr = formatDate td.date
+formatTransactionLine :: Language -> Map DictionaryEntryId Text -> (TransactionId, TransactionData) -> Text
+formatTransactionLine lang entryNames (_txId, td) =
+  let strings = telegramStrings lang
+      s = strings.transactions
+      dateStr = formatDate td.date
       formatAllocation a =
         let amtText = formatMoney a.amount
          in case Map.lookup a.categoryId entryNames of
@@ -108,16 +112,16 @@ formatTransactionLine entryNames (_txId, td) =
               [] -> kind
               xs -> kind <> " \xB7 " <> T.intercalate ", " xs
       typeLabel = case td.transactionType of
-        Income allocs -> withAllocations "Income" allocs
-        Expense allocs -> withAllocations "Expense" allocs
-        Transfer -> "Transfer"
-        Adjustment -> "Adjustment"
+        Income allocs -> withAllocations s.incomeLabel allocs
+        Expense allocs -> withAllocations s.expenseLabel allocs
+        Transfer -> s.transferLabel
+        Adjustment -> s.adjustmentLabel
       amt = formatMoney td.sourceAmount <> " " <> showCurrency (moneyCurrency td.sourceAmount)
       statusSuffix = case td.status of
         Completed -> ""
-        Pending -> "  [Pending]"
-        Failed reason -> "  [Failed: " <> reason <> "]"
-        Cancelled -> "  [Cancelled]"
+        Pending -> s.pendingMarker
+        Failed reason -> s.failedMarker reason
+        Cancelled -> s.cancelledMarker
       desc =
         if T.null td.description
           then ""
@@ -138,9 +142,10 @@ formatTransactionLine entryNames (_txId, td) =
         <> labelsSuffix
         <> statusSuffix
 
--- | Render the canonical bot command list as @\"/cmd - description\"@ lines.
-formatCommandList :: [Text]
-formatCommandList = map (\(cmd, desc) -> cmd <> " - " <> desc) botCommands
+-- | Render the canonical bot command list as @\"/cmd - description\"@ lines,
+-- localized to the given language.
+formatCommandList :: Language -> [Text]
+formatCommandList lang = map (\(cmd, desc) -> cmd <> " - " <> desc) (botCommands lang)
 
 -- Confirmation Renderer
 
@@ -153,26 +158,33 @@ formatCommandList = map (\(cmd, desc) -> cmd <> " - " <> desc) botCommands
 -- (transfer, to preserve the @A -> B@ arrow). Total over all
 -- 'TransactionType' and 'TransactionStatus' constructors.
 formatRecordedTransaction ::
+  Language ->
   Map DictionaryEntryId Text ->
   Map AccountId Text ->
   TransactionData ->
   Text
-formatRecordedTransaction entryNames accountNames td =
+formatRecordedTransaction lang entryNames accountNames td =
   case td.transactionType of
-    Income allocs -> categorised "Income" td.targetAmount td.targetAccountId allocs
-    Expense allocs -> categorised "Expense" td.sourceAmount td.sourceAccountId allocs
+    Income allocs -> categorised s.incomeLabel td.targetAmount td.targetAccountId allocs
+    Expense allocs -> categorised s.expenseLabel td.sourceAmount td.sourceAccountId allocs
     Transfer -> transfer
     Adjustment -> adjustment
   where
+    strings :: TelegramStrings
+    strings = telegramStrings lang
+
+    s :: TransactionStrings
+    s = strings.transactions
+
     header :: Text -> Text
-    header kind = "\9989 " <> kind <> " recorded" <> statusMarker
+    header kind = s.recorded kind <> statusMarker
 
     statusMarker :: Text
     statusMarker = case td.status of
       Completed -> ""
-      Pending -> "  [Pending]"
-      Cancelled -> "  [Cancelled]"
-      Failed reason -> "  [Failed: " <> reason <> "]"
+      Pending -> s.pendingMarker
+      Cancelled -> s.cancelledMarker
+      Failed reason -> s.failedMarker reason
 
     amountText :: Money -> Text
     amountText m = formatMoney m <> " " <> showCurrency (moneyCurrency m)
@@ -189,7 +201,7 @@ formatRecordedTransaction entryNames accountNames td =
     labelLines :: [Text]
     labelLines =
       let ns = sort [n | lid <- Set.toList td.labels, Just n <- [Map.lookup lid entryNames]]
-       in ["Labels: " <> T.intercalate ", " ns | not (null ns)]
+       in [s.labels (T.intercalate ", " ns) | not (null ns)]
 
     bullet :: Allocation -> Text
     bullet a =
@@ -220,10 +232,10 @@ formatRecordedTransaction entryNames accountNames td =
               then amountText td.sourceAmount <> " \x2192 " <> amountText td.targetAmount
               else amountText td.sourceAmount
           rateLines = case td.exchangeRate of
-            Just er | crossCurrency -> ["Rate: " <> formatRate (exchangeRateValue er)]
+            Just er | crossCurrency -> [s.rate (formatRate (exchangeRateValue er))]
             _ -> []
        in T.intercalate "\n" $
-            [ header "Transfer",
+            [ header s.transferLabel,
               accountRef td.sourceAccountId <> " \x2192 " <> accountRef td.targetAccountId,
               amountLine
             ]
@@ -234,7 +246,7 @@ formatRecordedTransaction entryNames accountNames td =
     adjustment :: Text
     adjustment =
       T.intercalate "\n" $
-        [ header "Adjustment",
+        [ header s.adjustmentLabel,
           amountText td.sourceAmount <> accountSuffix td.sourceAccountId
         ]
           <> labelLines

@@ -24,6 +24,7 @@ import Domain.Core.Types
     unsafeMoney,
     unsafeTransactionId,
   )
+import Domain.Localization.Language (Language (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Telegram.Formatting (formatRecordedTransaction, formatTransactionLine)
 import Test.Hspec
@@ -113,81 +114,88 @@ spec = do
 lineSpec :: Spec
 lineSpec = describe "formatTransactionLine" $ do
   it "annotates Expense rows with the resolved category name" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 5), sampleTxn (expenseFor foodCat))
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 5), sampleTxn (expenseFor foodCat))
     line `shouldSatisfy` T.isInfixOf "Expense \x00B7 Food"
 
   it "annotates Income rows with the resolved category name" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 6), sampleTxn (incomeFor salaryCat))
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 6), sampleTxn (incomeFor salaryCat))
     line `shouldSatisfy` T.isInfixOf "Income \x00B7 Salary"
 
   it "leaves Transfer rows unannotated" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 7), sampleTxn Transfer)
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 7), sampleTxn Transfer)
     line `shouldSatisfy` T.isInfixOf "Transfer"
     line `shouldNotSatisfy` T.isInfixOf "\x00B7"
 
   it "renders the amount when the category isn't in the map" $ do
     -- With allocations, an unresolved category still renders the amount
     -- after the bullet separator (allocations always emit per-line money).
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 8), sampleTxn (expenseFor orphanCat))
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 8), sampleTxn (expenseFor orphanCat))
     line `shouldSatisfy` T.isInfixOf "Expense \x00B7"
     line `shouldNotSatisfy` T.isInfixOf "Expense \x00B7 Food"
 
   it "omits the status marker for Completed rows" $ do
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 9), sampleTxn (expenseFor foodCat))
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 9), sampleTxn (expenseFor foodCat))
     line `shouldNotSatisfy` T.isInfixOf "[Completed]"
     line `shouldNotSatisfy` T.isInfixOf "["
 
   it "keeps the status marker for Pending rows" $ do
     let txn = (sampleTxn (expenseFor foodCat)) {status = Pending}
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 10), txn)
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 10), txn)
     line `shouldSatisfy` T.isInfixOf "[Pending]"
 
   it "keeps the status marker with reason for Failed rows" $ do
     let txn = (sampleTxn (expenseFor foodCat)) {status = Failed "insufficient funds"}
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 11), txn)
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 11), txn)
     line `shouldSatisfy` T.isInfixOf "[Failed: insufficient funds]"
 
   it "renders resolved labels as a comma-separated bracketed list" $ do
     let txn = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [lunchLabel, kyivLabel]}
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 12), txn)
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 12), txn)
     line `shouldSatisfy` T.isInfixOf "[kyiv, lunch]"
 
   it "omits unresolved label ids and shows no marker when none resolve" $ do
     let txn = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [orphanLabel]}
-    let line = formatTransactionLine names (unsafeTransactionId (uuidFromInt 13), txn)
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 13), txn)
     line `shouldNotSatisfy` T.isInfixOf "["
+
+  it "localizes the type label but keeps category and description verbatim (Uk)" $ do
+    let line = formatTransactionLine Uk names (unsafeTransactionId (uuidFromInt 14), sampleTxn (expenseFor foodCat))
+    line `shouldSatisfy` T.isInfixOf "Витрата" -- localized type label
+    line `shouldNotSatisfy` T.isInfixOf "Expense" -- English label gone
+    line `shouldSatisfy` T.isInfixOf "Food" -- category name (user/config content) verbatim
+    line `shouldSatisfy` T.isInfixOf "McDonald's" -- user description verbatim
 
 recordedSpec :: Spec
 recordedSpec = describe "formatRecordedTransaction" $ do
   it "renders an expense header, total-account line, bullet, and date" $ do
-    let out = formatRecordedTransaction names acctNames (sampleTxn (expenseFor foodCat))
+    let out = formatRecordedTransaction En names acctNames (sampleTxn (expenseFor foodCat))
     out `shouldSatisfy` T.isInfixOf "\9989 Expense recorded"
     out `shouldSatisfy` T.isInfixOf "300.00 USD \xB7 Cash"
     out `shouldSatisfy` T.isInfixOf "\x2022 Food 300.00"
     out `shouldSatisfy` T.isInfixOf "2026-04-18 14:30"
 
   it "renders income against the target account" $ do
-    let out = formatRecordedTransaction names acctNames (sampleTxn (incomeFor salaryCat))
+    let out = formatRecordedTransaction En names acctNames (sampleTxn (incomeFor salaryCat))
     out `shouldSatisfy` T.isInfixOf "\9989 Income recorded"
     out `shouldSatisfy` T.isInfixOf "\x2022 Salary 300.00"
 
   it "renders one bullet per allocation with per-allocation comment" $ do
-    let out = formatRecordedTransaction names acctNames (sampleTxn multiExpense)
+    let out = formatRecordedTransaction En names acctNames (sampleTxn multiExpense)
     out `shouldSatisfy` T.isInfixOf "\x2022 Food 4.00 \x2014 latte"
     out `shouldSatisfy` T.isInfixOf "\x2022 Salary 16.00"
     out `shouldNotSatisfy` T.isInfixOf "Salary 16.00 \x2014"
 
   it "falls back to the bare amount when a category is unresolved" $ do
-    let out = formatRecordedTransaction names acctNames (sampleTxn (expenseFor orphanCat))
+    let out = formatRecordedTransaction En names acctNames (sampleTxn (expenseFor orphanCat))
     out `shouldSatisfy` T.isInfixOf "\x2022 300.00"
 
   it "omits the account suffix when the account is unresolved" $ do
-    let out = formatRecordedTransaction names Map.empty (sampleTxn (expenseFor foodCat))
+    let out = formatRecordedTransaction En names Map.empty (sampleTxn (expenseFor foodCat))
     out `shouldSatisfy` T.isInfixOf "300.00 USD"
     out `shouldNotSatisfy` T.isInfixOf "\xB7"
 
   it "renders a same-currency transfer with one amount and no rate" $ do
-    let out = formatRecordedTransaction names acctNames (sampleTxn Transfer)
+    let out = formatRecordedTransaction En names acctNames (sampleTxn Transfer)
     out `shouldSatisfy` T.isInfixOf "\9989 Transfer recorded"
     out `shouldSatisfy` T.isInfixOf "Cash \x2192 Savings"
     out `shouldSatisfy` T.isInfixOf "300.00 USD"
@@ -201,23 +209,31 @@ recordedSpec = describe "formatRecordedTransaction" $ do
               targetAmount = unsafeMoney UAH 4150,
               exchangeRate = Just er
             }
-        out = formatRecordedTransaction names acctNames txn
+        out = formatRecordedTransaction En names acctNames txn
     out `shouldSatisfy` T.isInfixOf "100.00 USD \x2192 4150.00 UAH"
     out `shouldSatisfy` T.isInfixOf "Rate: 41.50"
 
   it "falls back to a short id for an unresolved transfer endpoint" $ do
-    let out = formatRecordedTransaction names Map.empty (sampleTxn Transfer)
+    let out = formatRecordedTransaction En names Map.empty (sampleTxn Transfer)
     out `shouldSatisfy` T.isInfixOf "00000000 \x2192 00000000"
 
   it "appends a Pending marker but not for Completed" $ do
-    let completed = formatRecordedTransaction names acctNames (sampleTxn (expenseFor foodCat))
-        pending = formatRecordedTransaction names acctNames ((sampleTxn (expenseFor foodCat)) {status = Pending})
+    let completed = formatRecordedTransaction En names acctNames (sampleTxn (expenseFor foodCat))
+        pending = formatRecordedTransaction En names acctNames ((sampleTxn (expenseFor foodCat)) {status = Pending})
     completed `shouldNotSatisfy` T.isInfixOf "["
     pending `shouldSatisfy` T.isInfixOf "[Pending]"
 
   it "appends resolved labels sorted and omits when empty" $ do
     let withLabels = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [kyivLabel, lunchLabel]}
-        out = formatRecordedTransaction names acctNames withLabels
+        out = formatRecordedTransaction En names acctNames withLabels
     out `shouldSatisfy` T.isInfixOf "Labels: kyiv, lunch"
-    formatRecordedTransaction names acctNames (sampleTxn (expenseFor foodCat))
+    formatRecordedTransaction En names acctNames (sampleTxn (expenseFor foodCat))
       `shouldNotSatisfy` T.isInfixOf "Labels:"
+
+  it "localizes the header/labels chrome but keeps the category verbatim (Uk)" $ do
+    let withLabels = (sampleTxn (expenseFor foodCat)) {labels = Set.fromList [kyivLabel, lunchLabel]}
+        out = formatRecordedTransaction Uk names acctNames withLabels
+    out `shouldSatisfy` T.isInfixOf "Витрата записано" -- localized header (kind + "recorded")
+    out `shouldNotSatisfy` T.isInfixOf "recorded" -- English chrome gone
+    out `shouldSatisfy` T.isInfixOf "Мітки: kyiv, lunch" -- localized labels prefix, verbatim names
+    out `shouldSatisfy` T.isInfixOf "Food" -- category name (user/config content) verbatim

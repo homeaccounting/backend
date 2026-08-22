@@ -29,10 +29,12 @@ module Telegram.Api
 
     -- * Bot Configuration
     registerCommands,
+    registerChatCommands,
     registerWebhook,
   )
 where
 
+import Domain.Localization.Language (Language (..), languageCode)
 import Network.HTTP.Client (managerResponseTimeout, newManager, responseTimeoutMicro)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import RIO
@@ -223,19 +225,55 @@ fetchUpdates clientEnv maybeOffset timeoutSeconds = liftIO $ do
 -- Bot Configuration
 -- -----------------------------------------------------------------------------
 
--- | Register bot commands with Telegram so they appear in the menu.
+-- | Register bot commands with Telegram so they appear in the menu, for a
+-- single locale.
 --
--- This calls the @setMyCommands@ API. Should be called once at startup.
+-- This calls the @setMyCommands@ API. English is registered as the language
+-- code-less default (@setMyCommandsLanguageCode = Nothing@), which Telegram
+-- serves to any client whose locale has no dedicated registration; every other
+-- 'Language' is registered under its two-letter code so Telegram clients set to
+-- that locale see localized descriptions. Call once per supported locale at
+-- startup (see 'Telegram.Bot.setupBotCommands').
 registerCommands ::
   (MonadIO m) =>
   ClientEnv ->
+  Language ->
   m (Either ClientError Bool)
-registerCommands clientEnv = liftIO $ do
-  let commands = map (uncurry TG.BotCommand) botCommands
+registerCommands clientEnv lang = liftIO $ do
+  let commands = map (uncurry TG.BotCommand) (botCommands lang)
+      langCode = case lang of
+        En -> Nothing
+        _ -> Just (languageCode lang)
       request =
         TG.SetMyCommandsRequest
           { TG.setMyCommandsCommands = commands,
             TG.setMyCommandsScope = Nothing,
+            TG.setMyCommandsLanguageCode = langCode
+          }
+  response <- runClientM (TG.setMyCommands request) clientEnv
+  return $ fmap TG.responseResult response
+
+-- | Register bot commands for one specific chat, in @lang@.
+--
+-- Unlike 'registerCommands' (which scopes by the client's @language_code@), this
+-- uses a @BotCommandScopeChat@ override, which Telegram serves to that chat
+-- regardless of the user's Telegram-client language. This is how the command
+-- menu follows the user's /app/ language preference rather than their Telegram
+-- app locale. Higher precedence than the default/language-code registration, so
+-- it wins for the target chat.
+registerChatCommands ::
+  (MonadIO m) =>
+  ClientEnv ->
+  Language ->
+  Int64 ->
+  m (Either ClientError Bool)
+registerChatCommands clientEnv lang chatId = liftIO $ do
+  let commands = map (uncurry TG.BotCommand) (botCommands lang)
+      scope = TG.BotCommandScopeChat (TG.SomeChatId (TG.ChatId (fromIntegral chatId)))
+      request =
+        TG.SetMyCommandsRequest
+          { TG.setMyCommandsCommands = commands,
+            TG.setMyCommandsScope = Just scope,
             TG.setMyCommandsLanguageCode = Nothing
           }
   response <- runClientM (TG.setMyCommands request) clientEnv

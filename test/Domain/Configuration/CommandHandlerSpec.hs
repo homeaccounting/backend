@@ -62,6 +62,7 @@ spec = do
   changeCountrySpec
   addDictionaryEntrySpec
   renameDictionaryEntrySpec
+  renameDictionaryEntriesSpec
   removeDictionaryEntrySpec
   setDefaultIncomeCategorySpec
   setDefaultExpenseCategorySpec
@@ -970,6 +971,41 @@ renameDictionaryEntrySpec = describe "RenameDictionaryEntry Command" $ do
         let result = handleConfigurationCommand config command
 
         result `shouldBe` Left ConfigurationNotCreated
+
+-- -----------------------------------------------------------------------------
+-- RenameDictionaryEntries (bulk) Tests
+-- -----------------------------------------------------------------------------
+
+renameDictionaryEntriesSpec :: Spec
+renameDictionaryEntriesSpec = describe "RenameDictionaryEntries Command" $ do
+  it "emits one DictionaryEntryRenamed per valid rename in a single result" $ do
+    let config = configWithTwoEntries
+        command =
+          RenameDictionaryEntriesConfigurationCommand
+            RenameDictionaryEntries
+              { renames =
+                  [ RenameDictionaryEntry {dictionaryKind = testDictId, entryId = testEntryId1, newName = testEntryName3},
+                    RenameDictionaryEntry {dictionaryKind = testDictId, entryId = testEntryId2, newName = mockEntryName "Housing"}
+                  ]
+              }
+    case handleConfigurationCommand config command of
+      Right events -> length events `shouldBe` 2
+      Left err -> expectationFailure ("expected Right, got " <> show err)
+
+  it "drops an invalid rename (missing entry) while keeping the valid ones" $ do
+    let config = configWithTwoEntries
+        missing = mockDictionaryEntryId (read "99999999-9999-9999-9999-999999999999")
+        command =
+          RenameDictionaryEntriesConfigurationCommand
+            RenameDictionaryEntries
+              { renames =
+                  [ RenameDictionaryEntry {dictionaryKind = testDictId, entryId = testEntryId1, newName = testEntryName3},
+                    RenameDictionaryEntry {dictionaryKind = testDictId, entryId = missing, newName = mockEntryName "Ghost"}
+                  ]
+              }
+    case handleConfigurationCommand config command of
+      Right events -> length events `shouldBe` 1
+      Left err -> expectationFailure ("expected Right, got " <> show err)
 
 -- -----------------------------------------------------------------------------
 -- RemoveDictionaryEntry Tests

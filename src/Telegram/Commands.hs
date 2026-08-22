@@ -102,19 +102,29 @@ import Domain.Core.Types
     unEntryName,
     unsafeMoney,
   )
+import Domain.Localization.Language (Language (..))
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
 import Infrastructure.App (AppM, HasTelegramClient (..), runDb)
 import RIO
 import qualified RIO.Map as Map
 import qualified RIO.Text as T
 import Servant.Client (ClientEnv)
-import Telegram.Api (answerCallback, sendMessageWithKeyboard, sendTextMessage)
+import Telegram.Api (answerCallback, registerChatCommands, sendMessageWithKeyboard, sendTextMessage)
 import qualified Telegram.Bot.API as TG
 import Telegram.Formatting
   ( formatCommandList,
     formatRecordedTransaction,
     formatTransactionLine,
     showCurrency,
+  )
+import Telegram.I18n
+  ( AccountStrings (..),
+    CommonStrings (..),
+    ErrorStrings (..),
+    PromptStrings (..),
+    TelegramStrings (..),
+    TransactionStrings (..),
+    telegramStrings,
   )
 import Telegram.Keyboards
   ( InlineButton (..),
@@ -134,20 +144,24 @@ handleCommand :: TVar BotState -> TelegramIdentity -> Int64 -> Text -> AppM ()
 handleCommand botState tgIdentity chatId text = do
   let (cmd, args) = parseCommand text
       telegramId = (.id) tgIdentity
+  lang <- languageForTelegram telegramId
+  syncChatCommandMenu botState chatId lang
   case cmd of
     "/start" -> handleStart botState tgIdentity chatId args
     "/signup" -> handleSignup botState tgIdentity chatId args
-    "/login" -> handleLogin botState telegramId chatId args
-    "/accounts" -> handleAccounts botState telegramId chatId
-    "/prompt" -> handlePromptCommand botState telegramId chatId args
-    "/newaccount" -> handleNewAccount botState telegramId chatId
-    "/transfer" -> handleTransfer botState telegramId chatId
-    "/income" -> handleIncome botState telegramId chatId
-    "/expense" -> handleExpense botState telegramId chatId
-    "/transactions" -> handleTransactions botState telegramId chatId
-    "/cancel" -> handleCancel botState telegramId chatId
-    "/help" -> handleHelp telegramId chatId
-    _ -> sendMsg chatId $ "Unknown command: " <> cmd <> ". Use /help to see available commands."
+    "/login" -> handleLogin lang botState telegramId chatId args
+    "/accounts" -> handleAccounts lang botState telegramId chatId
+    "/prompt" -> handlePromptCommand lang botState telegramId chatId args
+    "/newaccount" -> handleNewAccount lang botState telegramId chatId
+    "/transfer" -> handleTransfer lang botState telegramId chatId
+    "/income" -> handleIncome lang botState telegramId chatId
+    "/expense" -> handleExpense lang botState telegramId chatId
+    "/transactions" -> handleTransactions lang botState telegramId chatId
+    "/cancel" -> handleCancel lang botState telegramId chatId
+    "/help" -> handleHelp lang telegramId chatId
+    _ -> do
+      let t = telegramStrings lang
+      sendMsg chatId (t.common.unknownCommand cmd)
 
 -- | Parse command and arguments from text.
 parseCommand :: Text -> (Text, Maybe Text)
@@ -164,30 +178,31 @@ parseCommand text =
 -- | Handle a non-command message (part of a conversation flow).
 handleMessage :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
 handleMessage botState telegramId chatId text = do
+  lang <- languageForTelegram telegramId
   state <- atomically $ Map.lookup telegramId . (.conversations) <$> readTVar botState
   case state of
     -- No active conversation: treat any free text as a natural-language prompt
     -- (issue #28). The user's currently-selected account, if any, is applied.
     Nothing ->
-      handlePromptText botState telegramId chatId text
+      handlePromptText lang botState telegramId chatId text
     Just CreateAccountEnterName ->
-      handleCreateAccountName botState telegramId chatId text
+      handleCreateAccountName lang botState telegramId chatId text
     Just (IncomeEnterAmount cat) ->
-      handleIncomeAmount botState telegramId chatId cat text
+      handleIncomeAmount lang botState telegramId chatId cat text
     Just (IncomeEnterDescription cat money) ->
-      handleIncomeDescription botState telegramId chatId cat money text
+      handleIncomeDescription lang botState telegramId chatId cat money text
     Just (ExpenseEnterAmount cat) ->
-      handleExpenseAmount botState telegramId chatId cat text
+      handleExpenseAmount lang botState telegramId chatId cat text
     Just (ExpenseEnterDescription cat money) ->
-      handleExpenseDescription botState telegramId chatId cat money text
+      handleExpenseDescription lang botState telegramId chatId cat money text
     Just (TransferEnterAmount srcId tgtId) ->
-      handleTransferAmount botState telegramId chatId srcId tgtId text
+      handleTransferAmount lang botState telegramId chatId srcId tgtId text
     Just (TransferEnterDescription srcId tgtId money) ->
-      handleTransferDescription botState telegramId chatId srcId tgtId money text
+      handleTransferDescription lang botState telegramId chatId srcId tgtId money text
     -- A keyboard-driven step (selecting an account/category/currency) is in
     -- progress: a stray text message isn't a prompt, so nudge instead.
     Just _ ->
-      sendMsg chatId "Please tap one of the buttons above, or /cancel to start over."
+      sendMsg chatId (telegramStrings lang).common.tapButtonOrCancel
 
 -- -----------------------------------------------------------------------------
 -- Callback Query Handler
@@ -197,13 +212,14 @@ handleMessage botState telegramId chatId text = do
 handleCallbackQuery :: TVar BotState -> TelegramId -> Int64 -> TG.CallbackQueryId -> Text -> AppM ()
 handleCallbackQuery botState telegramId chatId callbackQueryId rawData = do
   withClient $ \clientEnv -> void $ answerCallback clientEnv callbackQueryId Nothing
+  lang <- languageForTelegram telegramId
   case parseCallbackData rawData of
-    Nothing -> sendMsg chatId "Invalid button data."
-    Just Cancel -> handleCancel botState telegramId chatId
-    Just ClearSelection -> handleClearSelection botState telegramId chatId
+    Nothing -> sendMsg chatId (telegramStrings lang).errors.invalidButtonData
+    Just Cancel -> handleCancel lang botState telegramId chatId
+    Just ClearSelection -> handleClearSelection lang botState telegramId chatId
     Just cbData -> do
       state <- atomically $ Map.lookup telegramId . (.conversations) <$> readTVar botState
-      dispatchCallback botState telegramId chatId state cbData
+      dispatchCallback lang botState telegramId chatId state cbData
 
 -- | Parse callback data from a raw text string.
 parseCallbackData :: Text -> Maybe CallbackData
@@ -219,28 +235,28 @@ parseCallbackData t
   | otherwise = Nothing
 
 -- | Dispatch a callback to the appropriate handler based on state.
-dispatchCallback :: TVar BotState -> TelegramId -> Int64 -> Maybe ConversationState -> CallbackData -> AppM ()
+dispatchCallback :: Language -> TVar BotState -> TelegramId -> Int64 -> Maybe ConversationState -> CallbackData -> AppM ()
 -- /accounts selection callback
-dispatchCallback botState telegramId chatId _ (AccountSelect cb)
-  | cb.context == "select" = handleSelectCallback botState telegramId chatId cb.accountId
+dispatchCallback lang botState telegramId chatId _ (AccountSelect cb)
+  | cb.context == "select" = handleSelectCallback lang botState telegramId chatId cb.accountId
 -- Account creation currency selection
-dispatchCallback botState telegramId chatId (Just (CreateAccountSelectCurrency name)) (CurrencySelect curText) =
-  handleCreateAccountCurrency botState telegramId chatId name curText
+dispatchCallback lang botState telegramId chatId (Just (CreateAccountSelectCurrency name)) (CurrencySelect curText) =
+  handleCreateAccountCurrency lang botState telegramId chatId name curText
 -- Income category selection
-dispatchCallback botState telegramId chatId (Just IncomeSelectCategory) (CategorySelect catText) =
-  handleIncomeCategorySelected botState telegramId chatId catText
+dispatchCallback lang botState telegramId chatId (Just IncomeSelectCategory) (CategorySelect catText) =
+  handleIncomeCategorySelected lang botState telegramId chatId catText
 -- Expense category selection
-dispatchCallback botState telegramId chatId (Just ExpenseSelectCategory) (CategorySelect catText) =
-  handleExpenseCategorySelected botState telegramId chatId catText
+dispatchCallback lang botState telegramId chatId (Just ExpenseSelectCategory) (CategorySelect catText) =
+  handleExpenseCategorySelected lang botState telegramId chatId catText
 -- Transfer source account selection
-dispatchCallback botState telegramId chatId (Just TransferSelectSource) (AccountSelect cb)
-  | cb.context == "transfer_src" = handleTransferSourceSelected botState telegramId chatId cb.accountId
+dispatchCallback lang botState telegramId chatId (Just TransferSelectSource) (AccountSelect cb)
+  | cb.context == "transfer_src" = handleTransferSourceSelected lang botState telegramId chatId cb.accountId
 -- Transfer target account selection
-dispatchCallback botState telegramId chatId (Just (TransferSelectTarget srcId)) (AccountSelect cb)
-  | cb.context == "transfer_tgt" = handleTransferTargetSelected botState telegramId chatId srcId cb.accountId
+dispatchCallback lang botState telegramId chatId (Just (TransferSelectTarget srcId)) (AccountSelect cb)
+  | cb.context == "transfer_tgt" = handleTransferTargetSelected lang botState telegramId chatId srcId cb.accountId
 -- Fallback
-dispatchCallback _botState _telegramId chatId _ _ =
-  sendMsg chatId "Unexpected input. Use /cancel to start over."
+dispatchCallback lang _botState _telegramId chatId _ _ =
+  sendMsg chatId (telegramStrings lang).errors.unexpectedInput
 
 -- -----------------------------------------------------------------------------
 -- Individual Command Handlers
@@ -258,15 +274,15 @@ handleStart _botState tgIdentity chatId args =
     Just tok -> do
       result <- redeemTelegramLinkCode (mkLinkCodeToken tok) tgIdentity
       case result of
-        Right _uid ->
-          sendMsg
-            chatId
-            "Done \8212 this Telegram is now linked to your account. Send /help to get started."
+        Right _uid -> do
+          -- The identity is now linked, so honour the account's stored language.
+          lang <- languageForTelegram ((.id) tgIdentity)
+          sendMsg chatId (telegramStrings lang).common.linkedSuccess
         Left err -> do
           logInfo $ "Telegram link redemption failed: " <> displayShow err
-          sendMsg
-            chatId
-            "That link is no longer valid. Generate a new one in the web app under \"Link Telegram\"."
+          -- Not linked by this token; falls back to En for an unknown identity.
+          lang <- languageForTelegram ((.id) tgIdentity)
+          sendMsg chatId (telegramStrings lang).common.linkInvalid
     Nothing -> handleStartNoPayload tgIdentity chatId
 
 -- | Handle /start with no payload.
@@ -279,15 +295,11 @@ handleStartNoPayload :: TelegramIdentity -> Int64 -> AppM ()
 handleStartNoPayload tgIdentity chatId = do
   existing <- runDb (getUserByTelegramId ((.id) tgIdentity))
   case existing of
-    Just _ -> sendWelcome False chatId
+    Just _ -> do
+      lang <- languageForTelegram ((.id) tgIdentity)
+      sendWelcome lang False chatId
     Nothing ->
-      sendMsg chatId
-        $ T.unlines
-          [ "I don't recognise this Telegram account.",
-            "",
-            "To use it with your existing account, open the web app and tap \"Link Telegram\".",
-            "To create a brand-new account, send /signup."
-          ]
+      sendMsg chatId (telegramStrings En).common.unrecognisedAccount
 
 -- | Handle /signup command.
 --
@@ -299,23 +311,27 @@ handleSignup _botState tgIdentity chatId _args = do
   case result of
     Left err -> do
       logError $ "Telegram /signup failed: " <> displayShow err
-      sendMsg chatId "Failed to create your account. Please try again later."
-    Right (_userId, isNew) -> sendWelcome isNew chatId
+      sendMsg chatId (telegramStrings En).errors.failedToCreateYourAccount
+    Right (_userId, isNew) -> do
+      lang <- languageForTelegram ((.id) tgIdentity)
+      sendWelcome lang isNew chatId
 
--- | Send the welcome message to a chat.
-sendWelcome :: Bool -> Int64 -> AppM ()
-sendWelcome isNew chatId =
-  sendMsg chatId
-    $ T.unlines
-    $ [ if isNew
-          then "Welcome to HomeAccounting Bot!\n\nYour account has been created successfully."
-          else "Welcome back to HomeAccounting Bot!",
-        "",
-        "\128172 Just type what you spent or earned \8212 e.g. \8220coffee 4.50\8221 or \8220salary 5000\8221 \8212 and I'll record it. Pick an account with /accounts to file it there.",
-        "",
-        "Available commands:"
-      ]
-    ++ formatCommandList
+-- | Send the welcome message to a chat, in the account's language.
+--
+-- A freshly-created account has no language preference yet, so it resolves to the
+-- 'En' default; an already-linked account is greeted in its stored language.
+sendWelcome :: Language -> Bool -> Int64 -> AppM ()
+sendWelcome lang isNew chatId =
+  let t = telegramStrings lang
+   in sendMsg chatId
+        $ T.unlines
+        $ [ if isNew then t.common.welcomeNew else t.common.welcomeBack,
+            "",
+            t.common.welcomeTip,
+            "",
+            t.common.availableCommands
+          ]
+        ++ formatCommandList lang
 
 -- | Strip the @LINK_@ prefix from the start payload.
 --
@@ -326,9 +342,9 @@ stripLinkPrefix Nothing = Nothing
 stripLinkPrefix (Just t) = T.stripPrefix "LINK_" t
 
 -- | Handle /login command.
-handleLogin :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
-handleLogin _botState _telegramId chatId _args = do
-  sendMsg chatId "To link your Telegram account, please log in at our website and use the 'Link Telegram' option."
+handleLogin :: Language -> TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
+handleLogin lang _botState _telegramId chatId _args = do
+  sendMsg chatId (telegramStrings lang).common.loginPrompt
 
 -- | Handle /accounts command.
 --
@@ -336,81 +352,85 @@ handleLogin _botState _telegramId chatId _args = do
 -- surfaces the currently-selected account (used by prompts and /transactions),
 -- the active account is marked with a check, and a Clear-selection button is
 -- offered when something is selected.
-handleAccounts :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleAccounts botState telegramId chatId = do
+handleAccounts :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleAccounts lang botState telegramId chatId = do
+  let t = telegramStrings lang
   maybeAccounts <- accessibleAccountsForTelegram telegramId
   selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
   case maybeAccounts of
-    Nothing -> sendMsg chatId "You don't have an account yet. Use /start to create one."
+    Nothing -> sendMsg chatId t.accounts.noAccountYet
     Just accounts
-      | null accounts -> sendMsg chatId "You don't have any accounts yet. Use /newaccount to create one."
+      | null accounts -> sendMsg chatId t.accounts.noAccountsYet
       | otherwise -> do
           let header = case selected of
-                Just (_, name) -> "Currently selected: " <> name
-                Nothing -> "No account selected."
-              body = header <> "\n\nYour accounts (tap to select):"
-          sendMsgWithKeyboard chatId body (accountSelectionKeyboard accounts (fst <$> selected) "select")
+                Just (_, name) -> t.accounts.currentlySelected name
+                Nothing -> t.accounts.noAccountSelectedHeader
+              body = header <> "\n\n" <> t.accounts.yourAccountsPrompt
+          sendMsgWithKeyboard chatId body (accountSelectionKeyboard lang accounts (fst <$> selected) "select")
 
 -- | Handle /newaccount command.
-handleNewAccount :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleNewAccount botState telegramId chatId = do
+handleNewAccount :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleNewAccount lang botState telegramId chatId = do
   atomically $ modifyTVar' botState $ \s ->
     s {conversations = Map.insert telegramId CreateAccountEnterName s.conversations}
-  sendMsg chatId "Enter a name for your new account:"
+  sendMsg chatId (telegramStrings lang).accounts.enterAccountName
 
 -- | Handle account name input during account creation.
-handleCreateAccountName :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-handleCreateAccountName botState telegramId chatId name = do
+handleCreateAccountName :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+handleCreateAccountName lang botState telegramId chatId name = do
   let trimmedName = T.strip name
   if T.null trimmedName
-    then sendMsg chatId "Account name cannot be empty. Please enter a name:"
+    then sendMsg chatId (telegramStrings lang).accounts.accountNameEmpty
     else do
       atomically $ modifyTVar' botState $ \s ->
         s {conversations = Map.insert telegramId (CreateAccountSelectCurrency trimmedName) s.conversations}
-      sendMsgWithKeyboard chatId "Select a currency for the account:" currencyKeyboard
+      sendMsgWithKeyboard chatId (telegramStrings lang).accounts.selectCurrency (currencyKeyboard lang)
 
 -- | Handle /transfer command.
-handleTransfer :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleTransfer botState telegramId chatId = do
+handleTransfer :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleTransfer lang botState telegramId chatId = do
+  let t = telegramStrings lang
   maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
-    Nothing -> sendMsg chatId "You don't have an account yet. Use /start to create one."
+    Nothing -> sendMsg chatId t.accounts.noAccountYet
     Just accounts
-      | length accounts < 2 -> sendMsg chatId "You need at least 2 accounts for a transfer. Use /newaccount to create more."
+      | length accounts < 2 -> sendMsg chatId t.transactions.needTwoAccounts
       | otherwise -> do
           atomically $ modifyTVar' botState $ \s ->
             s {conversations = Map.insert telegramId TransferSelectSource s.conversations}
-          sendMsgWithKeyboard chatId "Select source account:" (accountSelectionKeyboard accounts Nothing "transfer_src")
+          sendMsgWithKeyboard chatId t.transactions.selectSourceAccount (accountSelectionKeyboard lang accounts Nothing "transfer_src")
 
 -- | Handle /income command.
-handleIncome :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleIncome botState telegramId chatId = do
+handleIncome :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleIncome lang botState telegramId chatId = do
+  let t = telegramStrings lang
   selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
   case selected of
-    Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
+    Nothing -> sendMsg chatId t.transactions.noAccountSelectedUseAccounts
     Just _ -> do
       entries <- getCategoryEntries telegramId incomeCategoryDictKind
       case entries of
-        Nothing -> sendMsg chatId "Could not load income categories. Please try again."
+        Nothing -> sendMsg chatId t.transactions.couldNotLoadIncomeCategories
         Just cats -> do
           atomically $ modifyTVar' botState $ \s ->
             s {conversations = Map.insert telegramId IncomeSelectCategory s.conversations}
-          sendMsgWithKeyboard chatId "Select income category:" (categoryKeyboard cats)
+          sendMsgWithKeyboard chatId t.transactions.selectIncomeCategory (categoryKeyboard lang cats)
 
 -- | Handle /expense command.
-handleExpense :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleExpense botState telegramId chatId = do
+handleExpense :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleExpense lang botState telegramId chatId = do
+  let t = telegramStrings lang
   selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
   case selected of
-    Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
+    Nothing -> sendMsg chatId t.transactions.noAccountSelectedUseAccounts
     Just _ -> do
       entries <- getCategoryEntries telegramId expenseCategoryDictKind
       case entries of
-        Nothing -> sendMsg chatId "Could not load expense categories. Please try again."
+        Nothing -> sendMsg chatId t.transactions.couldNotLoadExpenseCategories
         Just cats -> do
           atomically $ modifyTVar' botState $ \s ->
             s {conversations = Map.insert telegramId ExpenseSelectCategory s.conversations}
-          sendMsgWithKeyboard chatId "Select expense category:" (categoryKeyboard cats)
+          sendMsgWithKeyboard chatId t.transactions.selectExpenseCategory (categoryKeyboard lang cats)
 
 -- | Handle /transactions command.
 --
@@ -418,11 +438,12 @@ handleExpense botState telegramId chatId = do
 -- selected (via /accounts) the list is filtered to transactions that
 -- touch that account; otherwise every transaction the user can see is
 -- shown. The window is always [now - 30 days, now].
-handleTransactions :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleTransactions botState telegramId chatId = do
+handleTransactions :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleTransactions lang botState telegramId chatId = do
+  let t = telegramStrings lang
   maybeUserId <- getUserIdForTelegram telegramId
   case maybeUserId of
-    Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
+    Nothing -> sendMsg chatId t.errors.couldNotFindUserAccount
     Just userId -> do
       now <- liftIO getCurrentTime
       let thirtyDays = 30 * 86400 :: Int
@@ -433,46 +454,47 @@ handleTransactions botState telegramId chatId = do
       case mkRange (Just fromDate) (Just now) of
         Left err -> do
           logError $ "Failed to build transactions query: " <> display err
-          sendMsg chatId "Failed to list transactions. Please try again."
+          sendMsg chatId t.errors.failedToListTransactions
         Right dateRange -> do
           let filt = mkTransactionFilter maybeAcctId dateRange (Just (PendingKind :| [CompletedKind])) Nothing
           (total, results) <- TransactionService.listTransactions userId filt (Page 50 0)
           entryNames <- getDictionaryEntryNames telegramId
           let header = case selected of
-                Just (_, name) -> "Transactions for " <> name <> " (last 30 days):"
-                Nothing -> "Your transactions (last 30 days):"
+                Just (_, name) -> t.transactions.transactionsForHeader name
+                Nothing -> t.transactions.yourTransactionsHeader
           if null results
-            then sendMsg chatId $ header <> "\n\nNo transactions found."
+            then sendMsg chatId $ header <> "\n\n" <> t.transactions.noTransactionsFound
             else do
               let maxItems = 20
                   shown = take maxItems results
                   overflow = total - length shown
-                  body = T.unlines $ map (formatTransactionLine entryNames) shown
+                  body = T.unlines $ map (formatTransactionLine lang entryNames) shown
                   suffix =
                     if overflow > 0
-                      then "\n... and " <> tshow overflow <> " more."
+                      then t.transactions.andMore overflow
                       else ""
               sendMsg chatId $ header <> "\n\n" <> body <> suffix
 
 -- | Handle /cancel command.
-handleCancel :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleCancel botState telegramId chatId = do
+handleCancel :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleCancel lang botState telegramId chatId = do
   hadConversation <- atomically $ do
     s <- readTVar botState
     let had = Map.member telegramId s.conversations
     writeTVar botState $ s {conversations = Map.delete telegramId s.conversations}
     return had
   if hadConversation
-    then sendMsg chatId "Operation cancelled."
-    else sendMsg chatId "Nothing to cancel."
+    then sendMsg chatId (telegramStrings lang).common.cancelled
+    else sendMsg chatId (telegramStrings lang).common.nothingToCancel
 
 -- | Handle /help command.
-handleHelp :: TelegramId -> Int64 -> AppM ()
-handleHelp _telegramId chatId = do
+handleHelp :: Language -> TelegramId -> Int64 -> AppM ()
+handleHelp lang _telegramId chatId = do
+  let t = telegramStrings lang
   sendMsg chatId
     $ T.unlines
-    $ ["HomeAccounting Bot Commands:", ""]
-    ++ formatCommandList
+    $ [t.common.helpHeader, ""]
+    ++ formatCommandList lang
 
 -- -----------------------------------------------------------------------------
 -- Prompt (natural language) — issue #28
@@ -484,17 +506,12 @@ handleHelp _telegramId chatId = do
 -- immediately. With no argument we explain the feature; because 'handleMessage'
 -- already routes any idle free-text message through 'handlePromptText', the user can
 -- simply type their next message and it will be recorded.
-handlePromptCommand :: TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
-handlePromptCommand botState telegramId chatId args =
+handlePromptCommand :: Language -> TVar BotState -> TelegramId -> Int64 -> Maybe Text -> AppM ()
+handlePromptCommand lang botState telegramId chatId args =
   case T.strip <$> args of
-    Just t | not (T.null t) -> handlePromptText botState telegramId chatId t
+    Just t | not (T.null t) -> handlePromptText lang botState telegramId chatId t
     _ ->
-      sendMsg chatId
-        $ T.unlines
-          [ "Tell me what to record, e.g. \8220coffee 4.50\8221 or \8220groceries 500, taxi 120\8221.",
-            "",
-            "Tip: you can just type it directly \8212 no /prompt needed. Use /accounts to pick which account it goes to."
-          ]
+      sendMsg chatId (telegramStrings lang).prompt.promptUsage
 
 -- | Interpret free text as a transaction via the natural-language prompt
 -- pipeline and reply with the outcome.
@@ -502,27 +519,28 @@ handlePromptCommand botState telegramId chatId args =
 -- The user's currently-selected account (via /accounts), if any, is passed
 -- through so it fills the transaction's primary account slot; otherwise the
 -- account is resolved from the text by the existing rules (issue #28).
-handlePromptText :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-handlePromptText botState telegramId chatId text = do
+handlePromptText :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+handlePromptText lang botState telegramId chatId text = do
+  let t = telegramStrings lang
   maybeUserId <- getUserIdForTelegram telegramId
   case maybeUserId of
-    Nothing -> sendMsg chatId "I couldn't find your account. Use /start first."
+    Nothing -> sendMsg chatId t.prompt.couldntFindAccountStart
     Just userId -> do
       selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
       result <- PromptService.handlePrompt userId (fst <$> selected) text
       case result of
         Right (TransactionsRecorded succeeded failed) -> do
-          forM_ succeeded $ \r -> replyRecordedTransaction telegramId chatId r.tx
+          forM_ succeeded $ \r -> replyRecordedTransaction lang telegramId chatId r.tx
           unless (null failed)
             $ sendMsg chatId
-            $ "\9888\65039 Couldn't record:\n"
-            <> T.unlines [" \8226 transaction " <> tshow (f.index + 1) <> ": " <> f.reason | f <- failed]
+            $ t.prompt.couldntRecordHeader
+            <> T.unlines [t.prompt.failedTransactionLine (f.index + 1) f.reason | f <- failed]
         Left (PromptDomainError de) ->
-          sendMsg chatId ("\9888\65039 " <> renderDomainError de)
+          sendMsg chatId (t.prompt.domainError (renderDomainError de))
         Left PromptFeatureDisabled ->
-          sendMsg chatId "Text prompts aren't available right now. Try /income, /expense or /transfer."
+          sendMsg chatId t.prompt.featureDisabled
         Left (PromptUpstreamError _) ->
-          sendMsg chatId "Sorry, I couldn't process that. Please rephrase, or use /help to see the commands."
+          sendMsg chatId t.prompt.upstreamError
 
 -- -----------------------------------------------------------------------------
 -- Callback Handlers
@@ -530,36 +548,38 @@ handlePromptText botState telegramId chatId text = do
 
 -- | Clear the user's selected account. Works regardless of any in-flight
 -- conversation, so it is dispatched early alongside /cancel.
-handleClearSelection :: TVar BotState -> TelegramId -> Int64 -> AppM ()
-handleClearSelection botState telegramId chatId = do
+handleClearSelection :: Language -> TVar BotState -> TelegramId -> Int64 -> AppM ()
+handleClearSelection lang botState telegramId chatId = do
   had <- atomically $ do
     s <- readTVar botState
     let existed = Map.member telegramId s.selectedAccounts
     writeTVar botState $ s {selectedAccounts = Map.delete telegramId s.selectedAccounts}
     return existed
   if had
-    then sendMsg chatId "Selection cleared."
-    else sendMsg chatId "No account was selected."
+    then sendMsg chatId (telegramStrings lang).common.selectionCleared
+    else sendMsg chatId (telegramStrings lang).common.noAccountWasSelected
 
 -- | Handle account selection callback from /accounts.
-handleSelectCallback :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-handleSelectCallback botState telegramId chatId shortId = do
+handleSelectCallback :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+handleSelectCallback lang botState telegramId chatId shortId = do
+  let t = telegramStrings lang
   maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
-    Nothing -> sendMsg chatId "Could not find your accounts."
+    Nothing -> sendMsg chatId t.errors.couldNotFindAccounts
     Just accounts ->
       case findAccountByShortId shortId accounts of
-        Nothing -> sendMsg chatId "Account not found."
+        Nothing -> sendMsg chatId t.errors.accountNotFound
         Just (accountId, name, _balance) -> do
           atomically $ modifyTVar' botState $ \s ->
             s {selectedAccounts = Map.insert telegramId (accountId, name) s.selectedAccounts}
-          sendMsg chatId $ "Selected: " <> name
+          sendMsg chatId (t.accounts.selected name)
 
 -- | Handle currency selection during account creation.
-handleCreateAccountCurrency :: TVar BotState -> TelegramId -> Int64 -> Text -> Text -> AppM ()
-handleCreateAccountCurrency botState telegramId chatId name curText = do
+handleCreateAccountCurrency :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> Text -> AppM ()
+handleCreateAccountCurrency lang botState telegramId chatId name curText = do
+  let t = telegramStrings lang
   case parseCurrency curText of
-    Left _ -> sendMsg chatId "Invalid currency. Please select from the keyboard."
+    Left _ -> sendMsg chatId t.accounts.invalidCurrency
     Right currency -> do
       -- Clear conversation state
       atomically $ modifyTVar' botState $ \s ->
@@ -568,7 +588,7 @@ handleCreateAccountCurrency botState telegramId chatId name curText = do
       -- Look up user
       maybeUserId <- getUserIdForTelegram telegramId
       case maybeUserId of
-        Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
+        Nothing -> sendMsg chatId t.errors.couldNotFindUserAccount
         Just userId -> do
           let createCmd =
                 CreateAccount
@@ -582,229 +602,237 @@ handleCreateAccountCurrency botState telegramId chatId name curText = do
           case result of
             Left err -> do
               logError $ "Failed to create account: " <> displayShow err
-              sendMsg chatId "Failed to create account. Please try again."
+              sendMsg chatId t.accounts.failedToCreateAccount
             Right (accountId, _accountData) -> do
               -- Auto-select the new account
               atomically $ modifyTVar' botState $ \s ->
                 s {selectedAccounts = Map.insert telegramId (accountId, name) s.selectedAccounts}
-              sendMsg chatId $ "Account \"" <> name <> "\" created and selected! (" <> showCurrency currency <> ")"
+              sendMsg chatId $ t.accounts.createdSelected name (showCurrency currency)
 
 -- -----------------------------------------------------------------------------
 -- Income Flow Handlers
 -- -----------------------------------------------------------------------------
 
 -- | Handle income category selection callback.
-handleIncomeCategorySelected :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-handleIncomeCategorySelected botState telegramId chatId catText =
+handleIncomeCategorySelected :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+handleIncomeCategorySelected lang botState telegramId chatId catText =
   case parseCategoryUUID catText of
-    Nothing -> sendMsg chatId "Invalid category. Please select from the keyboard."
+    Nothing -> sendMsg chatId (telegramStrings lang).transactions.invalidCategorySelectKeyboard
     Just _ -> do
       atomically $ modifyTVar' botState $ \s ->
         s {conversations = Map.insert telegramId (IncomeEnterAmount catText) s.conversations}
-      sendMsg chatId "Enter amount:"
+      sendMsg chatId (telegramStrings lang).transactions.enterAmount
 
 -- | Handle income amount input.
-handleIncomeAmount :: TVar BotState -> TelegramId -> Int64 -> Text -> Text -> AppM ()
-handleIncomeAmount botState telegramId chatId cat text =
-  case parseAmount text of
-    Nothing -> sendMsg chatId "Invalid amount. Please enter a positive number:"
-    Just amt -> do
-      selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
-      case selected of
-        Nothing -> do
-          clearConversation botState telegramId
-          sendMsg chatId "No account selected. Use /accounts to select one first."
-        Just (accountId, _name) -> do
-          maybeAcc <- runDb (getAccount accountId)
-          case maybeAcc of
+handleIncomeAmount :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> Text -> AppM ()
+handleIncomeAmount lang botState telegramId chatId cat text =
+  let t = telegramStrings lang
+   in case parseAmount text of
+        Nothing -> sendMsg chatId t.transactions.invalidAmount
+        Just amt -> do
+          selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
+          case selected of
             Nothing -> do
               clearConversation botState telegramId
-              sendMsg chatId "Selected account not found. Use /accounts to choose another."
-            Just accData -> do
-              let currency = moneyCurrency accData.balance
-              case mkMoney currency (toRational amt) of
-                Left _ -> sendMsg chatId "Failed to create money amount. Please try again."
-                Right money -> do
-                  atomically $ modifyTVar' botState $ \s ->
-                    s {conversations = Map.insert telegramId (IncomeEnterDescription cat money) s.conversations}
-                  sendMsg chatId "Enter description:"
+              sendMsg chatId t.transactions.noAccountSelectedUseAccounts
+            Just (accountId, _name) -> do
+              maybeAcc <- runDb (getAccount accountId)
+              case maybeAcc of
+                Nothing -> do
+                  clearConversation botState telegramId
+                  sendMsg chatId t.accounts.selectedAccountNotFound
+                Just accData -> do
+                  let currency = moneyCurrency accData.balance
+                  case mkMoney currency (toRational amt) of
+                    Left _ -> sendMsg chatId t.transactions.failedToCreateMoney
+                    Right money -> do
+                      atomically $ modifyTVar' botState $ \s ->
+                        s {conversations = Map.insert telegramId (IncomeEnterDescription cat money) s.conversations}
+                      sendMsg chatId t.transactions.enterDescription
 
 -- | Handle income description input and execute the transaction.
-handleIncomeDescription :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
-handleIncomeDescription botState telegramId chatId cat money description = do
+handleIncomeDescription :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
+handleIncomeDescription lang botState telegramId chatId cat money description = do
+  let t = telegramStrings lang
   clearConversation botState telegramId
   case parseCategoryUUID cat of
-    Nothing -> sendMsg chatId "Invalid category. Operation cancelled."
+    Nothing -> sendMsg chatId t.transactions.invalidCategoryCancelled
     Just categoryEntryId -> do
       maybeUserId <- getUserIdForTelegram telegramId
       case maybeUserId of
-        Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
+        Nothing -> sendMsg chatId t.errors.couldNotFindUserAccount
         Just userId -> do
           selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
           case selected of
-            Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
+            Nothing -> sendMsg chatId t.transactions.noAccountSelectedUseAccounts
             Just (accountId, _name) -> case mkAllocation categoryEntryId money Nothing of
               Left allocErr -> do
                 logError $ "Income failed (invalid allocation): " <> displayShow allocErr
-                sendMsg chatId $ "Income recording failed: " <> tshow allocErr
+                sendMsg chatId $ t.transactions.incomeRecordingFailed (tshow allocErr)
               Right alloc -> do
                 let allocations = mkIncomeAllocations (alloc :| [])
                 result <- initiateIncome userId accountId money allocations Set.empty description Nothing Nothing Nothing
                 case result of
                   Left err -> do
                     logError $ "Income failed: " <> displayShow err
-                    sendMsg chatId $ "Income recording failed: " <> tshow err
+                    sendMsg chatId $ t.transactions.incomeRecordingFailed (tshow err)
                   Right (_txId, txData) -> case txData.status of
                     Failed failureReason -> do
                       logError $ "Income transfer failed: " <> display failureReason
-                      sendMsg chatId $ "Income recording failed: " <> failureReason
+                      sendMsg chatId $ t.transactions.incomeRecordingFailed failureReason
                     _ ->
-                      replyRecordedTransaction telegramId chatId txData
+                      replyRecordedTransaction lang telegramId chatId txData
 
 -- -----------------------------------------------------------------------------
 -- Expense Flow Handlers
 -- -----------------------------------------------------------------------------
 
 -- | Handle expense category selection callback.
-handleExpenseCategorySelected :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-handleExpenseCategorySelected botState telegramId chatId catText =
+handleExpenseCategorySelected :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+handleExpenseCategorySelected lang botState telegramId chatId catText =
   case parseCategoryUUID catText of
-    Nothing -> sendMsg chatId "Invalid category. Please select from the keyboard."
+    Nothing -> sendMsg chatId (telegramStrings lang).transactions.invalidCategorySelectKeyboard
     Just _ -> do
       atomically $ modifyTVar' botState $ \s ->
         s {conversations = Map.insert telegramId (ExpenseEnterAmount catText) s.conversations}
-      sendMsg chatId "Enter amount:"
+      sendMsg chatId (telegramStrings lang).transactions.enterAmount
 
 -- | Handle expense amount input.
-handleExpenseAmount :: TVar BotState -> TelegramId -> Int64 -> Text -> Text -> AppM ()
-handleExpenseAmount botState telegramId chatId cat text =
-  case parseAmount text of
-    Nothing -> sendMsg chatId "Invalid amount. Please enter a positive number:"
-    Just amt -> do
-      selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
-      case selected of
-        Nothing -> do
-          clearConversation botState telegramId
-          sendMsg chatId "No account selected. Use /accounts to select one first."
-        Just (accountId, _name) -> do
-          maybeAcc <- runDb (getAccount accountId)
-          case maybeAcc of
+handleExpenseAmount :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> Text -> AppM ()
+handleExpenseAmount lang botState telegramId chatId cat text =
+  let t = telegramStrings lang
+   in case parseAmount text of
+        Nothing -> sendMsg chatId t.transactions.invalidAmount
+        Just amt -> do
+          selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
+          case selected of
             Nothing -> do
               clearConversation botState telegramId
-              sendMsg chatId "Selected account not found. Use /accounts to choose another."
-            Just accData -> do
-              let currency = moneyCurrency accData.balance
-              case mkMoney currency (toRational amt) of
-                Left _ -> sendMsg chatId "Failed to create money amount. Please try again."
-                Right money -> do
-                  atomically $ modifyTVar' botState $ \s ->
-                    s {conversations = Map.insert telegramId (ExpenseEnterDescription cat money) s.conversations}
-                  sendMsg chatId "Enter description:"
+              sendMsg chatId t.transactions.noAccountSelectedUseAccounts
+            Just (accountId, _name) -> do
+              maybeAcc <- runDb (getAccount accountId)
+              case maybeAcc of
+                Nothing -> do
+                  clearConversation botState telegramId
+                  sendMsg chatId t.accounts.selectedAccountNotFound
+                Just accData -> do
+                  let currency = moneyCurrency accData.balance
+                  case mkMoney currency (toRational amt) of
+                    Left _ -> sendMsg chatId t.transactions.failedToCreateMoney
+                    Right money -> do
+                      atomically $ modifyTVar' botState $ \s ->
+                        s {conversations = Map.insert telegramId (ExpenseEnterDescription cat money) s.conversations}
+                      sendMsg chatId t.transactions.enterDescription
 
 -- | Handle expense description input and execute the transaction.
-handleExpenseDescription :: TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
-handleExpenseDescription botState telegramId chatId cat money description = do
+handleExpenseDescription :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> Money -> Text -> AppM ()
+handleExpenseDescription lang botState telegramId chatId cat money description = do
+  let t = telegramStrings lang
   clearConversation botState telegramId
   case parseCategoryUUID cat of
-    Nothing -> sendMsg chatId "Invalid category. Operation cancelled."
+    Nothing -> sendMsg chatId t.transactions.invalidCategoryCancelled
     Just categoryEntryId -> do
       maybeUserId <- getUserIdForTelegram telegramId
       case maybeUserId of
-        Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
+        Nothing -> sendMsg chatId t.errors.couldNotFindUserAccount
         Just userId -> do
           selected <- atomically $ Map.lookup telegramId . (.selectedAccounts) <$> readTVar botState
           case selected of
-            Nothing -> sendMsg chatId "No account selected. Use /accounts to select one first."
+            Nothing -> sendMsg chatId t.transactions.noAccountSelectedUseAccounts
             Just (accountId, _name) -> case mkAllocation categoryEntryId money Nothing of
               Left allocErr -> do
                 logError $ "Expense failed (invalid allocation): " <> displayShow allocErr
-                sendMsg chatId $ "Expense recording failed: " <> tshow allocErr
+                sendMsg chatId $ t.transactions.expenseRecordingFailed (tshow allocErr)
               Right alloc -> do
                 let allocations = mkExpenseAllocations (alloc :| [])
                 result <- initiateExpense userId accountId money allocations Set.empty description Nothing Nothing Nothing
                 case result of
                   Left err -> do
                     logError $ "Expense failed: " <> displayShow err
-                    sendMsg chatId $ "Expense recording failed: " <> tshow err
+                    sendMsg chatId $ t.transactions.expenseRecordingFailed (tshow err)
                   Right (_txId, txData) -> case txData.status of
                     Failed failureReason -> do
                       logError $ "Expense transfer failed: " <> display failureReason
-                      sendMsg chatId $ "Expense recording failed: " <> failureReason
+                      sendMsg chatId $ t.transactions.expenseRecordingFailed failureReason
                     _ ->
-                      replyRecordedTransaction telegramId chatId txData
+                      replyRecordedTransaction lang telegramId chatId txData
 
 -- -----------------------------------------------------------------------------
 -- Transfer Flow Handlers
 -- -----------------------------------------------------------------------------
 
 -- | Handle transfer source account selection.
-handleTransferSourceSelected :: TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
-handleTransferSourceSelected botState telegramId chatId shortId = do
+handleTransferSourceSelected :: Language -> TVar BotState -> TelegramId -> Int64 -> Text -> AppM ()
+handleTransferSourceSelected lang botState telegramId chatId shortId = do
+  let t = telegramStrings lang
   maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
-    Nothing -> sendMsg chatId "Could not find your accounts."
+    Nothing -> sendMsg chatId t.errors.couldNotFindAccounts
     Just accounts ->
       case findAccountByShortId shortId accounts of
-        Nothing -> sendMsg chatId "Account not found."
+        Nothing -> sendMsg chatId t.errors.accountNotFound
         Just (srcAccountId, _name, _balance) -> do
           let otherAccounts = filter (\(accId, _, _) -> accId /= srcAccountId) accounts
           atomically $ modifyTVar' botState $ \s ->
             s {conversations = Map.insert telegramId (TransferSelectTarget srcAccountId) s.conversations}
-          sendMsgWithKeyboard chatId "Select target account:" (accountSelectionKeyboard otherAccounts Nothing "transfer_tgt")
+          sendMsgWithKeyboard chatId t.transactions.selectTargetAccount (accountSelectionKeyboard lang otherAccounts Nothing "transfer_tgt")
 
 -- | Handle transfer target account selection.
-handleTransferTargetSelected :: TVar BotState -> TelegramId -> Int64 -> AccountId -> Text -> AppM ()
-handleTransferTargetSelected botState telegramId chatId srcId shortId = do
+handleTransferTargetSelected :: Language -> TVar BotState -> TelegramId -> Int64 -> AccountId -> Text -> AppM ()
+handleTransferTargetSelected lang botState telegramId chatId srcId shortId = do
+  let t = telegramStrings lang
   maybeAccounts <- accessibleAccountsForTelegram telegramId
   case maybeAccounts of
-    Nothing -> sendMsg chatId "Could not find your accounts."
+    Nothing -> sendMsg chatId t.errors.couldNotFindAccounts
     Just accounts ->
       case findAccountByShortId shortId accounts of
-        Nothing -> sendMsg chatId "Account not found."
+        Nothing -> sendMsg chatId t.errors.accountNotFound
         Just (tgtAccountId, _name, _balance) -> do
           atomically $ modifyTVar' botState $ \s ->
             s {conversations = Map.insert telegramId (TransferEnterAmount srcId tgtAccountId) s.conversations}
-          sendMsg chatId "Enter amount:"
+          sendMsg chatId t.transactions.enterAmount
 
 -- | Handle transfer amount input.
-handleTransferAmount :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Text -> AppM ()
-handleTransferAmount botState telegramId chatId srcId tgtId text =
-  case parseAmount text of
-    Nothing -> sendMsg chatId "Invalid amount. Please enter a positive number:"
-    Just amt -> do
-      maybeAcc <- runDb (getAccount srcId)
-      case maybeAcc of
-        Nothing -> do
-          clearConversation botState telegramId
-          sendMsg chatId "Source account not found. Use /transfer to start over."
-        Just accData -> do
-          let currency = moneyCurrency accData.balance
-          case mkMoney currency (toRational amt) of
-            Left _ -> sendMsg chatId "Failed to create money amount. Please try again."
-            Right money -> do
-              atomically $ modifyTVar' botState $ \s ->
-                s {conversations = Map.insert telegramId (TransferEnterDescription srcId tgtId money) s.conversations}
-              sendMsg chatId "Enter description:"
+handleTransferAmount :: Language -> TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Text -> AppM ()
+handleTransferAmount lang botState telegramId chatId srcId tgtId text =
+  let t = telegramStrings lang
+   in case parseAmount text of
+        Nothing -> sendMsg chatId t.transactions.invalidAmount
+        Just amt -> do
+          maybeAcc <- runDb (getAccount srcId)
+          case maybeAcc of
+            Nothing -> do
+              clearConversation botState telegramId
+              sendMsg chatId t.transactions.sourceAccountNotFound
+            Just accData -> do
+              let currency = moneyCurrency accData.balance
+              case mkMoney currency (toRational amt) of
+                Left _ -> sendMsg chatId t.transactions.failedToCreateMoney
+                Right money -> do
+                  atomically $ modifyTVar' botState $ \s ->
+                    s {conversations = Map.insert telegramId (TransferEnterDescription srcId tgtId money) s.conversations}
+                  sendMsg chatId t.transactions.enterDescription
 
 -- | Handle transfer description input and execute the transaction.
-handleTransferDescription :: TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Money -> Text -> AppM ()
-handleTransferDescription botState telegramId chatId srcId tgtId money description = do
+handleTransferDescription :: Language -> TVar BotState -> TelegramId -> Int64 -> AccountId -> AccountId -> Money -> Text -> AppM ()
+handleTransferDescription lang botState telegramId chatId srcId tgtId money description = do
+  let t = telegramStrings lang
   clearConversation botState telegramId
   maybeUserId <- getUserIdForTelegram telegramId
   case maybeUserId of
-    Nothing -> sendMsg chatId "Could not find your user account. Use /start first."
+    Nothing -> sendMsg chatId t.errors.couldNotFindUserAccount
     Just userId -> do
       result <- initiateTransfer userId srcId tgtId money Set.empty description Nothing Nothing Nothing
       case result of
         Left err -> do
           logError $ "Transfer failed: " <> displayShow err
-          sendMsg chatId $ "Transfer failed: " <> tshow err
+          sendMsg chatId $ t.transactions.transferFailed (tshow err)
         Right (_txId, txData) -> case txData.status of
           Failed failureReason -> do
             logError $ "Transfer failed: " <> display failureReason
-            sendMsg chatId $ "Transfer failed: " <> failureReason
+            sendMsg chatId $ t.transactions.transferFailed failureReason
           _ ->
-            replyRecordedTransaction telegramId chatId txData
+            replyRecordedTransaction lang telegramId chatId txData
 
 -- -----------------------------------------------------------------------------
 -- Category Parsers
@@ -886,13 +914,13 @@ getDictionaryEntryNames telegramId = do
 -- account the user can access (source for expense, target for income, both
 -- for transfer), so 'accessibleAccountsForTelegram' suffices — no
 -- External-account lookup is needed.
-replyRecordedTransaction :: TelegramId -> Int64 -> TransactionData -> AppM ()
-replyRecordedTransaction telegramId chatId td = do
+replyRecordedTransaction :: Language -> TelegramId -> Int64 -> TransactionData -> AppM ()
+replyRecordedTransaction lang telegramId chatId td = do
   entryNames <- getDictionaryEntryNames telegramId
   maybeAccounts <- accessibleAccountsForTelegram telegramId
   let accountNames =
         Map.fromList [(aid, n) | (aid, n, _) <- fromMaybe [] maybeAccounts]
-  sendMsg chatId (formatRecordedTransaction entryNames accountNames td)
+  sendMsg chatId (formatRecordedTransaction lang entryNames accountNames td)
 
 -- -----------------------------------------------------------------------------
 -- User/Account Lookup Helpers
@@ -903,6 +931,46 @@ getUserIdForTelegram :: TelegramId -> AppM (Maybe UserId)
 getUserIdForTelegram telegramId = do
   maybeUser <- runDb (getUserByTelegramId telegramId)
   return $ fmap fst maybeUser
+
+-- | Resolve the persisted UI language for a Telegram user's replies.
+--
+-- Reads the user's configuration and returns its stored 'Language'. Unknown or
+-- not-yet-linked Telegram accounts (and configurations that can't be resolved)
+-- default to 'En', so onboarding and error paths always have a language.
+languageForTelegram :: TelegramId -> AppM Language
+languageForTelegram telegramId = do
+  maybeUser <- runDb (getUserByTelegramId telegramId)
+  case maybeUser of
+    Nothing -> pure En
+    Just (_, userData) -> do
+      maybeConfig <- runDb (getConfiguration userData.configurationId)
+      pure (maybe En (.language) maybeConfig)
+
+-- | Ensure this chat's Telegram command menu is shown in @lang@.
+--
+-- The global 'registerCommands' registration scopes by the user's Telegram-client
+-- language, so it cannot honour our per-user app-language signal. This pushes a
+-- chat-scoped @setMyCommands@ (which overrides regardless of client language) —
+-- but only when the chat's resolved language actually changed, memoised in
+-- 'BotState.syncedCommandLangs', so it costs one API call on first contact or a
+-- language switch and nothing otherwise. Best-effort: a failure is logged and
+-- left un-memoised so the next interaction retries.
+syncChatCommandMenu :: TVar BotState -> Int64 -> Language -> AppM ()
+syncChatCommandMenu botState chatId lang = do
+  synced <- (.syncedCommandLangs) <$> readTVarIO botState
+  when (commandMenuNeedsSync synced chatId lang)
+    $ withClient
+    $ \clientEnv -> do
+      result <- registerChatCommands clientEnv lang chatId
+      case result of
+        Right True ->
+          atomically
+            $ modifyTVar' botState
+            $ \s -> s {syncedCommandLangs = Map.insert chatId lang s.syncedCommandLangs}
+        Right False ->
+          logWarn "Telegram returned false for per-chat setMyCommands"
+        Left err ->
+          logWarn $ "Failed to set per-chat command menu: " <> displayShow err
 
 -- | Get the regular (non-External) accounts a Telegram user can access — those
 -- they own plus any shared to them — as (AccountId, name, balance) triples.

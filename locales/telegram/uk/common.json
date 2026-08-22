@@ -1,0 +1,20 @@
+{
+  "cancelled": "Операцію скасовано.",
+  "nothingToCancel": "Немає чого скасовувати.",
+  "selectionCleared": "Вибір очищено.",
+  "noAccountWasSelected": "Жоден рахунок не був вибраний.",
+  "tapButtonOrCancel": "Будь ласка, натисніть одну з кнопок вище, або /cancel, щоб почати спочатку.",
+  "unknownCommand": "Невідома команда: {command}. Використайте /help, щоб побачити доступні команди.",
+  "confirmButton": "Підтвердити",
+  "cancelButton": "Скасувати",
+  "clearSelectionButton": "Очистити вибір",
+  "linkedSuccess": "Готово — цей Telegram тепер прив'язано до вашого рахунку. Надішліть /help, щоб почати.",
+  "linkInvalid": "Це посилання більше не дійсне. Створіть нове у вебдодатку в розділі \"Link Telegram\".",
+  "unrecognisedAccount": "Я не впізнаю цей акаунт Telegram.\n\nЩоб використати його з наявним рахунком, відкрийте вебдодаток і натисніть \"Link Telegram\".\nЩоб створити новий рахунок, надішліть /signup.\n",
+  "welcomeNew": "Ласкаво просимо до HomeAccounting Bot!\n\nВаш рахунок успішно створено.",
+  "welcomeBack": "З поверненням до HomeAccounting Bot!",
+  "welcomeTip": "💬 Просто напишіть, що ви витратили або заробили — напр. “кава 4.50” або “зарплата 5000” — і я це запишу. Виберіть рахунок через /accounts, щоб зберегти туди.",
+  "availableCommands": "Доступні команди:",
+  "helpHeader": "Команди HomeAccounting Bot:",
+  "loginPrompt": "Щоб прив'язати ваш акаунт Telegram, увійдіть на нашому вебсайті та скористайтеся опцією 'Link Telegram'."
+}

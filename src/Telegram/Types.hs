@@ -15,6 +15,7 @@ module Telegram.Types
 
     -- * Commands
     botCommands,
+    commandMenuNeedsSync,
 
     -- * Callback Data
     CallbackData (..),
@@ -23,11 +24,14 @@ module Telegram.Types
 where
 
 import Data.Aeson (FromJSON, ToJSON)
+import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Domain.Core.Types (AccountId, Money, TelegramId)
+import Domain.Localization.Language (Language (..))
 import GHC.Generics (Generic)
+import Telegram.I18n (CommandStrings (..), TelegramStrings (..), telegramStrings)
 
 -- -----------------------------------------------------------------------------
 -- Bot State
@@ -42,35 +46,51 @@ data BotState = BotState
   { -- | Active conversations by Telegram user ID
     conversations :: Map TelegramId ConversationState,
     -- | Selected accounts by Telegram user ID
-    selectedAccounts :: Map TelegramId (AccountId, Text)
+    selectedAccounts :: Map TelegramId (AccountId, Text),
+    -- | The language the per-chat command menu was last set to, by chat id.
+    -- Lets the bot push a chat-scoped @setMyCommands@ only when a chat's
+    -- resolved language actually changes (see 'commandMenuNeedsSync').
+    syncedCommandLangs :: Map Int64 Language
   }
   deriving (Show, Eq, Generic)
 
 -- | Initial empty bot state.
 emptyBotState :: BotState
-emptyBotState = BotState Map.empty Map.empty
+emptyBotState = BotState Map.empty Map.empty Map.empty
+
+-- | Whether the chat-scoped command menu must be (re)pushed for @chatId@ to
+-- match @lang@. The unset baseline is 'En' — the global default menu already
+-- shows English — so a fresh English chat needs no per-chat override, while any
+-- non-English chat, or a chat whose language changed, does.
+commandMenuNeedsSync :: Map Int64 Language -> Int64 -> Language -> Bool
+commandMenuNeedsSync synced chatId lang =
+  Map.findWithDefault En chatId synced /= lang
 
 -- -----------------------------------------------------------------------------
 -- Commands
 -- -----------------------------------------------------------------------------
 
--- | Canonical list of bot commands (command, description).
+-- | Canonical list of bot commands (command, description) for a locale.
 --
--- Single source of truth used by setMyCommands, /help, and /start.
-botCommands :: [(Text, Text)]
-botCommands =
-  [ ("/start", "Start using the bot"),
-    ("/signup", "Create a new account via Telegram"),
-    ("/accounts", "View & select accounts"),
-    ("/newaccount", "Create a new account"),
-    ("/prompt", "Record a transaction from a text description"),
-    ("/income", "Record income"),
-    ("/expense", "Record expense"),
-    ("/transfer", "Transfer between accounts"),
-    ("/transactions", "List transactions (last 30 days)"),
-    ("/cancel", "Cancel current operation"),
-    ("/help", "Show available commands")
-  ]
+-- Single source of truth used by setMyCommands, /help, and /start. The command
+-- tokens (@\/start@ etc.) are stable across locales; only the descriptions are
+-- localized via 'Telegram.I18n'.
+botCommands :: Language -> [(Text, Text)]
+botCommands lang =
+  let strings = telegramStrings lang
+      c = strings.commands
+   in [ ("/start", c.start),
+        ("/signup", c.signup),
+        ("/accounts", c.viewAccounts),
+        ("/newaccount", c.newaccount),
+        ("/prompt", c.recordFromText),
+        ("/income", c.income),
+        ("/expense", c.expense),
+        ("/transfer", c.transfer),
+        ("/transactions", c.listTransactions),
+        ("/cancel", c.cancel),
+        ("/help", c.help)
+      ]
 
 -- | State for a multi-step conversation.
 --

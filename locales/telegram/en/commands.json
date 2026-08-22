@@ -1,0 +1,13 @@
+{
+  "start": "Start using the bot",
+  "signup": "Create a new account via Telegram",
+  "viewAccounts": "View & select accounts",
+  "newaccount": "Create a new account",
+  "recordFromText": "Record a transaction from a text description",
+  "income": "Record income",
+  "expense": "Record expense",
+  "transfer": "Transfer between accounts",
+  "listTransactions": "List transactions (last 30 days)",
+  "cancel": "Cancel current operation",
+  "help": "Show available commands"
+}

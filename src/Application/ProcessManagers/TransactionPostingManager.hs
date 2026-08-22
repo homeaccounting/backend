@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -53,6 +56,7 @@ module Application.ProcessManagers.TransactionPostingManager
   )
 where
 
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
@@ -66,6 +70,7 @@ import Eventium
     StreamEvent (..),
     VersionedStreamEvent,
   )
+import GHC.Generics (Generic)
 import Infrastructure.Eventium (embedWith)
 import Infrastructure.Observability.Context (propagateContext)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
@@ -82,7 +87,8 @@ data TransactionPostingManager = TransactionPostingManager
   { -- | Map of transaction ID to transfer tracking data
     transfers :: Map TransactionId TransactionPostingData
   }
-  deriving (Show)
+  deriving stock (Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Phase of a transfer within the saga.
 data TransactionPostingPhase
@@ -92,7 +98,8 @@ data TransactionPostingPhase
     DebitIssued
   | -- | Debit confirmed, credit and complete issued
     CreditIssued
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Per-transfer tracking data.
 --
@@ -110,7 +117,8 @@ data TransactionPostingData = TransactionPostingData
     -- | Current phase of the transfer saga
     phase :: TransactionPostingPhase
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- Generate optics labels for TransactionPostingManager
 makeFieldLabelsNoPrefix ''TransactionPostingManager

@@ -20,6 +20,8 @@ RUN cabal update && \
 COPY app/ app/
 COPY src/ src/
 COPY config/ config/
+COPY locales/ locales/
+
 
 RUN cabal build -j && \
     cp "$(cabal list-bin backend)" /build/backend-bin

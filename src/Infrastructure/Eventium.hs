@@ -73,7 +73,7 @@ module Infrastructure.Eventium
 where
 
 import Control.Monad.IO.Class (MonadIO)
-import Data.Aeson (toJSON)
+import Data.Aeson (FromJSON, ToJSON, toJSON)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Database.Persist.Sql
@@ -109,7 +109,9 @@ import Eventium
     VersionedStreamEvent,
     allEvents,
     applyCommandHandler,
+    cachedProcessManagerEventHandler,
     codecGlobalEventStoreReader,
+    codecProjectionCache,
     codecVersionedEventStoreReader,
     commandHandlerDispatcherWithTag,
     eventTypeNameOf,
@@ -118,7 +120,6 @@ import Eventium
     metadataEnrichingEventStoreWriterWithTag,
     mkAggregateHandler,
     mkAggregateHandlerWith,
-    processManagerEventHandler,
     publishingGlobalTaggedCodecEventStoreWriter,
     readModelPublisher,
     runEventStoreReaderUsing,
@@ -126,6 +127,7 @@ import Eventium
     synchronousGlobalPublisher,
     telemetryEventStoreWriter,
   )
+import Eventium.ProjectionCache.Sql (ProjectionName (..), sqlGlobalProjectionCache)
 import Eventium.Store.Postgresql
   ( JSONString,
     SqlEventStoreConfig,
@@ -133,6 +135,7 @@ import Eventium.Store.Postgresql
     sqlEventStoreReader,
     sqlGlobalEventStoreReader,
   )
+import Eventium.Store.Sql.JSONString (jsonStringCodec)
 import Infrastructure.Database (runDbDirect)
 import Infrastructure.Eventium.Schema (accountingEventCodec, accountingEventTypeOf)
 
@@ -288,13 +291,23 @@ accountingEventStoreWriterWithRaw telemetry rawWriter config pmFactory persisten
 --
 -- Satisfies 'AccountingProcessManagerFactory': receives the lazily-bound
 -- publishing writer, global reader, and versioned reader, then delegates to
--- 'processManagerEventHandler' and 'commandDispatcher'.
+-- 'cachedProcessManagerEventHandler' and 'commandDispatcher'.
+--
+-- The saga's global projection is snapshot-cached (SQL @projection_snapshots@,
+-- keyed by @name@) so each event folds only the events written since the last
+-- snapshot instead of replaying the whole store — the write path no longer
+-- degrades with the event-log size. @name@ must be stable across deploys (the
+-- snapshot is looked up by it) and unique per process manager. The snapshot
+-- commits in the write transaction, so it advances iff the events do.
 wireProcessManager ::
-  (MonadIO m) =>
+  (MonadIO m, ToJSON state, FromJSON state) =>
+  -- | Stable, unique snapshot name for this process manager.
+  T.Text ->
   ProcessManager state AccountingEvent AccountingCommand ->
-  AccountingProcessManagerFactory m
-wireProcessManager pm writer globalReader versionedReader =
-  processManagerEventHandler pm globalReader (commandDispatcher writer versionedReader)
+  AccountingProcessManagerFactory (SqlPersistT m)
+wireProcessManager name pm writer globalReader versionedReader =
+  let cache = codecProjectionCache jsonStringCodec (sqlGlobalProjectionCache (ProjectionName name))
+   in cachedProcessManagerEventHandler pm globalReader cache (commandDispatcher writer versionedReader)
 
 -- | Combine multiple process-manager factories into a single one.
 --

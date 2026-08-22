@@ -24,6 +24,7 @@ module Telegram.Bot
 where
 
 import Domain.Core.Types (TelegramId (..), TelegramIdentity (..))
+import Domain.Localization.Language (Language, languageCode)
 import Infrastructure.App (AppM, HasTelegramClient (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
@@ -44,16 +45,19 @@ import Telegram.Types (BotState (..), emptyBotState)
 initBot :: (MonadIO m) => TelegramConfig -> m (TVar BotState)
 initBot _config = liftIO $ newTVarIO emptyBotState
 
--- | Register bot commands with Telegram (shows the menu in the chat).
+-- | Register bot commands with Telegram (shows the menu in the chat), once per
+-- supported locale so Telegram clients see menu descriptions in their language.
 --
 -- Should be called once at startup when a client environment is available.
 setupBotCommands :: (MonadIO m, MonadReader env m, HasLogFunc env) => ClientEnv -> m ()
-setupBotCommands clientEnv = do
-  result <- registerCommands clientEnv
-  case result of
-    Right True -> logInfo "Bot commands registered with Telegram"
-    Right False -> logWarn "Telegram returned false for setMyCommands"
-    Left err -> logWarn $ "Failed to register bot commands: " <> displayShow err
+setupBotCommands clientEnv =
+  forM_ ([minBound .. maxBound] :: [Language]) $ \lang -> do
+    let code = display (languageCode lang)
+    result <- registerCommands clientEnv lang
+    case result of
+      Right True -> logInfo $ "Bot commands registered with Telegram (" <> code <> ")"
+      Right False -> logWarn $ "Telegram returned false for setMyCommands (" <> code <> ")"
+      Left err -> logWarn $ "Failed to register bot commands (" <> code <> "): " <> displayShow err
 
 -- | Register the webhook URL with Telegram so it knows where to send updates.
 --

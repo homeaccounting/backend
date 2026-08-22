@@ -273,10 +273,10 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
           telemetry
           eventStoreConfig
           ( wireProcessManagers
-              [ wireProcessManager transferProcessManager,
-                wireProcessManager transferAmendmentProcessManager,
-                wireProcessManager transactionCancellationProcessManager,
-                wireProcessManager transactionMergeProcessManager
+              [ wireProcessManager "pm-transaction-posting" transferProcessManager,
+                wireProcessManager "pm-transaction-amendment" transferAmendmentProcessManager,
+                wireProcessManager "pm-transaction-cancellation" transactionCancellationProcessManager,
+                wireProcessManager "pm-transaction-merge" transactionMergeProcessManager
               ]
           )
           -- Persistent (SQL) read models: applied + checkpointed in the write

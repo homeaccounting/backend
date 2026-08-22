@@ -10,7 +10,7 @@ with-compiler: ghc-9.10.3
 
 -- Pin the Hackage snapshot so every machine and the release image resolve the
 -- identical dependency set (prevents "builds on host, fails in Docker" drift).
-index-state: 2026-08-03T13:45:45Z
+index-state: 2026-08-22T19:33:33Z
 
 -- Prevent hashable 1.5.0 which has breaking changes with uuid
 constraints:

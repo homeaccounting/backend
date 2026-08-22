@@ -49,7 +49,7 @@ where
 
 import Data.List (find)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, mapMaybe)
 import Data.Time (UTCTime)
 import Domain.Banking.Types (BankConnectionId, ExternalAccountId)
 import Domain.Configuration.Commands
@@ -393,6 +393,31 @@ handleConfigurationCommand config (RenameDictionaryEntryConfigurationCommand Ren
         ]
   where
     entryParent = findEntry entryId dictionaryKind config >>= (.parentId)
+-- Handle RenameDictionaryEntries command (bulk, one atomic append)
+handleConfigurationCommand config (RenameDictionaryEntriesConfigurationCommand RenameDictionaryEntries {..})
+  | not config.isCreated = Left ConfigurationNotCreated
+  | otherwise = Right (mapMaybe renameEvent renames)
+  where
+    -- Emit an event only for a rename that is currently valid; drop the rest so
+    -- one bad entry never fails the whole batch (best-effort, mirroring the old
+    -- per-entry relocalize loop). Each rename is validated against the pre-batch
+    -- state — safe here because relocalize targets are mutually distinct names
+    -- that collide with no existing sibling.
+    renameEvent RenameDictionaryEntry {..} =
+      let entryParent = findEntry entryId dictionaryKind config >>= (.parentId)
+       in if dictionaryExists dictionaryKind config
+            && entryExists entryId dictionaryKind config
+            && not (hasDuplicateSiblingName newName entryParent (Just entryId) dictionaryKind config)
+            then
+              Just
+                ( DictionaryEntryRenamedConfigurationEvent
+                    DictionaryEntryRenamed
+                      { dictionaryKind = dictionaryKind,
+                        entryId = entryId,
+                        newName = newName
+                      }
+                )
+            else Nothing
 -- Handle RemoveDictionaryEntry command
 handleConfigurationCommand config (RemoveDictionaryEntryConfigurationCommand RemoveDictionaryEntry {..})
   | not config.isCreated = Left ConfigurationNotCreated

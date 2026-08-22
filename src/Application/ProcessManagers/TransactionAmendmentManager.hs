@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -52,6 +55,7 @@ import Application.ProcessManagers.Snapshots
     applyTransactionAmendmentCompleted,
     applyTransactionPostingInitiated,
   )
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Domain.Core.Types
@@ -94,7 +98,8 @@ import RIO hiding ((%~), (&), (.~), (^.))
 -- 'NonFallibleLeg' so the compiler can prove the saga only ever attaches
 -- compensation to this leg.
 newtype FallibleLeg = DebitNewSource (AccountId, Money, TransactionId)
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | A guaranteed-success leg of the amendment saga (reversals plus the
 -- new-target credit).
@@ -111,7 +116,8 @@ data NonFallibleLeg
   | -- | New-target credit. Issued on either target amount-up (same
     -- account) or target-account swap.
     CreditNewTarget AccountId Money TransactionId
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Saga lifecycle for an in-flight amendment.
 --
@@ -131,7 +137,8 @@ data NonFallibleLeg
 data TransactionAmendmentPhase
   = AwaitingDebit FallibleLeg [NonFallibleLeg]
   | ReadyToFinalize [NonFallibleLeg]
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Per-amendment tracking. Captures the saga phase plus the full new
 -- payload so the react function can issue the completion command
@@ -168,7 +175,8 @@ data TransactionAmendmentData = TransactionAmendmentData
     -- | Saga lifecycle state.
     phase :: TransactionAmendmentPhase
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Saga state. Holds both the in-flight amendment registry and the
 -- per-transaction current-postings snapshot used to compute future diffs.
@@ -176,7 +184,8 @@ data TransactionAmendmentManager = TransactionAmendmentManager
   { amendments :: Map TransactionId TransactionAmendmentData,
     currentPostings :: Map TransactionId TransferPostings
   }
-  deriving (Show)
+  deriving stock (Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 makeFieldLabelsNoPrefix ''TransactionAmendmentManager
 

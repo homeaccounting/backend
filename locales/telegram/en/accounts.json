@@ -1,0 +1,15 @@
+{
+  "noAccountYet": "You don't have an account yet. Use /start to create one.",
+  "noAccountsYet": "You don't have any accounts yet. Use /newaccount to create one.",
+  "currentlySelected": "Currently selected: {name}",
+  "noAccountSelectedHeader": "No account selected.",
+  "yourAccountsPrompt": "Your accounts (tap to select):",
+  "enterAccountName": "Enter a name for your new account:",
+  "accountNameEmpty": "Account name cannot be empty. Please enter a name:",
+  "selectCurrency": "Select a currency for the account:",
+  "invalidCurrency": "Invalid currency. Please select from the keyboard.",
+  "failedToCreateAccount": "Failed to create account. Please try again.",
+  "createdSelected": "Account \"{name}\" created and selected! ({currency})",
+  "selected": "Selected: {name}",
+  "selectedAccountNotFound": "Selected account not found. Use /accounts to choose another."
+}

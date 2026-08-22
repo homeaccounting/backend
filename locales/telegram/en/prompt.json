@@ -1,0 +1,9 @@
+{
+  "couldntFindAccountStart": "I couldn't find your account. Use /start first.",
+  "promptUsage": "Tell me what to record, e.g. “coffee 4.50” or “groceries 500, taxi 120”.\n\nTip: you can just type it directly — no /prompt needed. Use /accounts to pick which account it goes to.\n",
+  "couldntRecordHeader": "⚠️ Couldn't record:\n",
+  "failedTransactionLine": " • transaction {index}: {reason}",
+  "domainError": "⚠️ {message}",
+  "featureDisabled": "Text prompts aren't available right now. Try /income, /expense or /transfer.",
+  "upstreamError": "Sorry, I couldn't process that. Please rephrase, or use /help to see the commands."
+}

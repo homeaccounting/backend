@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -58,6 +61,7 @@ import Application.ProcessManagers.Snapshots
     applyTransactionAmendmentCompleted,
     applyTransactionPostingInitiated,
   )
+import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import Domain.Account.Events (AccountCreditReversed (..), AccountDebitReversed (..))
 import Domain.Core.Types
@@ -75,6 +79,7 @@ import Eventium
     StreamEvent (..),
     VersionedStreamEvent,
   )
+import GHC.Generics (Generic)
 import Infrastructure.Eventium (embedWith)
 import Infrastructure.Observability.Context (propagateContext)
 import Optics (at, makeFieldLabelsNoPrefix, (%), (%~), (&), (?~), (^.))
@@ -97,7 +102,8 @@ data TransactionCancellationData = TransactionCancellationData
     -- | True once 'AccountCreditReversed' matching this 'transactionId' lands.
     targetReversed :: Bool
   }
-  deriving (Show, Eq)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 -- | Saga state. Holds both the in-flight cancellation registry and the
 -- per-transaction current-postings snapshot used to derive reversal amounts.
@@ -105,7 +111,8 @@ data TransactionCancellationManager = TransactionCancellationManager
   { cancellations :: Map.Map TransactionId TransactionCancellationData,
     currentPostings :: Map.Map TransactionId TransferPostings
   }
-  deriving (Show)
+  deriving stock (Show, Generic)
+  deriving anyclass (ToJSON, FromJSON)
 
 makeFieldLabelsNoPrefix ''TransactionCancellationData
 makeFieldLabelsNoPrefix ''TransactionCancellationManager

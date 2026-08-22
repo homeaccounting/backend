@@ -24,7 +24,7 @@ module Domain.Configuration.Defaults
     expenseCategoryDictKind,
 
     -- * Default-entry value
-    DefaultEntry (entryName, entryId, role, parentId),
+    DefaultEntry (entryName, slug, entryId, role, parentId),
 
     -- * Expense namespace
     ExpenseDefaults (foodAndDining, housing, healthWellness, shoppingGoods, leisureTravel, groceries, dining, transport, utilities, rent, entertainment, fitness, health, education, clothing, insurance, subscriptions, household, travel, gifts, charity, taxesFees, beauty, pets, electronics, shopping, other),
@@ -37,10 +37,14 @@ module Domain.Configuration.Defaults
     -- * Derived lists (seed loop consumes these)
     defaultExpenseCategories,
     defaultIncomeCategories,
+
+    -- * ID -> slug index (locale re-translation anchor)
+    defaultCategorySlugsById,
   )
 where
 
 import qualified Data.ByteString as BS
+import qualified Data.Map.Strict as Map
 import Data.UUID (UUID)
 import qualified Data.UUID.V5 as UUID5
 import Domain.Configuration.Dictionary (DictionaryKind (..), EntryRole (..), dictionaryKindSlug)
@@ -80,35 +84,37 @@ expenseCategoryDictKind = ExpenseKind
 --   @Just@ its group's 'entryId'.
 data DefaultEntry = DefaultEntry
   { entryName :: !Text,
+    slug :: !Text,
     entryId :: !CategoryId,
     role :: !EntryRole,
     parentId :: !(Maybe CategoryId)
   }
   deriving (Show, Eq)
 
--- | A root-level expense group (container, never assignable).
-mkExpenseGroup :: Text -> DefaultEntry
-mkExpenseGroup n = DefaultEntry n (mkDeterministicEntryId expenseCategoryDictKind n) GroupRole Nothing
+-- | A root-level expense group (container, never assignable). The @slug@ is the
+--   stable locale key; the id is STILL derived from the English name.
+mkExpenseGroup :: Text -> Text -> DefaultEntry
+mkExpenseGroup slug' n = DefaultEntry n slug' (mkDeterministicEntryId expenseCategoryDictKind n) GroupRole Nothing
 
 -- | A root-level expense item (leaf, assignable).
-mkExpense :: Text -> DefaultEntry
-mkExpense n = DefaultEntry n (mkDeterministicEntryId expenseCategoryDictKind n) ItemRole Nothing
+mkExpense :: Text -> Text -> DefaultEntry
+mkExpense slug' n = DefaultEntry n slug' (mkDeterministicEntryId expenseCategoryDictKind n) ItemRole Nothing
 
 -- | A child expense item nested under the group whose id is @pid@.
-mkExpenseChild :: CategoryId -> Text -> DefaultEntry
-mkExpenseChild pid n = DefaultEntry n (mkDeterministicEntryId expenseCategoryDictKind n) ItemRole (Just pid)
+mkExpenseChild :: CategoryId -> Text -> Text -> DefaultEntry
+mkExpenseChild pid slug' n = DefaultEntry n slug' (mkDeterministicEntryId expenseCategoryDictKind n) ItemRole (Just pid)
 
 -- | A root-level income group (container, never assignable).
-mkIncomeGroup :: Text -> DefaultEntry
-mkIncomeGroup n = DefaultEntry n (mkDeterministicEntryId incomeCategoryDictKind n) GroupRole Nothing
+mkIncomeGroup :: Text -> Text -> DefaultEntry
+mkIncomeGroup slug' n = DefaultEntry n slug' (mkDeterministicEntryId incomeCategoryDictKind n) GroupRole Nothing
 
 -- | A root-level income item (leaf, assignable).
-mkIncome :: Text -> DefaultEntry
-mkIncome n = DefaultEntry n (mkDeterministicEntryId incomeCategoryDictKind n) ItemRole Nothing
+mkIncome :: Text -> Text -> DefaultEntry
+mkIncome slug' n = DefaultEntry n slug' (mkDeterministicEntryId incomeCategoryDictKind n) ItemRole Nothing
 
 -- | A child income item nested under the group whose id is @pid@.
-mkIncomeChild :: CategoryId -> Text -> DefaultEntry
-mkIncomeChild pid n = DefaultEntry n (mkDeterministicEntryId incomeCategoryDictKind n) ItemRole (Just pid)
+mkIncomeChild :: CategoryId -> Text -> Text -> DefaultEntry
+mkIncomeChild pid slug' n = DefaultEntry n slug' (mkDeterministicEntryId incomeCategoryDictKind n) ItemRole (Just pid)
 
 data ExpenseDefaults = ExpenseDefaults
   { -- Group nodes (containers, never assignable)
@@ -169,53 +175,64 @@ expense =
       healthWellness = wellnessGroup,
       shoppingGoods = goodsGroup,
       leisureTravel = leisureGroup,
-      groceries = mkExpenseChild foodGroup.entryId "Groceries",
-      dining = mkExpenseChild foodGroup.entryId "Dining",
-      transport = mkExpense "Transport",
-      utilities = mkExpenseChild housingGroup.entryId "Utilities",
-      rent = mkExpenseChild housingGroup.entryId "Rent",
-      entertainment = mkExpenseChild leisureGroup.entryId "Entertainment",
-      fitness = mkExpenseChild wellnessGroup.entryId "Fitness",
-      health = mkExpenseChild wellnessGroup.entryId "Health",
-      education = mkExpense "Education",
-      clothing = mkExpenseChild goodsGroup.entryId "Clothing",
-      insurance = mkExpense "Insurance",
-      subscriptions = mkExpense "Subscriptions",
-      household = mkExpenseChild housingGroup.entryId "Household",
-      travel = mkExpenseChild leisureGroup.entryId "Travel",
-      gifts = mkExpenseChild goodsGroup.entryId "Gifts",
-      charity = mkExpense "Charity",
-      taxesFees = mkExpense "Taxes & Fees",
-      beauty = mkExpenseChild wellnessGroup.entryId "Beauty & Personal Care",
-      pets = mkExpense "Pets",
-      electronics = mkExpenseChild goodsGroup.entryId "Electronics",
-      shopping = mkExpenseChild goodsGroup.entryId "Shopping",
-      other = mkExpense "Other"
+      groceries = mkExpenseChild foodGroup.entryId "groceries" "Groceries",
+      dining = mkExpenseChild foodGroup.entryId "dining" "Dining",
+      transport = mkExpense "transport" "Transport",
+      utilities = mkExpenseChild housingGroup.entryId "utilities" "Utilities",
+      rent = mkExpenseChild housingGroup.entryId "rent" "Rent",
+      entertainment = mkExpenseChild leisureGroup.entryId "entertainment" "Entertainment",
+      fitness = mkExpenseChild wellnessGroup.entryId "fitness" "Fitness",
+      health = mkExpenseChild wellnessGroup.entryId "health" "Health",
+      education = mkExpense "education" "Education",
+      clothing = mkExpenseChild goodsGroup.entryId "clothing" "Clothing",
+      insurance = mkExpense "insurance" "Insurance",
+      subscriptions = mkExpense "subscriptions" "Subscriptions",
+      household = mkExpenseChild housingGroup.entryId "household" "Household",
+      travel = mkExpenseChild leisureGroup.entryId "travel" "Travel",
+      gifts = mkExpenseChild goodsGroup.entryId "gifts" "Gifts",
+      charity = mkExpense "charity" "Charity",
+      taxesFees = mkExpense "taxesAndFees" "Taxes & Fees",
+      beauty = mkExpenseChild wellnessGroup.entryId "beautyAndPersonalCare" "Beauty & Personal Care",
+      pets = mkExpense "pets" "Pets",
+      electronics = mkExpenseChild goodsGroup.entryId "electronics" "Electronics",
+      shopping = mkExpenseChild goodsGroup.entryId "shopping" "Shopping",
+      other = mkExpense "other" "Other"
     }
   where
-    foodGroup = mkExpenseGroup "Food"
-    housingGroup = mkExpenseGroup "Housing"
-    wellnessGroup = mkExpenseGroup "Wellness"
-    goodsGroup = mkExpenseGroup "Goods"
-    leisureGroup = mkExpenseGroup "Leisure"
+    foodGroup = mkExpenseGroup "food" "Food"
+    housingGroup = mkExpenseGroup "housing" "Housing"
+    wellnessGroup = mkExpenseGroup "wellness" "Wellness"
+    goodsGroup = mkExpenseGroup "goods" "Goods"
+    leisureGroup = mkExpenseGroup "leisure" "Leisure"
 
 income :: IncomeDefaults
 income =
   IncomeDefaults
     { earned = earnedGroup,
       passive = passiveGroup,
-      salary = mkIncomeChild earnedGroup.entryId "Salary",
-      freelance = mkIncomeChild earnedGroup.entryId "Freelance",
-      investment = mkIncomeChild passiveGroup.entryId "Investment",
-      business = mkIncomeChild earnedGroup.entryId "Business",
-      rental = mkIncomeChild passiveGroup.entryId "Rental",
-      gift = mkIncome "Gift",
-      refund = mkIncome "Refund",
-      other = mkIncome "Other"
+      salary = mkIncomeChild earnedGroup.entryId "salary" "Salary",
+      freelance = mkIncomeChild earnedGroup.entryId "freelance" "Freelance",
+      investment = mkIncomeChild passiveGroup.entryId "investment" "Investment",
+      business = mkIncomeChild earnedGroup.entryId "business" "Business",
+      rental = mkIncomeChild passiveGroup.entryId "rental" "Rental",
+      gift = mkIncome "gift" "Gift",
+      refund = mkIncome "refund" "Refund",
+      other = mkIncome "other" "Other"
     }
   where
-    earnedGroup = mkIncomeGroup "Earned"
-    passiveGroup = mkIncomeGroup "Passive"
+    earnedGroup = mkIncomeGroup "earned" "Earned"
+    passiveGroup = mkIncomeGroup "passive" "Passive"
+
+-- | Every default entry's stable locale slug, keyed by its deterministic id.
+-- The ID anchor for locale re-translation: an entry counts as an untouched app
+-- default only if its id is a key here. The slug (not the English name) is the
+-- key into the localization catalog.
+defaultCategorySlugsById :: Map CategoryId Text
+defaultCategorySlugsById =
+  Map.fromList
+    [ (e.entryId, e.slug)
+    | e <- defaultIncomeCategories <> defaultExpenseCategories
+    ]
 
 -- | Default expense categories in seed order. Every group node precedes its
 -- children so the seed loop's parent-exists guard never rejects a child.

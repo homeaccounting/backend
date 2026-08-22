@@ -487,6 +487,10 @@ instance ToJSON TransactionId where
 instance FromJSON TransactionId where
   parseJSON v = TransactionId <$> parseJSON v
 
+instance ToJSONKey TransactionId
+
+instance FromJSONKey TransactionId
+
 -- | Smart constructor for TransactionId.
 --
 -- Creates a TransactionId from a UUID.

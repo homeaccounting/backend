@@ -32,6 +32,7 @@ module Application.Services.ConfigurationService
     renameDictionaryEntry,
     removeDictionaryEntry,
     moveDictionaryEntry,
+    relocalizeDefaultDictionaries,
     setDefaultIncomeCategory,
     setDefaultExpenseCategory,
     setDefaultAccount,
@@ -113,6 +114,7 @@ import Domain.Configuration.Commands
     RemoveBankConnection (..),
     RemoveDictionaryEntry (..),
     RenameBankConnection (..),
+    RenameDictionaryEntries (..),
     RenameDictionaryEntry (..),
     SetBankConnectionAccountMap (..),
     SetBankConnectionEnabled (..),
@@ -128,6 +130,7 @@ import Domain.Configuration.Defaults
   ( DefaultEntry (..),
     ExpenseDefaults (other),
     IncomeDefaults (other),
+    defaultCategorySlugsById,
     defaultExpenseCategories,
     defaultIncomeCategories,
     expense,
@@ -142,7 +145,8 @@ import Domain.Configuration.Projection
     ConfigurationDefaults (..),
   )
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Domain.Core.Types (AccountId, AccountRole (..), AccountSubtypeKind, CategoryId, ConfigurationId, ContactId, CreatedBy (..), Currency (..), DictionaryEntryId, EntryName, UserId, defaultConfigurationId, isRegular, mkConfigurationId, unAccountId, unConfigurationId, unDictionaryEntryId, unUserId, unsafeDictionaryEntryId, unsafeEntryName)
+import Domain.Core.Types (AccountId, AccountRole (..), AccountSubtypeKind, CategoryId, ConfigurationId, ContactId, CreatedBy (..), Currency (..), DictionaryEntryId, EntryName, UserId, defaultConfigurationId, isRegular, mkConfigurationId, unAccountId, unConfigurationId, unDictionaryEntryId, unEntryName, unUserId, unsafeDictionaryEntryId, unsafeEntryName)
+import Domain.Localization.CategoryCatalog (localizedCategoryName)
 import Domain.Localization.Country (Country, unCountry)
 import Domain.Localization.Language (Language, languageCode)
 import Domain.Localization.Preset (CountryPreset (..), presetFor)
@@ -252,6 +256,7 @@ changeLanguage userId newLanguage = runExceptT $ do
     translateConfigurationError
     (unConfigurationId configId)
     (ChangeLanguageConfigurationCommand ChangeLanguage {language = newLanguage})
+  lift (relocalizeDefaultDictionaries userId newLanguage)
   lift $ logInfo "Language changed successfully"
 
 -- | Change the user country, applying the regional preset in two legs:
@@ -268,7 +273,7 @@ changeCountry userId newCountry = runExceptT $ do
   lift $ logInfo $ "Changing country to " <> displayShow (unCountry newCountry) <> " for user " <> displayShow userId
   -- Destructure the preset (not record-dot) to avoid the DuplicateRecordFields
   -- ambiguity on the shared field name.
-  let CountryPreset {baseCurrency = presetBaseCurrency} = presetFor newCountry
+  let CountryPreset {baseCurrency = presetBaseCurrency, language = presetLanguage} = presetFor newCountry
   configId <- ExceptT (ensureClonedConfiguration userId)
   runConfigurationCmd
     translateConfigurationError
@@ -279,6 +284,7 @@ changeCountry userId newCountry = runExceptT $ do
     $ forM_ presetBaseCurrency
     $ \c ->
       ExceptT (changeBaseCurrency userId c)
+  lift (relocalizeDefaultDictionaries userId presetLanguage)
   lift $ logInfo "Country changed successfully"
 
 -- | Add a new entry to a dictionary in the user's configuration.
@@ -368,6 +374,65 @@ moveDictionaryEntry userId dictKind entryId newParentId = runExceptT $ do
             }
   runConfigurationCmd translateConfigurationError (unConfigurationId configId) cmd
   lift $ logInfo "Dictionary entry moved successfully"
+
+-- | Re-translate the user's *untouched* default categories to @lang@.
+--
+-- Materialized re-translation: rewrites the stored name via 'renameDictionaryEntry'.
+-- An entry qualifies only if (a) its id is a known default id AND (b) its current
+-- name equals that default's canonical name in some supported language — so
+-- user-renamed or user-created entries are never touched. Best-effort per entry:
+-- a 'DuplicateEntryName' (or any) failure is logged and skipped, never aborting
+-- the caller (mirrors 'copyDictionaries'/'seedFresh').
+--
+-- Uses 'dictionaryEntriesParentFirst' (NOT 'dictionaryItems') so GROUP nodes
+-- ("Food", "Housing", …) — which are default entries and must be localized too —
+-- are included.
+relocalizeDefaultDictionaries :: UserId -> Language -> AppM ()
+relocalizeDefaultDictionaries userId lang = do
+  ensured <- ensureClonedConfiguration userId
+  case ensured of
+    Left err -> logWarn $ "relocalize: could not ensure config: " <> displayShow err
+    Right configId -> do
+      maybeConfig <- runDb (getConfiguration configId)
+      case maybeConfig of
+        Nothing -> logWarn "relocalize: config not found after ensure"
+        Just configData -> do
+          -- Collect every untouched default whose name must change, then rename
+          -- them all in ONE 'RenameDictionaryEntries' command. That is a single
+          -- event-store append (one transaction + one synchronous read-model
+          -- pass) instead of one per entry — ~N renames used to be ~N separate
+          -- appends, which dominated 'changeCountry' latency on slower stores.
+          let plannedRename dictKind eid nm = do
+                slug <- Map.lookup eid defaultCategorySlugsById
+                let current = unEntryName nm
+                    target = localizedCategoryName lang slug
+                    acceptable = [localizedCategoryName l slug | l <- [minBound .. maxBound]]
+                -- Only an *untouched* default (current name is a canonical name in
+                -- some supported locale) whose name actually differs from the target.
+                guard (current `elem` acceptable && current /= target)
+                pure RenameDictionaryEntry {dictionaryKind = dictKind, entryId = eid, newName = unsafeEntryName target}
+              renames =
+                [ rename
+                | (dictKind, dictData) <- Map.toList configData.dictionaries,
+                  (eid, nm, _role, _parent) <- dictionaryEntriesParentFirst dictData,
+                  Just rename <- [plannedRename dictKind eid nm]
+                ]
+          if null renames
+            then pure ()
+            else do
+              writer <- view eventStoreWriterL
+              reader <- view eventStoreReaderL
+              enricher <- enricherFromContext <$> view requestContextL
+              let cmd = RenameDictionaryEntriesConfigurationCommand RenameDictionaryEntries {renames = renames}
+              result <- liftIO $ applyConfigurationCommand writer reader enricher (unConfigurationId configId) cmd
+              case result of
+                Left err -> logWarn $ "relocalize: batch rename failed: " <> displayShow err
+                Right events ->
+                  logInfo
+                    $ "relocalize: localized "
+                    <> display (length events)
+                    <> " default categories to "
+                    <> display (languageCode lang)
 
 -- | Set the global default income category in the user's configuration.
 setDefaultIncomeCategory :: UserId -> CategoryId -> AppM (Either DomainError ())

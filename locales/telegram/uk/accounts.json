@@ -1,0 +1,15 @@
+{
+  "noAccountYet": "У вас ще немає рахунку. Скористайтеся /start, щоб створити його.",
+  "noAccountsYet": "У вас ще немає жодного рахунку. Скористайтеся /newaccount, щоб створити.",
+  "currentlySelected": "Наразі вибрано: {name}",
+  "noAccountSelectedHeader": "Рахунок не вибрано.",
+  "yourAccountsPrompt": "Ваші рахунки (натисніть, щоб вибрати):",
+  "enterAccountName": "Введіть назву для нового рахунку:",
+  "accountNameEmpty": "Назва рахунку не може бути порожньою. Будь ласка, введіть назву:",
+  "selectCurrency": "Виберіть валюту для рахунку:",
+  "invalidCurrency": "Некоректна валюта. Будь ласка, виберіть із клавіатури.",
+  "failedToCreateAccount": "Не вдалося створити рахунок. Спробуйте ще раз.",
+  "createdSelected": "Рахунок \"{name}\" створено та вибрано! ({currency})",
+  "selected": "Вибрано: {name}",
+  "selectedAccountNotFound": "Вибраний рахунок не знайдено. Скористайтеся /accounts, щоб вибрати інший."
+}

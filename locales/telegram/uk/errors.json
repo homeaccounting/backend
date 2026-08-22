@@ -1,0 +1,9 @@
+{
+  "invalidButtonData": "Некоректні дані кнопки.",
+  "unexpectedInput": "Неочікуване введення. Використайте /cancel, щоб почати спочатку.",
+  "couldNotFindUserAccount": "Не вдалося знайти ваш рахунок користувача. Спершу скористайтеся /start.",
+  "couldNotFindAccounts": "Не вдалося знайти ваші рахунки.",
+  "accountNotFound": "Рахунок не знайдено.",
+  "failedToCreateYourAccount": "Не вдалося створити ваш рахунок. Спробуйте пізніше.",
+  "failedToListTransactions": "Не вдалося отримати список транзакцій. Спробуйте ще раз."
+}

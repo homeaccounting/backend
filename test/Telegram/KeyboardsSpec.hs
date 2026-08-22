@@ -6,6 +6,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.UUID as UUID
 import Domain.Core.Types (AccountId, Currency (..), Money, unsafeAccountId, unsafeMoney)
+import Domain.Localization.Language (Language (..))
 import Telegram.Keyboards
   ( InlineButton (..),
     InlineKeyboard (..),
@@ -32,21 +33,21 @@ spec :: Spec
 spec = do
   describe "accountSelectionKeyboard" $ do
     it "prefixes the selected account with a check mark in the select context" $ do
-      let kb = accountSelectionKeyboard sampleAccounts (Just (acc 2)) "select"
+      let kb = accountSelectionKeyboard En sampleAccounts (Just (acc 2)) "select"
           texts = buttonTexts kb
       any (\t -> "Card" `T.isInfixOf` t && "\x2713" `T.isInfixOf` t) texts `shouldBe` True
       any (\t -> "Cash" `T.isInfixOf` t && "\x2713" `T.isInfixOf` t) texts `shouldBe` False
 
     it "adds a Clear selection row when an account is selected in the select context" $ do
-      let kb = accountSelectionKeyboard sampleAccounts (Just (acc 1)) "select"
+      let kb = accountSelectionKeyboard En sampleAccounts (Just (acc 1)) "select"
       any (\b -> b.callbackData == "unselect") (concat kb.rows) `shouldBe` True
 
     it "omits the Clear selection row when nothing is selected" $ do
-      let kb = accountSelectionKeyboard sampleAccounts Nothing "select"
+      let kb = accountSelectionKeyboard En sampleAccounts Nothing "select"
       any (\b -> b.callbackData == "unselect") (concat kb.rows) `shouldBe` False
 
     it "never marks or offers Clear in transfer contexts" $ do
-      let kb = accountSelectionKeyboard sampleAccounts (Just (acc 1)) "transfer_src"
+      let kb = accountSelectionKeyboard En sampleAccounts (Just (acc 1)) "transfer_src"
           texts = buttonTexts kb
       any (\t -> "\x2713" `T.isInfixOf` t) texts `shouldBe` False
       any (\b -> b.callbackData == "unselect") (concat kb.rows) `shouldBe` False

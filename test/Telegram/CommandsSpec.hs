@@ -29,6 +29,7 @@ import Domain.Core.Types
     unsafeAccountId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
+import Domain.Localization.Language (Language (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
@@ -189,14 +190,14 @@ spec = do
             { selectedAccounts =
                 Map.singleton freshTgIdent.id (someAccountId, "Cash")
             }
-      runAppM env $ handleClearSelection botState freshTgIdent.id testChatId
+      runAppM env $ handleClearSelection En botState freshTgIdent.id testChatId
       s <- readTVarIO botState
       Map.lookup freshTgIdent.id s.selectedAccounts `shouldBe` Nothing
 
     it "is a no-op when nothing was selected" $ do
       env <- createTestAppEnv
       botState <- newTVarIO emptyBotState
-      runAppM env $ handleClearSelection botState freshTgIdent.id testChatId
+      runAppM env $ handleClearSelection En botState freshTgIdent.id testChatId
       s <- readTVarIO botState
       s.selectedAccounts `shouldBe` Map.empty
 

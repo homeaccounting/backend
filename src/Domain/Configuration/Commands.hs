@@ -22,6 +22,7 @@ module Domain.Configuration.Commands
     ChangeCountry (..),
     AddDictionaryEntry (..),
     RenameDictionaryEntry (..),
+    RenameDictionaryEntries (..),
     RemoveDictionaryEntry (..),
     MoveDictionaryEntry (..),
     SetDefaultIncomeCategory (..),
@@ -76,6 +77,7 @@ configurationCommands =
     ''ChangeCountry,
     ''AddDictionaryEntry,
     ''RenameDictionaryEntry,
+    ''RenameDictionaryEntries,
     ''RemoveDictionaryEntry,
     ''MoveDictionaryEntry,
     ''SetDefaultIncomeCategory,
@@ -175,6 +177,18 @@ data RenameDictionaryEntry = RenameDictionaryEntry
     entryId :: DictionaryEntryId,
     -- | New display name
     newName :: EntryName
+  }
+  deriving (Show, Eq)
+
+-- | Command to rename several dictionary entries in one atomic append.
+--
+-- Produces one 'DictionaryEntryRenamed' event per /valid/ rename (invalid ones —
+-- missing entry, duplicate sibling name — are dropped, so it is best-effort at
+-- the batch level). Used by locale re-translation so ~N default categories cost a
+-- single event-store transaction and one read-model pass instead of N.
+newtype RenameDictionaryEntries = RenameDictionaryEntries
+  { -- | The individual renames to apply.
+    renames :: [RenameDictionaryEntry]
   }
   deriving (Show, Eq)
 
@@ -370,6 +384,7 @@ deriveJSON defaultOptions ''ChangeLanguage
 deriveJSON defaultOptions ''ChangeCountry
 deriveJSON defaultOptions ''AddDictionaryEntry
 deriveJSON defaultOptions ''RenameDictionaryEntry
+deriveJSON defaultOptions ''RenameDictionaryEntries
 deriveJSON defaultOptions ''RemoveDictionaryEntry
 deriveJSON defaultOptions ''MoveDictionaryEntry
 deriveJSON defaultOptions ''SetDefaultIncomeCategory
