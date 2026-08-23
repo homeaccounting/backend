@@ -21,10 +21,10 @@ dependencies:
   - base >= 4.17 && < 5
 
   # Eventium (local packages)
-  - eventium-core >= 0.7.0 && < 0.8.0
-  - eventium-sql-common >= 0.7.0 && < 0.8.0
-  - eventium-postgresql >= 0.7.0 && < 0.8.0
-  - eventium-memory >= 0.7.0 && < 0.8.0
+  - eventium-core >= 0.7.1 && < 0.8.0
+  - eventium-sql-common >= 0.7.1 && < 0.8.0
+  - eventium-postgresql >= 0.7.1 && < 0.8.0
+  - eventium-memory >= 0.7.1 && < 0.8.0
 
   # Servant web framework
   - servant >= 0.19 && < 0.21
@@ -227,9 +227,9 @@ tests:
       # HTTP integration testing
       - hspec-wai >= 0.11 && < 0.12
       - hspec-wai-json >= 0.11 && < 0.12
-      - eventium-testkit >= 0.7.0 && < 0.8.0
+      - eventium-testkit >= 0.7.1 && < 0.8.0
       # SQLite-backed harness for persistent read-model tests (in-memory DB).
-      - eventium-sqlite >= 0.7.0 && < 0.8.0
+      - eventium-sqlite >= 0.7.1 && < 0.8.0
       - persistent-sqlite >= 2.13 && < 2.15
       - cassava >= 0.5 && < 0.6
       - vector >= 0.12 && < 0.14

@@ -45,6 +45,7 @@ module Domain.Models
   ( -- * Unified Types
     AccountingEvent (..),
     AccountingCommand (..),
+    isTransactionSagaEvent,
 
     -- * ExchangeRate Sum Type
     ExchangeRateEvent (..),
@@ -89,6 +90,7 @@ where
 
 import Data.Aeson (Options (constructorTagModifier), defaultOptions)
 import Data.Aeson.TH (deriveJSON)
+import Data.Maybe (isJust)
 import Domain.Account as X
 import Domain.Configuration as X
 import Domain.ExchangeRate.Events as X (ExchangeRateMap, ExchangeRatesPublished (..), exchangeRateEvents)
@@ -187,6 +189,22 @@ mkSumTypeEmbedding "accountEventEmbedding" ''AccountEvent ''AccountingEvent
 -- Embeds aggregate-specific TransactionEvent into unified AccountingEvent.
 -- This enables the Transaction aggregate to work within the unified domain model.
 mkSumTypeEmbedding "transactionEventEmbedding" ''TransactionEvent ''AccountingEvent
+
+-- | True for events originating from the Account or Transaction aggregates —
+-- the exact set the transaction sagas (posting, amendment, cancellation, merge)
+-- react to. Everything else (Configuration, User, ExchangeRate) is ignored by
+-- every process manager.
+--
+-- Passed as the relevance predicate to 'wireProcessManager' so the cached
+-- process-manager handler skips its snapshot read/fold/store for events no saga
+-- acts on. Without it, a write that appends many unrelated events (e.g. a
+-- language change relocalizing dozens of dictionary entries) drives every
+-- transaction saga once per event — pure I/O that dominates write latency
+-- against a remote database. A superset of any single saga's matched events is
+-- safe here: it only governs the optimisation, never correctness.
+isTransactionSagaEvent :: AccountingEvent -> Bool
+isTransactionSagaEvent e =
+  isJust (accountEventEmbedding.extract e) || isJust (transactionEventEmbedding.extract e)
 
 -- -----------------------------------------------------------------------------
 -- Command Embeddings

@@ -50,7 +50,7 @@ import qualified Data.Set as Set
 import qualified Data.Vault.Lazy as Vault
 import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
 import Database.Persist.Sqlite (createSqlitePool)
-import Domain.Models (AccountingEvent)
+import Domain.Models (AccountingEvent, isTransactionSagaEvent)
 import Eventium (GlobalStreamEvent, ReadModel (..), silentTelemetry)
 import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Memory
@@ -233,10 +233,10 @@ mkAppEnv withProcessManager = do
         if withProcessManager
           then
             wireProcessManagers
-              [ wireProcessManager "pm-transaction-posting" transferProcessManager,
-                wireProcessManager "pm-transaction-amendment" transferAmendmentProcessManager,
-                wireProcessManager "pm-transaction-cancellation" transactionCancellationProcessManager,
-                wireProcessManager "pm-transaction-merge" transactionMergeProcessManager
+              [ wireProcessManager isTransactionSagaEvent "pm-transaction-posting" transferProcessManager,
+                wireProcessManager isTransactionSagaEvent "pm-transaction-amendment" transferAmendmentProcessManager,
+                wireProcessManager isTransactionSagaEvent "pm-transaction-cancellation" transactionCancellationProcessManager,
+                wireProcessManager isTransactionSagaEvent "pm-transaction-merge" transactionMergeProcessManager
               ]
           else wireProcessManagers []
 

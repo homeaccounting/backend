@@ -89,6 +89,7 @@ import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
 import qualified Data.Vault.Lazy as Vault
 import Domain.ExchangeRate.Events (unProvider)
+import Domain.Models (isTransactionSagaEvent)
 import Infrastructure.App
   ( AppEnv,
     AppM,
@@ -273,10 +274,13 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
           telemetry
           eventStoreConfig
           ( wireProcessManagers
-              [ wireProcessManager "pm-transaction-posting" transferProcessManager,
-                wireProcessManager "pm-transaction-amendment" transferAmendmentProcessManager,
-                wireProcessManager "pm-transaction-cancellation" transactionCancellationProcessManager,
-                wireProcessManager "pm-transaction-merge" transactionMergeProcessManager
+              -- All four sagas react only to Account/Transaction events, so
+              -- 'isTransactionSagaEvent' lets them skip snapshot I/O for the rest
+              -- (e.g. the dozens of dictionary events a language change appends).
+              [ wireProcessManager isTransactionSagaEvent "pm-transaction-posting" transferProcessManager,
+                wireProcessManager isTransactionSagaEvent "pm-transaction-amendment" transferAmendmentProcessManager,
+                wireProcessManager isTransactionSagaEvent "pm-transaction-cancellation" transactionCancellationProcessManager,
+                wireProcessManager isTransactionSagaEvent "pm-transaction-merge" transactionMergeProcessManager
               ]
           )
           -- Persistent (SQL) read models: applied + checkpointed in the write

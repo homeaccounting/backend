@@ -301,13 +301,17 @@ accountingEventStoreWriterWithRaw telemetry rawWriter config pmFactory persisten
 -- commits in the write transaction, so it advances iff the events do.
 wireProcessManager ::
   (MonadIO m, ToJSON state, FromJSON state) =>
+  -- | Relevance predicate: events it rejects skip this saga's snapshot I/O
+  -- entirely (see 'cachedProcessManagerEventHandler'). Use @const True@ for a
+  -- saga that reacts to every event type.
+  (AccountingEvent -> Bool) ->
   -- | Stable, unique snapshot name for this process manager.
   T.Text ->
   ProcessManager state AccountingEvent AccountingCommand ->
   AccountingProcessManagerFactory (SqlPersistT m)
-wireProcessManager name pm writer globalReader versionedReader =
+wireProcessManager relevant name pm writer globalReader versionedReader =
   let cache = codecProjectionCache jsonStringCodec (sqlGlobalProjectionCache (ProjectionName name))
-   in cachedProcessManagerEventHandler pm globalReader cache (commandDispatcher writer versionedReader)
+   in cachedProcessManagerEventHandler relevant pm globalReader cache (commandDispatcher writer versionedReader)
 
 -- | Combine multiple process-manager factories into a single one.
 --
@@ -321,8 +325,8 @@ wireProcessManager name pm writer globalReader versionedReader =
 -- accountingEventStoreWriter
 --   config
 --   ( wireProcessManagers
---       [ wireProcessManager transferProcessManager,
---         wireProcessManager transferAmendmentProcessManager
+--       [ wireProcessManager isTransactionSagaEvent "pm-a" transferProcessManager,
+--         wireProcessManager isTransactionSagaEvent "pm-b" transferAmendmentProcessManager
 --       ]
 --   )
 --   handlers
