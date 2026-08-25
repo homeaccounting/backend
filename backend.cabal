@@ -192,6 +192,7 @@ library
       Web.ErrorMapping
       Web.Middleware.Auth
       Web.Middleware.Context
+      Web.Middleware.RouteLabel
       Web.Query
       Web.Server
       Web.Types
@@ -572,6 +573,7 @@ test-suite backend-test
       Web.API.TransactionLabelsAPISpec
       Web.API.TransactionMergeAPISpec
       Web.API.TransactionRelationsAPISpec
+      Web.Middleware.RouteLabelSpec
       Web.ObservabilityIntegrationSpec
       Web.QuerySpec
       Web.ReportingResponseSpec

@@ -142,7 +142,7 @@ import Network.Wai.Middleware.Cors
 import Network.Wai.Middleware.Gzip (defaultGzipSettings, gzip)
 import Network.Wai.Middleware.Prometheus
   ( PrometheusSettings (..),
-    instrumentApp,
+    instrumentHandlerValue,
     prometheus,
   )
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -156,6 +156,7 @@ import Web.API (API, api, server)
 import Web.API.InfoAPI (InfoAPI, infoAPI, infoHandler)
 import Web.Middleware.Auth (AuthenticatedUser, authHandler)
 import Web.Middleware.Context (contextMiddleware)
+import Web.Middleware.RouteLabel (routeLabel)
 
 -- -----------------------------------------------------------------------------
 -- Server Execution
@@ -494,17 +495,21 @@ loggingMiddleware = logStdoutDev -- Development logging with colors
 --     its default auto-instrumentation labels the request-duration
 --     histogram by the raw request path, which is unbounded cardinality for
 --     a REST API whose paths embed ids (accounts, transactions, ...).
---   * 'instrumentApp' instruments the app with a single constant @"app"@
---     handler label instead, so @http_request_duration_seconds@ carries only
---     @{handler="app", method, status_code}@ — bounded regardless of how
---     many distinct paths are served.
+--   * 'instrumentHandlerValue' instruments the app with a per-request handler
+--     label computed by 'routeLabel' — the normalized route /template/
+--     (@\/api\/accounts\/:id@), not the raw path — so
+--     @http_request_duration_seconds@ carries
+--     @{handler=\<route\>, method, status_code}@ and the dashboard can break
+--     latency down per endpoint. Cardinality stays bounded: ids collapse to
+--     @:id@ and unknown paths bucket into @other@ (see 'Web.Middleware.RouteLabel').
 --
 -- Example:
 --  >>> metricsMiddleware app
 --  >>> -- GET /metrics now returns the Prometheus text exposition format;
---  >>> -- every other request bumps http_request_duration_seconds{handler="app",...}
+--  >>> -- GET /api/accounts/<uuid> bumps
+--  >>> --   http_request_duration_seconds{handler="/api/accounts/:id",...}
 metricsMiddleware :: Middleware
-metricsMiddleware = prometheus settings . instrumentApp "app"
+metricsMiddleware = prometheus settings . instrumentHandlerValue routeLabel
   where
     settings =
       PrometheusSettings

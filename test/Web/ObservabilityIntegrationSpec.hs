@@ -22,9 +22,10 @@
 --   * a caller-supplied @X-Correlation-Id@ is echoed back on the response;
 --   * an absent one is replaced with a freshly minted, valid UUID;
 --   * @GET \/metrics@ returns 200 with both @events_persisted_total@ (once
---     it has an exported sample) and @http_request_duration_seconds@, and
---     the latter's labels are bounded (a constant @handler=\"app\"@, never
---     the raw request path). The in-memory test event store's telemetry is
+--     it has an exported sample) and @http_request_duration_seconds@, the
+--     latter labeled by the normalized route template (@handler=\"\/api\/info\"@,
+--     @handler=\"\/api\/accounts\/:id\"@) — never the raw id-bearing path, so
+--     cardinality stays bounded. The in-memory test event store's telemetry is
 --     wired as a no-op ('Eventium.silentTelemetry'), so this test bumps the
 --     counter directly rather than re-proving the increment-on-persist
 --     link — that's 'Infrastructure.Observability.InterpreterSpec''s job;
@@ -92,7 +93,7 @@ correlationIdSpec = describe "X-Correlation-Id response header" $ do
 metricsEndpointSpec :: Spec
 metricsEndpointSpec =
   describe "GET /metrics"
-    $ it "returns 200 with events_persisted_total and a bounded http_request_duration_seconds"
+    $ it "returns 200 with events_persisted_total and a per-route, bounded http_request_duration_seconds"
     $ do
       env <- createTestAppEnv
       let app = buildApplication env
@@ -105,19 +106,27 @@ metricsEndpointSpec =
       -- Prometheus vector) events_persisted_total counter directly, giving
       -- it an exported sample.
       incEventPersisted env.metrics "ObservabilityIntegrationTestEvent"
-      -- Bump the HTTP request-duration histogram at least once.
+      -- Bump the HTTP request-duration histogram on two routes: a static one
+      -- (labeled verbatim) and an id-bearing one (whose capture must collapse
+      -- to @:id@). The account read is unauthenticated — it need not succeed;
+      -- the middleware records the histogram regardless of response status.
       void $ httpRequest app "GET" "/api/info" [(hContentType, "application/json")] ""
+      void $ httpRequest app "GET" ("/api/accounts/" <> UUID.toASCIIBytes idBearing) [] ""
 
       resp <- httpRequest app "GET" "/metrics" [] ""
       simpleStatus resp `shouldBe` status200
       let body = BLC.unpack (simpleBody resp)
       body `shouldContain` "events_persisted_total"
       body `shouldContain` "http_request_duration_seconds"
-      -- Bounded cardinality: the HTTP histogram is labeled by a constant
-      -- handler, never by the raw request path (which would be unbounded
-      -- for a REST API whose paths embed ids).
-      body `shouldContain` "handler=\"app\""
-      body `shouldNotContain` "handler=\"/api/info\""
+      -- Labeled by the normalized route template, per endpoint.
+      body `shouldContain` "handler=\"/api/info\""
+      body `shouldContain` "handler=\"/api/accounts/:id\""
+      -- Bounded cardinality: ids collapse to @:id@ (the raw uuid never appears
+      -- as a label) and the old constant @handler=\"app\"@ is gone.
+      body `shouldNotContain` UUID.toString idBearing
+      body `shouldNotContain` "handler=\"app\""
+  where
+    idBearing = UUID.fromWords 5 6 7 8
 
 -- -----------------------------------------------------------------------------
 -- Authenticated write -> stored-event metadata parity
