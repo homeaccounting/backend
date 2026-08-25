@@ -21,7 +21,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Ratio ((%))
 import qualified Data.UUID as UUID
 import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty, mkByLabel, mkByMcc, unsafeMcc)
-import Domain.Core.Types (Allocation (..), Currency (UAH, USD), TransactionType (Transfer), allAllocations, exchangeRateValue, unMoney, unsafeMoney)
+import Domain.Core.Types (AccountSubtype (Asset), Allocation (..), AssetProperties (..), AssetType (..), Currency (UAH, USD), TransactionType (Transfer), allAllocations, exchangeRateValue, unMoney, unsafeMoney)
 import RIO
 import Test.Hspec
 import Testkit.BankingHelpers (byCounterparty)
@@ -33,16 +33,19 @@ import Testkit.Helpers
     mockTransactionId,
   )
 import Web.Types
-  ( CategoryAmount (..),
+  ( AccountSubtypeRequest (..),
+    CategoryAmount (..),
     ChangeTransactionAllocationsRequest (..),
     IncomeRequest (..),
     IncomeVsExpenseResponse (..),
     MoneyDTO,
     TransactionRelation (..),
     TransactionRelationsResponse (..),
+    fromAccountSubtype,
     fromAllocationsDTO,
     fromTransactionData,
     parseOptionalExchangeRate,
+    toAccountSubtype,
     toMoneyDTO,
   )
 
@@ -280,3 +283,50 @@ spec = do
       case Aeson.eitherDecode json :: Either String CategoryAmount of
         Left err -> expectationFailure $ "decode failed: " <> err
         Right ca -> ca.comment `shouldBe` Just "flowers"
+
+  describe "AssetType request/response round-trip" $ do
+    let baseAssetReq =
+          AccountSubtypeRequest
+            { type_ = "asset",
+              storageLocation = Nothing,
+              bankName = Nothing,
+              accountNumber = Nothing,
+              cardNetwork = Nothing,
+              provider = Nothing,
+              accountIdentifier = Nothing,
+              assetType = Nothing,
+              description = Nothing,
+              lender = Nothing,
+              interestRate = Nothing,
+              dueDate = Nothing,
+              metadata = Nothing
+            }
+        parsedAssetType raw =
+          case toAccountSubtype (baseAssetReq {assetType = Just raw}) of
+            Right (Asset (AssetProperties {assetType = at})) -> at
+            _ -> Nothing
+        renderedAssetType sub =
+          case fromAccountSubtype sub of
+            Object o -> KeyMap.lookup "assetType" o
+            _ -> Nothing
+
+    it "parses the new named asset categories to their domain constructors" $ do
+      parsedAssetType "electronics" `shouldBe` Just Electronics
+      parsedAssetType "equipment" `shouldBe` Just Equipment
+      parsedAssetType "furniture" `shouldBe` Just Furniture
+
+    it "keeps the four original named categories" $ do
+      parsedAssetType "property" `shouldBe` Just Property
+      parsedAssetType "vehicle" `shouldBe` Just Vehicle
+      parsedAssetType "stocks" `shouldBe` Just Stocks
+      parsedAssetType "retirementFund" `shouldBe` Just RetirementFund
+
+    it "falls back to freeform OtherAsset for an unknown category" $ do
+      parsedAssetType "piano" `shouldBe` Just (OtherAsset "piano")
+
+    it "round-trips every category back to its wire string" $ do
+      let wire raw =
+            renderedAssetType . Asset $ AssetProperties (parsedAssetType raw) Nothing mempty
+      traverse_
+        (\raw -> wire raw `shouldBe` Just (Aeson.String raw))
+        ["electronics", "equipment", "furniture", "property", "vehicle", "stocks", "retirementFund", "piano"]

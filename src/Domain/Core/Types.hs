@@ -747,6 +747,9 @@ data AssetType
   | Vehicle
   | Stocks
   | RetirementFund
+  | Electronics
+  | Equipment
+  | Furniture
   | OtherAsset Text
   deriving (Show, Eq, Generic)
 

@@ -103,6 +103,7 @@ module Web.Types
     toAllocationsDTO,
     fromAllocationsDTO,
     fromAccountData,
+    fromAccountSubtype,
     fromTransaction,
     fromTransactionData,
     fromTransactionStatus,
@@ -1232,6 +1233,9 @@ parseAssetType "property" = Property
 parseAssetType "vehicle" = Vehicle
 parseAssetType "stocks" = Stocks
 parseAssetType "retirementFund" = RetirementFund
+parseAssetType "electronics" = Electronics
+parseAssetType "equipment" = Equipment
+parseAssetType "furniture" = Furniture
 parseAssetType other = OtherAsset other
 
 assetTypeToText :: AssetType -> Text
@@ -1239,6 +1243,9 @@ assetTypeToText Property = "property"
 assetTypeToText Vehicle = "vehicle"
 assetTypeToText Stocks = "stocks"
 assetTypeToText RetirementFund = "retirementFund"
+assetTypeToText Electronics = "electronics"
+assetTypeToText Equipment = "equipment"
+assetTypeToText Furniture = "furniture"
 assetTypeToText (OtherAsset t) = t
 
 parseDay :: Text -> Maybe Day
