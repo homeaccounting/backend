@@ -98,6 +98,6 @@ banking:
 llm:
   enabled: ${LLM_ENABLED:-false}
   base_url: ${LLM_BASE_URL:-https://api.groq.com/openai/v1}
-  model: ${LLM_MODEL:-llama-3.3-70b-versatile}
+  model: ${LLM_MODEL:-openai/gpt-oss-120b}
   api_key: ${LLM_API_KEY:-}
   timeout_ms: ${LLM_TIMEOUT_MS:-20000}

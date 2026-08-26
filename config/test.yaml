@@ -100,6 +100,6 @@ banking:
 llm:
   enabled: false
   base_url: https://api.groq.com/openai/v1
-  model: llama-3.3-70b-versatile
+  model: openai/gpt-oss-120b
   api_key: ""
   timeout_ms: 20000
