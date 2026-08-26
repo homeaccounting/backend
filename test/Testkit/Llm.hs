@@ -17,6 +17,7 @@
 module Testkit.Llm
   ( constLlmClient,
     queueLlmClient,
+    failingLlmClient,
     withLlmClient,
   )
 where
@@ -52,6 +53,17 @@ queueLlmClient contents = do
               writeIORef ref rest
               pure (Right (LlmResponse c))
       }
+
+-- | A client whose transport always fails with the given cause text (mirrors
+-- the real client's @Left@ on a non-2xx status or a connection error). Used to
+-- prove the router preserves the upstream cause rather than flattening it to a
+-- constant string.
+failingLlmClient :: Text -> LlmClient
+failingLlmClient cause =
+  LlmClient
+    { modelName = "stub-failing",
+      complete = \_ -> pure (Left cause)
+    }
 
 -- | Inject an 'LlmClient' into an 'AppEnv', enabling the prompt feature.
 withLlmClient :: LlmClient -> AppEnv -> AppEnv

@@ -74,51 +74,72 @@ handlePrompt uid selected userText
                 (ValidationErr (mkValidationError "text" "prompt text cannot be empty" userText))
             )
         )
-  | otherwise = runExceptT $ do
-      client <- ExceptT (fmap (maybe (Left PromptFeatureDisabled) Right) (view llmClientL))
-      (pctx, rctx) <- ExceptT (fmap (first PromptDomainError) (Txn.gatherContext uid selected))
-      now <- liftIO getCurrentTime
-      let today = T.pack (formatTime defaultTimeLocale "%Y-%m-%d" now)
-          baseMsgs = buildMessages today [recordTransactionsIntentName] [recordTransactionsGuide pctx] userText
-          -- Request json_object (not json_schema): the transaction shape is
-          -- fully described in the prompt guide and we validate defensively, so
-          -- json_object works across all OpenAI-compatible providers. Many
-          -- models (e.g. Groq's llama-3.3-70b) reject json_schema outright.
-          callOnce msgs = liftIO (client.complete (LlmRequest msgs Nothing))
-          -- Pass the WHOLE decoded list (including any 'Left RowError' elements)
-          -- so malformed rows are reported as per-row failures while the
-          -- well-formed rows still commit.
-          dispatch rows =
-            ExceptT (fmap (first PromptDomainError) (Txn.runRecordTransactions uid rctx userText rows))
-          -- At least one usable (decoded) transaction to record.
-          hasUsable rows = not (null (rights rows))
-          -- The model returned nothing usable to record (empty list, or every
-          -- element malformed) even after a retry: a comprehension miss, not an
-          -- upstream outage, so a 400.
-          emptyErr =
-            PromptDomainError
-              (ValidationErr (mkValidationError "transactions" "couldn't identify a transaction in that text" userText))
-          unknownErr n =
-            PromptDomainError
-              (ValidationErr (mkValidationError "intent" ("Unsupported request: " <> n) userText))
-      resp1 <- ExceptT (fmap (first (const (PromptUpstreamError "LLM request failed"))) (callOnce baseMsgs))
-      case decodePromptIntent (toLBS resp1.content) of
-        Right (RecordTransactionsIntent rows) | hasUsable rows -> dispatch rows
-        Left (UnknownIntent n) -> throwError (unknownErr n)
-        -- Malformed body OR no usable transactions (empty list, or every element
-        -- malformed): retry once with a JSON-only nudge.
-        _ -> do
-          let retryMsgs =
-                baseMsgs
-                  ++ [ LlmMessage
-                         User
-                         "Return ONLY one valid JSON object matching the schema, with a non-empty \"transactions\" array listing every transaction you find."
-                     ]
-          resp2 <- ExceptT (fmap (first (const (PromptUpstreamError "LLM request failed"))) (callOnce retryMsgs))
-          case decodePromptIntent (toLBS resp2.content) of
-            Right (RecordTransactionsIntent rows) | hasUsable rows -> dispatch rows
-            Right (RecordTransactionsIntent _) -> throwError emptyErr
-            Left (UnknownIntent n) -> throwError (unknownErr n)
-            Left _ -> throwError (PromptUpstreamError "LLM returned unparseable output")
+  | otherwise =
+      logUpstream
+        =<< runExceptT
+          ( do
+              client <- ExceptT (fmap (maybe (Left PromptFeatureDisabled) Right) (view llmClientL))
+              (pctx, rctx) <- ExceptT (fmap (first PromptDomainError) (Txn.gatherContext uid selected))
+              now <- liftIO getCurrentTime
+              let today = T.pack (formatTime defaultTimeLocale "%Y-%m-%d" now)
+                  baseMsgs = buildMessages today [recordTransactionsIntentName] [recordTransactionsGuide pctx] userText
+                  -- Request json_object (not json_schema): the transaction shape is
+                  -- fully described in the prompt guide and we validate defensively, so
+                  -- json_object works across all OpenAI-compatible providers. Many
+                  -- models (e.g. Groq's llama-3.3-70b) reject json_schema outright.
+                  callOnce msgs = liftIO (client.complete (LlmRequest msgs Nothing))
+                  -- Pass the WHOLE decoded list (including any 'Left RowError' elements)
+                  -- so malformed rows are reported as per-row failures while the
+                  -- well-formed rows still commit.
+                  dispatch rows =
+                    ExceptT (fmap (first PromptDomainError) (Txn.runRecordTransactions uid rctx userText rows))
+                  -- At least one usable (decoded) transaction to record.
+                  hasUsable rows = not (null (rights rows))
+                  -- The model returned nothing usable to record (empty list, or every
+                  -- element malformed) even after a retry: a comprehension miss, not an
+                  -- upstream outage, so a 400.
+                  emptyErr =
+                    PromptDomainError
+                      (ValidationErr (mkValidationError "transactions" "couldn't identify a transaction in that text" userText))
+                  unknownErr n =
+                    PromptDomainError
+                      (ValidationErr (mkValidationError "intent" ("Unsupported request: " <> n) userText))
+              resp1 <- ExceptT (fmap (first PromptUpstreamError) (callOnce baseMsgs))
+              case decodePromptIntent (toLBS resp1.content) of
+                Right (RecordTransactionsIntent rows) | hasUsable rows -> dispatch rows
+                Left (UnknownIntent n) -> throwError (unknownErr n)
+                -- Malformed body OR no usable transactions (empty list, or every element
+                -- malformed): retry once with a JSON-only nudge.
+                _ -> do
+                  let retryMsgs =
+                        baseMsgs
+                          ++ [ LlmMessage
+                                 User
+                                 "Return ONLY one valid JSON object matching the schema, with a non-empty \"transactions\" array listing every transaction you find."
+                             ]
+                  resp2 <- ExceptT (fmap (first PromptUpstreamError) (callOnce retryMsgs))
+                  case decodePromptIntent (toLBS resp2.content) of
+                    Right (RecordTransactionsIntent rows) | hasUsable rows -> dispatch rows
+                    Right (RecordTransactionsIntent _) -> throwError emptyErr
+                    Left (UnknownIntent n) -> throwError (unknownErr n)
+                    Left (MalformedResponse detail) ->
+                      throwError
+                        ( PromptUpstreamError
+                            ("LLM returned unparseable output: " <> detail <> " | body: " <> bodySnippet resp2.content)
+                        )
+          )
   where
     toLBS t = BL.fromStrict (encodeUtf8 t)
+    -- Bound the echoed body so a large/garbage response can't flood the log line.
+    bodySnippet = T.take 300
+    -- Surface upstream (502) causes to the log sink. Without this the Web
+    -- boundary maps 'PromptUpstreamError' to a bare 502 and the underlying
+    -- reason (provider HTTP body, unparseable model output) never reaches
+    -- stdout — so Loki/Grafana show nothing actionable. Comprehension misses
+    -- and domain errors are the user's, not an outage, so they stay unlogged.
+    logUpstream outcome = do
+      case outcome of
+        Left (PromptUpstreamError cause) ->
+          logWarn ("prompt: upstream LLM failure (returning 502): " <> display cause)
+        _ -> pure ()
+      pure outcome

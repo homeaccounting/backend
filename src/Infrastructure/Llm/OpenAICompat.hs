@@ -12,6 +12,7 @@ module Infrastructure.Llm.OpenAICompat
     -- exported for tests
     encodeChatBody,
     decodeChatContent,
+    httpErrorText,
   )
 where
 
@@ -81,6 +82,19 @@ decodeChatContent body =
           m <- withObject "choice" (.: "message") c
           withObject "message" (.: "content") m
 
+-- | Build the error text for a non-2xx @/chat/completions@ response. Carries a
+-- bounded prefix of the response body so the provider's own explanation (e.g. a
+-- decommissioned-model message) survives into the caller's error and the log —
+-- without a bare @"HTTP 400"@ the root cause is invisible. The body is trimmed
+-- and length-capped so a large error payload cannot flood a log line.
+httpErrorText :: Int -> BL.ByteString -> Text
+httpErrorText code body
+  | T.null trimmed = prefix
+  | otherwise = prefix <> " - " <> trimmed
+  where
+    prefix = "LLM: HTTP " <> T.pack (show code)
+    trimmed = T.strip (T.take 500 (decodeUtf8Lenient (BL.toStrict body)))
+
 -- | Construct an 'LlmClient' backed by an OpenAI-compatible endpoint.
 mkOpenAICompatClient :: Text -> Text -> Text -> Int -> Manager -> LlmClient
 mkOpenAICompatClient baseUrl model apiKey timeoutMs manager =
@@ -102,7 +116,7 @@ mkOpenAICompatClient baseUrl model apiKey timeoutMs manager =
         pure
           $ if code >= 200 && code < 300
             then LlmResponse <$> decodeChatContent (responseBody resp)
-            else Left ("LLM: HTTP " <> T.pack (show code))
+            else Left (httpErrorText code (responseBody resp))
     }
   where
     tryAsEither io = do

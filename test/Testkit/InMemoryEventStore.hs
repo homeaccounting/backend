@@ -33,6 +33,9 @@ module Testkit.InMemoryEventStore
     runDbIn,
     seedGlobals,
 
+    -- * Logging helpers
+    withCapturingLogFunc,
+
     -- * Event Store Components
     InMemoryEventStores (..),
 
@@ -161,6 +164,18 @@ createInMemoryEventStores = do
 -- for the widely-repeated @runAppM env . runDb@ pattern in DB-backed specs.
 runDbIn :: AppEnv -> SqlPersistT (LoggingT IO) a -> IO a
 runDbIn env = runAppM env . runDb
+
+-- | Swap an 'AppEnv's log function for one that captures every rendered message
+-- into an 'IORef'. Returns the rewired env and an action that reads the messages
+-- logged so far, so a spec can assert what reached the log sink (and, in prod,
+-- Loki/Grafana). Generic: any 'AppM' action run against the returned env is
+-- observable.
+withCapturingLogFunc :: AppEnv -> IO (AppEnv, IO [Text])
+withCapturingLogFunc env = do
+  ref <- newIORef []
+  let lf = mkLogFunc $ \_cs _src _lvl msg ->
+        modifyIORef' ref (<> [utf8BuilderToText msg])
+  pure (env {logFunc = lf}, readIORef ref)
 
 -- | Create a process-manager-wired test 'AppEnv' and seed it by feeding the
 -- given global events through a read model's own apply. The single seeding

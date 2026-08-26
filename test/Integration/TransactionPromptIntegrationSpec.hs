@@ -50,8 +50,8 @@ import RIO
 import qualified RIO.Text as T
 import Test.Hspec
 import Testkit.Fixtures (createAccount, registerUser, seedExchangeRates)
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
-import Testkit.Llm (constLlmClient, queueLlmClient, withLlmClient)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, withCapturingLogFunc)
+import Testkit.Llm (constLlmClient, failingLlmClient, queueLlmClient, withLlmClient)
 
 -- -----------------------------------------------------------------------------
 -- Harness
@@ -125,6 +125,11 @@ isUpstream _ = False
 isDomainErr :: PromptError -> Bool
 isDomainErr (PromptDomainError _) = True
 isDomainErr _ = False
+
+-- | The human-readable cause carried by an upstream (502) failure, if any.
+upstreamCause :: PromptError -> Maybe Text
+upstreamCause (PromptUpstreamError cause) = Just cause
+upstreamCause _ = Nothing
 
 -- -----------------------------------------------------------------------------
 -- Specs
@@ -303,6 +308,35 @@ spec = describe "Integration.TransactionPrompt / handlePrompt" $ do
     case result of
       Left err | isUpstream err -> pure ()
       other -> expectationFailure ("expected Left (PromptUpstreamError _), got: " <> show other)
+
+  it "preserves the transport cause in the upstream error instead of a constant string" $ do
+    h <- setupHarness "prompt-cause-transport@example.com"
+    let e = withLlmClient (failingLlmClient "LLM: HTTP 400 - model_decommissioned: qux") h.env
+    result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
+    case result of
+      Left err -> case upstreamCause err of
+        Just cause -> ("model_decommissioned" `T.isInfixOf` cause) `shouldBe` True
+        Nothing -> expectationFailure ("expected PromptUpstreamError, got: " <> show err)
+      Right ok -> expectationFailure ("expected an upstream failure, got: " <> show ok)
+
+  it "preserves the model's unparseable output in the upstream error" $ do
+    h <- setupHarness "prompt-cause-unparseable@example.com"
+    client <- queueLlmClient ["not json", "sorry, I cannot help with that"]
+    let e = withLlmClient client h.env
+    result <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
+    case result of
+      Left err -> case upstreamCause err of
+        Just cause -> ("sorry, I cannot help" `T.isInfixOf` cause) `shouldBe` True
+        Nothing -> expectationFailure ("expected PromptUpstreamError, got: " <> show err)
+      Right ok -> expectationFailure ("expected an upstream failure, got: " <> show ok)
+
+  it "logs the upstream cause so it reaches the log sink (Grafana)" $ do
+    h <- setupHarness "prompt-cause-logged@example.com"
+    (e0, readLogs) <- withCapturingLogFunc h.env
+    let e = withLlmClient (failingLlmClient "LLM: HTTP 502 - upstream_boom_marker") e0
+    _ <- runAppM e (handlePrompt h.user Nothing "cash 123 food")
+    logs <- readLogs
+    any ("upstream_boom_marker" `T.isInfixOf`) logs `shouldBe` True
 
   it "rejects an unknown intent with a domain error (400)" $ do
     h <- setupHarness "prompt-unknown-intent@example.com"
