@@ -333,20 +333,21 @@ recordTransactionsGuide ctx =
       "Expense categories: " <> commas ctx.expenseCategoryNames,
       labelsLine ctx.labelNames,
       "",
-      "Examples (comment carries only the item, not the amount/account):",
+      "Examples (comment carries only the item, not the amount/account; the",
+      "category values below are drawn from YOUR listed categories) ->",
       "  'cash 123 food' (one transaction) ->",
-      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\",\"category\":\"Food / Groceries\",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
       "  'ATB: milk 20, bread 15' (ONE payment split across categories -> one transaction, two allocations) ->",
-      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"20\",\"category\":\"Food / Groceries\",\"comment\":\"milk\"},{\"amount\":\"15\",\"category\":\"Food / Groceries\",\"comment\":\"bread\"}],\"currency\":null,\"sourceAccount\":\"ATB\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"20\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":\"milk\"},{\"amount\":\"15\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":\"bread\"}],\"currency\":null,\"sourceAccount\":\"ATB\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
       "  'salary 5000 to bank, coffee 45 cash, taxi 120 cash' (THREE distinct transactions) ->",
-      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"income\",\"amount\":null,\"allocations\":[{\"amount\":\"5000\",\"category\":\"Salary\",\"comment\":null}],\"currency\":null,\"sourceAccount\":null,\"targetAccount\":\"Bank\",\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"45\",\"category\":\"Food / Groceries\",\"comment\":\"coffee\"}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"120\",\"category\":null,\"comment\":\"taxi\"}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"income\",\"amount\":null,\"allocations\":[{\"amount\":\"5000\"," <> quotedCategory exampleIncomeCat <> ",\"comment\":null}],\"currency\":null,\"sourceAccount\":null,\"targetAccount\":\"Bank\",\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"45\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":\"coffee\"}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"120\",\"category\":null,\"comment\":\"taxi\"}],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
       "  'move 200 from cash to card' (one transfer) ->",
       "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"transfer\",\"amount\":\"200\",\"allocations\":[],\"currency\":null,\"sourceAccount\":\"Cash\",\"targetAccount\":\"Card\",\"description\":null,\"date\":null}]}",
       "  Ukrainian 'готівка 123 їжа' (one transaction; готівка is the CASH type) ->",
-      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\",\"category\":\"Food / Groceries\",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"123\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":null}],\"currency\":null,\"sourceAccount\":\"cash\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
       "  Ukrainian 'готівка 400 молоко, 50 банани; карта 33 кава, 55 хліб'",
       "  (TWO transactions — a cash-type line and a card-type line, each split across items) ->",
-      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"400\",\"category\":\"Food / Groceries\",\"comment\":\"молоко\"},{\"amount\":\"50\",\"category\":\"Food / Groceries\",\"comment\":\"банани\"}],\"currency\":null,\"sourceAccount\":\"cash\",\"targetAccount\":null,\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"33\",\"category\":\"Food / Groceries\",\"comment\":\"кава\"},{\"amount\":\"55\",\"category\":\"Food / Groceries\",\"comment\":\"хліб\"}],\"currency\":null,\"sourceAccount\":\"card\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
+      "    {\"intent\":\"record_transactions\",\"transactions\":[{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"400\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":\"молоко\"},{\"amount\":\"50\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":\"банани\"}],\"currency\":null,\"sourceAccount\":\"cash\",\"targetAccount\":null,\"description\":null,\"date\":null},{\"kind\":\"expense\",\"amount\":null,\"allocations\":[{\"amount\":\"33\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":\"кава\"},{\"amount\":\"55\"," <> quotedCategory exampleExpenseCat <> ",\"comment\":\"хліб\"}],\"currency\":null,\"sourceAccount\":\"card\",\"targetAccount\":null,\"description\":null,\"date\":null}]}",
       "",
       "Output only JSON."
     ]
@@ -354,3 +355,15 @@ recordTransactionsGuide ctx =
     commas = T.intercalate ", "
     labelsLine [] = "Labels: (none)"
     labelsLine ls = "Labels: " <> commas ls
+    -- Few-shot examples must reference categories the user actually has, or the
+    -- model imitates a spelling its dictionary lacks and the matcher (no
+    -- cross-lingual mapping) silently drops it to the default category — the
+    -- localization regression this closes. Draw them from the (already
+    -- localized) context, falling back to the English canonical names only when
+    -- the user has no categories of that kind.
+    exampleExpenseCat = firstOr "Food / Groceries" ctx.expenseCategoryNames
+    exampleIncomeCat = firstOr "Salary" ctx.incomeCategoryNames
+    firstOr d xs = case xs of
+      (x : _) -> x
+      [] -> d
+    quotedCategory c = "\"category\":\"" <> c <> "\""

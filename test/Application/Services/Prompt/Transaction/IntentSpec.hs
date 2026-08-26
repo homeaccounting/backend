@@ -14,6 +14,7 @@ import Application.Services.Prompt.Transaction.Intent
     decodeTransactionIntent,
     recordTransactionsGuide,
   )
+import qualified Data.Text as DT
 import RIO
 import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.Text as T
@@ -34,6 +35,25 @@ sampleContext =
       expenseCategoryNames = ["Food", "Transport"],
       labelNames = []
     }
+
+-- | A localized (Ukrainian) context: category names are Cyrillic, none of the
+-- historical English literals ("Food / Groceries", "Salary") appear. Mirrors a
+-- user whose default categories were relocalized to their app language.
+ukContext :: PromptContext
+ukContext =
+  PromptContext
+    { accountNames = ["Готівка", "Картка"],
+      incomeCategoryNames = ["Дохід / Зарплата"],
+      expenseCategoryNames = ["Їжа / Продукти", "Транспорт"],
+      labelNames = []
+    }
+
+-- | Every quoted @"category":"X"@ value appearing in the guide's examples.
+-- @"category":null@ (no opening quote after the colon) is deliberately skipped.
+exampleCategories :: T.Text -> [T.Text]
+exampleCategories g = [T.takeWhile (/= '"') after | after <- drop 1 (DT.splitOn marker g)]
+  where
+    marker = "\"category\":\""
 
 spec :: Spec
 spec = describe "Application.Services.Prompt.Transaction.Intent" $ do
@@ -143,3 +163,17 @@ spec = describe "Application.Services.Prompt.Transaction.Intent" $ do
     it "instructs mapping account type-words (any language) to a subtype keyword" $ do
       all (`T.isInfixOf` guide) ["\"cash\"", "\"card\"", "\"bank\"", "\"wallet\""] `shouldBe` True
       ("готівка" `T.isInfixOf` guide) `shouldBe` True
+    it "draws every example category from the listed categories (no hardcoded names)" $ do
+      -- The few-shot examples must never teach a category spelling the user's
+      -- dictionary does not contain, or the model echoes it and the matcher
+      -- (no cross-lingual mapping) drops it to the default category. For a
+      -- localized user, that means the examples must use their localized names.
+      let ukGuide = recordTransactionsGuide ukContext
+          listed = ukContext.incomeCategoryNames <> ukContext.expenseCategoryNames
+          used = exampleCategories ukGuide
+      used `shouldSatisfy` (not . null)
+      used `shouldSatisfy` all (`elem` listed)
+    it "does not leak English default category names into a localized guide" $ do
+      let ukGuide = recordTransactionsGuide ukContext
+      ("Food / Groceries" `T.isInfixOf` ukGuide) `shouldBe` False
+      ("\"category\":\"Salary\"" `T.isInfixOf` ukGuide) `shouldBe` False
