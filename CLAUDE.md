@@ -194,8 +194,7 @@ migration.** The append-only event log is never mutated in place.
   `.:? "field" .!= default` custom `FromJSON` as the migration story.
 - DTO/API changes are additive or versioned — don't break existing clients.
 - The generic machinery lives in eventium-core; the app supplies only the concrete
-  registry + `eventTypeOf` tag extractor. See
-  `docs/specs/2026-07-30-event-schema-evolution-design.md`.
+  registry + `eventTypeOf` tag extractor.
 
 > **Pre-launch alpha status.** We are currently **pre-launch alpha** (invited
 > beta-testers only), not yet public. The **standing rule above is unchanged** —
@@ -347,6 +346,6 @@ Project documentation lives in `docs/` with a precedence hierarchy:
 
 - **L1 (highest)**: `mission-statement.md`, `operational-context.md`, `user-experience-spec.md`
 - **L2**: `architecture.md` (living doc), `deployment.md` (ops runbook)
-- **L3**: `specs/` (design specs, `*-design.md`), `plans/` (implementation plans), `decisions/` (ADRs)
+- **L3**: `decisions/` (ADRs)
 
-Specs and plans use `YYYY-MM-DD-feature-name.md` naming (`-design.md` suffix for specs) and require frontmatter with `status: draft|in-progress|completed|superseded`. In case of conflict, higher-level documents take precedence.
+ADRs use `YYYY-MM-DD-feature-name.md` naming and require frontmatter with `status: draft|in-progress|completed|superseded`. In case of conflict, higher-level documents take precedence.
