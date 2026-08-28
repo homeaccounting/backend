@@ -1,0 +1,39 @@
+name: Security
+
+# Automated secret scanning — compensating control for skipping a paid
+# third-party review (tracker#4). Scans the current tree on every change and
+# fails on any finding, so no new secret can be committed.
+#
+# NOTE: this scans the working tree, not full git history. The repo's *history*
+# still contains previously-committed secrets (tracker#6) that MUST be scrubbed
+# (git-filter-repo/BFG) AND rotated before this repo goes public (tracker#11) —
+# going public is a one-way door. Run the full-history check manually as part of
+# that gate:
+#   docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest git /repo --redact
+#
+# Haskell has no meaningful free SAST equivalent to semgrep/CodeQL, so this is
+# secret-scanning only; hlint (.hlint.yaml) covers style, not security.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: ['**']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4 # fresh checkout, no build — tracked files only
+      - name: gitleaks (working tree)
+        run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest dir /repo --redact --exit-code 1
