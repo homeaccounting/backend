@@ -182,3 +182,16 @@ jobs:
             APP_COMMIT_HASH=${{ steps.meta.outputs.sha_short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Stable aggregate check named "CI" — the single required status check shared
+  # across repos via the org ruleset (this repo's build job is matrix-named).
+  ci:
+    name: CI
+    needs: [build-and-test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require build-and-test to pass
+        run: |
+          echo "build-and-test: ${{ needs.build-and-test.result }}"
+          test "${{ needs.build-and-test.result }}" = "success"
