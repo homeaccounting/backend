@@ -1,7 +1,0 @@
-{
-  "accountId": "REPLACE_WITH_ACCOUNT_ID",
-  "amount": 100.0,
-  "currency": "USD",
-  "category": "REPLACE_WITH_CATEGORY_UUID",
-  "description": "Groceries"
-}

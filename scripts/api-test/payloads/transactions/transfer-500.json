@@ -1,7 +1,0 @@
-{
-  "sourceAccountId": "REPLACE_WITH_SOURCE_ACCOUNT_ID",
-  "targetAccountId": "REPLACE_WITH_TARGET_ACCOUNT_ID",
-  "amount": 500.0,
-  "currency": "USD",
-  "description": "Transfer to savings"
-}

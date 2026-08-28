@@ -1,7 +1,0 @@
-# Temporary test files
-/tmp/test_*.txt
-*.log
-
-# Response captures
-responses/
-*.response.json

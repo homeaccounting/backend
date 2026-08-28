@@ -326,7 +326,6 @@ withLogFunc logOptions $ \logFunc -> do
 - **eventium-memory**: [README.md](../../eventium/eventium-memory/README.md)
 - **hspec-wai**: [Hackage Documentation](https://hackage.haskell.org/package/hspec-wai)
 - **Test Patterns**: [TEST_FILES_CREATED.md](../TEST_FILES_CREATED.md)
-- **API Documentation**: [CURL_REFERENCE.md](../../scripts/api-test/CURL_REFERENCE.md)
 
 ## Contributing
 
