@@ -14,7 +14,7 @@ category:       Finance
 stability:      experimental
 author:         Developer
 maintainer:     developer@example.com
-license:        MIT
+license:        AGPL-3.0-or-later
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:

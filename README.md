@@ -1,6 +1,6 @@
 # Accounting Backend
 
-A personal accounting system backend built with Haskell using **Domain-Driven Design (DDD)**, **CQRS** (Command Query Responsibility Segregation), and **Event Sourcing** patterns with the [Eventium](../lib/eventium/) library.
+A personal accounting system backend built with Haskell using **Domain-Driven Design (DDD)**, **CQRS** (Command Query Responsibility Segregation), and **Event Sourcing** patterns with the [Eventium](https://eventium.dev) library.
 
 ## Architecture
 
@@ -273,7 +273,7 @@ The `TransferManager` orchestrates the saga:
 
 ## Event Sourcing with Eventium
 
-This project uses the [Eventium](https://hackage.haskell.org/package/eventium-core) library for event sourcing:
+This project uses the [Eventium](https://eventium.dev) library for event sourcing:
 
 - **Event Store**: PostgreSQL-backed persistent storage
 - **Projections**: Aggregate state reconstruction from events
@@ -400,8 +400,8 @@ nix-collect-garbage -d
 - [`docs/architecture.md`](docs/architecture.md) - Living architecture doc
 - [`docs/deployment.md`](docs/deployment.md) - Deployment runbook
 - [`CLAUDE.md`](CLAUDE.md) - Coding conventions and monad/error handling guidance
-- [Eventium on Hackage](https://hackage.haskell.org/package/eventium-core) - Event sourcing framework
+- [Eventium](https://eventium.dev) - Event sourcing framework
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details
+GNU Affero General Public License v3.0 (AGPL-3.0) - See [LICENSE](LICENSE) for details
