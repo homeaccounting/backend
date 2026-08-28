@@ -5,7 +5,7 @@ description: |
   A REST API for an accounting system built with CQRS and Event Sourcing patterns
   using the Eventium library. Implements DDD with clear aggregate boundaries,
   command handlers, projections, and process managers for complex workflows.
-license: MIT
+license: AGPL-3.0-or-later
 author: Developer
 maintainer: developer@example.com
 category: Finance
