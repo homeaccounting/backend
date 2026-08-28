@@ -47,3 +47,8 @@ logs/
 .claude/
 
 .worktrees/
+
+# secrets — never commit
+infra/deploy_key
+infra/.env
+*.env
