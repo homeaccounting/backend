@@ -23,7 +23,7 @@ import Infrastructure.Banking.ExternalId
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
-import Test.QuickCheck (Positive (..), Property, (===))
+import Test.QuickCheck (Positive (..), Property, conjoin, (===))
 
 -- | Normalize via raw text, for brevity in the assertions below.
 norm :: Text -> Text
@@ -92,15 +92,22 @@ spec = do
     prop "is idempotent for legacy-spelled keys" propIdempotent
     prop "collapses trailing-zero spellings of the same value" propSpellingAgnostic
 
--- | Normalizing twice equals normalizing once, for any legacy-spelled key.
--- Required because the dedup projection re-applies it on every rebuild. Tests
--- against generated keys in pre-38968e9 format (raw decimal text, not
--- canonicalised fractions), including whitespace-padded variants.
+-- | Idempotence over the LEGACY spelling space, which is what the dedup
+-- projection actually reads: bare integers, raw decimals, and whitespace-padded
+-- fields. Built by concatenation and never via 'privatBankRetailExternalId',
+-- because the projection sees stored ids, never freshly-constructed ones.
 propIdempotent :: Integer -> Integer -> Property
-propIdempotent a b =
-  let -- Generate a legacy key in the pre-canonicalised format, with potential whitespace padding
-      legacyKey = "privatbank:06.08.2026 11:09:20:" <> tshow a <> ":" <> tshow b
-   in norm (norm legacyKey) === norm legacyKey
+propIdempotent units frac =
+  conjoin
+    [ check (tshow units) (tshow frac),
+      check (decimal units frac) (decimal frac units),
+      check (" " <> tshow units <> " ") ("\t" <> decimal units frac <> " ")
+    ]
+  where
+    check amount balance =
+      let legacy = "privatbank:06.08.2026 11:09:20:" <> amount <> ":" <> balance
+       in norm (norm legacy) === norm legacy
+    decimal whole part = tshow whole <> "." <> tshow (abs part `mod` 100)
 
 -- | "-80" and "-80.0" are the same money and must key identically — the CSV
 -- (pre-38968e9) vs XLSX (current) spelling difference.
