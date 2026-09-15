@@ -61,13 +61,15 @@ privatBankRetailExternalId date amount balance =
 
 -- | Normalize a stored PrivatBank retail id to the current derivation, for ids
 -- written before the amount/balance fields were canonicalised (commit
--- @38968e9@, 2026-08-17). Re-canonicalises the trailing two colon-fields.
+-- @38968e9@, 2026-08-17). Re-canonicalises the trailing two colon-fields after
+-- stripping whitespace from the numeric fields.
 --
 -- Total, and safe to apply to anything: the identity for ids without the retail
 -- prefix (Monobank ids, business references) and for a prefixed id whose shape
--- does not parse. Idempotent, because 'canonicalDecimal' falls back to its
--- argument for the @N % D@ spelling that 'parseSignedDecimal' rejects — which
--- matters because the dedup projection re-applies this on every rebuild.
+-- does not parse. Idempotent for any stored legacy key, including ones with
+-- whitespace-padded fields (which can occur when the parser interpolated raw
+-- statement data without stripping), because the repair strips and then
+-- canonicalises.
 --
 -- 'unsafeExternalTransactionId' is justified here: the output always carries at
 -- least the non-empty prefix, so it can never be the empty string that
@@ -79,7 +81,7 @@ normalizePrivatBankRetailId extId =
     Just rest -> case splitTrailingTwo rest of
       Nothing -> extId
       Just (date, amount, balance) ->
-        unsafeExternalTransactionId (privatBankRetailExternalId date amount balance)
+        unsafeExternalTransactionId (privatBankRetailExternalId date (T.strip amount) (T.strip balance))
 
 -- | Split @\"\<date\>:\<amount\>:\<balance\>\"@ into its three parts, taking the
 -- last two colon-separated fields from the right so that the colons inside the

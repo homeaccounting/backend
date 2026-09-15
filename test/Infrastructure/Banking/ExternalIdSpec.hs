@@ -32,6 +32,10 @@ norm = unExternalTransactionId . normalizePrivatBankRetailId . unsafeExternalTra
 spec :: Spec
 spec = do
   describe "privatBankRetailExternalId (GOLDEN — see module haddock)" $ do
+    it "tags retail ids with the privatbank: prefix"
+      $ privatBankRetailPrefix
+      `shouldBe` "privatbank:"
+
     it "keys the AliExpress double-conversion row"
       $ privatBankRetailExternalId "06.08.2026 11:09:20" "-1221.17" "-19593.46"
       `shouldBe` "privatbank:06.08.2026 11:09:20:(-122117) % 100:(-979673) % 50"
@@ -81,15 +85,22 @@ spec = do
       $ norm "privatbank:no-colon-fields"
       `shouldBe` "privatbank:no-colon-fields"
 
-    prop "is idempotent" propIdempotent
+    it "reaches canonical form in one pass with whitespace-padded fields"
+      $ norm "privatbank:04.08.2026 14:02:50: -149 :-17835.51"
+      `shouldBe` "privatbank:04.08.2026 14:02:50:(-149) % 1:(-1783551) % 100"
+
+    prop "is idempotent for legacy-spelled keys" propIdempotent
     prop "collapses trailing-zero spellings of the same value" propSpellingAgnostic
 
--- | Normalizing twice equals normalizing once, for any generated key. Required
--- because the dedup projection re-applies it on every rebuild.
+-- | Normalizing twice equals normalizing once, for any legacy-spelled key.
+-- Required because the dedup projection re-applies it on every rebuild. Tests
+-- against generated keys in pre-38968e9 format (raw decimal text, not
+-- canonicalised fractions), including whitespace-padded variants.
 propIdempotent :: Integer -> Integer -> Property
 propIdempotent a b =
-  let key = privatBankRetailExternalId "06.08.2026 11:09:20" (tshow a) (tshow b)
-   in norm (norm key) === norm key
+  let -- Generate a legacy key in the pre-canonicalised format, with potential whitespace padding
+      legacyKey = "privatbank:06.08.2026 11:09:20:" <> tshow a <> ":" <> tshow b
+   in norm (norm legacyKey) === norm legacyKey
 
 -- | "-80" and "-80.0" are the same money and must key identically — the CSV
 -- (pre-38968e9) vs XLSX (current) spelling difference.
