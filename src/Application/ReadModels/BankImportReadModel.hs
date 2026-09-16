@@ -19,8 +19,10 @@
 -- Key components:
 --   - 'ImportedTransactionEntity': @imported_transactions@ row (external id -> internal tx id)
 --   - 'isImported': SQL membership check used during bank statement import
---   - 'isReconciled': reverse lookup (by internal tx id) — whether a transaction
---     already carries import attribution, used to exclude reconciliation candidates
+--   - 'importAttributionCount': reverse lookup (by internal tx id) — how many
+--     external ids are attributed to a transaction, which reconciliation weighs
+--     against the transaction's capacity to decide whether another may attach
+--   - 'isReconciled': the same lookup as a boolean; test-facing only
 --   - 'bankImportReadModel': the eventium 'ReadModel' (apply, checkpoint,
 --     migrate, reset), driven synchronously in the event-append transaction
 --   - 'migrateBankImport' / 'resetBankImport': schema + rebuild support
@@ -129,8 +131,11 @@ importAttributionCount :: (MonadIO m) => TransactionId -> SqlPersistT m Int
 importAttributionCount txId =
   count [ImportedTransactionEntityTransactionId ==. txId]
 
--- | Whether a transaction already carries import attribution (was imported or
--- reconciled). Reverse lookup used by reconciliation candidate exclusion.
+-- | Whether a transaction carries any import attribution at all. Has no
+-- production caller: reconciliation weighs 'importAttributionCount' against
+-- 'Domain.Core.Types.importAttributionCapacity' rather than gating on a boolean,
+-- which is what lets a transfer take one attribution per leg. Retained as the
+-- existence predicate the specs assert with.
 isReconciled :: (MonadIO m) => TransactionId -> SqlPersistT m Bool
 isReconciled txId = (> 0) <$> importAttributionCount txId
 
@@ -171,7 +176,7 @@ applyBankImportEvent globalEvent =
 
 -- | Secondary indexes the query layer relies on. Persistent's quasi-quoter only
 -- emits the unique constraint on the external id, so the @transaction_id@ column
--- backing the 'isReconciled' reverse lookup gets an explicit
+-- backing the 'importAttributionCount' reverse lookup gets an explicit
 -- @CREATE INDEX IF NOT EXISTS@ (valid on both PostgreSQL and SQLite) at startup.
 createBankImportIndexes :: (MonadIO m) => SqlPersistT m ()
 createBankImportIndexes =
