@@ -1,0 +1,84 @@
+# 006 - Import attribution is capacity-limited, not once-only
+
+## Status
+Accepted
+
+## Context
+
+A transaction's `reconciled` field — a boolean guard introduced to prevent a double
+attach — became incorrect when a single logical transfer with two accounting legs
+appeared on the write side. Each leg receives its own import attribution from the
+bank statement, so rejecting the second leg's reconcile outright meant that
+single-leg imports could not match existing transfers. The field was documented
+as "guard against a double attach" and the aggregate enforcement enforced it
+strictly, so legacy code (and later maintainers) had no way to distinguish between
+"this transaction is already fully attributed" and "this transaction is not a
+transfer."
+
+The defect surfaced on backend#3 when a converted-to-transfer re-import could not
+reconcile onto an existing transfer: the source leg matched as expected, but the
+target leg's reconcile command was rejected by the boolean guard, even though the
+transfer was only half-attributed. Both legs then imported as new transactions,
+duplicating the movement.
+
+## Decision
+
+1. **Import attribution is capacity-limited, not once-only.** The `reconciled`
+   boolean is replaced by counting attributed external ids. Each `TransactionType`
+   has an attribution capacity: transfers (two legs) get 2, and income/expense (one
+   movement) get 1.
+
+2. **The capacity rule has one definition.** `importAttributionCapacity :: TransactionType -> Int`
+   lives in `Domain.Core.Types` with a single home, so the write-side aggregate
+   guard (`Domain.Transaction.CommandHandler`) and the import-side candidate
+   filter (`Application.Services.BankImportService`) can never derive the rule
+   differently — the duplicate-posting bug (backend#3) was a consequence of them
+   drifting apart.
+
+3. **It counts attributed external ids, not events.** The whole-pair transfer path
+   emits a single `TransactionImportReconciled` event carrying two ids
+   (one per leg), so counting events would leave a fully-attributed transfer with
+   spare capacity.
+
+4. **Behaviour for income/expense is preserved bit-for-bit:** 0 attributions
+   allowed, then 1 allowed, then rejection — exactly what the boolean `0 + 1 = 1
+   (clamped to boolean true, reject)` did.
+
+5. **It is retroactive and needs no migration.** The count folds from the same
+   `TransactionImportReconciled` events the boolean did, so a production transfer
+   already reconciled on one leg replays to a count of 1 and gains its second slot
+   automatically. The aggregate is never persisted or snapshotted, so no stored
+   shape changed and no upcaster is required.
+
+6. **The error name was deliberately reused.** `TransactionAlreadyReconciled` is
+   still the error case — when a transaction's capacity is full and another id
+   arrives. This keeps the change additive; the error message remains the same.
+
+### Out of scope (deliberately not changed)
+
+- **Per-leg attribution.** The current limit counts ids per transaction side,
+  not per leg. A same-side over-attaching scenario — a transfer whose source leg
+  absorbs two unrelated expense ids — remains possible (e.g. an unrelated
+  same-amount expense with no same-kind candidate could attach to the source leg,
+  and the transfer's own debit leg could then take the second slot). This follows
+  from the id-counting choice and is the same mis-attribution class the
+  same-kind-first ordering in the matching logic already tolerates. It is a known
+  residual limitation, deferred pending a specific requirement for per-leg
+  attribution.
+
+## Consequences
+
+- **Transfers can be reconciled on both legs.** A single-leg import now gains
+  capacity to match an existing transfer without rejecting the second leg's
+  reconcile, fixing the core of backend#3.
+- **The rule is durable.** One source of truth (`importAttributionCapacity`)
+  eliminates the coordination bug that allowed the boolean guard and the filter
+  to drift apart.
+- **No migration needed.** Existing production transfers already reconciled on one
+  leg replay to a count of 1 and gain capacity for the second leg automatically.
+- **Backward compatible.** For income/expense, `0 → 1 → rejected` is identical to
+  the boolean `false → true → rejected`. The semantic change is single-direction:
+  transfers go from fully-rejected-if-any to properly-pairwise.
+- **Honest about residual risk.** Per-side counting leaves an edge case where both
+  ids land on one leg of a transfer. This is documented and deferred, not hidden
+  by claiming the rule is perfect.
