@@ -37,7 +37,11 @@
 --   - External ids are normalized on apply ('normalizePrivatBankRetailId'), so a
 --     provider-synthesized id stored under a superseded derivation still matches
 --     the current one. Deploying such a change therefore needs one
---     @REBUILD_READ_MODELS=bankimport@ startup and no event rewriting.
+--     @REBUILD_READ_MODELS=bankimport@ startup and no event rewriting. A statement
+--     line imported both before and after the derivation change will have both its
+--     events normalize to the same key, so 'insertUnique' keeps the lower-sequence
+--     row and the later duplicate gains zero attribution (becoming a reconciliation
+--     candidate) — the intended outcome.
 module Application.ReadModels.BankImportReadModel
   ( ImportedTransactionEntity (..),
     ImportedTransactionEntityId,
@@ -111,7 +115,9 @@ resetBankImport = deleteWhere ([] :: [Filter ImportedTransactionEntity])
 -- Query
 -- -----------------------------------------------------------------------------
 
--- | Whether an external transaction id has already been imported.
+-- | Whether an external transaction id has already been imported. The argument
+-- is assumed to be in canonical form as produced by the current parser;
+-- comparing against a stored or user-supplied id is a silent-miss failure mode.
 isImported :: (MonadIO m) => ExternalTransactionId -> SqlPersistT m Bool
 isImported extId = isJust <$> getBy (UniqueExternalTransactionId extId)
 

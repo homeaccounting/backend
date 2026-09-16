@@ -13,13 +13,13 @@
 module Testkit.TransactionEvents
   ( postingInitiatedGlobal,
     postingInitiatedImportGlobal,
+    transactionImportReconciledGlobal,
     transactionEditGlobal,
   )
 where
 
 import Data.Time (UTCTime)
 import qualified Data.UUID as UUID
-import qualified RIO.NonEmpty as NE
 import Domain.Banking.Import (ExternalTransactionId, ImportInfo (..))
 import Domain.Core.Types
   ( AccountId,
@@ -32,6 +32,7 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import Domain.Models (AccountingEvent (..), TransactionPostingInitiated (..))
+import Domain.Transaction.Events (TransactionImportReconciled (..))
 import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
 import qualified Eventium
 import RIO
@@ -83,7 +84,7 @@ postingInitiatedImportGlobal ::
   TransactionId ->
   AccountId ->
   AccountId ->
-  NE.NonEmpty ExternalTransactionId ->
+  NonEmpty ExternalTransactionId ->
   UTCTime ->
   SequenceNumber ->
   GlobalStreamEvent AccountingEvent
@@ -116,6 +117,30 @@ postingInitiatedImportGlobal txId src tgt extIds businessAt seqNo =
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
+
+-- | A 'TransactionImportReconciled' event, attaching import attribution to
+-- an existing manual transaction. Used by the dedup read-model specs to
+-- verify normalization of the reconciliation path.
+transactionImportReconciledGlobal ::
+  TransactionId ->
+  NonEmpty ExternalTransactionId ->
+  SequenceNumber ->
+  GlobalStreamEvent AccountingEvent
+transactionImportReconciledGlobal txId extIds seqNo =
+  let inner =
+        StreamEvent
+          (unTransactionId txId)
+          0
+          (emptyMetadata "TransactionImportReconciled")
+          ( TransactionImportReconciledEvent
+              TransactionImportReconciled
+                { transactionId = txId,
+                  externalTransactionIds = extIds,
+                  category = Nothing,
+                  contact = Nothing
+                }
+          )
+   in StreamEvent () seqNo (emptyMetadata "TransactionImportReconciled") inner
 
 -- | A subsequent edit/terminal event (description, date, labels, status,
 -- cancellation, …) wrapped as a 'GlobalStreamEvent' targeting @txId@'s stream.

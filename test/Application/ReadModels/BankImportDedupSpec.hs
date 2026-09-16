@@ -24,7 +24,6 @@ import Application.ReadModels.BankImportReadModel
     isImported,
     isReconciled,
   )
-import qualified Data.List.NonEmpty as NE
 import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID as UUID
 import Domain.Banking.Import (unsafeExternalTransactionId)
@@ -33,7 +32,7 @@ import RIO
 import Test.Hspec
 import Testkit.Helpers (mockAccountId, mockTransactionId)
 import Testkit.InMemoryEventStore (runDbIn, seedGlobals)
-import Testkit.TransactionEvents (postingInitiatedImportGlobal)
+import Testkit.TransactionEvents (postingInitiatedImportGlobal, transactionImportReconciledGlobal)
 
 -- | The pre-38968e9 spelling of a real PrivatBank retail row.
 legacyId :: Text
@@ -60,7 +59,7 @@ spec = do
               tx1
               (mockAccountId (UUID.fromWords 10 0 0 0))
               (mockAccountId (UUID.fromWords 11 0 0 0))
-              (NE.fromList [unsafeExternalTransactionId legacyId])
+              (unsafeExternalTransactionId legacyId :| [])
               businessAt
               1
           ]
@@ -73,7 +72,7 @@ spec = do
               tx1
               (mockAccountId (UUID.fromWords 10 0 0 0))
               (mockAccountId (UUID.fromWords 11 0 0 0))
-              (NE.fromList [unsafeExternalTransactionId legacyId])
+              (unsafeExternalTransactionId legacyId :| [])
               businessAt
               1
       env <- seedGlobals applyBankImportEvent [event, event]
@@ -89,10 +88,8 @@ spec = do
               tx1
               (mockAccountId (UUID.fromWords 10 0 0 0))
               (mockAccountId (UUID.fromWords 11 0 0 0))
-              ( NE.fromList
-                  [ unsafeExternalTransactionId "mono-debit-leg",
-                    unsafeExternalTransactionId "mono-credit-leg"
-                  ]
+              ( unsafeExternalTransactionId "mono-debit-leg"
+                  :| [unsafeExternalTransactionId "mono-credit-leg"]
               )
               businessAt
               1
@@ -105,7 +102,7 @@ spec = do
       n <- runDbIn env (importAttributionCount tx1)
       n `shouldBe` 0
 
-    it "agrees with isReconciled" $ do
+    it "agrees with isReconciled for an attributed transaction" $ do
       env <-
         seedGlobals
           applyBankImportEvent
@@ -113,9 +110,44 @@ spec = do
               tx1
               (mockAccountId (UUID.fromWords 10 0 0 0))
               (mockAccountId (UUID.fromWords 11 0 0 0))
-              (NE.fromList [unsafeExternalTransactionId "mono-1"])
+              (unsafeExternalTransactionId "mono-1" :| [])
               businessAt
               1
           ]
       (n, recon) <- runDbIn env ((,) <$> importAttributionCount tx1 <*> isReconciled tx1)
-      (n > 0) `shouldBe` recon
+      n `shouldBe` 1
+      recon `shouldBe` True
+
+    it "agrees with isReconciled for an unattributed transaction" $ do
+      env <- seedGlobals applyBankImportEvent []
+      recon <- runDbIn env (isReconciled tx1)
+      recon `shouldBe` False
+
+  describe "already-canonical ids" $ do
+    it "preserves an already-canonical PrivatBank id" $ do
+      env <-
+        seedGlobals
+          applyBankImportEvent
+          [ postingInitiatedImportGlobal
+              tx1
+              (mockAccountId (UUID.fromWords 10 0 0 0))
+              (mockAccountId (UUID.fromWords 11 0 0 0))
+              (unsafeExternalTransactionId currentId :| [])
+              businessAt
+              1
+          ]
+      imported <- runDbIn env (isImported (unsafeExternalTransactionId currentId))
+      imported `shouldBe` True
+
+  describe "TransactionImportReconciled event normalization" $ do
+    it "normalizes legacy ids in reconciliation events" $ do
+      env <-
+        seedGlobals
+          applyBankImportEvent
+          [ transactionImportReconciledGlobal
+              tx1
+              (unsafeExternalTransactionId legacyId :| [])
+              1
+          ]
+      imported <- runDbIn env (isImported (unsafeExternalTransactionId currentId))
+      imported `shouldBe` True
