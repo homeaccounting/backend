@@ -45,10 +45,14 @@ the DST regime changes.
    `Infrastructure.Banking.Statement`, alongside the other format-neutral
    helpers.
 
-3. **The zone is a property of the provider**, declared by the provider module
-   that knows its format's convention — `Europe__Kiev` for both PrivatBank
-   parsers. Note the label spelling: `tz 0.1.3.6` predates the `Europe/Kyiv`
-   rename. Monobank needs no conversion and gets none.
+3. **The zone is a property of the provider**, named once for that provider
+   rather than spelled at each parser. PrivatBank's retail and business exports
+   are parsed by two modules sitting behind two different Cabal flags, so the
+   constant lives in the flag-free `Infrastructure.Banking.PrivatBankZone`
+   (`privatBankZone`) and both parsers read it — a copied literal could
+   silently disagree. Note the label spelling: `tz 0.1.3.6` predates the
+   `Europe/Kyiv` rename, so the constructor is still `Europe__Kiev`, recorded
+   in one place. Monobank needs no conversion and gets none.
 
 4. **A provider's zone is not user-configurable.** PrivatBank is a Ukrainian bank
    issuing statements in Kyiv time; that is a fact about the format, not a user

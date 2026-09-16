@@ -31,9 +31,22 @@ duplicating the movement.
 2. **The capacity rule has one definition.** `importAttributionCapacity :: TransactionType -> Int`
    lives in `Domain.Core.Types` with a single home, so the write-side aggregate
    guard (`Domain.Transaction.CommandHandler`) and the import-side candidate
-   filter (`Application.Services.BankImportService`) can never derive the rule
-   differently — the duplicate-posting bug (backend#3) was a consequence of them
-   drifting apart.
+   filter (`Application.Services.BankImportService`) can never derive the
+   *capacity* differently — the duplicate-posting bug (backend#3) was a
+   consequence of them drifting apart on how many legs may attach.
+
+   What is shared is the capacity, **not the count**, and deliberately so: the
+   two count from different sources. The filter's `importAttributionCount` reads
+   the `imported_transactions` read model, which the projection fills from
+   `TransactionPostingInitiated`-with-`importInfo` *as well as*
+   `TransactionImportReconciled`; the aggregate folds only the latter. So an
+   import-*created* transaction has read-model count 1 and aggregate count 0.
+   The read-model count is a superset, hence always the safe side — the filter
+   is strictly more conservative than the aggregate, and for an import-created
+   transaction the stricter answer is also the correct one (it already carries
+   its own bank id). Making the two symmetric by counting the aggregate's ids on
+   the import side would re-open a duplicate-posting path; the asymmetry is the
+   design, not drift.
 
 3. **It counts attributed external ids, not events.** The whole-pair transfer path
    emits a single `TransactionImportReconciled` event carrying two ids
@@ -66,6 +79,22 @@ duplicating the movement.
   residual limitation, deferred pending a specific requirement for per-leg
   attribution.
 
+  **What it costs when it happens, spelled out:** the absorbed import never
+  posts. There is no duplicate to delete and no error — the transaction is
+  simply missing, the account balance is understated by its amount, and because
+  bank-import dedup is permanent by design its external id is now bound to the
+  transfer forever, so a re-sync will not bring it back. The only recovery is
+  manual re-entry. Round amounts are exactly what both transfers and cash
+  spends use, so this is not an exotic shape.
+
+  Two mitigations, neither a fix: the cross-kind pass runs on its own **±1 day**
+  window (`transferLegReconciliationWindow`) rather than the ±3 days used for
+  same-transaction reconciliation — it cannot go below 24h, because a
+  date-picker client sends a midnight date and a legitimate same-day pair is
+  already ~24h apart — and every cross-kind attach emits a `logWarn` naming the
+  external id, transaction and amount (grep `cross-kind reconcile`), so the
+  suppression leaves a trace the user can find instead of being invisible.
+
 ## Consequences
 
 - **Transfers can be reconciled on both legs.** A single-leg import now gains
@@ -73,7 +102,8 @@ duplicating the movement.
   reconcile, fixing the core of backend#3.
 - **The rule is durable.** One source of truth (`importAttributionCapacity`)
   eliminates the coordination bug that allowed the boolean guard and the filter
-  to drift apart.
+  to drift apart on capacity. Their *counts* stay intentionally asymmetric (see
+  Decision 2), which a maintainer must not "correct".
 - **No migration needed.** Existing production transfers already reconciled on one
   leg replay to a count of 1 and gain capacity for the second leg automatically.
 - **Backward compatible.** For income/expense, `0 → 1 → rejected` is identical to

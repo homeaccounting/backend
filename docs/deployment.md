@@ -246,6 +246,24 @@ It is read **at startup**, and the container restarts on its own
 (`restart: unless-stopped`), so **leaving it set replays the entire event log on
 every restart.** Set it, deploy, confirm, then clear it.
 
+A rebuild announces itself on the log, once per projection, before and after its
+replay:
+
+```
+Starting read-model rebuild (reset + full replay): bankimport
+Finished read-model rebuild: bankimport
+```
+
+A name that matches no projection is **not** silently ignored — it logs
+`REBUILD_READ_MODELS names no such projection: … Known projections: …` at WARN,
+so a typo (`bank_import`, `bankImport`) is visible rather than a clean-looking
+startup that rebuilt nothing.
+
+**The variable must be declared on the `api` service in the infra repo's
+`docker-compose.yaml`** (`- REBUILD_READ_MODELS=${REBUILD_READ_MODELS:-}`) or it
+never reaches the container and setting it in `.env` does nothing. That ships in
+a companion infra PR; until it lands, this backend behaviour is inert.
+
 ### One-time read-model rebuild — PrivatBank import idempotency (backend#3)
 
 This release normalizes legacy PrivatBank retail external ids in the bank-import
@@ -264,7 +282,11 @@ REBUILD_READ_MODELS=bankimport
 
 ```bash
 just deploy-product-backend <sha>            # rsyncs .env, restarts api → rebuild runs
-just logs-backend --tail=200 | grep -i rebuild   # confirm it replayed
+# Confirm it replayed. Expect BOTH lines naming 'bankimport'; no output means the
+# rebuild did NOT run (var not declared in docker-compose.yaml, or not rsynced).
+just logs-backend --tail=200 | grep -i 'read-model rebuild'
+# Also check nothing was mistyped:
+just logs-backend --tail=200 | grep 'no such projection'
 # then clear REBUILD_READ_MODELS in infra/.env and deploy again
 ```
 
