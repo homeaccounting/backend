@@ -49,6 +49,7 @@ import Domain.Core.Types
     TransactionType (..),
     allAllocations,
     allocationsOf,
+    importAttributionCapacity,
     moneyCurrency,
     unAccountId,
     unMoney,
@@ -132,8 +133,10 @@ data TransactionError
   | -- | 'CompleteTransactionMerge' / 'FailTransactionMerge' was issued when no
     -- merge is in progress (@mergeInProgress = False@).
     NoMergeInProgress
-  | -- | 'ReconcileTransactionImport' was issued against a transaction that has
-    -- already had import attribution attached (@reconciled = True@).
+  | -- | 'ReconcileTransactionImport' was issued against a transaction whose
+    -- import-attribution capacity is already used up: the attach would push
+    -- @attributedExternalIds@ past 'importAttributionCapacity' (one id for an
+    -- income/expense, two for a transfer — one per leg).
     TransactionAlreadyReconciled
   deriving (Show, Eq)
 
@@ -290,11 +293,20 @@ handleTransactionCommand transaction (SetTransactionContactTransactionCommand Se
 --
 -- Attaches import attribution onto a completed manual transaction. Balance-neutral —
 -- emits a single 'TransactionImportReconciled'. Rejected if the transaction is not
--- Completed, or if it has already been reconciled (guard against a double attach).
+-- Completed, or if the attach would exceed the transaction's
+-- 'importAttributionCapacity' (guard against over-attaching).
+--
+-- Capacity is counted in external ids, not attach events, so the two ways a
+-- transfer can be fully attributed agree: one whole-pair attach carrying both
+-- legs' ids (0 + 2), or two single-leg attaches (0 + 1, then 1 + 1). Either way
+-- a further attach is rejected. An income/expense allows 0 + 1 and then rejects
+-- 1 + 1 — exactly the reconcile-once behaviour it had before capacity existed.
 handleTransactionCommand transaction (ReconcileTransactionImportTransactionCommand ReconcileTransactionImport {..}) =
   case transaction ^. #status of
     Completed
-      | transaction ^. #reconciled -> Left TransactionAlreadyReconciled
+      | fromIntegral (transaction ^. #attributedExternalIds) + length externalTransactionIds
+          > importAttributionCapacity (transaction ^. #transactionType) ->
+          Left TransactionAlreadyReconciled
       | otherwise ->
           Right
             [ TransactionImportReconciledTransactionEvent

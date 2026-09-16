@@ -109,6 +109,7 @@ module Domain.Core.Types
     TransactionType (..),
     TransactionKind (..),
     kindOf,
+    importAttributionCapacity,
     deriveTransactionKind,
     mkIncome,
     mkExpense,
@@ -1136,6 +1137,17 @@ kindOf (Income _) = IncomeKind
 kindOf (Expense _) = ExpenseKind
 kindOf Transfer = TransferKind
 kindOf Adjustment = AdjustmentKind
+
+-- | How many external transaction ids import reconciliation may attribute to a
+-- transaction of this type. A 'Transfer' spans two accounts, so it absorbs one
+-- leg per side; every other type is a single movement carrying one id.
+--
+-- This is the single home for the limit: the transaction aggregate's reconcile
+-- guard and the bank-import candidate filter both read it, so the write model
+-- and the import path cannot drift apart on how many legs may attach.
+importAttributionCapacity :: TransactionType -> Int
+importAttributionCapacity Transfer = 2
+importAttributionCapacity _ = 1
 
 -- | Derive the 'TransactionKind' from the account types of the two endpoints.
 --

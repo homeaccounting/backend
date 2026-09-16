@@ -58,7 +58,7 @@ where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
-import Application.ReadModels.BankImportReadModel (isImported, isReconciled)
+import Application.ReadModels.BankImportReadModel (importAttributionCount, isImported)
 import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItemIds, dictionaryItems)
 import Application.ReadModels.Transaction
   ( LegSide (..),
@@ -89,7 +89,7 @@ import Domain.Banking.Types (ExternalAccountId, unExternalAccountId)
 import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
 import Domain.Configuration.Projection (BankingConfiguration (..), ConfigurationDefaults (..))
 import Domain.Core.Errors (DomainError (..), renderDomainError)
-import Domain.Core.Types (AccountId, CategoryId, ContactId, Currency, Money, TransactionId, TransactionKind (..), TransactionType (..), UserId, currencyFromNumericCode, kindOf, mkAllocation, mkExchangeRate, mkExpenseAllocations, mkIncomeAllocations, mkMoney, moneyCurrency, unEntryName, unMoney)
+import Domain.Core.Types (AccountId, CategoryId, ContactId, Currency, Money, TransactionId, TransactionKind (..), TransactionType (..), UserId, currencyFromNumericCode, importAttributionCapacity, kindOf, mkAllocation, mkExchangeRate, mkExpenseAllocations, mkIncomeAllocations, mkMoney, moneyCurrency, unEntryName, unMoney)
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Domain.Transaction.Matching.Leg (Leg (..))
 import Domain.Transaction.Matching.Reconciliation (ReconciliationOutcome (..), reconcile)
@@ -940,9 +940,19 @@ commitImport classify userId userData localAccId tx money = do
           fromT = addUTCTime (negate reconciliationWindow) tx.time
           toT = addUTCTime reconciliationWindow tx.time
           importedLeg = Leg (unMoney money) (moneyCurrency money) tx.time
-      candidates <- lift $ runDb (findReconciliationCandidates localAccId legSide money kind fromT toT)
-      result <-
-        lift $ attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.category tx.contact
+      -- Same-kind candidates first; a Transfer leg only if none matched. A
+      -- user-converted (or hand-entered) transfer carries the matching leg on
+      -- this account, but its kind is TransferKind, so a single-leg import
+      -- could never see it and posted a duplicate (backend#3). Ordering the
+      -- passes keeps a nearby same-amount transfer from hijacking an ordinary
+      -- income/expense.
+      let tryKind k = do
+            candidates <- runDb (findReconciliationCandidates localAccId legSide money k fromT toT)
+            attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.category tx.contact
+      sameKind <- lift (tryKind kind)
+      result <- case sameKind of
+        ReconcileNoMatch -> lift (tryKind TransferKind)
+        matched -> pure matched
       case result of
         ReconciledOnto tid -> pure (Imported tid)
         ReconcileAmbiguous -> pure (Skipped AmbiguousReconciliation)
@@ -968,9 +978,9 @@ data ReconcileResult
     ReconcileNoMatch
 
 -- | The shared reconcile step for both import paths (single transaction and
--- whole-pair transfer): exclude already-reconciled candidates, run the pure
--- matcher, and on a unique match attach the incoming external id(s) + category
--- + contact onto the matched manual transaction. Returns a 'ReconcileResult' the caller turns
+-- whole-pair transfer): exclude candidates without room for this attach, run
+-- the pure matcher, and on a unique match attach the incoming external id(s)
+-- + category + contact onto the matched manual transaction. Returns a 'ReconcileResult' the caller turns
 -- into its own outcome. @label@ is a grep-friendly tag for the log lines (the
 -- transaction's external id, or @"d/c"@ for a transfer pair).
 attemptReconcile ::
@@ -984,7 +994,7 @@ attemptReconcile ::
   Maybe BankProviderContact ->
   AppM ReconcileResult
 attemptReconcile userId label importedLeg candidates projectLeg extIds category contact = do
-  fresh <- filterM (\(tid, _) -> not <$> runDb (isReconciled tid)) candidates
+  fresh <- filterM hasSpareAttribution candidates
   case reconcile reconciliationWindow importedLeg [(tid, projectLeg td) | (tid, td) <- fresh] of
     NoMatch -> pure ReconcileNoMatch
     Ambiguous tids -> do
@@ -999,6 +1009,21 @@ attemptReconcile userId label importedLeg candidates projectLeg extIds category 
         Left err -> do
           logWarn $ "Reconcile of " <> display label <> " onto " <> displayShow tid <> " failed (" <> displayShow err <> "); importing fresh"
           pure ReconcileNoMatch
+  where
+    -- A candidate is eligible while this attach still fits its
+    -- 'importAttributionCapacity': an income/expense holds one external id, a
+    -- transfer two (one per leg), so a transfer that already absorbed one leg
+    -- can still absorb the other. A boolean "already reconciled" test blocked
+    -- that second leg and let it post a duplicate instead. The predicate
+    -- deliberately mirrors the aggregate's guard term for term — it counts the
+    -- ids THIS attach carries, so the whole-pair route (two ids at once) rules
+    -- out a partly-attributed transfer here rather than being rejected by the
+    -- aggregate afterwards and losing the other candidates with it. A leg
+    -- re-arriving under its own id never reaches here — 'isImported' skips it
+    -- first.
+    hasSpareAttribution (tid, td) = do
+      attributed <- runDb (importAttributionCount tid)
+      pure (attributed + length extIds <= importAttributionCapacity td.transactionType)
 
 -- | Continue an import once the LOCAL account's currency has been confirmed to
 -- match the transaction currency. Handles configuration lookup, category
