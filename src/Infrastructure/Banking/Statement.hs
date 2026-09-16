@@ -91,6 +91,15 @@ readDigits s
 -- a fixed offset, so both halves of the year are right — Kyiv is UTC+2 in
 -- winter and UTC+3 in summer.
 --
+-- On the two DST boundary nights a local wall clock is not a unique instant
+-- (Ukraine transitions at 03:00 local, and PrivatBank does stamp rows in that
+-- window): we inherit 'localTimeToUTCTZ''s policy, which silently resolves an
+-- ambiguous (repeated) local time to one of its two instants and a nonexistent
+-- (skipped) one to the neighbouring instant, rather than failing. Accepted —
+-- the worst case is one imported row an hour off, twice a year, and there is no
+-- dedup exposure because synthesized external ids key on the raw date text, not
+-- the converted instant (ADR 004).
+--
 -- Pure, so 'StatementParser' stays pure and no configuration surface is needed.
 localToUtcIn :: TZLabel -> LocalTime -> UTCTime
 localToUtcIn label = localTimeToUTCTZ (tzByLabel label)

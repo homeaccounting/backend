@@ -1145,9 +1145,15 @@ kindOf Adjustment = AdjustmentKind
 -- This is the single home for the limit: the transaction aggregate's reconcile
 -- guard and the bank-import candidate filter both read it, so the write model
 -- and the import path cannot drift apart on how many legs may attach.
+--
+-- Enumerated constructor by constructor (like 'kindOf') rather than via a
+-- catch-all, so that adding a 'TransactionType' is a compile error here instead
+-- of silently inheriting a capacity of one.
 importAttributionCapacity :: TransactionType -> Int
 importAttributionCapacity Transfer = 2
-importAttributionCapacity _ = 1
+importAttributionCapacity (Income _) = 1
+importAttributionCapacity (Expense _) = 1
+importAttributionCapacity Adjustment = 1
 
 -- | Derive the 'TransactionKind' from the account types of the two endpoints.
 --

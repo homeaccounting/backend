@@ -25,11 +25,11 @@ where
 import qualified Data.Text as T
 import Data.Time (Day, LocalTime (..), TimeOfDay, UTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
-import Data.Time.Zones.All (TZLabel (..))
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty)
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
+import Infrastructure.Banking.PrivatBankZone (privatBankZone)
 import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, localToUtcIn, parseSignedDecimal, stripTrailingComma)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
@@ -174,7 +174,7 @@ combineDateTime :: Text -> Text -> Maybe UTCTime
 combineDateTime dateText timeText = do
   day <- parseTimeM True defaultTimeLocale "%d.%m.%Y" (T.unpack dateText) :: Maybe Day
   tod <- parseTimeM True defaultTimeLocale "%H:%M:%S" (T.unpack timeText) :: Maybe TimeOfDay
-  pure (localToUtcIn Europe__Kiev (LocalTime day tod))
+  pure (localToUtcIn privatBankZone (LocalTime day tod))
 
 -- | Ledger memo: counterparty name + purpose (joined when both present, either
 -- one alone otherwise). A missing column is treated as blank.

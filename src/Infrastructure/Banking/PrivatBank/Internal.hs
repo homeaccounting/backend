@@ -21,13 +21,13 @@ import qualified Data.Csv as Csv
 import qualified Data.Text as T
 import Data.Time (LocalTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
-import Data.Time.Zones.All (TZLabel (..))
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
 import Infrastructure.Banking.ExternalId (privatBankRetailExternalId)
+import Infrastructure.Banking.PrivatBankZone (privatBankZone)
 import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Statement (localToUtcIn, parseSignedDecimal)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
@@ -163,7 +163,7 @@ validateRow rowNumber raw =
                 { externalId = extId,
                   externalAccountId = unsafeExternalAccountId raw.rawCard,
                   -- The statement's clock is Kyiv-local; store the instant (ADR 005).
-                  time = localToUtcIn Europe__Kiev localTime,
+                  time = localToUtcIn privatBankZone localTime,
                   amount = amt,
                   currencyCode = currCode,
                   description = raw.rawDescription,
