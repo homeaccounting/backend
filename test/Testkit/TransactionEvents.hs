@@ -12,19 +12,22 @@
 -- on them); the transaction type, labels, and dates are parameters.
 module Testkit.TransactionEvents
   ( postingInitiatedGlobal,
+    postingInitiatedImportGlobal,
     transactionEditGlobal,
   )
 where
 
 import Data.Time (UTCTime)
 import qualified Data.UUID as UUID
+import qualified RIO.NonEmpty as NE
+import Domain.Banking.Import (ExternalTransactionId, ImportInfo (..))
 import Domain.Core.Types
   ( AccountId,
     ContactId,
     Currency (..),
     LabelId,
     TransactionId,
-    TransactionType,
+    TransactionType (..),
     unTransactionId,
     unsafeMoney,
   )
@@ -69,6 +72,47 @@ postingInitiatedGlobal txId src tgt tt labelSet businessAt persistedAt seqNo con
                   importInfo = Nothing,
                   labels = labelSet,
                   contactId = contact
+                }
+          )
+   in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner
+
+-- | A 'TransactionPostingInitiated' that carries import provenance, as the bank
+-- import emits. @extIds@ is one id for a plain import, or both legs' ids for a
+-- detected internal transfer. Used by the dedup read-model specs.
+postingInitiatedImportGlobal ::
+  TransactionId ->
+  AccountId ->
+  AccountId ->
+  NE.NonEmpty ExternalTransactionId ->
+  UTCTime ->
+  SequenceNumber ->
+  GlobalStreamEvent AccountingEvent
+postingInitiatedImportGlobal txId src tgt extIds businessAt seqNo =
+  let inner =
+        StreamEvent
+          (unTransactionId txId)
+          0
+          (emptyMetadata "TransactionPostingInitiated")
+          ( TransactionPostingInitiatedEvent
+              TransactionPostingInitiated
+                { sourceAccountId = src,
+                  targetAccountId = tgt,
+                  sourceAmount = unsafeMoney USD 100,
+                  targetAmount = unsafeMoney USD 100,
+                  exchangeRate = Nothing,
+                  description = "seed",
+                  by = mockUserId (UUID.fromWords 9 0 0 0),
+                  at = businessAt,
+                  transactionType = Transfer,
+                  importInfo =
+                    Just
+                      ImportInfo
+                        { externalTransactionIds = extIds,
+                          category = Nothing,
+                          contact = Nothing
+                        },
+                  labels = mempty,
+                  contactId = Nothing
                 }
           )
    in StreamEvent () seqNo (emptyMetadata "TransactionPostingInitiated") inner

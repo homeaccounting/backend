@@ -34,6 +34,10 @@
 --     fails. A re-sync therefore never re-imports a transaction it has already
 --     attempted, preventing the unbounded duplicate accumulation that the
 --     previous (evict-on-failure) behaviour caused.
+--   - External ids are normalized on apply ('normalizePrivatBankRetailId'), so a
+--     provider-synthesized id stored under a superseded derivation still matches
+--     the current one. Deploying such a change therefore needs one
+--     @REBUILD_READ_MODELS=bankimport@ startup and no event rewriting.
 module Application.ReadModels.BankImportReadModel
   ( ImportedTransactionEntity (..),
     ImportedTransactionEntityId,
@@ -43,13 +47,15 @@ module Application.ReadModels.BankImportReadModel
     bankImportReadModel,
     isImported,
     isReconciled,
+    applyBankImportEvent,
+    importAttributionCount,
   )
 where
 
 import Control.Monad (forM_, void)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Maybe (isJust)
-import Database.Persist (Filter, SelectOpt (LimitTo), deleteWhere, getBy, insertUnique, selectList, (==.))
+import Database.Persist (Filter, count, deleteWhere, getBy, insertUnique, (==.))
 import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationSilent)
 import Database.Persist.TH
   ( mkMigrate,
@@ -64,6 +70,7 @@ import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransactionImportReconciled (..), TransactionPostingInitiated (..))
 import Eventium (EventHandler (..), GlobalStreamEvent, ReadModel (..))
 import Eventium.ProjectionCache.Postgresql (CheckpointName (..), postgresqlCheckpointStore)
+import Infrastructure.Banking.ExternalId (normalizePrivatBankRetailId)
 import Infrastructure.Database.Orphans ()
 import Infrastructure.Eventium.GlobalEvent (unpackGlobalEvent)
 
@@ -108,11 +115,18 @@ resetBankImport = deleteWhere ([] :: [Filter ImportedTransactionEntity])
 isImported :: (MonadIO m) => ExternalTransactionId -> SqlPersistT m Bool
 isImported extId = isJust <$> getBy (UniqueExternalTransactionId extId)
 
+-- | How many external ids are attributed to a transaction. Reconciliation
+-- compares this against the transaction's capacity: an income/expense holds one
+-- attribution, a transfer holds two (one per leg), so a transfer that already
+-- absorbed one leg can still absorb the other.
+importAttributionCount :: (MonadIO m) => TransactionId -> SqlPersistT m Int
+importAttributionCount txId =
+  count [ImportedTransactionEntityTransactionId ==. txId]
+
 -- | Whether a transaction already carries import attribution (was imported or
 -- reconciled). Reverse lookup used by reconciliation candidate exclusion.
 isReconciled :: (MonadIO m) => TransactionId -> SqlPersistT m Bool
-isReconciled txId =
-  not . null <$> selectList [ImportedTransactionEntityTransactionId ==. txId] [LimitTo 1]
+isReconciled txId = (> 0) <$> importAttributionCount txId
 
 -- -----------------------------------------------------------------------------
 -- Read model
@@ -132,17 +146,22 @@ applyBankImportEvent globalEvent =
    in case payload of
         TransactionPostingInitiatedEvent evt ->
           case (importInfoExternalTransactionIds <$> evt.importInfo, mkTransactionIdSafe streamUuid) of
-            (Just extIds, Just txId) ->
-              forM_ extIds $ \extId ->
-                void $ insertUnique (ImportedTransactionEntity extId txId)
+            (Just extIds, Just txId) -> record txId extIds
             _ -> pure ()
         TransactionImportReconciledEvent evt ->
           case mkTransactionIdSafe streamUuid of
-            Just txId ->
-              forM_ evt.externalTransactionIds $ \extId ->
-                void $ insertUnique (ImportedTransactionEntity extId txId)
+            Just txId -> record txId evt.externalTransactionIds
             Nothing -> pure ()
         _ -> pure ()
+  where
+    -- Ids are normalized on the way IN to the view, not by rewriting the log:
+    -- a PrivatBank retail id written before commit 38968e9 lands on today's
+    -- derivation, so 'isImported' matches what the parser now produces
+    -- (backend#3 / ADR 004). Doing it here rather than as a one-off table
+    -- migration keeps a rebuild correct, and it is idempotent.
+    record txId extIds =
+      forM_ extIds $ \extId ->
+        void $ insertUnique (ImportedTransactionEntity (normalizePrivatBankRetailId extId) txId)
 
 -- | Secondary indexes the query layer relies on. Persistent's quasi-quoter only
 -- emits the unique constraint on the external id, so the @transaction_id@ column
