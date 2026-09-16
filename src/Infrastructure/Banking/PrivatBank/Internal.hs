@@ -19,7 +19,9 @@ where
 import qualified Data.ByteString as BS
 import qualified Data.Csv as Csv
 import qualified Data.Text as T
+import Data.Time (LocalTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Data.Time.Zones.All (TZLabel (..))
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unsafeExternalAccountId)
@@ -27,7 +29,7 @@ import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
 import Infrastructure.Banking.ExternalId (privatBankRetailExternalId)
 import Infrastructure.Banking.Provider
-import Infrastructure.Banking.Statement (parseSignedDecimal)
+import Infrastructure.Banking.Statement (localToUtcIn, parseSignedDecimal)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
 import RIO
 
@@ -147,9 +149,9 @@ dropPreambleLine bs =
 -- in a 'RowError'.
 validateRow :: Int -> PrivatRawRow -> Either RowError BankTransaction
 validateRow rowNumber raw =
-  case parseTimeM True defaultTimeLocale dateFormat (T.unpack raw.rawDate) of
+  case parseTimeM True defaultTimeLocale dateFormat (T.unpack raw.rawDate) :: Maybe LocalTime of
     Nothing -> rowErr ("invalid date: " <> raw.rawDate)
-    Just utcTime -> case parseSignedDecimal raw.rawAmount of
+    Just localTime -> case parseSignedDecimal raw.rawAmount of
       Nothing -> rowErr ("invalid amount: " <> raw.rawAmount)
       Just amt -> case fmap currencyNumericCode (parseCurrency raw.rawCurrency) of
         Left err -> rowErr ("invalid currency: " <> err)
@@ -160,7 +162,8 @@ validateRow rowNumber raw =
               BankTransaction
                 { externalId = extId,
                   externalAccountId = unsafeExternalAccountId raw.rawCard,
-                  time = utcTime,
+                  -- The statement's clock is Kyiv-local; store the instant (ADR 005).
+                  time = localToUtcIn Europe__Kiev localTime,
                   amount = amt,
                   currencyCode = currCode,
                   description = raw.rawDescription,

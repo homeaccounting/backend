@@ -160,7 +160,8 @@ spec = describe "Infrastructure.Banking.PrivatBankBusiness" $ do
         Right (Right tx : _) -> do
           tx.amount `shouldBe` (4105128 % 100)
           tx.currencyCode `shouldBe` 980
-          tx.time `shouldBe` UTCTime (fromGregorian 2026 8 5) (timeOfDayToTime (TimeOfDay 13 45 30))
+          -- 13:45:30 Kyiv local on 05.08.2026 is EEST (+3) => 10:45:30Z (ADR 005).
+          tx.time `shouldBe` UTCTime (fromGregorian 2026 8 5) (timeOfDayToTime (TimeOfDay 10 45 30))
           tx.externalAccountId `shouldBe` unsafeExternalAccountId "UA-ACC-1"
           tx.contact `shouldBe` mkBankProviderContact "12345678"
           tx.category `shouldBe` mkByCounterparty "12345678"

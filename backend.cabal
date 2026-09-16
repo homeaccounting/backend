@@ -1,4 +1,4 @@
-cabal-version: 1.12
+cabal-version: 2.2
 
 -- This file has been generated from package.yaml by hpack version 0.38.3.
 --
@@ -147,6 +147,7 @@ library
       Infrastructure.Auth.Password
       Infrastructure.Auth.Telegram
       Infrastructure.Banking.CategoryDefaults
+      Infrastructure.Banking.ExternalId
       Infrastructure.Banking.Provider
       Infrastructure.Banking.Providers
       Infrastructure.Banking.Registry
@@ -198,6 +199,8 @@ library
       Web.Types
       Web.Validation
   other-modules:
+      Paths_backend
+  autogen-modules:
       Paths_backend
   hs-source-dirs:
       src
@@ -256,6 +259,8 @@ library
     , text >=1.2 && <2.2
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
+    , tz >=0.1.3 && <0.2
+    , tzdata ==0.2.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*
@@ -301,6 +306,8 @@ library
 executable backend
   main-is: Main.hs
   other-modules:
+      Paths_backend
+  autogen-modules:
       Paths_backend
   hs-source-dirs:
       app
@@ -360,6 +367,8 @@ executable backend
     , text >=1.2 && <2.2
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
+    , tz >=0.1.3 && <0.2
+    , tzdata ==0.2.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*
@@ -394,6 +403,7 @@ test-suite backend-test
       Application.ReadModels.AccountSpec
       Application.ReadModels.AmendmentBalanceSpec
       Application.ReadModels.BalanceAsOfJoinSpec
+      Application.ReadModels.BankImportDedupSpec
       Application.ReadModels.ConfigurationDictionaryDataSpec
       Application.ReadModels.DataVersionIntegrationSpec
       Application.ReadModels.DataVersionSpec
@@ -494,6 +504,7 @@ test-suite backend-test
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Banking.CategoryDefaultsSpec
       Infrastructure.Banking.CsvSpec
+      Infrastructure.Banking.ExternalIdSpec
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.PrivatBankBusinessSpec
       Infrastructure.Banking.PrivatBankSpec
@@ -579,6 +590,8 @@ test-suite backend-test
       Web.ReportingResponseSpec
       Web.TypesSpec
       Paths_backend
+  autogen-modules:
+      Paths_backend
   hs-source-dirs:
       test
   default-extensions:
@@ -649,6 +662,8 @@ test-suite backend-test
     , text >=1.2 && <2.2
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
+    , tz >=0.1.3 && <0.2
+    , tzdata ==0.2.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*

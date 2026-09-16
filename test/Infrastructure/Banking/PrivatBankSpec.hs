@@ -6,6 +6,7 @@ module Infrastructure.Banking.PrivatBankSpec (spec) where
 import qualified Data.ByteString as BS
 import Data.Ratio ((%))
 import qualified Data.Text as T
+import Data.Time (TimeOfDay (..), UTCTime (..), fromGregorian, timeOfDayToTime)
 import Domain.Banking.Import (unExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
@@ -117,6 +118,24 @@ badDateRow =
       "100",
       "UAH",
       "1000.00",
+      "UAH"
+    ]
+
+-- | A well-formed data row stamped with a summer (EEST) Kyiv wall clock, for
+-- the statement-time conversion cases (ADR 005).
+summerRow :: Text
+summerRow =
+  T.intercalate
+    ","
+    [ "06.08.2026 11:09:20",
+      "Дім та ремонт",
+      "0000 **** **** 0000",
+      "AliExpress",
+      "-1221.17",
+      "UAH",
+      "1213.12",
+      "UAH",
+      "-19593.46",
       "UAH"
     ]
 
@@ -370,4 +389,18 @@ spec = describe "Infrastructure.Banking.PrivatBank" $ do
         Right [Right tx] ->
           unExternalTransactionId tx.externalId
             `shouldBe` "privatbank:10.07.2026 03:30:50:(-281) % 1:2191358 % 25"
+        other -> expectationFailure ("expected one valid row, got: " <> show other)
+
+  describe "statement times are Kyiv-local (ADR 005)" $ do
+    it "converts a summer row's wall clock to UTC"
+      $ case parsePrivatBankCsv (mkCsv [summerRow]) of
+        Right [Right tx] ->
+          tx.time `shouldBe` UTCTime (fromGregorian 2026 8 6) (timeOfDayToTime (TimeOfDay 8 9 20))
+        other -> expectationFailure ("expected one valid row, got: " <> show other)
+
+    it "leaves the external id keyed on the raw date text"
+      $ case parsePrivatBankCsv (mkCsv [summerRow]) of
+        Right [Right tx] ->
+          unExternalTransactionId tx.externalId
+            `shouldBe` "privatbank:06.08.2026 11:09:20:(-122117) % 100:(-979673) % 50"
         other -> expectationFailure ("expected one valid row, got: " <> show other)
