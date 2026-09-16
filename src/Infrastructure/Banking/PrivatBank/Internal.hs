@@ -25,8 +25,9 @@ import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
+import Infrastructure.Banking.ExternalId (privatBankRetailExternalId)
 import Infrastructure.Banking.Provider
-import Infrastructure.Banking.Statement (canonicalDecimal, parseSignedDecimal)
+import Infrastructure.Banking.Statement (parseSignedDecimal)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
 import RIO
 
@@ -152,7 +153,7 @@ validateRow rowNumber raw =
       Nothing -> rowErr ("invalid amount: " <> raw.rawAmount)
       Just amt -> case fmap currencyNumericCode (parseCurrency raw.rawCurrency) of
         Left err -> rowErr ("invalid currency: " <> err)
-        Right currCode -> case mkExternalTransactionId (externalIdText raw) of
+        Right currCode -> case mkExternalTransactionId (externalIdFor raw) of
           Left err -> rowErr ("invalid external id: " <> err)
           Right extId ->
             Right
@@ -197,14 +198,9 @@ counterpartyToken =
     . fst
     . T.breakOn ". Коментар:"
 
--- | Deterministic external id composite: the row's date verbatim plus its
--- card-currency amount and running balance in canonical decimal form
--- ('canonicalDecimal'). The running balance makes each row unique even when
--- date+amount repeat (e.g. two identical top-ups). Canonicalising amount and
--- balance by exact value rather than textual spelling makes the id
--- format-independent, so the same statement imported as CSV (@"510"@) or XLSX
--- (@"510.0"@) yields one id and dedups identically; parsing the same file bytes
--- still always yields the same id.
-externalIdText :: PrivatRawRow -> Text
-externalIdText raw =
-  "privatbank:" <> raw.rawDate <> ":" <> canonicalDecimal raw.rawAmount <> ":" <> canonicalDecimal raw.rawBalance
+-- | This row's deterministic external id. The format itself lives in
+-- 'Infrastructure.Banking.ExternalId' — it is an idempotency key pinned by a
+-- golden test, not a local implementation detail (ADR 004).
+externalIdFor :: PrivatRawRow -> Text
+externalIdFor raw =
+  privatBankRetailExternalId raw.rawDate raw.rawAmount raw.rawBalance

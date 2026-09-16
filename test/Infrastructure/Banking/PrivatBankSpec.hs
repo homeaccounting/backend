@@ -6,6 +6,7 @@ module Infrastructure.Banking.PrivatBankSpec (spec) where
 import qualified Data.ByteString as BS
 import Data.Ratio ((%))
 import qualified Data.Text as T
+import Domain.Banking.Import (unExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unBankProviderId, unsafeExternalAccountId)
 import Infrastructure.Banking.PrivatBank (descriptor)
@@ -360,3 +361,13 @@ spec = describe "Infrastructure.Banking.PrivatBank" $ do
       case descriptor.fileImport of
         Nothing -> expectationFailure "expected fileImport to be present"
         Just cap -> Map.keys cap.parsers `shouldBe` [StatementCsv, StatementXlsx]
+
+  describe "externalId derivation (GOLDEN — see Infrastructure.Banking.ExternalIdSpec)"
+    $ it "derives the pinned key for the CSV fixture row"
+    $ do
+      let parsed = parsePrivatBankCsv (mkCsv [goodRow])
+      case parsed of
+        Right [Right tx] ->
+          unExternalTransactionId tx.externalId
+            `shouldBe` "privatbank:10.07.2026 03:30:50:(-281) % 1:2191358 % 25"
+        other -> expectationFailure ("expected one valid row, got: " <> show other)
