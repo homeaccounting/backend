@@ -148,7 +148,6 @@ library
       Infrastructure.Auth.Telegram
       Infrastructure.Banking.CategoryDefaults
       Infrastructure.Banking.ExternalId
-      Infrastructure.Banking.PrivatBankZone
       Infrastructure.Banking.Provider
       Infrastructure.Banking.Providers
       Infrastructure.Banking.Registry

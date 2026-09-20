@@ -25,15 +25,23 @@ where
 import qualified Data.Text as T
 import Data.Time (Day, LocalTime (..), TimeOfDay, UTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Data.Time.Zones.All (TZLabel (..))
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty)
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
-import Infrastructure.Banking.PrivatBankZone (privatBankZone)
 import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, localToUtcIn, parseSignedDecimal, stripTrailingComma)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
 import RIO
+
+-- | The IANA zone of a PrivatBank statement's wall clock.
+--
+-- Note the label spelling: @tz@ (0.1.3.6) predates the @Europe/Kyiv@ rename, so
+-- the constructor is still @Europe__Kiev@. Bumping @tz@/@tzdata@ past the rename
+-- is the one place that has to change (see ADR 005).
+privatBankZone :: TZLabel
+privatBankZone = Europe__Kiev
 
 -- | Parse a PrivatBank business XLSX statement export.
 --

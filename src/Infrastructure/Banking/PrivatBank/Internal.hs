@@ -21,17 +21,25 @@ import qualified Data.Csv as Csv
 import qualified Data.Text as T
 import Data.Time (LocalTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Data.Time.Zones.All (TZLabel (..))
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
 import Infrastructure.Banking.ExternalId (privatBankRetailExternalId)
-import Infrastructure.Banking.PrivatBankZone (privatBankZone)
 import Infrastructure.Banking.Provider
 import Infrastructure.Banking.Statement (localToUtcIn, parseSignedDecimal)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
 import RIO
+
+-- | The IANA zone of a PrivatBank statement's wall clock.
+--
+-- Note the label spelling: @tz@ (0.1.3.6) predates the @Europe/Kyiv@ rename, so
+-- the constructor is still @Europe__Kiev@. Bumping @tz@/@tzdata@ past the rename
+-- is the one place that has to change (see ADR 005).
+privatBankZone :: TZLabel
+privatBankZone = Europe__Kiev
 
 -- | One data row of a PrivatBank CSV export, decoded field-for-field with no
 -- semantic validation — every field is raw 'Text' straight off the CSV. This

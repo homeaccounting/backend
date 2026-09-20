@@ -29,7 +29,7 @@ duplicating the movement.
    movement) get 1.
 
 2. **The capacity rule has one definition.** `importAttributionCapacity :: TransactionType -> Int`
-   lives in `Domain.Core.Types` with a single home, so the write-side aggregate
+   lives in `Domain.Banking.Import` with a single home, so the write-side aggregate
    guard (`Domain.Transaction.CommandHandler`) and the import-side candidate
    filter (`Application.Services.BankImportService`) can never derive the
    *capacity* differently — the duplicate-posting bug (backend#3) was a

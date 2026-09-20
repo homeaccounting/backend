@@ -41,6 +41,7 @@ module Domain.Transaction.CommandHandler
   )
 where
 
+import Domain.Banking.Import (importAttributionCapacity)
 import Domain.Core.Types
   ( Allocation (..),
     Allocations (..),
@@ -49,7 +50,6 @@ import Domain.Core.Types
     TransactionType (..),
     allAllocations,
     allocationsOf,
-    importAttributionCapacity,
     moneyCurrency,
     unAccountId,
     unMoney,
