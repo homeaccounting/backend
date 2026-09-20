@@ -621,10 +621,13 @@ data LegSide = SourceLeg | TargetLeg deriving (Show, Eq)
 
 -- | Completed manual candidates on @account@ on @legSide@, with exact
 -- @amount@ (currency-tagged 'Money'), matching @kind@, business date within
--- @[from, to]@. Callers exclude already-reconciled ids via
--- 'Application.ReadModels.BankImportReadModel.isReconciled'. Amount equality is
--- exact (no fuzz); the date-window and account/leg constraints are enforced here
--- in SQL.
+-- @[from, to]@. Callers exclude a candidate that has no room for the incoming
+-- attach, weighing
+-- 'Application.ReadModels.BankImportReadModel.importAttributionCount' against
+-- 'Domain.Core.Types.importAttributionCapacity' — never a boolean
+-- already-reconciled test, which blocks a transfer's second leg and posts a
+-- duplicate (backend#3). Amount equality is exact (no fuzz); the date-window and
+-- account/leg constraints are enforced here in SQL.
 findReconciliationCandidates ::
   (MonadIO m) =>
   AccountId ->

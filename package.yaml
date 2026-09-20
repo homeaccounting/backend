@@ -50,6 +50,10 @@ dependencies:
   - containers >= 0.6 && < 0.8
   - uuid >= 1.3 && < 1.4
   - time >= 1.9 && < 1.15
+  # Timezone conversion for statement-file imports (ADR 005). tzdata embeds the
+  # IANA database so the conversion is pure and needs no system zoneinfo.
+  - tz >= 0.1.3 && < 0.2
+  - tzdata >= 0.2 && < 0.3
 
   # Monad transformers & effects
   - mtl >= 2.2 && < 2.4
@@ -104,23 +108,16 @@ dependencies:
   - fast-logger >= 3.2 && < 3.3
   - vault >= 0.3 && < 0.4
 
+  # Banking providers (CSV/XLSX statement parsing)
+  - cassava >= 0.5 && < 0.6
+  - vector >= 0.12 && < 0.14
+  - zip-archive >= 0.4 && < 0.5
+
 flags:
   ci:
     description: Enable -Werror for CI builds
     manual: true
     default: false
-  monobank:
-    description: Compile the Monobank (UA) bank provider
-    manual: true
-    default: true
-  privatbank:
-    description: Compile the PrivatBank (UA) bank provider
-    manual: true
-    default: true
-  privatbank-business:
-    description: Compile the PrivatBank (UA) business statement-file provider
-    manual: true
-    default: true
 
 default-extensions:
   - NoFieldSelectors
@@ -147,33 +144,6 @@ library:
   when:
     - condition: flag(ci)
       ghc-options: -Werror
-    - condition: flag(monobank)
-      cpp-options: -DPROVIDER_MONOBANK
-      exposed-modules:
-        - Infrastructure.Banking.Monobank
-        - Infrastructure.Banking.Monobank.Internal
-    - condition: flag(privatbank)
-      cpp-options: -DPROVIDER_PRIVATBANK
-      exposed-modules:
-        - Infrastructure.Banking.PrivatBank
-        - Infrastructure.Banking.PrivatBank.Internal
-    - condition: flag(privatbank)
-      exposed-modules:
-        - Infrastructure.Banking.Csv
-      dependencies:
-        - cassava >= 0.5 && < 0.6
-        - vector >= 0.12 && < 0.14
-    - condition: flag(privatbank-business)
-      cpp-options: -DPROVIDER_PRIVATBANK_BUSINESS
-      exposed-modules:
-        - Infrastructure.Banking.PrivatBankBusiness
-        - Infrastructure.Banking.PrivatBankBusiness.Internal
-    - condition: flag(privatbank-business)
-      exposed-modules:
-        - Infrastructure.Banking.Xlsx
-      dependencies:
-        - zip-archive >= 0.4 && < 0.5
-        - vector >= 0.12 && < 0.14
 
 executables:
   backend:

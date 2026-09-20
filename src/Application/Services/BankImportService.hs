@@ -58,7 +58,7 @@ where
 
 import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
-import Application.ReadModels.BankImportReadModel (isImported, isReconciled)
+import Application.ReadModels.BankImportReadModel (importAttributionCount, isImported)
 import Application.ReadModels.Configuration (ConfigurationData (..), dictionaryItemIds, dictionaryItems)
 import Application.ReadModels.Transaction
   ( LegSide (..),
@@ -83,7 +83,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text.Match (normalizeName)
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, utctDay)
-import Domain.Banking.Import (ExternalTransactionId, ImportInfo (..))
+import Domain.Banking.Import (ExternalTransactionId, ImportInfo (..), importAttributionCapacity)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, renderBankProviderCategoryKey, renderBankProviderContactKey)
 import Domain.Banking.Types (ExternalAccountId, unExternalAccountId)
 import Domain.Configuration.Defaults (expenseCategoryDictKind, incomeCategoryDictKind)
@@ -369,7 +369,11 @@ importTransferPair classify userId accountLink transfer = do
             label = textDisplay dLeg.externalId <> "/" <> textDisplay cLeg.externalId
         candidates <- runDb (findTransferReconciliationCandidates dLocal cLocal money fromT toT)
         result <-
-          attemptReconcile userId label importedLeg candidates (legOf SourceLeg) (dLeg.externalId :| [cLeg.externalId]) Nothing Nothing
+          -- The full 'reconciliationWindow': this is a detected transfer pair
+          -- matching a manually-entered transfer — same-kind reconciliation of
+          -- the same movement, not the single-leg cross-kind attach that
+          -- 'transferLegReconciliationWindow' tightens.
+          attemptReconcile reconciliationWindow userId label importedLeg candidates (legOf SourceLeg) (dLeg.externalId :| [cLeg.externalId]) Nothing Nothing
         case result of
           ReconciledOnto tid -> bothLegs (Imported tid)
           ReconcileAmbiguous -> bothLegs (Skipped AmbiguousReconciliation)
@@ -937,20 +941,93 @@ commitImport classify userId userData localAccId tx money = do
           kind = case direction of
             ClassifiedExpense -> ExpenseKind
             ClassifiedIncome -> IncomeKind
-          fromT = addUTCTime (negate reconciliationWindow) tx.time
-          toT = addUTCTime reconciliationWindow tx.time
           importedLeg = Leg (unMoney money) (moneyCurrency money) tx.time
-      candidates <- lift $ runDb (findReconciliationCandidates localAccId legSide money kind fromT toT)
-      result <-
-        lift $ attemptReconcile userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.category tx.contact
+      -- Same-kind candidates first; a Transfer leg only if none matched. A
+      -- user-converted (or hand-entered) transfer carries the matching leg on
+      -- this account, but its kind is TransferKind, so a single-leg import
+      -- could never see it and posted a duplicate (backend#3).
+      --
+      -- Ordering the passes only DEFERS the transfer pass: no same-kind
+      -- candidate is the common case (most imported rows have no hand-entered
+      -- counterpart), so an ordinary expense routinely reaches the transfer
+      -- pass and a lone same-amount transfer leg there is a UniqueMatch, not
+      -- Ambiguous. The transfer pass therefore runs on the much tighter
+      -- 'transferLegReconciliationWindow' — both for the SQL date bounds and
+      -- for the pure matcher, or the tightening would be cosmetic — and every
+      -- attach it makes is logged ('warnCrossKindReconcile'), because the
+      -- window alone cannot separate a real transfer leg from an unrelated
+      -- same-amount spend on the same day.
+      let tryKind window k = do
+            let fromT = addUTCTime (negate window) tx.time
+                toT = addUTCTime window tx.time
+            candidates <- runDb (findReconciliationCandidates localAccId legSide money k fromT toT)
+            attemptReconcile window userId (textDisplay tx.externalId) importedLeg candidates (legOf legSide) (tx.externalId :| []) tx.category tx.contact
+      sameKind <- lift (tryKind reconciliationWindow kind)
+      result <- case sameKind of
+        ReconcileNoMatch -> do
+          crossKind <- lift (tryKind transferLegReconciliationWindow TransferKind)
+          case crossKind of
+            ReconciledOnto tid -> lift (warnCrossKindReconcile tx money tid)
+            _ -> pure ()
+          pure crossKind
+        matched -> pure matched
       case result of
         ReconciledOnto tid -> pure (Imported tid)
         ReconcileAmbiguous -> pure (Skipped AmbiguousReconciliation)
         ReconcileNoMatch -> commitMatchingCurrencyImport userId externalAccId localAccId tx money direction
 
 -- | Fuzzy-match window for manual↔import reconciliation: ±3 days (spec §1).
+-- Wide on purpose: it reconciles an import against the SAME transaction entered
+-- by hand, and a hand-entered date is approximate (a receipt typed in over the
+-- weekend).
 reconciliationWindow :: NominalDiffTime
 reconciliationWindow = 3 * 86400
+
+-- | Fuzzy-match window for attaching a single-leg import onto an existing
+-- 'Transfer' leg: ±1 day.
+--
+-- Deliberately much tighter than 'reconciliationWindow'. That window exists for
+-- date imprecision in a hand-entered copy of the same transaction; the transfer
+-- pass is a different problem — the bank leg IS the movement the user recorded,
+-- so a day is ample. The extra slack is pure risk there, because the transfer
+-- pass runs whenever no same-kind candidate matched (the common case) and a lone
+-- same-amount transfer leg is then a unique match: a genuinely unrelated spend
+-- of a round amount would attach to the transfer, never post, and — dedup being
+-- permanent by design — bind its external id to the transfer for good, leaving
+-- the balance understated. ±1 day bounds how far that can reach
+-- (ADR 006 "Out of scope").
+transferLegReconciliationWindow :: NominalDiffTime
+transferLegReconciliationWindow = 86400
+
+-- | Record a cross-kind attach: an income/expense import that matched no
+-- same-kind candidate and was attributed to an existing 'Transfer' leg instead.
+--
+-- Usually right — it is the transfer leg the user recorded by hand, which is
+-- what the second pass exists for (backend#3). But it is also the one shape in
+-- which an unrelated same-amount spend gets absorbed: it never posts, the
+-- balance is understated by its amount, and bank-import dedup is permanent by
+-- design, so its external id stays bound to the transfer. The window cannot
+-- separate the two cases (a midnight-dated manual transfer and an evening bank
+-- leg on the same day are already ~24h apart), so the trace is what makes the
+-- residual risk discoverable instead of invisible. Grep @cross-kind reconcile@.
+--
+-- Not emitted for a same-kind reconcile, nor for the whole-pair transfer route:
+-- those match like for like, and warning on the normal path would train the
+-- operator to ignore the line.
+warnCrossKindReconcile :: BankTransaction -> Money -> TransactionId -> AppM ()
+warnCrossKindReconcile tx money tid =
+  logWarn
+    $ "cross-kind reconcile: import "
+    <> display tx.externalId
+    <> " ("
+    <> displayShow (unMoney money)
+    <> " "
+    <> displayShow (moneyCurrency money)
+    <> ") attached onto transfer "
+    <> displayShow tid
+    <> " — expected for a hand-entered transfer's leg, but an unrelated"
+    <> " same-amount transaction would be absorbed the same way and never"
+    <> " posted; check this transfer if a balance looks understated"
 
 -- | Project a matched candidate's local leg into a 'Leg' for the pure matcher.
 legOf :: LegSide -> TransactionData -> Leg Currency
@@ -968,12 +1045,18 @@ data ReconcileResult
     ReconcileNoMatch
 
 -- | The shared reconcile step for both import paths (single transaction and
--- whole-pair transfer): exclude already-reconciled candidates, run the pure
--- matcher, and on a unique match attach the incoming external id(s) + category
--- + contact onto the matched manual transaction. Returns a 'ReconcileResult' the caller turns
+-- whole-pair transfer): exclude candidates without room for this attach, run
+-- the pure matcher, and on a unique match attach the incoming external id(s)
+-- + category + contact onto the matched manual transaction. Returns a 'ReconcileResult' the caller turns
 -- into its own outcome. @label@ is a grep-friendly tag for the log lines (the
 -- transaction's external id, or @"d/c"@ for a transfer pair).
+--
+-- @window@ is the caller's fuzzy-match tolerance, and must be the same value
+-- the caller used for its SQL date bounds — the query narrows the candidates,
+-- this matcher decides among them, and a mismatch would make the narrower of
+-- the two the only one that counts.
 attemptReconcile ::
+  NominalDiffTime ->
   UserId ->
   Text ->
   Leg Currency ->
@@ -983,9 +1066,9 @@ attemptReconcile ::
   Maybe BankProviderCategory ->
   Maybe BankProviderContact ->
   AppM ReconcileResult
-attemptReconcile userId label importedLeg candidates projectLeg extIds category contact = do
-  fresh <- filterM (\(tid, _) -> not <$> runDb (isReconciled tid)) candidates
-  case reconcile reconciliationWindow importedLeg [(tid, projectLeg td) | (tid, td) <- fresh] of
+attemptReconcile window userId label importedLeg candidates projectLeg extIds category contact = do
+  fresh <- filterM hasSpareAttribution candidates
+  case reconcile window importedLeg [(tid, projectLeg td) | (tid, td) <- fresh] of
     NoMatch -> pure ReconcileNoMatch
     Ambiguous tids -> do
       logInfo $ "Ambiguous reconciliation for import " <> display label <> " (" <> displayShow (length tids) <> " candidates); skipping"
@@ -999,6 +1082,34 @@ attemptReconcile userId label importedLeg candidates projectLeg extIds category 
         Left err -> do
           logWarn $ "Reconcile of " <> display label <> " onto " <> displayShow tid <> " failed (" <> displayShow err <> "); importing fresh"
           pure ReconcileNoMatch
+  where
+    -- A candidate is eligible while this attach still fits its
+    -- 'importAttributionCapacity': an income/expense holds one external id, a
+    -- transfer two (one per leg), so a transfer that already absorbed one leg
+    -- can still absorb the other. A boolean "already reconciled" test blocked
+    -- that second leg and let it post a duplicate instead. It counts the ids
+    -- THIS attach carries, so the whole-pair route (two ids at once) rules out
+    -- a partly-attributed transfer here rather than being rejected by the
+    -- aggregate afterwards and losing the other candidates with it. A leg
+    -- re-arriving under its own id never reaches here — 'isImported' skips it
+    -- first.
+    --
+    -- What this predicate shares with the transaction aggregate's reconcile
+    -- guard is the CAPACITY rule ('importAttributionCapacity'), not the count:
+    -- the two deliberately count from different sources. 'importAttributionCount'
+    -- reads @imported_transactions@, which the projection fills from
+    -- 'TransactionPostingInitiated'-with-importInfo AS WELL AS
+    -- 'TransactionImportReconciled'; the aggregate folds only the latter. So an
+    -- import-CREATED transaction has read-model count 1 and aggregate count 0.
+    -- The read-model count is a superset, hence always the safe side — this
+    -- filter is strictly more conservative than the aggregate, and for an
+    -- import-created transaction the stricter answer is also the correct one
+    -- (it already carries its own bank id; a second unrelated id has no
+    -- business attaching). Do NOT "fix" the asymmetry by counting the
+    -- aggregate's ids here: that would re-open a duplicate-posting path.
+    hasSpareAttribution (tid, td) = do
+      attributed <- runDb (importAttributionCount tid)
+      pure (attributed + length extIds <= importAttributionCapacity td.transactionType)
 
 -- | Continue an import once the LOCAL account's currency has been confirmed to
 -- match the transaction currency. Handles configuration lookup, category

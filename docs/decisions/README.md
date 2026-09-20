@@ -9,6 +9,9 @@ This directory contains Architecture Decision Records documenting significant te
 | [001](./001-event-field-naming.md) | Event field naming convention | Accepted | 2026-06-13 |
 | [002](./002-structural-group-item-dictionary-entries.md) | Structural group/item dictionary entries | Accepted | 2026-07-20 |
 | [003](./003-process-manager-snapshot-caching.md) | Process managers project through a snapshot cache | Accepted | 2026-08-21 |
+| [004](./004-synthesized-external-ids-are-pinned-idempotency-keys.md) | Provider-synthesized external ids are pinned idempotency keys | Accepted | 2026-09-15 |
+| [005](./005-statement-times-are-provider-local.md) | Statement wall-clock times are provider-local | Accepted | 2026-09-15 |
+| [006](./006-import-attribution-capacity-replaces-boolean-reconciled.md) | Import attribution is capacity-limited, not once-only | Accepted | 2026-09-16 |
 
 ## ADR Format
 

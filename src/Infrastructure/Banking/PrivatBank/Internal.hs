@@ -19,16 +19,27 @@ where
 import qualified Data.ByteString as BS
 import qualified Data.Csv as Csv
 import qualified Data.Text as T
+import Data.Time (LocalTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Data.Time.Zones.All (TZLabel (..))
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByLabel)
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Csv (comma, csvColumn, csvStatementParser)
+import Infrastructure.Banking.ExternalId (privatBankRetailExternalId)
 import Infrastructure.Banking.Provider
-import Infrastructure.Banking.Statement (canonicalDecimal, parseSignedDecimal)
+import Infrastructure.Banking.Statement (localToUtcIn, parseSignedDecimal)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
 import RIO
+
+-- | The IANA zone of a PrivatBank statement's wall clock.
+--
+-- Note the label spelling: @tz@ (0.1.3.6) predates the @Europe/Kyiv@ rename, so
+-- the constructor is still @Europe__Kiev@. Bumping @tz@/@tzdata@ past the rename
+-- is the one place that has to change (see ADR 005).
+privatBankZone :: TZLabel
+privatBankZone = Europe__Kiev
 
 -- | One data row of a PrivatBank CSV export, decoded field-for-field with no
 -- semantic validation — every field is raw 'Text' straight off the CSV. This
@@ -146,20 +157,21 @@ dropPreambleLine bs =
 -- in a 'RowError'.
 validateRow :: Int -> PrivatRawRow -> Either RowError BankTransaction
 validateRow rowNumber raw =
-  case parseTimeM True defaultTimeLocale dateFormat (T.unpack raw.rawDate) of
+  case parseTimeM True defaultTimeLocale dateFormat (T.unpack raw.rawDate) :: Maybe LocalTime of
     Nothing -> rowErr ("invalid date: " <> raw.rawDate)
-    Just utcTime -> case parseSignedDecimal raw.rawAmount of
+    Just localTime -> case parseSignedDecimal raw.rawAmount of
       Nothing -> rowErr ("invalid amount: " <> raw.rawAmount)
       Just amt -> case fmap currencyNumericCode (parseCurrency raw.rawCurrency) of
         Left err -> rowErr ("invalid currency: " <> err)
-        Right currCode -> case mkExternalTransactionId (externalIdText raw) of
+        Right currCode -> case mkExternalTransactionId (externalIdFor raw) of
           Left err -> rowErr ("invalid external id: " <> err)
           Right extId ->
             Right
               BankTransaction
                 { externalId = extId,
                   externalAccountId = unsafeExternalAccountId raw.rawCard,
-                  time = utcTime,
+                  -- The statement's clock is Kyiv-local; store the instant (ADR 005).
+                  time = localToUtcIn privatBankZone localTime,
                   amount = amt,
                   currencyCode = currCode,
                   description = raw.rawDescription,
@@ -197,14 +209,9 @@ counterpartyToken =
     . fst
     . T.breakOn ". Коментар:"
 
--- | Deterministic external id composite: the row's date verbatim plus its
--- card-currency amount and running balance in canonical decimal form
--- ('canonicalDecimal'). The running balance makes each row unique even when
--- date+amount repeat (e.g. two identical top-ups). Canonicalising amount and
--- balance by exact value rather than textual spelling makes the id
--- format-independent, so the same statement imported as CSV (@"510"@) or XLSX
--- (@"510.0"@) yields one id and dedups identically; parsing the same file bytes
--- still always yields the same id.
-externalIdText :: PrivatRawRow -> Text
-externalIdText raw =
-  "privatbank:" <> raw.rawDate <> ":" <> canonicalDecimal raw.rawAmount <> ":" <> canonicalDecimal raw.rawBalance
+-- | This row's deterministic external id. The format itself lives in
+-- 'Infrastructure.Banking.ExternalId' — it is an idempotency key pinned by a
+-- golden test, not a local implementation detail (ADR 004).
+externalIdFor :: PrivatRawRow -> Text
+externalIdFor raw =
+  privatBankRetailExternalId raw.rawDate raw.rawAmount raw.rawBalance

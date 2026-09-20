@@ -4,7 +4,9 @@
 module Infrastructure.Banking.StatementSpec (spec) where
 
 import Data.Ratio ((%))
-import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, parseSignedDecimal, stripTrailingComma)
+import Data.Time (LocalTime (..), TimeOfDay (..), UTCTime (..), fromGregorian, timeOfDayToTime)
+import Data.Time.Zones.All (TZLabel (..))
+import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, localToUtcIn, parseSignedDecimal, stripTrailingComma)
 import RIO
 import Test.Hspec
 
@@ -35,3 +37,16 @@ spec = do
     it "drops a single trailing comma and is a no-op otherwise" $ do
       stripTrailingComma "918.99," `shouldBe` "918.99"
       stripTrailingComma "USD" `shouldBe` "USD"
+
+  describe "localToUtcIn" $ do
+    it "converts a summer (EEST, +3) Kyiv wall clock"
+      $ localToUtcIn Europe__Kiev (LocalTime (fromGregorian 2026 8 6) (TimeOfDay 11 9 20))
+      `shouldBe` UTCTime (fromGregorian 2026 8 6) (timeOfDayToTime (TimeOfDay 8 9 20))
+
+    it "converts a winter (EET, +2) Kyiv wall clock"
+      $ localToUtcIn Europe__Kiev (LocalTime (fromGregorian 2026 1 15) (TimeOfDay 11 9 20))
+      `shouldBe` UTCTime (fromGregorian 2026 1 15) (timeOfDayToTime (TimeOfDay 9 9 20))
+
+    it "rolls back a day when the local clock is just after midnight"
+      $ localToUtcIn Europe__Kiev (LocalTime (fromGregorian 2026 8 9) (TimeOfDay 0 2 57))
+      `shouldBe` UTCTime (fromGregorian 2026 8 8) (timeOfDayToTime (TimeOfDay 21 2 57))

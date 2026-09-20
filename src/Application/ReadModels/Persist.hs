@@ -14,7 +14,9 @@
 --   * 'initializePersistentReadModels' brings each model up to date at startup
 --     with 'catchUpReadModel' (initialize + replay from its checkpoint, no
 --     reset) — or 'rebuildReadModel' (reset + replay) when named in
---     'rebuildEnvVar'.
+--     'rebuildEnvVar'. A rebuild is announced on the log around the replay
+--     (grep @read-model rebuild@), because it is an operator-requested one-off
+--     whose only other evidence is the corrected data it produces.
 --
 -- Lives in Application (it references concrete read models) and is called from
 -- the composition root, so Infrastructure need not depend on Application.
@@ -66,17 +68,46 @@ persistentReadModels =
 
 -- | Bring every persistent read model up to date at startup: catch up from each
 -- model's checkpoint, or fully rebuild the ones named in 'rebuildEnvVar'.
+--
+-- Each rebuild is logged by name, before and after its replay, so that the
+-- operator who set 'rebuildEnvVar' for a one-off correction can confirm it
+-- actually ran (and see it start, since replaying the whole log is not quick).
+-- A catch-up is the normal startup path and stays silent.
 initializePersistentReadModels ::
+  (MonadIO m, MonadReader env m, HasLogFunc env) =>
   ConnectionPool ->
   AccountingGlobalEventStoreReader SqlIO ->
-  IO ()
+  m ()
 initializePersistentReadModels pool gr = do
-  rebuildTargets <- readRebuildTargets
+  rebuildTargets <- liftIO readRebuildTargets
+  warnUnknownRebuildTargets rebuildTargets
   forM_ persistentReadModels $ \(name, rm) ->
-    runDbDirect pool
-      $ if shouldRebuild rebuildTargets name
-        then rebuildReadModel gr rm
-        else catchUpReadModel gr rm
+    if shouldRebuild rebuildTargets name
+      then do
+        logInfo $ "Starting read-model rebuild (reset + full replay): " <> display name
+        liftIO $ runDbDirect pool (rebuildReadModel gr rm)
+        logInfo $ "Finished read-model rebuild: " <> display name
+      else liftIO $ runDbDirect pool (catchUpReadModel gr rm)
+
+-- | Warn about 'rebuildEnvVar' entries that name no registered projection.
+-- Such an entry is a no-op, so a typo would otherwise leave the operator
+-- concluding from a clean startup that the rebuild they asked for happened.
+warnUnknownRebuildTargets ::
+  (MonadIO m, MonadReader env m, HasLogFunc env) =>
+  [Text] ->
+  m ()
+warnUnknownRebuildTargets targets =
+  case filter (\t -> t /= "all" && t `notElem` known) targets of
+    [] -> pure ()
+    unknown ->
+      logWarn
+        $ display (T.pack rebuildEnvVar)
+        <> " names no such projection: "
+        <> display (T.intercalate ", " unknown)
+        <> " — nothing was rebuilt for it. Known projections: "
+        <> display (T.intercalate ", " known)
+  where
+    known = map fst persistentReadModels
 
 -- | Parse 'rebuildEnvVar' into a list of requested targets (trimmed,
 -- comma-separated). Empty when unset.

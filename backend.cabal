@@ -1,4 +1,4 @@
-cabal-version: 1.12
+cabal-version: 2.2
 
 -- This file has been generated from package.yaml by hpack version 0.38.3.
 --
@@ -37,21 +37,6 @@ flag ci
   description: Enable -Werror for CI builds
   manual: True
   default: False
-
-flag monobank
-  description: Compile the Monobank (UA) bank provider
-  manual: True
-  default: True
-
-flag privatbank
-  description: Compile the PrivatBank (UA) bank provider
-  manual: True
-  default: True
-
-flag privatbank-business
-  description: Compile the PrivatBank (UA) business statement-file provider
-  manual: True
-  default: True
 
 library
   exposed-modules:
@@ -147,10 +132,19 @@ library
       Infrastructure.Auth.Password
       Infrastructure.Auth.Telegram
       Infrastructure.Banking.CategoryDefaults
+      Infrastructure.Banking.Csv
+      Infrastructure.Banking.ExternalId
+      Infrastructure.Banking.Monobank
+      Infrastructure.Banking.Monobank.Internal
+      Infrastructure.Banking.PrivatBank
+      Infrastructure.Banking.PrivatBank.Internal
+      Infrastructure.Banking.PrivatBankBusiness
+      Infrastructure.Banking.PrivatBankBusiness.Internal
       Infrastructure.Banking.Provider
       Infrastructure.Banking.Providers
       Infrastructure.Banking.Registry
       Infrastructure.Banking.Statement
+      Infrastructure.Banking.Xlsx
       Infrastructure.Bootstrap
       Infrastructure.Config
       Infrastructure.Crypto.SecretBox
@@ -199,6 +193,8 @@ library
       Web.Validation
   other-modules:
       Paths_backend
+  autogen-modules:
+      Paths_backend
   hs-source-dirs:
       src
   default-extensions:
@@ -222,6 +218,7 @@ library
     , base >=4.17 && <5
     , base64-bytestring ==1.2.*
     , bytestring >=0.10 && <0.13
+    , cassava ==0.5.*
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
     , eventium-core >=0.7.1 && <0.8.0
@@ -256,10 +253,13 @@ library
     , text >=1.2 && <2.2
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
+    , tz >=0.1.3 && <0.2
+    , tzdata ==0.2.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*
     , vault ==0.3.*
+    , vector >=0.12 && <0.14
     , wai ==3.2.*
     , wai-cors ==0.2.*
     , wai-extra ==3.1.*
@@ -267,40 +267,16 @@ library
     , warp >=3.3 && <3.5
     , xml-conduit >=1.9 && <2
     , yaml ==0.11.*
+    , zip-archive ==0.4.*
   default-language: Haskell2010
   if flag(ci)
     ghc-options: -Werror
-  if flag(monobank)
-    exposed-modules:
-        Infrastructure.Banking.Monobank
-        Infrastructure.Banking.Monobank.Internal
-    cpp-options: -DPROVIDER_MONOBANK
-  if flag(privatbank)
-    exposed-modules:
-        Infrastructure.Banking.PrivatBank
-        Infrastructure.Banking.PrivatBank.Internal
-    cpp-options: -DPROVIDER_PRIVATBANK
-  if flag(privatbank)
-    exposed-modules:
-        Infrastructure.Banking.Csv
-    build-depends:
-        cassava ==0.5.*
-      , vector >=0.12 && <0.14
-  if flag(privatbank-business)
-    exposed-modules:
-        Infrastructure.Banking.PrivatBankBusiness
-        Infrastructure.Banking.PrivatBankBusiness.Internal
-    cpp-options: -DPROVIDER_PRIVATBANK_BUSINESS
-  if flag(privatbank-business)
-    exposed-modules:
-        Infrastructure.Banking.Xlsx
-    build-depends:
-        vector >=0.12 && <0.14
-      , zip-archive ==0.4.*
 
 executable backend
   main-is: Main.hs
   other-modules:
+      Paths_backend
+  autogen-modules:
       Paths_backend
   hs-source-dirs:
       app
@@ -326,6 +302,7 @@ executable backend
     , base >=4.17 && <5
     , base64-bytestring ==1.2.*
     , bytestring >=0.10 && <0.13
+    , cassava ==0.5.*
     , containers >=0.6 && <0.8
     , cryptonite >=0.29 && <0.31
     , eventium-core >=0.7.1 && <0.8.0
@@ -360,10 +337,13 @@ executable backend
     , text >=1.2 && <2.2
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
+    , tz >=0.1.3 && <0.2
+    , tzdata ==0.2.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*
     , vault ==0.3.*
+    , vector >=0.12 && <0.14
     , wai ==3.2.*
     , wai-cors ==0.2.*
     , wai-extra ==3.1.*
@@ -371,6 +351,7 @@ executable backend
     , warp >=3.3 && <3.5
     , xml-conduit >=1.9 && <2
     , yaml ==0.11.*
+    , zip-archive ==0.4.*
   default-language: Haskell2010
   if flag(ci)
     ghc-options: -Werror
@@ -394,6 +375,7 @@ test-suite backend-test
       Application.ReadModels.AccountSpec
       Application.ReadModels.AmendmentBalanceSpec
       Application.ReadModels.BalanceAsOfJoinSpec
+      Application.ReadModels.BankImportDedupSpec
       Application.ReadModels.ConfigurationDictionaryDataSpec
       Application.ReadModels.DataVersionIntegrationSpec
       Application.ReadModels.DataVersionSpec
@@ -494,6 +476,7 @@ test-suite backend-test
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Banking.CategoryDefaultsSpec
       Infrastructure.Banking.CsvSpec
+      Infrastructure.Banking.ExternalIdSpec
       Infrastructure.Banking.MonobankSpec
       Infrastructure.Banking.PrivatBankBusinessSpec
       Infrastructure.Banking.PrivatBankSpec
@@ -579,6 +562,8 @@ test-suite backend-test
       Web.ReportingResponseSpec
       Web.TypesSpec
       Paths_backend
+  autogen-modules:
+      Paths_backend
   hs-source-dirs:
       test
   default-extensions:
@@ -649,6 +634,8 @@ test-suite backend-test
     , text >=1.2 && <2.2
     , time >=1.9 && <1.15
     , transformers >=0.5 && <0.7
+    , tz >=0.1.3 && <0.2
+    , tzdata ==0.2.*
     , unliftio ==0.2.*
     , unordered-containers ==0.2.*
     , uuid ==1.3.*

@@ -20,6 +20,7 @@ import Application.ReadModels.Account (AccountData (..))
 import qualified Application.ReadModels.Account as AccountRM
 import Application.ReadModels.BankImportReadModel
   ( bankImportReadModel,
+    importAttributionCount,
     isImported,
     isReconciled,
   )
@@ -92,6 +93,7 @@ import Infrastructure.Database (runDbDirect)
 import Infrastructure.Eventium (accountingGlobalEventStoreReader)
 import RIO
 import RIO.List (find)
+import qualified RIO.Text as T
 import Test.Hspec
 import Testkit.BankingHelpers (byCounterparty)
 import qualified Testkit.Fixtures as Fixtures
@@ -106,7 +108,7 @@ import Testkit.Helpers
     singletonExpense,
     singletonIncome,
   )
-import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
+import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn, withCapturingLogFunc)
 
 -- -----------------------------------------------------------------------------
 -- Test Data
@@ -1464,6 +1466,105 @@ spec = describe "BankImportService" $ do
           allSkipped2 = concatMap (.skipped) result2.accounts
       allSucceeded2 `shouldBe` []
       allSkipped2 `shouldBe` ["already imported", "already imported"]
+
+  describe "reconciling onto a Transfer (backend#3)" $ do
+    it "reconciles a single-leg import onto an existing transfer instead of importing fresh" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      transferId <- seedManualTransfer env accA accB 500 testTime
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", accA)]
+          debitLegTx = mkTestTransaction (-500) "leg-debit"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink debitLegTx
+      result `shouldBe` Imported transferId
+      -- Attached to the transfer, not posted alongside it.
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      runDbIn env (isReconciled transferId) `shouldReturn` True
+
+    it "lets the opposite leg attach to the same transfer" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      transferId <- seedManualTransfer env accA accB 500 testTime
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink =
+            [ (unsafeExternalAccountId "mono-acc-1", accA),
+              (unsafeExternalAccountId "mono-acc-2", accB)
+            ]
+          debitLegTx = mkTestTransaction (-500) "leg-debit"
+          creditLegTx = mkTestTransactionWithAccount 500 "leg-credit" "mono-acc-2"
+      r1 <- runAppM env $ importTransaction mockClassify testUserId accountLink debitLegTx
+      r1 `shouldBe` Imported transferId
+      -- A transfer's attribution capacity is two, one per leg: a boolean
+      -- already-reconciled exclusion blocked this second attach and posted a
+      -- duplicate instead.
+      r2 <- runAppM env $ importTransaction mockClassify testUserId accountLink creditLegTx
+      r2 `shouldBe` Imported transferId
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      runDbIn env (importAttributionCount transferId) `shouldReturn` 2
+
+    it "prefers a same-kind candidate over a transfer candidate" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      transferId <- seedManualTransfer env accA accB 500 testTime
+      expenseId <- seedManualExpense env accA 500 testTime
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 2
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", accA)]
+          debitLegTx = mkTestTransaction (-500) "leg-debit"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink debitLegTx
+      -- Same-kind pass runs first, so relaxing the kind filter cannot let a
+      -- nearby same-amount transfer hijack an ordinary expense.
+      result `shouldBe` Imported expenseId
+      runDbIn env (isReconciled expenseId) `shouldReturn` True
+      runDbIn env (isReconciled transferId) `shouldReturn` False
+
+    -- The cross-kind (transfer) pass runs on its own ±1 day window, tighter
+    -- than the ±3 day manual↔import window, because it is the one pass that can
+    -- attach an ordinary expense to a DIFFERENT movement: it fires whenever no
+    -- same-kind candidate matched (the common case), and a lone same-amount
+    -- transfer leg is a unique match. An absorbed expense never posts and its
+    -- external id is bound to the transfer permanently, so the reach of that
+    -- mistake is bounded here.
+    it "does not attach an ordinary expense to a transfer outside the ±1 day window" $ do
+      (env, accA, accB) <- setupTransferTestEnv
+      -- Two days out: still inside the ±3 day same-kind window, outside the
+      -- ±1 day window the cross-kind pass uses.
+      transferId <- seedManualTransfer env accA accB 500 (addUTCTime (2 * 86400) testTime)
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 1
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", accA)]
+          unrelatedSpend = mkTestTransaction (-500) "shop-500"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink unrelatedSpend
+      -- Imported as its own expense, not swallowed by the transfer.
+      newTxId <- expectImported result
+      newTxId `shouldNotBe` transferId
+      runDbIn env TransactionRM.countTransactions `shouldReturn` 2
+      runDbIn env (isReconciled transferId) `shouldReturn` False
+
+    -- The window cannot go below ~24h (a date-picker client sends a midnight
+    -- date, so a legitimate same-day pair is already ~24h apart), so a WARN on
+    -- every cross-kind attach is what keeps the residual mis-attribution
+    -- discoverable rather than invisible.
+    it "warns on a cross-kind attach onto a transfer" $ do
+      (env0, accA, accB) <- setupTransferTestEnv
+      transferId <- seedManualTransfer env0 accA accB 500 testTime
+      (env, readLogs) <- withCapturingLogFunc env0
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", accA)]
+          debitLegTx = mkTestTransaction (-500) "leg-debit"
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink debitLegTx
+      result `shouldBe` Imported transferId
+      logged <- readLogs
+      filter (T.isInfixOf "cross-kind reconcile") logged `shouldNotBe` []
+
+    it "does not warn on a same-kind reconcile" $ do
+      (env0, bankAccId) <- setupTestEnv
+      manualTxId <- seedManualExpense env0 bankAccId 50 testTime
+      (env, readLogs) <- withCapturingLogFunc env0
+      let accountLink :: [(ExternalAccountId, AccountId)]
+          accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
+      result <- runAppM env $ importTransaction mockClassify testUserId accountLink (mkTestTransaction (-50) "recon-same-kind")
+      result `shouldBe` Imported manualTxId
+      logged <- readLogs
+      filter (T.isInfixOf "cross-kind reconcile") logged `shouldBe` []
 
 -- -----------------------------------------------------------------------------
 -- Event construction for the read-model dedup test

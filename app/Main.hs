@@ -299,7 +299,7 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
   -- the event-append transaction; this is the one-time backfill / bounded boot
   -- catch-up / on-demand rebuild path.
   logInfo "Migrating + catching up persistent read models..."
-  liftIO $ initializePersistentReadModels pool sqlGlobalReader
+  initializePersistentReadModels pool sqlGlobalReader
   logInfo "Persistent read models up to date"
 
   -- Business metrics: scrape-time COUNT(*) on the read-model tables, exposed as

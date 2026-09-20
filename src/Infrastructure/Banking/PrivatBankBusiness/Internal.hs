@@ -23,16 +23,25 @@ module Infrastructure.Banking.PrivatBankBusiness.Internal
 where
 
 import qualified Data.Text as T
-import Data.Time (Day, TimeOfDay, UTCTime (..), timeOfDayToTime)
+import Data.Time (Day, LocalTime (..), TimeOfDay, UTCTime)
 import Data.Time.Format (defaultTimeLocale, parseTimeM)
+import Data.Time.Zones.All (TZLabel (..))
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty)
 import Domain.Banking.Types (unsafeExternalAccountId)
 import Domain.Core.Types (currencyNumericCode, parseCurrency)
 import Infrastructure.Banking.Provider
-import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, parseSignedDecimal, stripTrailingComma)
+import Infrastructure.Banking.Statement (assembleNumber, isNumericToken, localToUtcIn, parseSignedDecimal, stripTrailingComma)
 import Infrastructure.Banking.Xlsx (xlsxStatementParser)
 import RIO
+
+-- | The IANA zone of a PrivatBank statement's wall clock.
+--
+-- Note the label spelling: @tz@ (0.1.3.6) predates the @Europe/Kyiv@ rename, so
+-- the constructor is still @Europe__Kiev@. Bumping @tz@/@tzdata@ past the rename
+-- is the one place that has to change (see ADR 005).
+privatBankZone :: TZLabel
+privatBankZone = Europe__Kiev
 
 -- | Parse a PrivatBank business XLSX statement export.
 --
@@ -166,13 +175,14 @@ isCurrencyToken :: Text -> Bool
 isCurrencyToken t = isRight (parseCurrency (stripTrailingComma t))
 
 -- | Combine a @%d.%m.%Y@ date cell and a @%H:%M:%S@ time cell into one
--- 'UTCTime' (the statement times are already in the account's local wall
--- clock; no zone conversion is applied). 'Nothing' if either cell is unparsable.
+-- 'UTCTime'. The statement's clock is the account's Kyiv local wall time, so it
+-- is converted rather than relabelled (ADR 005). 'Nothing' if either cell is
+-- unparsable.
 combineDateTime :: Text -> Text -> Maybe UTCTime
 combineDateTime dateText timeText = do
   day <- parseTimeM True defaultTimeLocale "%d.%m.%Y" (T.unpack dateText) :: Maybe Day
   tod <- parseTimeM True defaultTimeLocale "%H:%M:%S" (T.unpack timeText) :: Maybe TimeOfDay
-  pure (UTCTime day (timeOfDayToTime tod))
+  pure (localToUtcIn privatBankZone (LocalTime day tod))
 
 -- | Ledger memo: counterparty name + purpose (joined when both present, either
 -- one alone otherwise). A missing column is treated as blank.

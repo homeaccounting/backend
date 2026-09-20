@@ -220,9 +220,13 @@ data Transaction = Transaction
     -- Because the whole merge cascade runs in one transaction, this flag is only
     -- ever True on uncommitted state and always False once committed.
     mergeInProgress :: Bool,
-    -- | True once a 'TransactionImportReconciled' event has been folded; gates
-    -- re-reconciliation.
-    reconciled :: Bool
+    -- | How many external transaction ids import reconciliation has attributed
+    -- to this transaction. Counts IDS, not events: the whole-pair transfer path
+    -- attaches both legs in a single 'TransactionImportReconciled', so counting
+    -- events would leave an already fully-attributed transfer looking like it
+    -- still had a free slot. The command handler gates a further attach on this
+    -- count against 'importAttributionCapacity'.
+    attributedExternalIds :: Word
   }
   deriving (Show, Eq)
 
@@ -291,7 +295,7 @@ transactionDefault =
       amendmentInProgress = False,
       cancellationInProgress = False,
       mergeInProgress = False,
-      reconciled = False
+      attributedExternalIds = 0
     }
 
 -- -----------------------------------------------------------------------------
@@ -473,11 +477,14 @@ handleTransactionEvent transaction (TransactionMergeFailedTransactionEvent _) =
   -- Clear the transient flag. No canonical change on failure (the amend was
   -- sequenced first and its failure applied nothing).
   transaction & #mergeInProgress .~ False
-handleTransactionEvent transaction (TransactionImportReconciledTransactionEvent _) =
+handleTransactionEvent transaction (TransactionImportReconciledTransactionEvent evt) =
   -- Attach import attribution onto a completed manual transaction. Balance-neutral:
-  -- flips the 'reconciled' flag so the command handler rejects a second reconcile.
+  -- advances the attributed-id count by however many ids this attach carried
+  -- (one per single-leg import, two for a whole-pair transfer), which the
+  -- command handler compares against 'importAttributionCapacity' to reject an
+  -- attach that would exceed the transaction's capacity.
   case transaction ^. #status of
-    Completed -> transaction & #reconciled .~ True
+    Completed -> transaction & #attributedExternalIds %~ (+ fromIntegral (length evt.externalTransactionIds))
     _ -> transaction
 handleTransactionEvent transaction (TransactionRelationAddedTransactionEvent _) =
   -- Relationships are a read-model concern; the aggregate never gates on them.

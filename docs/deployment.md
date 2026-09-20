@@ -233,6 +233,71 @@ it needs **no** event-store reset and old dumps remain readable:
   language/country + GET localization-options endpoints); existing clients
   unaffected.
 
+### Read-model rebuilds — `REBUILD_READ_MODELS`
+
+Persistent read models catch up from their own checkpoint at startup. Setting
+`REBUILD_READ_MODELS` to a comma-separated list of projection names — or `all` —
+makes those projections **reset and replay the whole log** instead
+(`Application.ReadModels.Persist`). Projection names, exactly as their
+`CheckpointName`s spell them: `bankimport`, `account`, `transaction`,
+`data_version`, `user`, `exchange_rate`, `configuration`.
+
+It is read **at startup**, and the container restarts on its own
+(`restart: unless-stopped`), so **leaving it set replays the entire event log on
+every restart.** Set it, deploy, confirm, then clear it.
+
+A rebuild announces itself on the log, once per projection, before and after its
+replay:
+
+```
+Starting read-model rebuild (reset + full replay): bankimport
+Finished read-model rebuild: bankimport
+```
+
+A name that matches no projection is **not** silently ignored — it logs
+`REBUILD_READ_MODELS names no such projection: … Known projections: …` at WARN,
+so a typo (`bank_import`, `bankImport`) is visible rather than a clean-looking
+startup that rebuilt nothing.
+
+**The variable must be declared on the `api` service in the infra repo's
+`docker-compose.yaml`** (`- REBUILD_READ_MODELS=${REBUILD_READ_MODELS:-}`) or it
+never reaches the container and setting it in `.env` does nothing. That ships in
+a companion infra PR; until it lands, this backend behaviour is inert.
+
+### One-time read-model rebuild — PrivatBank import idempotency (backend#3)
+
+This release normalizes legacy PrivatBank retail external ids in the bank-import
+dedup projection (see
+[ADR 004](decisions/004-synthesized-external-ids-are-pinned-idempotency-keys.md)).
+Normalization happens on projection *apply*, so existing `imported_transactions`
+rows keep their old keys until the projection is replayed. **Deploying without
+the rebuild leaves the duplicate-import bug unfixed** — no error, just no fix.
+
+No event-store reset. Old dumps stay readable.
+
+```bash
+# in infra/.env
+REBUILD_READ_MODELS=bankimport
+```
+
+```bash
+just deploy-product-backend <sha>            # rsyncs .env, restarts api → rebuild runs
+# Confirm it replayed. Expect BOTH lines naming 'bankimport'; no output means the
+# rebuild did NOT run (var not declared in docker-compose.yaml, or not rsynced).
+just logs-backend --tail=200 | grep -i 'read-model rebuild'
+# Also check nothing was mistyped:
+just logs-backend --tail=200 | grep 'no such projection'
+# then clear REBUILD_READ_MODELS in infra/.env and deploy again
+```
+
+Duplicate transactions created *before* this release are not removed by the
+rebuild — dedup only prevents new ones. Delete them by hand in the app.
+
+PrivatBank transactions imported before this release keep their 2–3h-late
+timestamps (see [ADR 005](decisions/005-statement-times-are-provider-local.md));
+the timezone fix applies to new imports only, so date ranges spanning the release
+mix both times.
+
 ## Observability (metrics & logs)
 
 The backend provides two **operator seams**; the observability *stack* that

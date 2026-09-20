@@ -9,7 +9,13 @@
 -- transaction via 'ReconcileTransactionImport', including the state guards:
 --   - Completed (not-yet-reconciled) → emits 'TransactionImportReconciled'
 --   - non-Completed → 'CannotEditUncompletedTransaction'
---   - already-reconciled → 'TransactionAlreadyReconciled'
+--   - capacity exhausted → 'TransactionAlreadyReconciled'
+--
+-- Attribution capacity comes from 'importAttributionCapacity' and is counted in
+-- external IDS, not attach events: an income/expense admits one, a transfer two
+-- (one per leg). The capacity cases below pin both boundaries, and the
+-- whole-pair case pins that a single two-id attach exhausts a transfer just as
+-- two single-id attaches do.
 module Domain.Transaction.ReconciliationCommandHandlerSpec (spec) where
 
 import qualified Data.Set as Set
@@ -32,9 +38,11 @@ mockTime = UTCTime (fromGregorian 2026 4 1) 0
 applyEvents :: [TransactionEvent] -> Transaction
 applyEvents = latestProjection transactionProjection
 
--- | A Completed transfer between the two given accounts.
-completedTransaction :: AccountId -> AccountId -> Money -> Transaction
-completedTransaction fromId toId amt =
+-- | A Completed transaction of the given type between the two given accounts.
+-- The type is what determines import-attribution capacity, so the capacity
+-- cases pick it deliberately.
+completedTransactionOfType :: TransactionType -> AccountId -> AccountId -> Money -> Transaction
+completedTransactionOfType txType fromId toId amt =
   applyEvents
     [ TransactionPostingInitiatedTransactionEvent
         $ TransactionPostingInitiated
@@ -46,13 +54,39 @@ completedTransaction fromId toId amt =
             description = "Test transfer",
             by = mockUserIdN 1,
             at = mockTime,
-            transactionType = Transfer,
+            transactionType = txType,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing
           },
       TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
     ]
+
+-- | A Completed transfer between the two given accounts — capacity 2, one
+-- attribution per leg.
+completedTransaction :: AccountId -> AccountId -> Money -> Transaction
+completedTransaction = completedTransactionOfType Transfer
+
+-- | A Completed expense between the two given accounts — capacity 1, the shape
+-- every income/expense import reconciliation targets.
+completedExpense :: AccountId -> AccountId -> Money -> Transaction
+completedExpense fromId toId amt =
+  completedTransactionOfType (singletonExpense (mockCategoryIdN 1) amt) fromId toId amt
+
+-- | Fold one import attach carrying the given external ids onto a transaction,
+-- so the capacity cases can build up attribution a leg at a time.
+attachIds :: NonEmpty ExternalTransactionId -> Transaction -> Transaction
+attachIds ids transaction =
+  handleTransactionEvent
+    transaction
+    ( TransactionImportReconciledTransactionEvent
+        TransactionImportReconciled
+          { transactionId = txId,
+            externalTransactionIds = ids,
+            category = Just mockCategory,
+            contact = Nothing
+          }
+    )
 
 fromAccount :: AccountId
 fromAccount = mockAccountIdN 1
@@ -65,6 +99,10 @@ txId = mockTransactionIdN 1
 
 extId :: ExternalTransactionId
 extId = unsafeExternalTransactionId "mono:stmt-42"
+
+-- | The opposite leg's id, for the two-attach transfer cases.
+extId2 :: ExternalTransactionId
+extId2 = unsafeExternalTransactionId "mono:stmt-43"
 
 mockCategory :: BankProviderCategory
 mockCategory = mkByMcc (unsafeMcc 5411)
@@ -106,20 +144,49 @@ spec = describe "ReconcileTransactionImport Command" $ do
       handleTransactionCommand transaction reconcileCommand
         `shouldBe` Left CannotEditUncompletedTransaction
 
-  context "Given an already-reconciled Completed transaction"
+  -- A capacity-1 transaction still reconciles exactly once. This is the
+  -- invariant the original already-reconciled case protected; it was written
+  -- against a Transfer fixture before capacity existed, and a transfer now
+  -- legitimately admits a second leg, so the assertion moves to an expense
+  -- rather than being dropped.
+  context "Given an already-reconciled Completed expense (capacity 1)"
     $ it "Then rejects with TransactionAlreadyReconciled"
     $ do
-      let completed = completedTransaction fromAccount toAccount (mockMoney 500)
-          reconciled =
-            handleTransactionEvent
-              completed
-              ( TransactionImportReconciledTransactionEvent
-                  TransactionImportReconciled
-                    { transactionId = txId,
-                      externalTransactionIds = extId :| [],
-                      category = Just mockCategory,
-                      contact = Nothing
-                    }
-              )
+      let reconciled = attachIds (extId :| []) (completedExpense fromAccount toAccount (mockMoney 500))
       handleTransactionCommand reconciled reconcileCommand
+        `shouldBe` Left TransactionAlreadyReconciled
+
+  -- The capacity-2 boundary, from both sides.
+  context "Given a Completed transfer with one leg attached (capacity 2)"
+    $ it "Then admits the opposite leg"
+    $ do
+      let oneLeg = attachIds (extId :| []) (completedTransaction fromAccount toAccount (mockMoney 500))
+      handleTransactionCommand oneLeg reconcileCommand
+        `shouldBe` Right
+          [ TransactionImportReconciledTransactionEvent
+              TransactionImportReconciled
+                { transactionId = txId,
+                  externalTransactionIds = extId :| [],
+                  category = Just mockCategory,
+                  contact = Just mockContact
+                }
+          ]
+
+  context "Given a Completed transfer with both legs attached"
+    $ it "Then rejects the third attach with TransactionAlreadyReconciled"
+    $ do
+      let bothLegs =
+            attachIds (extId2 :| [])
+              $ attachIds (extId :| []) (completedTransaction fromAccount toAccount (mockMoney 500))
+      handleTransactionCommand bothLegs reconcileCommand
+        `shouldBe` Left TransactionAlreadyReconciled
+
+  -- Capacity counts IDS, not attach events: the whole-pair import path attaches
+  -- both legs in one event, and that must exhaust the transfer exactly as two
+  -- single-leg attaches do. Counting events would leave a free slot here.
+  context "Given a Completed transfer attributed by one two-id attach"
+    $ it "Then rejects a further attach with TransactionAlreadyReconciled"
+    $ do
+      let wholePair = attachIds (extId :| [extId2]) (completedTransaction fromAccount toAccount (mockMoney 500))
+      handleTransactionCommand wholePair reconcileCommand
         `shouldBe` Left TransactionAlreadyReconciled
