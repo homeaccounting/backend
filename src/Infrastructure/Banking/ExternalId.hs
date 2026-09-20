@@ -16,10 +16,10 @@
 -- 'Infrastructure.Banking.ExternalIdSpec' pins the exact output. See
 -- @docs/decisions/004-synthesized-external-ids-are-pinned-idempotency-keys.md@.
 --
--- It is deliberately __not__ behind a provider Cabal flag: the dedup projection
--- must interpret historical PrivatBank ids regardless of which providers a
--- given build compiles in, and @Infrastructure.Banking.PrivatBank*@ sits behind
--- @flag(privatbank)@.
+-- It lives here rather than inside the PrivatBank provider because the dedup
+-- projection must interpret historical PrivatBank ids regardless of whether
+-- that provider is enabled in @banking.providers@ — a disabled provider stops
+-- new imports, it does not erase the ids already in the log.
 module Infrastructure.Banking.ExternalId
   ( privatBankRetailPrefix,
     privatBankRetailExternalId,

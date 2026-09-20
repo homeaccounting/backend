@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -25,9 +24,7 @@ import qualified Data.Map.Strict as Map
 import Domain.Banking.Signal (BankProviderCategory, MCC, mkByLabel, mkByMcc, unsafeMcc)
 import Domain.Configuration.Defaults (DefaultEntry (entryId), ExpenseDefaults (..), expense)
 import Domain.Core.Types (CategoryId)
-#ifdef PROVIDER_PRIVATBANK
 import qualified Infrastructure.Banking.PrivatBank as PrivatBank
-#endif
 import RIO
 
 -- | Default MCC assignments grouped by expense category — the maintainable
@@ -234,29 +231,17 @@ defaultMccExpenseCategoryMap =
 
 -- | The universal provider-category seed unioned into a user's category map at
 -- configuration-seed time: the ISO-18245 MCC defaults as 'ByMcc' keys, plus
--- each compiled-in label-based provider's own label defaults as 'ByLabel' keys.
--- Each label-provider's term is CPP-guarded (mirroring
--- 'Infrastructure.Banking.Providers') so a build with that provider's flag off
--- simply omits its labels — the map is then just the ByMcc defaults. The MCC
+-- each label-based provider's own label defaults as 'ByLabel' keys. The MCC
 -- defaults never collide with label keys since 'ByMcc' and 'ByLabel' keys are
 -- structurally disjoint.
 defaultBankProviderExpenseCategoryMap :: Map BankProviderCategory CategoryId
 defaultBankProviderExpenseCategoryMap =
   Map.mapKeys mkByMcc defaultMccExpenseCategoryMap <> labelDefaults providerLabelMaps
 
--- | Every compiled-in label-based provider's pure @labelExpenseCategories@ binding.
--- The binding is CPP-guarded at the declaration level (mirroring
--- 'Infrastructure.Banking.Providers') so a build with a provider's flag off
--- contributes nothing — with all label providers off this is @[]@ and
--- 'defaultBankProviderExpenseCategoryMap' is just the ByMcc defaults. A new label provider
--- adds its @labelExpenseCategories@ to the guarded list here (this is the only place
--- that needs a CPP guard per label provider).
+-- | Every label-based provider's pure @labelExpenseCategories@ binding.
+-- A new label provider adds its @labelExpenseCategories@ to this list.
 providerLabelMaps :: [Map Text CategoryId]
-#ifdef PROVIDER_PRIVATBANK
 providerLabelMaps = [PrivatBank.labelExpenseCategories]
-#else
-providerLabelMaps = []
-#endif
 
 -- | Re-key providers' pure label→category defaults as 'ByLabel' provider
 -- categories, dropping any blank label 'mkByLabel' rejects (there are none in

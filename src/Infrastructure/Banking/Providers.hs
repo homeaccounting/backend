@@ -1,28 +1,22 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
 -- Module      : Infrastructure.Banking.Providers
--- Description : Root assembly point for compiled-in bank providers
+-- Description : Root assembly point for bank providers
 --
--- The single place in the codebase that enumerates which bank providers are
--- compiled into this build and knows the 'PROVIDER_MONOBANK' CPP flag. Adding
--- or removing a provider is a one-line change to 'candidates' plus its Cabal
--- flag — @app/Main.hs@ never changes.
+-- Assembles the bank provider registry from all available providers. The
+-- 'buildRegistry' function combines candidate descriptors from every provider
+-- and filters them by the @banking.providers@ configuration (see
+-- 'assembleRegistry'). Adding a provider is a one-line addition to 'candidates'
+-- and its own @*Candidates@ definition — @app/Main.hs@ never changes.
 module Infrastructure.Banking.Providers (buildRegistry) where
 
+import qualified Infrastructure.Banking.Monobank as Monobank
+import qualified Infrastructure.Banking.PrivatBank as PrivatBank
+import qualified Infrastructure.Banking.PrivatBankBusiness as PrivatBankBusiness
 import Infrastructure.Banking.Provider (BankProviderDescriptor)
 import Infrastructure.Banking.Registry (BankProviderRegistry, assembleRegistry)
 import Infrastructure.Config (BankingConfig)
-#ifdef PROVIDER_MONOBANK
-import qualified Infrastructure.Banking.Monobank as Monobank
-#endif
-#ifdef PROVIDER_PRIVATBANK
-import qualified Infrastructure.Banking.PrivatBank as PrivatBank
-#endif
-#ifdef PROVIDER_PRIVATBANK_BUSINESS
-import qualified Infrastructure.Banking.PrivatBankBusiness as PrivatBankBusiness
-#endif
 import Network.HTTP.Client (Manager)
 import RIO ((<>))
 
@@ -31,38 +25,23 @@ import RIO ((<>))
 buildRegistry :: BankingConfig -> Manager -> BankProviderRegistry
 buildRegistry cfg manager = assembleRegistry cfg (candidates cfg manager)
 
--- | Candidate descriptors contributed by providers compiled into this build:
--- the concatenation of each compiled-in provider's own candidate list.
--- 'assembleRegistry' then keeps only those whose @banking.providers@ entry
--- is present AND enabled. Adding a provider is a one-line addition to this
--- list plus its own @*Candidates@ definition below — existing providers'
--- CPP guards are untouched.
+-- | Candidate descriptors contributed by all providers, concatenated together.
+-- 'assembleRegistry' then keeps only those whose @banking.providers@ entry is
+-- enabled in the configuration. The set of providers is fixed at compile time
+-- via 'monobankCandidates', 'privatbankCandidates', and
+-- 'privatbankBusinessCandidates' below.
 candidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
 candidates cfg manager =
   monobankCandidates cfg manager <> privatbankCandidates <> privatbankBusinessCandidates
 
--- | Each compiled-in provider gets its own CPP-guarded candidate list, so
--- this is the only place that needs a CPP guard per provider.
-#ifdef PROVIDER_MONOBANK
+-- | Candidate descriptor from the Monobank provider.
 monobankCandidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
 monobankCandidates cfg manager = [Monobank.descriptorFromConfig cfg manager]
-#else
-monobankCandidates :: BankingConfig -> Manager -> [BankProviderDescriptor]
-monobankCandidates _cfg _manager = []
-#endif
 
-#ifdef PROVIDER_PRIVATBANK
+-- | Candidate descriptor from the PrivatBank provider.
 privatbankCandidates :: [BankProviderDescriptor]
 privatbankCandidates = [PrivatBank.descriptor]
-#else
-privatbankCandidates :: [BankProviderDescriptor]
-privatbankCandidates = []
-#endif
 
-#ifdef PROVIDER_PRIVATBANK_BUSINESS
+-- | Candidate descriptor from the PrivatBank business provider.
 privatbankBusinessCandidates :: [BankProviderDescriptor]
 privatbankBusinessCandidates = [PrivatBankBusiness.descriptor]
-#else
-privatbankBusinessCandidates :: [BankProviderDescriptor]
-privatbankBusinessCandidates = []
-#endif

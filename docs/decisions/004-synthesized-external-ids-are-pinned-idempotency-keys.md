@@ -63,12 +63,10 @@ detonates only in production against old rows.
 
 2. **The format has one owner.** `Infrastructure.Banking.ExternalId` holds both
    the construction and the repair of synthesized ids, so the two cannot drift
-   apart. It is deliberately *not* behind a provider Cabal flag: the dedup
-   projection must interpret historical PrivatBank ids regardless of which
-   providers are compiled into a given build
-   (`Infrastructure.Banking.PrivatBank*` sits behind `flag(privatbank)`).
-   `Infrastructure.Banking.CategoryDefaults` is the existing precedent for a
-   flag-free, provider-aware module.
+   apart. It is provider-aware but not provider-specific: the dedup projection
+   must interpret historical PrivatBank ids regardless of runtime configuration.
+   The module owns the format contract for all synthesized keys, making it the
+   single source of truth for both generation and normalization.
 
 3. **The derivation is pinned by a golden test.** Committed
    (statement row → exact id string) pairs live in the test suite. Changing the
