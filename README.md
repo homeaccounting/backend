@@ -407,8 +407,8 @@ nix-collect-garbage -d
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - How to set up, what blocks a merge, commit and branch conventions
 - [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) - Expected behaviour; reports go to `conduct@homeaccounting.com`
 - [`CLA.md`](CLA.md) - Contributor Licence Agreement, signed once via a bot on your first PR
-- [Discussions](https://github.com/homeaccounting/backend/discussions) - Questions, ideas, and bank-provider requests
-- [Community chat](https://www.homeaccounting.com/community) - Discord
+- [Discussions](https://github.com/orgs/homeaccounting/discussions) - Questions, ideas, and bank-provider requests
+- [Community](https://www.homeaccounting.com/community) - Discord (English) and Telegram (Ukrainian)
 
 ## Security
 
