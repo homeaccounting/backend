@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Chat with the community
-    url: https://www.homeaccounting.com/chat
+    url: https://www.homeaccounting.com/community
     about: Discord — #showcase, #self-hosting, #bank-providers, #security. Good for anything conversational.
   - name: Question, idea, or bank-provider request
     url: https://github.com/homeaccounting/backend/discussions
