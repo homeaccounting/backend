@@ -14,6 +14,7 @@ repository you are using**:
 | Web UI bug or UX problem | [homeaccounting/web](https://github.com/homeaccounting/web/issues) |
 | Website / docs content | [homeaccounting/site](https://github.com/homeaccounting/site/issues) |
 | Questions, ideas, bank-provider requests | [Discussions](https://github.com/homeaccounting/backend/discussions) |
+| Anything conversational | [Community chat](https://www.homeaccounting.com/chat) (Discord) |
 | **Security vulnerabilities** | **Never an issue** — see [SECURITY.md](SECURITY.md) |
 
 ## Before you write code

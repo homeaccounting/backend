@@ -408,6 +408,7 @@ nix-collect-garbage -d
 - [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) - Expected behaviour; reports go to `conduct@homeaccounting.com`
 - [`CLA.md`](CLA.md) - Contributor Licence Agreement, signed once via a bot on your first PR
 - [Discussions](https://github.com/homeaccounting/backend/discussions) - Questions, ideas, and bank-provider requests
+- [Community chat](https://www.homeaccounting.com/chat) - Discord
 
 ## Security
 
