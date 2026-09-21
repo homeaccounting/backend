@@ -402,6 +402,22 @@ nix-collect-garbage -d
 - [`CLAUDE.md`](CLAUDE.md) - Coding conventions and monad/error handling guidance
 - [Eventium](https://eventium.dev) - Event sourcing framework
 
+## Contributing
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) - How to set up, what blocks a merge, commit and branch conventions
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) - Expected behaviour; reports go to `conduct@homeaccounting.com`
+- [`CLA.md`](CLA.md) - Contributor Licence Agreement, signed once via a bot on your first PR
+- [Discussions](https://github.com/homeaccounting/backend/discussions) - Questions, ideas, and bank-provider requests
+- [Community chat](https://www.homeaccounting.com/community) - Discord
+
+## Security
+
+Never report a vulnerability in a public issue - see [`SECURITY.md`](SECURITY.md)
+for private reporting and `security@homeaccounting.com`.
+
 ## License
 
-GNU Affero General Public License v3.0 (AGPL-3.0) - See [LICENSE](LICENSE) for details
+GNU Affero General Public License v3.0 (AGPL-3.0) - See [LICENSE](LICENSE) for details.
+
+The HomeAccounting name and logo are not covered by that license - see
+[`TRADEMARK.md`](TRADEMARK.md).

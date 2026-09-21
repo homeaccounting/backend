@@ -1,0 +1,38 @@
+name: Feature or change
+description: Propose agreed work on the backend
+labels: [feature]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are for work we have agreed to do. If you are floating an idea or
+        requesting support for a new bank, start in
+        [Discussions](https://github.com/homeaccounting/backend/discussions) instead —
+        it will be converted to an issue once the shape is clear.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can you not do today? Describe the situation, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Event-sourcing impact
+      description: |
+        Does this change the shape of any stored event, or add new ones? Existing
+        self-hosters own their event store, so a shape change needs an upcaster.
+        Say "none" if it is read-only or purely additive at the API layer.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
