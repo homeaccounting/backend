@@ -1,0 +1,60 @@
+name: Bug report
+description: Something in the backend or API behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Do not include real financial data, bank tokens, or
+        credentials** — redact them before pasting logs or payloads. If the problem is
+        a security vulnerability, close this and follow [SECURITY.md](https://github.com/homeaccounting/backend/blob/master/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Call `POST /api/...` with ...
+        2. ...
+        3. The response is ...
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Self-hosted (Docker)
+        - Self-hosted (built from source)
+        - Managed cloud
+        - Local development
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The release tag, image tag, or commit SHA you are running.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redacted server logs or API responses. This is rendered as code, no backticks needed.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions for this problem.
+          required: true
+        - label: This report contains no real credentials, tokens, or personal financial data.
+          required: true
