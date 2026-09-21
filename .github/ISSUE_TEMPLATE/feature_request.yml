@@ -7,7 +7,7 @@ body:
       value: |
         Issues are for work we have agreed to do. If you are floating an idea or
         requesting support for a new bank, start in
-        [Discussions](https://github.com/homeaccounting/backend/discussions) instead —
+        [Discussions](https://github.com/orgs/homeaccounting/discussions) instead —
         it will be converted to an issue once the shape is clear.
   - type: textarea
     id: problem
