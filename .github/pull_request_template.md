@@ -27,4 +27,4 @@
 - [ ] No `error`, `undefined`, or partial functions
 - [ ] No secrets, tokens, or real financial data in the diff or test fixtures
 - [ ] Title follows Conventional Commits
-- [ ] I have signed the [CLA](../CLA.md) (a bot will ask on your first PR)
+- [ ] I have signed the [CLA](https://github.com/homeaccounting/backend/blob/master/CLA.md) (a bot will ask on your first PR)
