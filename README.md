@@ -420,4 +420,4 @@ for private reporting and `security@homeaccounting.com`.
 GNU Affero General Public License v3.0 (AGPL-3.0) - See [LICENSE](LICENSE) for details.
 
 The HomeAccounting name and logo are not covered by that license - see
-[`TRADEMARK.md`](TRADEMARK.md).
+the [trademark policy](https://www.homeaccounting.com/trademark).
