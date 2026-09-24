@@ -11,8 +11,10 @@ name on a personal-finance application, they must be able to trust that it is
 this project, with this project's security posture. A fork that changes the code
 and keeps the name breaks that guarantee for everyone.
 
-**Status:** trademark registration is in progress. This policy applies to the
-unregistered marks in the meantime.
+**Status:** the HomeAccounting marks are **unregistered**, and no application is
+on file. This policy rests on unregistered rights — narrower than a registration,
+but real, and the same footing most open-source brand policies stand on. If that
+changes, this paragraph changes with it.
 
 ## You may, without asking
 
