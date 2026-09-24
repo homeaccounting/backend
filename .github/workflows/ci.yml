@@ -79,6 +79,18 @@ jobs:
           export PATH="$HOME/.cabal/bin:$PATH"          
           hpack
 
+      # The image jobs consume the committed backend.cabal rather than
+      # regenerating it (hpack ships an x86-64 binary only, so they cannot on
+      # arm64). That is only safe while the committed file is current, so a
+      # package.yaml change without a matching hpack run fails here instead of
+      # silently shipping a stale .cabal to the Docker build.
+      - name: Committed backend.cabal is up to date
+        run: |
+          if ! git diff --exit-code --stat backend.cabal; then
+            echo "::error file=backend.cabal::backend.cabal is out of date. Run 'hpack' (or 'just build') and commit the result."
+            exit 1
+          fi
+
       - name: Restore cabal.project
         run: |
           if [ -f accounting/cabal.project.bak ]; then mv accounting/cabal.project.bak accounting/cabal.project; fi
@@ -143,12 +155,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate .cabal from package.yaml
-        run: |
-          curl -sSL https://github.com/sol/hpack/releases/download/0.38.3/hpack_linux.gz | gunzip > hpack
-          chmod +x hpack
-          ./hpack
-
+      # No hpack here. `backend.cabal` is committed, the Dockerfile copies it,
+      # and build-and-test fails if it has drifted from package.yaml — so there
+      # is nothing to regenerate. The step that used to do it downloaded
+      # hpack_linux.gz, which sol/hpack publishes for x86-64 only, and it died
+      # with "cannot execute binary file" the first time this job ran on arm64.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
