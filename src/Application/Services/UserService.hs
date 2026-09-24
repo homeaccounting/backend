@@ -11,7 +11,7 @@
 -- operations, handling:
 --
 --   - Read model queries for user profiles
---   - Password change orchestration
+--   - Password change orchestration (current-password verification included)
 --   - OAuth/Telegram account unlinking with login method safety checks
 --   - Command construction and execution
 --
@@ -34,7 +34,8 @@ where
 
 import Application.ReadModels.User (UserData (..))
 import Application.Services.Internal
-  ( getUserData,
+  ( getPasswordHash,
+    getUserData,
     guardE,
     liftMaybe,
     runUserCmd,
@@ -54,7 +55,7 @@ import Domain.User.Commands
     UnlinkTelegramAccount (..),
   )
 import Infrastructure.App (AppM)
-import Infrastructure.Auth.Password (hashPassword)
+import Infrastructure.Auth.Password (hashPassword, verifyPassword)
 import RIO
 import qualified RIO.List as L
 import qualified RIO.Text as T
@@ -79,26 +80,43 @@ getProfile userId = runExceptT $ do
 -- | Change a user's password.
 --
 -- Orchestrates:
---   1. Validate new password meets requirements
---   2. Hash the new password
---   3. Issue ChangePassword command
+--   1. Verify the user exists
+--   2. Verify the supplied current password against the stored hash
+--   3. Validate the new password meets requirements
+--   4. Hash the new password
+--   5. Issue ChangePassword command
 --
 -- Returns Left if:
+--   - User not found
+--   - The account has no password set (OAuth- or Telegram-only)
+--   - The current password does not match
 --   - New password is too short (< 8 characters)
 --
--- Note: Current password verification is not yet implemented (TODO).
+-- The current password is checked before anything else is validated: a caller
+-- who cannot produce it is not entitled to act on the account at all, even
+-- with a valid token, and stopping there also keeps the expensive new-password
+-- hash off the rejection path.
 changePassword ::
   UserId ->
   Text ->
   Text ->
   AppM (Either DomainError ())
-changePassword userId _currentPassword newPassword = runExceptT $ do
+changePassword userId currentPassword newPassword = runExceptT $ do
   lift $ logInfo "Processing password change"
+  void (getUserData userId)
+  storedHash <-
+    getPasswordHash userId
+      >>= liftMaybe (AccountError "No password is set for this account")
+  unless (verifyPassword currentPassword storedHash) $ do
+    -- Worth a warning rather than silence: repeated hits here on an
+    -- authenticated endpoint are what a hijacked session looks like.
+    lift $ logWarn "Password change rejected: current password did not match"
+    throwE
+      $ ValidationErr
+      $ mkValidationError "currentPassword" "Current password is incorrect" ""
   guardE (T.length newPassword >= 8)
     $ ValidationErr
     $ mkValidationError "newPassword" "Password must be at least 8 characters" ""
-  -- TODO: Verify current password (requires aggregate loading)
-  lift $ logWarn "Current password verification skipped - implement aggregate loading"
   newPasswordHash <- lift (hashPassword newPassword)
   let changeCmd = ChangePasswordUserCommand ChangePassword {newHash = newPasswordHash}
   runUserCmd (unUserId userId) changeCmd
