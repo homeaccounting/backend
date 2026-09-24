@@ -27,6 +27,9 @@ module Application.Services.Internal
     getUserData,
     getUserExternalAccountId,
 
+    -- * Aggregate helpers
+    getPasswordHash,
+
     -- * Aggregate command runners
     runAccountCmd,
     runUserCmd,
@@ -42,9 +45,10 @@ import Domain.Account.CommandHandler (AccountCommand)
 import Domain.Configuration.CommandHandler (ConfigurationCommand)
 import qualified Domain.Configuration.CommandHandler as ConfigCh
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (AccountId, UserId)
+import Domain.Core.Types (AccountId, PasswordHash, UserId, unUserId)
 import Domain.Transaction.CommandHandler (TransactionCommand, TransactionError)
 import Domain.User.CommandHandler (UserCommand)
+import Domain.User.Projection (User (..))
 import Eventium (CommandHandlerError)
 import Infrastructure.App (AppM, HasEventStore (..), HasRequestContext (..), runDb)
 import Infrastructure.Eventium
@@ -52,6 +56,7 @@ import Infrastructure.Eventium
     applyConfigurationCommand,
     applyTransactionCommand,
     applyUserCommand,
+    loadUserAggregate,
   )
 import Infrastructure.Observability.Context (enricherFromContext)
 import RIO
@@ -69,6 +74,23 @@ getUserData userId =
 -- if the user is missing from the read model.
 getUserExternalAccountId :: UserId -> ExceptT DomainError AppM AccountId
 getUserExternalAccountId userId = (.externalAccountId) <$> getUserData userId
+
+-- -----------------------------------------------------------------------------
+-- Aggregate Helpers
+-- -----------------------------------------------------------------------------
+
+-- | The password hash recorded on the user's aggregate, if the account has one.
+--
+-- The user read model carries only a @hasPassword@ flag, not the hash, so every
+-- password check has to load the aggregate. 'Nothing' means no password is set:
+-- an ordinary state for an OAuth- or Telegram-only account, but an
+-- inconsistency when the read model says otherwise — so callers phrase and log
+-- it themselves rather than sharing a message here.
+getPasswordHash :: UserId -> ExceptT DomainError AppM (Maybe PasswordHash)
+getPasswordHash userId = do
+  reader <- lift (view eventStoreReaderL)
+  user <- liftIO (loadUserAggregate reader (unUserId userId))
+  pure user.passwordHash
 
 -- -----------------------------------------------------------------------------
 -- Pure Lifters

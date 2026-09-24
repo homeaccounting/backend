@@ -57,7 +57,8 @@ import Application.ReadModels.User
     getUserByTelegramId,
   )
 import Application.Services.Internal
-  ( guardE,
+  ( getPasswordHash,
+    guardE,
     liftEitherWith,
     liftMaybeM,
     runAccountCmd,
@@ -90,11 +91,9 @@ import Domain.User.Commands
     RegisterUser (..),
     RegisterViaTelegram (..),
   )
-import Domain.User.Projection (User (..))
 import Infrastructure.App
   ( AppM,
     HasAuthConfig (..),
-    HasEventStore (..),
     HasLinkCodeStore (..),
     runDb,
   )
@@ -106,7 +105,6 @@ import Infrastructure.Auth.OAuth
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.Password (hashPassword, verifyPassword)
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
-import Infrastructure.Eventium (loadUserAggregate)
 import RIO hiding (Handler)
 import qualified RIO.Text as T
 
@@ -205,9 +203,8 @@ login email password = runExceptT $ do
   (userId, user) <-
     liftMaybeM (NotFound "User" email) (runDb (getUserByEmail email))
   guardE user.hasPassword (AccountError "Invalid email or password")
-  reader <- lift (view eventStoreReaderL)
-  userAggregate <- liftIO (loadUserAggregate reader (unUserId userId))
-  storedHash <- case userAggregate.passwordHash of
+  maybeHash <- getPasswordHash userId
+  storedHash <- case maybeHash of
     Just h -> pure h
     Nothing -> do
       lift $ logError "User has password flag but no hash in aggregate"
