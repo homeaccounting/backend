@@ -200,7 +200,7 @@ non-destructive and re-runnable.
 > change (tracker#54), and the Money/ExchangeRate exact-JSON change (backend#157 —
 > `amount`/`rate` now persist as exact `Rational` strings instead of lossy
 > `Double`) all altered stored-event shapes without shipping upcasters (documented
-> alpha escape hatch — see `CLAUDE.md` "Backward compatibility"). They land as part
+> alpha escape hatch — see `AGENTS.md` "Backward compatibility"). They land as part
 > of the same pre-launch window, so deploying **requires recreating the event-store
 > DB once**, not once per change; existing beta-tester data is discarded, not
 > migrated. Old dumps taken before this release are **not** readable by this app

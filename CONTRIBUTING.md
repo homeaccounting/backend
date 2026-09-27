@@ -51,7 +51,7 @@ just test
 | `just run` | run the API against `config/test.yaml` |
 | `just watch` | continuous compilation with ghcid |
 
-Start with [`docs/architecture.md`](docs/architecture.md) and `CLAUDE.md` — the
+Start with [`docs/architecture.md`](docs/architecture.md) and `AGENTS.md` — the
 latter is written for AI assistants but is the most complete statement of the
 project's conventions, and it applies to humans identically.
 
@@ -65,7 +65,7 @@ project's conventions, and it applies to humans identically.
 - **No partial functions.** No `error`, no `undefined`, no incomplete patterns.
 - **Stored events are versioned data.** The project is in production and
   self-hosters own their event store. A change to the shape of a persisted event
-  needs an upcaster, not a permissive `FromJSON`. `CLAUDE.md` explains the
+  needs an upcaster, not a permissive `FromJSON`. `AGENTS.md` explains the
   distinction and why the shortcut is banned.
 - **Tests.** Property-based tests are primary; unit and integration tests
   supplement them. New domain invariants need QuickCheck properties.

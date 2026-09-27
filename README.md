@@ -399,7 +399,7 @@ nix-collect-garbage -d
 
 - [`docs/architecture.md`](docs/architecture.md) - Living architecture doc
 - [`docs/deployment.md`](docs/deployment.md) - Deployment runbook
-- [`CLAUDE.md`](CLAUDE.md) - Coding conventions and monad/error handling guidance
+- [`AGENTS.md`](AGENTS.md) - Coding conventions and monad/error handling guidance
 - [Eventium](https://eventium.dev) - Event sourcing framework
 
 ## Contributing
