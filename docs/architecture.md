@@ -419,7 +419,7 @@ A stored event's `FromJSON`/`ToJSON` describes **only the current shape** —
 historical compatibility never lives in the instance (no `.:?`/`.!=`/`fromMaybe`
 migration logic); it belongs in an upcaster. External/inbound JSON (API DTOs,
 provider payloads) is the opposite case and keeps validating custom `FromJSON`
-instances. See the *Upcaster vs. custom `FromJSON`* rule in `CLAUDE.md`.
+instances. See the *Upcaster vs. custom `FromJSON`* rule in `AGENTS.md`.
 
 **To evolve an event's schema** (add/rename/remove a field, split/merge):
 
