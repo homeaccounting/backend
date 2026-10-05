@@ -474,6 +474,7 @@ test-suite backend-test
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
+      Infrastructure.Auth.TelegramSpec
       Infrastructure.Banking.CategoryDefaultsSpec
       Infrastructure.Banking.CsvSpec
       Infrastructure.Banking.ExternalIdSpec
@@ -550,6 +551,7 @@ test-suite backend-test
       Web.API.ConfigurationLocalizationAPISpec
       Web.API.PromptAPISpec
       Web.API.SyncAPIIntegrationSpec
+      Web.API.TelegramWebhookAPISpec
       Web.API.TransactionAllocationsAPISpec
       Web.API.TransactionAPISpec
       Web.API.TransactionContactAPISpec

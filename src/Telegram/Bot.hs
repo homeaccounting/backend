@@ -62,9 +62,9 @@ setupBotCommands clientEnv =
 -- | Register the webhook URL with Telegram so it knows where to send updates.
 --
 -- Must be called once at startup when running in webhook mode.
-setupWebhook :: (MonadIO m, MonadReader env m, HasLogFunc env) => ClientEnv -> Text -> m ()
-setupWebhook clientEnv webhookUrl = do
-  result <- registerWebhook clientEnv webhookUrl
+setupWebhook :: (MonadIO m, MonadReader env m, HasLogFunc env) => ClientEnv -> Text -> Text -> m ()
+setupWebhook clientEnv webhookUrl secret = do
+  result <- registerWebhook clientEnv webhookUrl secret
   case result of
     Right () -> logInfo $ "Webhook registered with Telegram: " <> display webhookUrl
     Left err -> logError $ "Failed to register webhook with Telegram: " <> displayShow err
