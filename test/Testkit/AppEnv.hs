@@ -33,7 +33,7 @@ import qualified Application.Services.ConfigurationService as ConfigurationServi
 import Domain.Banking.Types (unExternalAccountId, unsafeBankProviderId)
 import Infrastructure.App (AppEnv (..), BankingEnv (..), runAppM)
 import Infrastructure.Banking.Provider
-  ( BankAccount,
+  ( BankAccount (..),
     BankProviderDescriptor (..),
     BankTransaction (..),
     FileImportCapability (..),
@@ -155,9 +155,9 @@ stubPullDescriptor controls =
       pull = Just $ \_token ->
         PullCapability
           { fetchAccounts = readIORef controls.stubAccounts,
-            fetchStatements = \accId _from _to -> do
+            fetchStatements = \acc _from _to -> do
               m <- readIORef controls.stubStatements
-              pure $ Right (Map.findWithDefault [] (unExternalAccountId accId) m),
+              pure $ Right (Map.findWithDefault [] (unExternalAccountId acc.externalAccountId) m),
             registerWebhook = \_ -> pure (Right ())
           },
       fileImport = Nothing

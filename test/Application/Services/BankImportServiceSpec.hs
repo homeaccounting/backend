@@ -84,6 +84,7 @@ import Infrastructure.App (AppEnv (..), runAppM, runDb)
 import Infrastructure.Banking.PrivatBank (privatBankInterpretation)
 import Infrastructure.Banking.Provider
   ( BankTransaction (..),
+    OriginalAmount (OriginalAmount),
     TransactionClassification (..),
     TransactionInterpretation (..),
     defaultTransferMatcher,
@@ -904,14 +905,14 @@ spec = describe "BankImportService" $ do
 
     it "different currency: exchangeRate is still Nothing in Phase 1" $ do
       -- Local UAH account; Mono tx with amount = 1000 (UAH major units) and
-      -- originalAmount = Just 25 (original-currency major units). Expect the
+      -- an original amount of 25 EUR (e.g. a EUR purchase on a UAH card). Expect the
       -- emitted TransactionPostingInitiated to have exchangeRate = Nothing and
       -- sourceAmount == targetAmount (both in account currency). Verify the
       -- import succeeds (rate is logged, not persisted).
       (env, bankAccId) <- setupTestEnv
       let accountLink :: [(ExternalAccountId, AccountId)]
           accountLink = [(unsafeExternalAccountId "mono-acc-1", bankAccId)]
-      let tx = (mkTestTransaction 1000 "tx-cross-ccy") {originalAmount = Just 25}
+      let tx = (mkTestTransaction 1000 "tx-cross-ccy") {originalAmount = Just (OriginalAmount 25 978)}
       result <- runAppM env $ importTransaction mockClassify testUserId accountLink tx
       txId <- expectImported result
 

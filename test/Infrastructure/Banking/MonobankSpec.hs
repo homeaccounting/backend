@@ -19,6 +19,7 @@ import Infrastructure.Banking.Monobank.Internal
 import Infrastructure.Banking.Provider
 import RIO
 import Test.Hspec
+import Testkit.BankingHelpers (mkTestBankAccount)
 
 spec :: Spec
 spec = describe "Monobank Provider" $ do
@@ -63,7 +64,7 @@ spec = describe "Monobank Provider" $ do
       case eitherDecode body :: Either String MonoStatement of
         Left err -> expectationFailure ("decode failed: " <> err)
         Right stmt ->
-          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+          case toProviderTransaction uahAccount stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.category `shouldBe` mkByCounterparty "Acme Payroll"
 
@@ -73,7 +74,7 @@ spec = describe "Monobank Provider" $ do
       case eitherDecode body :: Either String MonoStatement of
         Left err -> expectationFailure ("decode failed: " <> err)
         Right stmt ->
-          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+          case toProviderTransaction uahAccount stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.category `shouldBe` (mkByMcc <$> parseMcc "5411")
 
@@ -83,7 +84,7 @@ spec = describe "Monobank Provider" $ do
       case eitherDecode body :: Either String MonoStatement of
         Left err -> expectationFailure ("decode failed: " <> err)
         Right stmt ->
-          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+          case toProviderTransaction uahAccount stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.contact `shouldBe` mkBankProviderContact "Book Store"
 
@@ -93,7 +94,7 @@ spec = describe "Monobank Provider" $ do
       case eitherDecode body :: Either String MonoStatement of
         Left err -> expectationFailure ("decode failed: " <> err)
         Right stmt ->
-          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+          case toProviderTransaction uahAccount stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.contact `shouldBe` Nothing
 
@@ -104,9 +105,35 @@ spec = describe "Monobank Provider" $ do
       case eitherDecode body :: Either String MonoStatement of
         Left err -> expectationFailure ("decode failed: " <> err)
         Right stmt ->
-          case toProviderTransaction (unsafeExternalAccountId "acc-1") stmt of
+          case toProviderTransaction uahAccount stmt of
             Left err -> expectationFailure ("adapter rejected statement: " <> show err)
             Right tx -> tx.notes `shouldBe` Nothing
+
+    -- Monobank's statement @currencyCode@ is the OPERATION currency, not the
+    -- account's: a EUR purchase on a UAH card reports 978 next to a UAH
+    -- @amount@. The adapter must keep the account currency from the account.
+    it "keeps the account currency for a foreign-currency purchase and carries the original amount" $ do
+      let body :: BSL.ByteString
+          body = "{\"id\":\"tx-eur\",\"time\":1700000000,\"description\":\"cafe\",\"mcc\":5814,\"amount\":-43210,\"operationAmount\":-1000,\"currencyCode\":978,\"hold\":false}"
+      case eitherDecode body :: Either String MonoStatement of
+        Left err -> expectationFailure ("decode failed: " <> err)
+        Right stmt ->
+          case toProviderTransaction uahAccount stmt of
+            Left err -> expectationFailure ("adapter rejected statement: " <> show err)
+            Right tx -> do
+              tx.currencyCode `shouldBe` 980
+              tx.amount `shouldBe` (-432.10)
+              tx.originalAmount `shouldBe` Just (OriginalAmount {amount = -10, currencyCode = 978})
+
+    it "leaves originalAmount Nothing for an account-currency statement" $ do
+      let body :: BSL.ByteString
+          body = "{\"id\":\"tx-uah\",\"time\":1700000000,\"description\":\"shop\",\"mcc\":5411,\"amount\":-500,\"operationAmount\":-500,\"currencyCode\":980,\"hold\":false}"
+      case eitherDecode body :: Either String MonoStatement of
+        Left err -> expectationFailure ("decode failed: " <> err)
+        Right stmt ->
+          case toProviderTransaction uahAccount stmt of
+            Left err -> expectationFailure ("adapter rejected statement: " <> show err)
+            Right tx -> tx.originalAmount `shouldBe` Nothing
 
   describe "classify" $ do
     let classify = d.interpretation.classify
@@ -160,3 +187,6 @@ mkTx mccVal amt =
       originalAmount = Nothing,
       notes = Nothing
     }
+
+uahAccount :: BankAccount
+uahAccount = mkTestBankAccount (unsafeExternalAccountId "acc-1") "UA123" 980

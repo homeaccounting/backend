@@ -54,7 +54,8 @@ import Domain.Transaction.Projection (TransactionStatus (Completed))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Banking.Provider
-  ( BankTransaction (..),
+  ( BankAccount (..),
+    BankTransaction (..),
     PullCapability (..),
     TransactionClassification (..),
     TransactionInterpretation (..),
@@ -69,7 +70,7 @@ import qualified RIO.Text as T
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (NonEmptyList (..), Positive (..), ioProperty, (===))
-import Testkit.BankingHelpers (mkSameCurrencyBankTx)
+import Testkit.BankingHelpers (mkSameCurrencyBankTx, mkTestBankAccount)
 import qualified Testkit.Fixtures as Fixtures
 import Testkit.Helpers
   ( fromRight',
@@ -118,7 +119,7 @@ testToTime = UTCTime (fromGregorian 2026 4 14) 0
 mockProvider :: [BankTransaction] -> PullCapability
 mockProvider statements =
   PullCapability
-    { fetchAccounts = return $ Right [],
+    { fetchAccounts = return $ Right mockBankAccounts,
       fetchStatements = \_ _ _ -> return $ Right statements,
       registerWebhook = \_ -> return $ Right ()
     }
@@ -129,10 +130,18 @@ mockProvider statements =
 mockProviderPerAccount :: [(ExternalAccountId, [BankTransaction])] -> PullCapability
 mockProviderPerAccount perAccount =
   PullCapability
-    { fetchAccounts = return $ Right [],
-      fetchStatements = \extAccId _ _ -> return $ Right (fromMaybe [] (lookup extAccId perAccount)),
+    { fetchAccounts = return $ Right mockBankAccounts,
+      fetchStatements = \acc _ _ -> return $ Right (fromMaybe [] (lookup acc.externalAccountId perAccount)),
       registerWebhook = \_ -> return $ Right ()
     }
+
+-- | The UAH accounts every mock provider lists: the external ids this spec
+-- links to local accounts.
+mockBankAccounts :: [BankAccount]
+mockBankAccounts =
+  [ mkTestBankAccount (unsafeExternalAccountId extId) extId 980
+  | extId <- ["mono-acc-1", "mono-acc-A", "mono-acc-B"]
+  ]
 
 -- | The classifier the mock provider pairs with: income for non-negative
 -- amounts, expense otherwise (the Monobank sign rule).
@@ -460,6 +469,14 @@ spec = describe "Bank Import Workflow" $ do
         concatMap (.succeeded) result2.accounts `shouldBe` []
         concatMap (.failed) result2.accounts `shouldBe` []
       _ -> expectationFailure $ "Expected exactly 3 imported IDs, got " <> show (length importedIds)
+
+  it "fails a linked account the provider no longer lists, without importing it" $ do
+    (env, _externalAccId, _bankAccId, accountLink) <- setupTestEnv
+    let provider = (mockProvider [mkTestTransaction (-50) "tx-unlisted"]) {fetchAccounts = return $ Right []}
+
+    result <- runAppM env $ importConnection interp provider testUserId accountLink testFromTime testToTime
+    concatMap (.succeeded) result.accounts `shouldBe` []
+    map (length . (.failed)) result.accounts `shouldBe` [1]
 
   it "imports hold transactions as if they were settled" $ do
     (env, _externalAccId, _bankAccId, accountLink) <- setupTestEnv

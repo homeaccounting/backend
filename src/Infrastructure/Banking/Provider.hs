@@ -10,6 +10,7 @@ module Infrastructure.Banking.Provider
     -- * Types
     BankAccount (..),
     BankTransaction (..),
+    OriginalAmount (..),
 
     -- * Descriptor + capabilities
     BankProviderDescriptor (..),
@@ -90,12 +91,18 @@ data BankTransaction = BankTransaction
     -- identifying who the transaction was with (e.g. the counterparty
     -- descriptor/merchant text). 'Nothing' when the provider supplies none.
     contact :: !(Maybe BankProviderContact),
-    -- | Major-unit amount in the transaction's original currency, iff the
-    -- transaction was in a currency different from the account. Monobank
-    -- does not report the original currency code; Phase 1 uses the ratio
-    -- @|originalAmount| / |amount|@ to derive an exchange rate.
-    originalAmount :: !(Maybe Rational),
+    -- | The amount in the transaction's original currency, iff that currency
+    -- differs from the account's (e.g. a EUR purchase on a UAH card).
+    originalAmount :: !(Maybe OriginalAmount),
     notes :: !(Maybe Text)
+  }
+  deriving (Show, Eq)
+
+-- | A signed major-unit amount in a currency other than the account's.
+data OriginalAmount = OriginalAmount
+  { amount :: !Rational,
+    -- | ISO 4217 numeric code of the original currency.
+    currencyCode :: !Int
   }
   deriving (Show, Eq)
 
@@ -154,7 +161,10 @@ coverageCountries (RegionalCoverage cs) = sort (map unCountry (Set.toList cs))
 -- live on the owning 'BankProviderDescriptor'.
 data PullCapability = PullCapability
   { fetchAccounts :: IO (Either Text [BankAccount]),
-    fetchStatements :: ExternalAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction]),
+    -- | Statements of one account, given as 'fetchAccounts' reported it, so
+    -- an adapter can use account details its statement payload lacks (e.g.
+    -- Monobank statements omit the account currency).
+    fetchStatements :: BankAccount -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction]),
     registerWebhook :: Text -> IO (Either Text ())
   }
 

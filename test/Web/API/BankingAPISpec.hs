@@ -53,7 +53,7 @@ import Testkit.AppEnv
     mkAppBankingEnabledSeeded,
     mkAppBankingEnabledSeededWith,
   )
-import Testkit.BankingHelpers (mkSameCurrencyBankTx)
+import Testkit.BankingHelpers (mkSameCurrencyBankTx, mkTestBankAccount)
 import Testkit.Helpers (mockExchangeRate)
 import Testkit.HspecWai (IdResponse (..), createAccountWith, jsonAuthHeaders, registerAndGetToken)
 import Testkit.InMemoryEventStore (runDbIn)
@@ -222,7 +222,13 @@ routesByAccountMapSpec =
       -- currency (USD), while the bank statements are UAH; seed a rate so
       -- the cross-currency import can resolve per-leg amounts.
       liftIO $ seedRate controls
-      -- Stub serves statements for BOTH external ids ...
+      -- Stub lists and serves statements for BOTH external ids ...
+      liftIO
+        $ writeIORef controls.stubAccounts
+        $ Right
+          [ mkTestBankAccount (unsafeExternalAccountId extId) extId 980
+          | extId <- ["ext-mapped", "ext-unmapped"]
+          ]
       liftIO
         $ writeIORef controls.stubStatements
         $ Map.fromList

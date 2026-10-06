@@ -99,7 +99,8 @@ import Infrastructure.App
     withUserLock,
   )
 import Infrastructure.Banking.Provider
-  ( BankTransaction (..),
+  ( BankAccount (..),
+    BankTransaction (..),
     PullCapability (..),
     TransactionClassification (..),
     TransactionInterpretation (..),
@@ -202,9 +203,12 @@ instance ToJSON ImportResult
 -- Runs in two phases so that internal transfers between two of the
 -- connection's OWN accounts are detected and paired:
 --
---   1. __Fetch__ every link entry's statements from the provider, keeping each
+--   1. __Fetch__ the provider's account list once, then every link entry's
+--      statements for its listed 'BankAccount', keeping each
 --      @(externalAccountId, localAccountId, Either err [BankTransaction])@.
---      A fetch failure for one account does not abort the others.
+--      A fetch failure for one account does not abort the others; a linked
+--      account the provider no longer lists (or a failed account listing)
+--      fails that entry.
 --   2. __Import__ the union of all successfully fetched transactions through a
 --      SINGLE 'importMany' call over the full @accountLink@, so its pairing
 --      pre-pass can see both legs of a transfer at once (per-account fetches
@@ -230,7 +234,20 @@ importConnection ::
   AppM ImportResult
 importConnection interpretation pull userId accountLink fromTime toTime = do
   logInfo $ "Importing bank transactions for user " <> displayShow userId
-  fetched <- forM accountLink fetchOne
+  accountsResult <- liftIO pull.fetchAccounts
+  fetched <- case accountsResult of
+    Left err -> do
+      logWarn $ "Failed to fetch bank accounts: " <> display err
+      pure [(extAccId, localAccId, Left ("Failed to fetch bank accounts: " <> err)) | (extAccId, localAccId) <- accountLink]
+    Right bankAccounts -> do
+      let byId = Map.fromList [(acc.externalAccountId, acc) | acc <- bankAccounts]
+      forM accountLink $ \(extAccId, localAccId) ->
+        case Map.lookup extAccId byId of
+          Nothing -> do
+            let err = "Account " <> unExternalAccountId extAccId <> " is no longer listed by the bank"
+            logWarn $ display err
+            pure (extAccId, localAccId, Left err)
+          Just acc -> fetchOne localAccId acc
   let allTxns = concat [txns | (_, _, Right txns) <- fetched]
   result <- importMany interpretation userId accountLink allTxns
   let byExtId =
@@ -239,8 +256,9 @@ importConnection interpretation pull userId accountLink fromTime toTime = do
       accountResults = map (regroup byExtId) fetched
   pure (ImportResult {accounts = accountResults, unresolved = result.unresolved})
   where
-    fetchOne (extAccId, localAccId) = do
-      fetchResult <- liftIO $ pull.fetchStatements extAccId fromTime toTime
+    fetchOne localAccId acc = do
+      let extAccId = acc.externalAccountId
+      fetchResult <- liftIO $ pull.fetchStatements acc fromTime toTime
       case fetchResult of
         Left err ->
           logWarn
