@@ -281,13 +281,16 @@ registerChatCommands clientEnv lang chatId = liftIO $ do
 
 -- | Register the webhook URL with Telegram.
 --
--- This calls the @setWebhook@ API so Telegram knows where to send updates.
+-- This calls the @setWebhook@ API so Telegram knows where to send updates,
+-- and which secret to echo back in each update's
+-- @X-Telegram-Bot-Api-Secret-Token@ header.
 -- Must be called once at startup when running in webhook mode.
 registerWebhook ::
   (MonadIO m) =>
   ClientEnv ->
   Text ->
+  Text ->
   m (Either ClientError ())
-registerWebhook clientEnv webhookUrl = liftIO $ do
-  let request = TGW.defSetWebhook (T.unpack webhookUrl)
+registerWebhook clientEnv webhookUrl secret = liftIO $ do
+  let request = (TGW.defSetWebhook (T.unpack webhookUrl)) {TGW.setWebhookSecretToken = Just (T.unpack secret)}
   TGW.setUpWebhook request clientEnv

@@ -17,11 +17,22 @@ module Infrastructure.Auth.Telegram
 
     -- * Default Config
     defaultTelegramConfig,
+
+    -- * Webhook Secret
+    webhookSecret,
+    verifyWebhookSecret,
   )
 where
 
+import Crypto.Hash (SHA256)
+import Crypto.MAC.HMAC (HMAC, hmac)
 import Data.Aeson (FromJSON (..), ToJSON, withObject, (.!=), (.:), (.:?))
+import qualified Data.ByteArray as BA
+import qualified Data.ByteArray.Encoding as BAE
+import Data.ByteString (ByteString)
 import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Time (NominalDiffTime, secondsToNominalDiffTime)
 import GHC.Generics (Generic)
 
@@ -69,3 +80,31 @@ defaultTelegramConfig botToken' botUsername' =
       usePolling = True,
       pollingTimeout = 30
     }
+
+-- -----------------------------------------------------------------------------
+-- Webhook Secret
+-- -----------------------------------------------------------------------------
+
+-- | The @secret_token@ registered with Telegram's @setWebhook@, which Telegram
+-- echoes in the @X-Telegram-Bot-Api-Secret-Token@ header of every update.
+--
+-- Derived from the bot token rather than configured separately, so a
+-- self-hosted instance is protected without a new setting, and the secret
+-- rotates whenever the bot token does. HMAC keeps the bot token itself out of
+-- the header. Hex output satisfies Telegram's @[A-Za-z0-9_-]{1,256}@ format.
+-- 'Nothing' when the bot is disabled (empty token): a secret derived from an
+-- empty key would be public.
+webhookSecret :: Text -> Maybe Text
+webhookSecret token
+  | T.null token = Nothing
+  | otherwise =
+      let mac = hmac (encodeUtf8 token) ("homeaccounting:telegram-webhook" :: ByteString) :: HMAC SHA256
+       in Just (decodeUtf8 (BAE.convertToBase BAE.Base16 mac))
+
+-- | Constant-time check of the webhook header against 'webhookSecret'.
+-- Always 'False' when the bot is disabled or the header is missing.
+verifyWebhookSecret :: Text -> Maybe Text -> Bool
+verifyWebhookSecret token received =
+  case (webhookSecret token, received) of
+    (Just expected, Just actual) -> BA.constEq (encodeUtf8 expected) (encodeUtf8 actual)
+    _ -> False

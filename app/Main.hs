@@ -102,7 +102,7 @@ import Infrastructure.App
     initializeAppEnv,
     runAppM,
   )
-import Infrastructure.Auth.Telegram (TelegramConfig (..))
+import Infrastructure.Auth.Telegram (TelegramConfig (..), webhookSecret)
 import qualified Infrastructure.Banking.Providers as BankProviders
 import Infrastructure.Bootstrap (configureProcess)
 import Infrastructure.Config
@@ -345,8 +345,8 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
         logInfo "Telegram API client environment created"
         setupBotCommands cEnv
         -- Register webhook URL with Telegram when in webhook mode
-        case telegramConfig.webhookUrl of
-          Just url | not telegramConfig.usePolling -> setupWebhook cEnv url
+        case (telegramConfig.webhookUrl, webhookSecret telegramConfig.botToken) of
+          (Just url, Just secret) | not telegramConfig.usePolling -> setupWebhook cEnv url secret
           _ -> return ()
         return (Just cEnv)
 
