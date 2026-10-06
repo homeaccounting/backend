@@ -24,6 +24,7 @@ import Domain.Banking.Types (ExternalAccountId, unsafeExternalAccountId)
 import Infrastructure.Banking.Provider
   ( BankAccount (..),
     BankTransaction (..),
+    OriginalAmount (..),
   )
 import RIO
 import qualified RIO.Text as T
@@ -61,17 +62,20 @@ mkSameCurrencyBankTx eid accId amt =
       notes = Nothing
     }
 
--- | Construct a cross-currency 'BankTransaction'. The @accountAmt@ is the
--- amount in the account currency; @originalAmt@ is the amount in the
--- transaction's original currency.
+-- | Construct a cross-currency 'BankTransaction' on a UAH account. The
+-- @accountAmt@ is the amount in UAH; @originalAmt@ is the amount in the
+-- transaction's original currency @originalCode@ (ISO 4217 numeric).
 mkCrossCurrencyBankTx ::
   ExternalTransactionId ->
   ExternalAccountId ->
   Rational ->
   Rational ->
+  Int ->
   BankTransaction
-mkCrossCurrencyBankTx eid accId accountAmt originalAmt =
-  (mkSameCurrencyBankTx eid accId accountAmt) {originalAmount = Just originalAmt}
+mkCrossCurrencyBankTx eid accId accountAmt originalAmt originalCode =
+  (mkSameCurrencyBankTx eid accId accountAmt)
+    { originalAmount = Just OriginalAmount {amount = originalAmt, currencyCode = originalCode}
+    }
 
 -- | Construct a minimal valid 'BankTransaction' with the given signed
 -- @amount@, for tests that only care about amount-driven behaviour (e.g.

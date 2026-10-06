@@ -20,7 +20,6 @@ import Data.Ratio ((%))
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Domain.Banking.Import (mkExternalTransactionId)
 import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty, mkByMcc, mkMcc)
-import Domain.Banking.Types (ExternalAccountId)
 import Infrastructure.Banking.Provider
 import RIO
 
@@ -92,28 +91,32 @@ instance FromJSON MonoStatement where
 -- the reason via stderr so silent drops are visible in logs.
 --
 -- Amounts are scaled from minor units (kopiykas) to major units here so the
--- application layer works in a single representation. 'originalAmount' is
--- populated only when the transaction's operation amount differs from the
--- account amount (i.e. a cross-currency transaction).
-toProviderTransaction :: ExternalAccountId -> MonoStatement -> Either Text BankTransaction
-toProviderTransaction accId ms =
+-- application layer works in a single representation. A statement's
+-- @currencyCode@ is the OPERATION currency, not the account's, so the account
+-- currency comes from the 'BankAccount'; 'originalAmount' is populated only
+-- when the two differ (e.g. a EUR purchase on a UAH card).
+toProviderTransaction :: BankAccount -> MonoStatement -> Either Text BankTransaction
+toProviderTransaction account ms =
   case mkExternalTransactionId ms.stmtId of
     Left err ->
       Left $ "stmtId=" <> tshow ms.stmtId <> " rejected: " <> err
     Right extId ->
-      let accountAmount = fromIntegral ms.stmtAmount % 100
-          operationAmount = fromIntegral ms.stmtOperationAmount % 100
-          maybeOriginal =
-            if accountAmount == operationAmount
+      let maybeOriginal =
+            if ms.stmtCurrencyCode == account.currencyCode
               then Nothing
-              else Just operationAmount
+              else
+                Just
+                  OriginalAmount
+                    { amount = fromIntegral ms.stmtOperationAmount % 100,
+                      currencyCode = ms.stmtCurrencyCode
+                    }
        in Right
             BankTransaction
               { externalId = extId,
-                externalAccountId = accId,
+                externalAccountId = account.externalAccountId,
                 time = posixSecondsToUTCTime (fromIntegral ms.stmtTime),
-                amount = accountAmount,
-                currencyCode = ms.stmtCurrencyCode,
+                amount = fromIntegral ms.stmtAmount % 100,
+                currencyCode = account.currencyCode,
                 description = ms.stmtDescription,
                 hold = ms.stmtHold,
                 category =

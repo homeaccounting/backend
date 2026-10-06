@@ -105,18 +105,18 @@ monoFetchAccounts apiBaseUrl token manager = do
       Right (info :: MonoClientInfo) ->
         return $ Right $ map toProviderAccount info.accounts
 
-monoFetchStatements :: Text -> Text -> Manager -> Domain.ExternalAccountId -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction])
-monoFetchStatements apiBaseUrl token manager accountId fromTime toTime = do
+monoFetchStatements :: Text -> Text -> Manager -> BankAccount -> UTCTime -> UTCTime -> IO (Either Text [BankTransaction])
+monoFetchStatements apiBaseUrl token manager account fromTime toTime = do
   let fromUnix = show @Int (round (utcTimeToPOSIXSeconds fromTime))
       toUnix = show @Int (round (utcTimeToPOSIXSeconds toTime))
-      url = T.unpack apiBaseUrl <> "/personal/statement/" <> T.unpack (Domain.unExternalAccountId accountId) <> "/" <> fromUnix <> "/" <> toUnix
+      url = T.unpack apiBaseUrl <> "/personal/statement/" <> T.unpack (Domain.unExternalAccountId account.externalAccountId) <> "/" <> fromUnix <> "/" <> toUnix
   result <- monoGet token manager url
   case result of
     Left err -> return (Left err)
     Right body -> case Aeson.eitherDecode body of
       Left err -> return (Left $ "Failed to parse statements: " <> T.pack err)
       Right (stmts :: [MonoStatement]) -> do
-        let (dropped, txs) = partitionEithers (map (toProviderTransaction accountId) stmts)
+        let (dropped, txs) = partitionEithers (map (toProviderTransaction account) stmts)
         unless (null dropped)
           $ TIO.hPutStrLn stderr
           $ "Monobank: dropped "
