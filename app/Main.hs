@@ -112,6 +112,7 @@ import Infrastructure.Config
     LlmConfig (..),
     LoggingConfig (..),
     ServerConfig (..),
+    llmActive,
     loadConfigWithEnv,
   )
 import Infrastructure.Database
@@ -375,9 +376,11 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
   httpManager <- liftIO newTlsManager
 
   -- LLM client for transaction prompting (reuses the shared TLS manager);
-  -- Nothing when LLM support is disabled in config.
+  -- Nothing when LLM support is disabled or has no API key.
+  when (config.llm.enabled && not (llmActive config.llm))
+    $ logInfo "Natural-language entry is off: LLM_API_KEY is not set"
   let llmClient =
-        if config.llm.enabled
+        if llmActive config.llm
           then Just (mkOpenAICompatClient config.llm.baseUrl config.llm.model config.llm.apiKey config.llm.timeoutMs httpManager)
           else Nothing
 

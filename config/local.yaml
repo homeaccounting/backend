@@ -96,7 +96,7 @@ banking:
 
 # LLM provider (OpenAI-compatible) for natural-language transaction prompting
 llm:
-  enabled: ${LLM_ENABLED:-false}
+  enabled: ${LLM_ENABLED:-true}
   base_url: ${LLM_BASE_URL:-https://api.groq.com/openai/v1}
   model: ${LLM_MODEL:-openai/gpt-oss-120b}
   api_key: ${LLM_API_KEY:-}
