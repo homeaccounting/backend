@@ -31,6 +31,7 @@ module Infrastructure.Config
     ExchangeRateConfig (..),
     LlmConfig (..),
     defaultLlmConfig,
+    llmActive,
     BankingConfig (..),
     ProviderSettings (..),
     providerEnabled,
@@ -350,7 +351,7 @@ data LlmConfig = LlmConfig
 instance FromJSON LlmConfig where
   parseJSON = withObject "LlmConfig" $ \v ->
     LlmConfig
-      <$> v .:? "enabled" .!= False
+      <$> v .:? "enabled" .!= True
       <*> v .:? "base_url" .!= "http://localhost:11434/v1"
       <*> v .:? "model" .!= "qwen2.5:7b-instruct"
       <*> v .:? "api_key" .!= ""
@@ -359,7 +360,13 @@ instance FromJSON LlmConfig where
 instance ToJSON LlmConfig
 
 defaultLlmConfig :: LlmConfig
-defaultLlmConfig = LlmConfig False "http://localhost:11434/v1" "qwen2.5:7b-instruct" "" 20000
+defaultLlmConfig = LlmConfig True "http://localhost:11434/v1" "qwen2.5:7b-instruct" "" 20000
+
+-- | Whether natural-language prompting is live. On by default so a self-hosted
+-- instance only needs @LLM_API_KEY@; without a key the endpoint stays disabled
+-- (503) rather than calling the provider unauthenticated.
+llmActive :: LlmConfig -> Bool
+llmActive cfg = cfg.enabled && not (T.null cfg.apiKey)
 
 -- | Banking integration configuration.
 data BankingConfig = BankingConfig
