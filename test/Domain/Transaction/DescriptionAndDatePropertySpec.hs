@@ -10,7 +10,7 @@ module Domain.Transaction.DescriptionAndDatePropertySpec (spec) where
 
 import qualified Data.Set as Set
 import qualified Data.Text as Text
-import Data.Time (UTCTime (..), fromGregorian)
+import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( Currency (..),
@@ -35,7 +35,7 @@ import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import Test.QuickCheck
-import Testkit.Generators (genUTCTime)
+import Testkit.Generators ()
 import Testkit.Helpers (singletonIncome)
 import Prelude (last)
 
@@ -67,6 +67,14 @@ seedInitiated =
 completed :: TransactionEvent
 completed = TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
 
+-- | QuickCheck-friendly 'UTCTime' built from an arbitrary 'Day' plus a clamped
+-- second-of-day component.
+genAnyUTCTime :: Gen UTCTime
+genAnyUTCTime = do
+  day <- arbitrary
+  secs <- choose (0, 86399) :: Gen Integer
+  pure $ UTCTime day (secondsToDiffTime secs)
+
 -- -----------------------------------------------------------------------------
 -- Spec
 -- -----------------------------------------------------------------------------
@@ -93,7 +101,7 @@ spec = do
 
   describe "Property: last TransactionDateChanged wins" $ do
     it "fold of N date-change events yields the last event's date"
-      $ forAll (listOf1 genUTCTime)
+      $ forAll (listOf1 genAnyUTCTime)
       $ \dates ->
         let changeEvents =
               [ TransactionDateChangedTransactionEvent
