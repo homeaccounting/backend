@@ -46,6 +46,9 @@ spec = describe "RefreshTokenStore" $ do
     runDbIn env (revokeFamily s.familyId now)
     Just n <- runDbIn env (findRefreshToken (hashRefreshToken next))
     n.revokedAt `shouldBe` Just now
+    Just f <- runDbIn env (findRefreshToken (hashRefreshToken first))
+    f.revokedAt `shouldBe` Just now
+    runDbIn env (markRotated (hashRefreshToken next) now) `shouldReturn` False
 
   it "issueSuccessor refuses a revoked family" $ do
     env <- createTestAppEnv
@@ -65,6 +68,21 @@ spec = describe "RefreshTokenStore" $ do
     let past = addUTCTime (-(2 * day)) now
     oldAlice <- runDbIn env (startFamily day alice past) -- expired yesterday
     oldBob <- runDbIn env (startFamily day bob past)
-    _ <- runDbIn env (startFamily (60 * day) alice now) -- triggers the prune for alice
+    liveAlice <- runDbIn env (startFamily (60 * day) alice now) -- triggers the prune for alice
     runDbIn env (findRefreshToken (hashRefreshToken oldAlice)) >>= (`shouldSatisfy` isNothing)
     runDbIn env (findRefreshToken (hashRefreshToken oldBob)) >>= (`shouldSatisfy` isJust)
+    -- the issueSuccessor path prunes too, and keeps the user's own live rows
+    Just live <- runDbIn env (findRefreshToken (hashRefreshToken liveAlice))
+    Just next <- runDbIn env (issueSuccessor (60 * day) alice live.familyId now)
+    runDbIn env (findRefreshToken (hashRefreshToken next)) >>= (`shouldSatisfy` isJust)
+    runDbIn env (findRefreshToken (hashRefreshToken oldAlice)) >>= (`shouldSatisfy` isNothing)
+
+  it "claimFamily is True for a live family and False once revoked" $ do
+    env <- createTestAppEnv
+    uid <- registerUser env "claim@example.com"
+    now <- getCurrentTime
+    tok <- runDbIn env (startFamily (60 * day) uid now)
+    Just s <- runDbIn env (findRefreshToken (hashRefreshToken tok))
+    runDbIn env (claimFamily s.familyId) `shouldReturn` True
+    runDbIn env (revokeFamily s.familyId now)
+    runDbIn env (claimFamily s.familyId) `shouldReturn` False

@@ -20,10 +20,16 @@
 -- events, and read-model rebuilds never touch it. Rotation and revocation
 -- contend on the family row, so a revocation can't miss a successor being
 -- issued concurrently.
+--
+-- Lock order: every path locks the family row before any token row. Callers
+-- must 'claimFamily' before 'markRotated'; 'revokeFamily' already updates the
+-- family first. Taking them in the other order can deadlock on PostgreSQL and
+-- aborts (and so loses) a revocation.
 module Infrastructure.Auth.RefreshTokenStore
   ( migrateRefreshTokens,
     startFamily,
     issueSuccessor,
+    claimFamily,
     findRefreshToken,
     markRotated,
     revokeFamily,
@@ -40,7 +46,7 @@ import Database.Persist
     (=.),
     (==.),
   )
-import Database.Persist.Sql (SqlPersistT, rawExecute, runMigration, updateWhereCount)
+import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationQuiet, updateWhereCount)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
 import Domain.Core.Types (UserId)
 import Infrastructure.Auth.RefreshToken
@@ -73,7 +79,7 @@ RefreshTokenEntity sql=refresh_tokens
 -- | Tables plus secondary indexes. Idempotent; valid on PostgreSQL and SQLite.
 migrateRefreshTokens :: (MonadIO m) => SqlPersistT m ()
 migrateRefreshTokens = do
-  void (runMigration migrateRefreshTokenTables)
+  void (runMigrationQuiet migrateRefreshTokenTables)
   forM_
     [ "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id)",
       "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON refresh_tokens (family_id)"
@@ -86,16 +92,26 @@ startFamily ttl uid now = do
   insert_ (RefreshTokenFamilyEntity fam uid now Nothing)
   insertToken ttl uid fam now
 
--- | Claim the family (one-row update that only matches while it is not
--- revoked), then insert the successor. A concurrent 'revokeFamily' serialises
--- on that row, so it either sees the successor or the claim fails.
+-- | Claim the family, then insert the successor. A concurrent 'revokeFamily'
+-- serialises on the family row, so it either sees the successor or the claim
+-- fails.
 issueSuccessor :: (MonadIO m) => NominalDiffTime -> UserId -> FamilyId -> UTCTime -> SqlPersistT m (Maybe RefreshToken)
 issueSuccessor ttl uid fam now = do
-  claimed <-
-    updateWhereCount
+  claimed <- claimFamily fam
+  if claimed then Just <$> insertToken ttl uid fam now else pure Nothing
+
+-- | Take the family row's lock; True iff the family is not revoked. The
+-- update is a deliberate no-op write (it only matches unrevoked rows and sets
+-- them unrevoked) so the row lock is held until the transaction ends.
+--
+-- Lock order: the family row is always locked before any token row, so call
+-- this before 'markRotated'. Re-claiming within the same transaction is free.
+claimFamily :: (MonadIO m) => FamilyId -> SqlPersistT m Bool
+claimFamily fam =
+  (== 1)
+    <$> updateWhereCount
       [RefreshTokenFamilyEntityFamilyId ==. fam, RefreshTokenFamilyEntityRevokedAt ==. Nothing]
       [RefreshTokenFamilyEntityRevokedAt =. Nothing]
-  if claimed == 1 then Just <$> insertToken ttl uid fam now else pure Nothing
 
 -- | Insert a token row, first pruning this user's expired rows.
 insertToken :: (MonadIO m) => NominalDiffTime -> UserId -> FamilyId -> UTCTime -> SqlPersistT m RefreshToken
@@ -138,7 +154,8 @@ markRotated h now =
       ]
       [RefreshTokenEntityRotatedAt =. Just now]
 
--- | Revoke the family row and all its unrevoked tokens.
+-- | Revoke the family row and all its unrevoked tokens. The statement order
+-- (family, then tokens) is the lock order and must not be swapped.
 revokeFamily :: (MonadIO m) => FamilyId -> UTCTime -> SqlPersistT m ()
 revokeFamily fam now = do
   updateWhere
