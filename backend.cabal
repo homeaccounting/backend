@@ -131,6 +131,7 @@ library
       Infrastructure.Auth.OAuth
       Infrastructure.Auth.Password
       Infrastructure.Auth.RefreshToken
+      Infrastructure.Auth.RefreshTokenStore
       Infrastructure.Auth.Telegram
       Infrastructure.Banking.CategoryDefaults
       Infrastructure.Banking.Csv
@@ -478,6 +479,7 @@ test-suite backend-test
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Auth.RefreshTokenPropertySpec
       Infrastructure.Auth.RefreshTokenSpec
+      Infrastructure.Auth.RefreshTokenStoreSpec
       Infrastructure.Auth.TelegramSpec
       Infrastructure.Banking.CategoryDefaultsSpec
       Infrastructure.Banking.CsvSpec
