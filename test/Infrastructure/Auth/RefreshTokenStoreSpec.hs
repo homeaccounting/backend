@@ -50,6 +50,21 @@ spec = describe "RefreshTokenStore" $ do
     f.revokedAt `shouldBe` Just now
     runDbIn env (markRotated (hashRefreshToken next) now) `shouldReturn` False
 
+  it "revokeFamily revokes live rows and leaves expired ones alone" $ do
+    env <- createTestAppEnv
+    uid <- registerUser env "revoke-expired@example.com"
+    now <- getCurrentTime
+    let past = addUTCTime (-(2 * day)) now
+    first <- runDbIn env (startFamily (60 * day) uid now)
+    Just s <- runDbIn env (findRefreshToken (hashRefreshToken first))
+    -- issued at a past time so its prune removes nothing and the row stays expired
+    Just old <- runDbIn env (issueSuccessor day uid s.familyId past)
+    runDbIn env (revokeFamily s.familyId now)
+    Just f <- runDbIn env (findRefreshToken (hashRefreshToken first))
+    f.revokedAt `shouldBe` Just now
+    o <- runDbIn env (findRefreshToken (hashRefreshToken old))
+    fmap (.revokedAt) o `shouldBe` Just Nothing
+
   it "issueSuccessor refuses a revoked family" $ do
     env <- createTestAppEnv
     uid <- registerUser env "store4@example.com"

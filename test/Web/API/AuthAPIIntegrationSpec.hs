@@ -165,8 +165,10 @@ refreshTokensSpec =
     $ do
       it "rotates on POST /api/auth/refresh" $ do
         (_, rt) <- registerAndGetTokens
-        postJSON "/api/auth/refresh" (encode (object ["refreshToken" .= rt]))
-          `shouldRespondWith` 200
+        resp <- postJSON "/api/auth/refresh" (encode (object ["refreshToken" .= rt]))
+        liftIO $ simpleStatus resp `shouldBe` status200
+        let newRt = decode (simpleBody resp) >>= parseMaybe (withObject "tokens" (.: "refreshToken"))
+        liftIO $ (isJust newRt && newRt /= Just rt) `shouldBe` True
 
       it "returns 401 UNAUTHENTICATED for a reused token" $ do
         (_, rt) <- registerAndGetTokens

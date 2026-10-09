@@ -36,6 +36,12 @@ spec = describe "decideRefresh" $ do
     $ \now -> forAll (genStored now False) $ \s ->
       decideRefresh now (Just s) === Reject RefreshExpired
 
+  it "rejects a token expiring exactly now as expired"
+    $ forAll genUTCTime
+    $ \now -> forAll (genStored now True) $ \s0 ->
+      let s = s0 {expiresAt = now, rotatedAt = Nothing, revokedAt = Nothing}
+       in decideRefresh now (Just s) === Reject RefreshExpired
+
   it "revokes the family when a live token was already rotated or revoked"
     $ forAll genUTCTime
     $ \now -> forAll (genStored now True) $ \s ->
