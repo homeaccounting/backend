@@ -47,6 +47,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Time (UTCTime)
 import Domain.Core.Types (OAuthProvider (..), UserId)
 import Infrastructure.App (AppM)
+import Infrastructure.Auth.RefreshToken (mkRefreshToken)
 import RIO hiding (Handler)
 import Servant
 import Web.ErrorMapping (throwDomainError)
@@ -268,7 +269,7 @@ handleLinkOAuth user LinkOAuthRequest {..} = do
 -- | Handle token refresh.
 handleRefreshToken :: RefreshTokenRequest -> AppM AuthResponse
 handleRefreshToken RefreshTokenRequest {..} = do
-  result <- AuthService.refreshToken token
+  result <- AuthService.refresh (mkRefreshToken token)
   case result of
     Right r -> return $ toAuthResponse r
     Left err -> throwDomainError err

@@ -14,7 +14,7 @@
 --   - User creation (via event store)
 --   - External account creation (auto-created on registration)
 --   - Password hashing and verification
---   - JWT token generation and refresh
+--   - JWT generation; refresh-token issue, rotation and revocation
 --   - OAuth flow orchestration
 --   - Identity linking (OAuth, Telegram)
 --
@@ -39,7 +39,10 @@ module Application.Services.AuthService
     linkOAuthIdentityToUser,
     issueTelegramLinkCode,
     redeemTelegramLinkCode,
-    refreshToken,
+    refresh,
+    refreshAt,
+    logout,
+    logoutAt,
     findOrCreateTelegramBotUser,
 
     -- * Helpers re-exported for AuthAPI types
@@ -52,6 +55,7 @@ import Application.ReadModels.Configuration (ConfigurationData (..), getConfigur
 import Application.ReadModels.User
   ( UserData (..),
     emailExists,
+    getUser,
     getUserByEmail,
     getUserByOAuthIdentity,
     getUserByTelegramId,
@@ -65,7 +69,7 @@ import Application.Services.Internal
     runUserCmd,
   )
 import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
-import Data.Time (NominalDiffTime, UTCTime)
+import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
 import Domain.Account.Commands (CreateAccount (..))
@@ -97,13 +101,28 @@ import Infrastructure.App
     HasLinkCodeStore (..),
     runDb,
   )
-import Infrastructure.Auth.JWT (JWTClaims (..), JWTConfig (..))
+import Infrastructure.Auth.JWT (JWTConfig (..))
 import qualified Infrastructure.Auth.JWT as JWT
 import Infrastructure.Auth.OAuth
   ( OAuthUserInfo (..),
   )
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.Password (hashPassword, verifyPassword)
+import Infrastructure.Auth.RefreshToken
+  ( RefreshDecision (..),
+    RefreshToken,
+    StoredRefreshToken (..),
+    decideRefresh,
+    hashRefreshToken,
+  )
+import Infrastructure.Auth.RefreshTokenStore
+  ( claimFamily,
+    findRefreshToken,
+    issueSuccessor,
+    markRotated,
+    revokeFamily,
+    startFamily,
+  )
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO hiding (Handler)
 import qualified RIO.Text as T
@@ -117,7 +136,8 @@ data AuthResult = AuthResult
   { token :: Text,
     userId :: UserId,
     email :: Maybe Text,
-    expiresIn :: Int
+    expiresIn :: Int,
+    refreshToken :: RefreshToken
   }
 
 -- | Result of initiating an OAuth flow.
@@ -398,33 +418,53 @@ redeemTelegramLinkCode tok tgIdent = runExceptT $ do
   lift $ logInfo "Telegram identity linked via redemption"
   pure uid
 
--- | Refresh a JWT token.
-refreshToken ::
-  Text ->
-  AppM (Either DomainError AuthResult)
-refreshToken token = runExceptT $ do
-  lift $ logInfo "Processing token refresh request"
-  jwtConfig <- lift (view jwtConfigL)
-  result <- lift (JWT.refreshToken jwtConfig token)
-  newToken <- case result of
-    Right ok -> pure ok
-    Left err -> do
-      lift $ logError $ "Token refresh failed: " <> displayShow err
-      throwE (AccountError "Invalid or expired token")
-  maybeClaims <- lift (JWT.verifyToken jwtConfig newToken)
-  claims <- case maybeClaims of
-    Just c -> pure c
-    Nothing -> do
-      lift $ logError "Failed to verify refreshed token"
-      throwE (AccountError "Internal error during token refresh")
-  lift $ logInfo "Token refreshed successfully"
-  pure
-    AuthResult
-      { token = newToken,
-        userId = claims.userId,
-        email = Just claims.email,
-        expiresIn = jwtConfig.expirySeconds
-      }
+refresh :: RefreshToken -> AppM (Either DomainError AuthResult)
+refresh rt = liftIO getCurrentTime >>= \now -> refreshAt now rt
+
+-- | Rotate a refresh token (ADR 007). The whole decision and its writes run
+-- in one transaction; reject branches return 'Left' (never throw) so that a
+-- revocation commits. The JWT is signed after commit.
+refreshAt :: UTCTime -> RefreshToken -> AppM (Either DomainError AuthResult)
+refreshAt now rt = do
+  jwtConfig <- view jwtConfigL
+  let ttl = fromIntegral jwtConfig.refreshExpirySeconds
+      h = hashRefreshToken rt
+      denied = Left (Unauthenticated "Invalid or expired refresh token")
+  outcome <- runDb $ do
+    stored <- findRefreshToken h
+    case decideRefresh now stored of
+      Reject _ -> pure denied
+      RevokeFamily fam -> revokeFamily fam now $> denied
+      Rotate uid fam -> do
+        -- Lock order: family row before token row on every path (see
+        -- RefreshTokenStore), so refresh can't deadlock against revoke.
+        claimed <- claimFamily fam
+        if not claimed
+          then pure denied
+          else do
+            won <- markRotated h now
+            if not won
+              then revokeFamily fam now $> denied
+              else do
+                mUser <- getUser uid
+                case mUser of
+                  Nothing -> pure denied
+                  Just u -> do
+                    mNext <- issueSuccessor ttl uid fam now
+                    pure (maybe denied (\next -> Right (uid, u.email, next)) mNext)
+  case outcome of
+    Left err -> pure (Left err)
+    Right (uid, email, next) -> signAuthResult uid email next
+
+logout :: RefreshToken -> AppM ()
+logout rt = liftIO getCurrentTime >>= \now -> logoutAt now rt
+
+-- | Revoke the token's family. Unknown tokens are a no-op, so the response
+-- reveals nothing.
+logoutAt :: UTCTime -> RefreshToken -> AppM ()
+logoutAt now rt = runDb $ do
+  stored <- findRefreshToken (hashRefreshToken rt)
+  forM_ stored $ \s -> revokeFamily s.familyId now
 
 -- | Find or create a user from Telegram bot interaction.
 --
@@ -447,7 +487,7 @@ findOrCreateTelegramBotUser tgIdent = runExceptT $ do
         Left err -> do
           lift $ logError $ "findOrCreateTelegramBotUser: failed for TelegramId " <> displayShow tgIdent.id
           throwE err
-        Right authResult -> pure (authResult.userId, True)
+        Right uid -> pure (uid, True)
 
 -- -----------------------------------------------------------------------------
 -- Helper Functions
@@ -461,9 +501,17 @@ parseOAuthProvider t = case T.toLower t of
   "microsoft" -> Just Microsoft
   _ -> Nothing
 
--- | Generate an AuthResult with a JWT token.
+-- | Start a refresh-token family and sign the access JWT for it.
 generateAuthResult :: UserId -> Maybe Text -> AppM (Either DomainError AuthResult)
-generateAuthResult userId email = runExceptT $ do
+generateAuthResult userId email = do
+  jwtConfig <- view jwtConfigL
+  now <- liftIO getCurrentTime
+  rt <- runDb (startFamily (fromIntegral jwtConfig.refreshExpirySeconds) userId now)
+  signAuthResult userId email rt
+
+-- | Sign the access JWT for an already-issued refresh token.
+signAuthResult :: UserId -> Maybe Text -> RefreshToken -> AppM (Either DomainError AuthResult)
+signAuthResult userId email rt = runExceptT $ do
   jwtConfig <- lift (view jwtConfigL)
   let emailText = fromMaybe "unknown@example.com" email
   token <-
@@ -475,7 +523,8 @@ generateAuthResult userId email = runExceptT $ do
       { token = token,
         userId = userId,
         email = email,
-        expiresIn = jwtConfig.expirySeconds
+        expiresIn = jwtConfig.expirySeconds,
+        refreshToken = rt
       }
 
 -- | Create a new user via OAuth (with email + external account + OAuth identity).
@@ -518,7 +567,7 @@ createUserViaOAuth email oauthIdentity = runExceptT $ do
   ExceptT (generateAuthResult uid (Just email))
 
 -- | Create a new user via Telegram (with external account + Telegram identity).
-createUserViaTelegram :: TelegramIdentity -> AppM (Either DomainError AuthResult)
+createUserViaTelegram :: TelegramIdentity -> AppM (Either DomainError UserId)
 createUserViaTelegram telegramIdentity = runExceptT $ do
   userUuid <- liftIO UUID.nextRandom
   externalAccountUuid <- liftIO UUID.nextRandom
@@ -549,4 +598,4 @@ createUserViaTelegram telegramIdentity = runExceptT $ do
             overdraftLimit = Nothing
           }
     )
-  ExceptT (generateAuthResult uid Nothing)
+  pure uid

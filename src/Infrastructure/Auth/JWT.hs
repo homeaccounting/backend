@@ -13,7 +13,6 @@
 -- Key Functions:
 --   - generateToken: Create a new JWT for a user
 --   - verifyToken: Verify and decode a JWT
---   - refreshToken: Generate a new token from an existing valid one
 --
 -- Token Structure:
 --   - Header: Algorithm (HS256) and token type
@@ -42,7 +41,6 @@ module Infrastructure.Auth.JWT
     -- * Token Operations
     generateToken,
     verifyToken,
-    refreshToken,
 
     -- * Error Types
     JWTError (..),
@@ -273,27 +271,6 @@ verifyToken config token = liftIO $ do
                       email = payload.email,
                       expiry = expiryTime
                     }
-
--- | Refresh an existing valid token.
---
--- Verifies the old token and generates a new one with a fresh expiration time.
--- This allows users to stay logged in without re-authenticating.
---
--- Example:
--- >>> newToken <- refreshToken config oldToken
--- >>> case newToken of
--- >>>   Right t -> sendNewToken t
--- >>>   Left err -> requireReLogin
-refreshToken ::
-  (MonadIO m) =>
-  JWTConfig ->
-  Text ->
-  m (Either JWTError Text)
-refreshToken config token = do
-  maybeClaims <- verifyToken config token
-  case maybeClaims of
-    Nothing -> return $ Left TokenExpired
-    Just claims -> generateToken config claims.userId claims.email
 
 -- -----------------------------------------------------------------------------
 -- Internal JWT Encoding/Decoding
