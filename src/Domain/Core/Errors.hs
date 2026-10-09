@@ -48,6 +48,9 @@ data DomainError
     TransactionError Text
   | -- | User-related error
     UserError Text
+  | -- | Authentication failed: an invalid, expired or revoked credential.
+    -- Maps to HTTP 401.
+    Unauthenticated Text
   | -- | Configuration-related error
     ConfigurationError Text
   | -- | Insufficient funds for operation
@@ -297,6 +300,7 @@ renderDomainError err = case err of
   AccountError msg -> "Account error: " <> msg
   TransactionError msg -> "Transaction error: " <> msg
   UserError msg -> "User error: " <> msg
+  Unauthenticated msg -> "Unauthenticated: " <> msg
   ConfigurationError msg -> "Configuration error: " <> msg
   InsufficientFunds src req ->
     "Insufficient funds: have "

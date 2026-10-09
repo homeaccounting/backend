@@ -558,6 +558,7 @@ test-suite backend-test
       Web.API.TransactionLabelsAPISpec
       Web.API.TransactionMergeAPISpec
       Web.API.TransactionRelationsAPISpec
+      Web.ErrorMappingSpec
       Web.Middleware.RouteLabelSpec
       Web.ObservabilityIntegrationSpec
       Web.QuerySpec
