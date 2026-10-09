@@ -30,6 +30,7 @@ import Domain.Localization.Country (Country, unCountry, unsafeCountry)
 import Domain.Localization.Language (Language, languageCode, parseLanguage)
 import Domain.Transaction.Projection (StatusKind, parseStatusKind, renderStatusKind)
 import Eventium.Store.Sql.Orphans ()
+import Infrastructure.Auth.RefreshToken (FamilyId, mkFamilyId, unFamilyId)
 import Infrastructure.Crypto.SecretBox (EncryptedSecret)
 import RIO
 import qualified RIO.ByteString.Lazy as BL
@@ -84,6 +85,14 @@ instance PersistField UserId where
     maybe (Left "Invalid UserId UUID") Right (mkUserIdSafe uuid)
 
 instance PersistFieldSql UserId where
+  sqlType _ = sqlType (Proxy :: Proxy UUID)
+
+-- | 'FamilyId' (refresh-token family) wraps a 'UUID'.
+instance PersistField FamilyId where
+  toPersistValue = toPersistValue . unFamilyId
+  fromPersistValue v = mkFamilyId <$> fromPersistValue v
+
+instance PersistFieldSql FamilyId where
   sqlType _ = sqlType (Proxy :: Proxy UUID)
 
 -- | 'ConfigurationId' wraps a 'UUID'.

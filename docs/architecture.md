@@ -107,6 +107,8 @@ src/
 │       ├── JWT.hs
 │       ├── OAuth.hs
 │       ├── Password.hs
+│       ├── RefreshToken.hs
+│       ├── RefreshTokenStore.hs
 │       └── Telegram.hs
 │
 ├── Web/                    # HTTP interface (thin adapters)
@@ -469,12 +471,17 @@ recreate cleared the registry, re-activating upcast-on-read for real.
 
 `Application.LinkCodeStore` is also an in-memory `TVar`, but it is **not** a read model — it is not a projection from events and is not rebuilt on startup. It holds short-lived (~10 min), single-use Telegram link codes used by the bot deep-link account-linking flow: `POST /auth/telegram/link-code` issues a token and stores `(UserId, expiresAt)`; the bot's `/start LINK_<token>` handler redeems it atomically and runs the `LinkTelegramAccount` aggregate command. This state is intentionally transient — too short-lived to event-source and too auth-specific to mix with read-model rebuild logic. Codes that are not redeemed simply expire and are evicted.
 
+### Persistent Auth State
+
+Refresh tokens are stored in two Postgres tables, `refresh_token_families` (one row per sign-in) and `refresh_tokens` (SHA-256 hashes only, one row per rotation), owned by `Infrastructure.Auth.RefreshTokenStore`. They are **not** read models: nothing projects them from events and they are never rebuilt. Unlike `LinkCodeStore` they must survive restarts. They are migrated by `Infrastructure.Database.runMigrations`. Every path locks the family row before any token row. Revocation touches only unexpired tokens, so the user-wide prune of expired rows never overlaps it. See [ADR 007](decisions/007-rotating-refresh-tokens.md).
+
 ### Authentication
 
 | Provider | Purpose |
 |----------|---------|
 | Password (Argon2) | Email/password login |
 | JWT | Session tokens |
+| Refresh tokens | Rotating per-device sessions (60-day sliding) |
 | OAuth2 | Google, GitHub, Microsoft |
 | Telegram | Bot deep-link account linking (`POST /auth/telegram/link-code` issues a short-lived code; bot's `/start LINK_<token>` redeems it and runs `LinkTelegramAccount`) |
 

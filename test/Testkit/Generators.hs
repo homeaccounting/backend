@@ -38,6 +38,7 @@ module Testkit.Generators
     genOAuthProvider,
     genOAuthIdentity,
     genPasswordHash,
+    genUTCTime,
     genEmail,
     genNonEmptyText,
     genTransactionType,
@@ -61,6 +62,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Ratio ((%))
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Time (UTCTime (..))
 import Data.Time.Calendar (Day, addDays, fromGregorian)
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
@@ -630,3 +632,11 @@ genIdentityAmendInputs = do
             by = uid
           }
   pure (td, cmd)
+
+-- | A UTCTime in 2026 with second precision.
+genUTCTime :: Gen UTCTime
+genUTCTime = do
+  month <- choose (1, 12) :: Gen Int
+  dayOfMonth <- choose (1, 28) :: Gen Int
+  secs <- choose (0, 86399) :: Gen Int
+  pure $ UTCTime (fromGregorian 2026 month dayOfMonth) (fromIntegral secs)

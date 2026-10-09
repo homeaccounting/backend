@@ -13,7 +13,6 @@
 -- Key Functions:
 --   - generateToken: Create a new JWT for a user
 --   - verifyToken: Verify and decode a JWT
---   - refreshToken: Generate a new token from an existing valid one
 --
 -- Token Structure:
 --   - Header: Algorithm (HS256) and token type
@@ -42,7 +41,6 @@ module Infrastructure.Auth.JWT
     -- * Token Operations
     generateToken,
     verifyToken,
-    refreshToken,
 
     -- * Error Types
     JWTError (..),
@@ -52,7 +50,7 @@ where
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Crypto.Hash (SHA256 (..))
 import Crypto.MAC.HMAC (HMAC (..), hmac)
-import Data.Aeson (FromJSON (..), ToJSON (..), decode, encode, object, withObject, (.:), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), decode, encode, object, withObject, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Bits (xor, (.|.))
 import Data.ByteArray (convert)
@@ -138,6 +136,9 @@ data JWTConfig = JWTConfig
     secret :: Text,
     -- | Token validity duration in seconds (default: 3600 = 1 hour)
     expirySeconds :: Int,
+    -- | Refresh-token validity in seconds, sliding on each rotation
+    -- (default: 5184000 = 60 days).
+    refreshExpirySeconds :: Int,
     -- | Token issuer (typically the application URL)
     issuer :: Text,
     -- | Token audience (typically the application name)
@@ -152,6 +153,7 @@ instance FromJSON JWTConfig where
     JWTConfig
       <$> v .: "jwt_secret"
       <*> v .: "jwt_expiry_seconds"
+      <*> v .:? "jwt_refresh_expiry_seconds" .!= 5184000
       <*> v .: "jwt_issuer"
       <*> v .: "jwt_audience"
 
@@ -163,6 +165,7 @@ defaultJWTConfig =
   JWTConfig
     { secret = "CHANGE_THIS_TO_A_SECURE_SECRET_KEY_AT_LEAST_32_BYTES",
       expirySeconds = 3600, -- 1 hour
+      refreshExpirySeconds = 5184000, -- 60 days
       issuer = "accounting-api",
       audience = "accounting-app"
     }
@@ -268,27 +271,6 @@ verifyToken config token = liftIO $ do
                       email = payload.email,
                       expiry = expiryTime
                     }
-
--- | Refresh an existing valid token.
---
--- Verifies the old token and generates a new one with a fresh expiration time.
--- This allows users to stay logged in without re-authenticating.
---
--- Example:
--- >>> newToken <- refreshToken config oldToken
--- >>> case newToken of
--- >>>   Right t -> sendNewToken t
--- >>>   Left err -> requireReLogin
-refreshToken ::
-  (MonadIO m) =>
-  JWTConfig ->
-  Text ->
-  m (Either JWTError Text)
-refreshToken config token = do
-  maybeClaims <- verifyToken config token
-  case maybeClaims of
-    Nothing -> return $ Left TokenExpired
-    Just claims -> generateToken config claims.userId claims.email
 
 -- -----------------------------------------------------------------------------
 -- Internal JWT Encoding/Decoding
