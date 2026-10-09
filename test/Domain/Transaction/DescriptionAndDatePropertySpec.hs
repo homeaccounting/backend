@@ -10,7 +10,7 @@ module Domain.Transaction.DescriptionAndDatePropertySpec (spec) where
 
 import qualified Data.Set as Set
 import qualified Data.Text as Text
-import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( Currency (..),
@@ -35,7 +35,7 @@ import Optics ((^.))
 import RIO hiding ((^.))
 import Test.Hspec
 import Test.QuickCheck
-import Testkit.Generators ()
+import Testkit.Generators (genUTCTime)
 import Testkit.Helpers (singletonIncome)
 import Prelude (last)
 
@@ -66,14 +66,6 @@ seedInitiated =
 
 completed :: TransactionEvent
 completed = TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
-
--- | QuickCheck-friendly 'UTCTime' built from an arbitrary 'Day' plus a clamped
--- second-of-day component.
-genUTCTime :: Gen UTCTime
-genUTCTime = do
-  day <- arbitrary
-  secs <- choose (0, 86399) :: Gen Integer
-  pure $ UTCTime day (secondsToDiffTime secs)
 
 -- -----------------------------------------------------------------------------
 -- Spec

@@ -27,7 +27,7 @@ import Application.ProcessManagers.TransactionCancellationManager
 import Data.List (sort)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Time (UTCTime (..), fromGregorian)
+import Data.Time (UTCTime (..))
 import qualified Data.UUID as UUID
 import Domain.Account.Commands
   ( ReverseAccountCredit (..),
@@ -62,19 +62,11 @@ import RIO hiding (view, (^.))
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck
-import Testkit.Generators (genAccountId, genPositiveMoney, genTransactionId, genUserId)
+import Testkit.Generators (genAccountId, genPositiveMoney, genTransactionId, genUTCTime, genUserId)
 
 -- -----------------------------------------------------------------------------
 -- Generators
 -- -----------------------------------------------------------------------------
-
--- | Generate a UTCTime in year 2026 (arbitrary day/seconds).
-genUTCTime :: Gen UTCTime
-genUTCTime = do
-  month <- choose (1, 12) :: Gen Int
-  dayOfMonth <- choose (1, 28) :: Gen Int
-  secs <- choose (0, 86399) :: Gen Int
-  pure $ UTCTime (fromGregorian 2026 month dayOfMonth) (fromIntegral secs)
 
 -- | Generate a valid TransferPostings snapshot.
 genTransferPostings :: Gen (AccountId, AccountId, TransferPostings)

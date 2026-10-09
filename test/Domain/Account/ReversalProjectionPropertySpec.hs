@@ -18,7 +18,6 @@
 -- by design (spec §2.1).
 module Domain.Account.ReversalProjectionPropertySpec (spec) where
 
-import Data.Time (UTCTime (..), secondsToDiffTime)
 import Domain.Account.Events
   ( AccountCreated (..),
     AccountCreditReversed (..),
@@ -47,14 +46,6 @@ spec = do
 
 applyEvents :: [AccountEvent] -> Account
 applyEvents = latestProjection accountProjection
-
--- | Generate a UTCTime derived from the Arbitrary Day instance already in
--- Testkit.Generators. The time-of-day component is fixed at midnight so that
--- shrinking stays simple.
-genUTCTime :: Gen UTCTime
-genUTCTime = do
-  day <- arbitrary
-  pure $ UTCTime day (secondsToDiffTime 0)
 
 -- -----------------------------------------------------------------------------
 -- Debit reversal cancels balance
