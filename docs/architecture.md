@@ -473,7 +473,7 @@ recreate cleared the registry, re-activating upcast-on-read for real.
 
 ### Persistent Auth State
 
-Refresh tokens are stored in two Postgres tables, `refresh_token_families` (one row per sign-in) and `refresh_tokens` (SHA-256 hashes only, one row per rotation), owned by `Infrastructure.Auth.RefreshTokenStore`. They are **not** read models: nothing projects them from events and they are never rebuilt. Unlike `LinkCodeStore` they must survive restarts. They are migrated by `Infrastructure.Database.runMigrations`. Every path locks the family row before any token row. See [ADR 007](decisions/007-rotating-refresh-tokens.md).
+Refresh tokens are stored in two Postgres tables, `refresh_token_families` (one row per sign-in) and `refresh_tokens` (SHA-256 hashes only, one row per rotation), owned by `Infrastructure.Auth.RefreshTokenStore`. They are **not** read models: nothing projects them from events and they are never rebuilt. Unlike `LinkCodeStore` they must survive restarts. They are migrated by `Infrastructure.Database.runMigrations`. Every path locks the family row before any token row. Revocation touches only unexpired tokens, so the user-wide prune of expired rows never overlaps it. See [ADR 007](decisions/007-rotating-refresh-tokens.md).
 
 ### Authentication
 

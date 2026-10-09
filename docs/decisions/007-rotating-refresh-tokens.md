@@ -38,7 +38,8 @@ credential that can be rotated, detected when stolen, and revoked.
    row: refresh calls `claimFamily` before `markRotated`, and `revokeFamily`
    updates the family row first. With the opposite orders (refresh token to
    family, revoke family to token) PostgreSQL deadlocks and the aborted revoke
-   rolls the revocation back. Reject branches inside the transaction return
+   rolls the revocation back. Revocation touches only unexpired tokens, so the
+   user-wide prune of expired rows never overlaps it. Reject branches inside the transaction return
    `Left` instead of throwing, for the same reason: `runSqlPool` rolls back on
    exceptions. The JWT is signed after the transaction commits.
 
@@ -52,7 +53,7 @@ credential that can be rotated, detected when stolen, and revoked.
    rebuilds. These tables project nothing, so they do not belong there. Nothing
    goes in `Domain`: sessions are auth mechanics, not accounting concepts.
 
-7. **Not event-sourced.** A token rotates at least hourly per device. Logging each
+7. **Not event-sourced.** A token rotates on every refresh, roughly hourly per active device. Logging each
    rotation would fill the store with session churn that has no history worth
    replaying.
 

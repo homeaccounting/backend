@@ -24,7 +24,9 @@
 -- Lock order: every path locks the family row before any token row. Callers
 -- must 'claimFamily' before 'markRotated'; 'revokeFamily' already updates the
 -- family first. Taking them in the other order can deadlock on PostgreSQL and
--- aborts (and so loses) a revocation.
+-- aborts (and so loses) a revocation. 'revokeFamily' only touches unexpired
+-- token rows, so it never overlaps the user-wide prune of expired rows in
+-- 'insertToken'; expired tokens are rejected anyway, so revoking them adds nothing.
 module Infrastructure.Auth.RefreshTokenStore
   ( migrateRefreshTokens,
     startFamily,
@@ -45,6 +47,7 @@ import Database.Persist
     (<=.),
     (=.),
     (==.),
+    (>.),
   )
 import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationQuiet, updateWhereCount)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
@@ -154,13 +157,19 @@ markRotated h now =
       ]
       [RefreshTokenEntityRotatedAt =. Just now]
 
--- | Revoke the family row and all its unrevoked tokens. The statement order
--- (family, then tokens) is the lock order and must not be swapped.
+-- | Revoke the family row and all its unrevoked, unexpired tokens. The
+-- statement order (family, then tokens) is the lock order and must not be
+-- swapped. Expired rows are skipped on purpose: 'insertToken' prunes them
+-- user-wide, so touching them here could deadlock with that prune, and
+-- 'decideRefresh' already rejects them.
 revokeFamily :: (MonadIO m) => FamilyId -> UTCTime -> SqlPersistT m ()
 revokeFamily fam now = do
   updateWhere
     [RefreshTokenFamilyEntityFamilyId ==. fam, RefreshTokenFamilyEntityRevokedAt ==. Nothing]
     [RefreshTokenFamilyEntityRevokedAt =. Just now]
   updateWhere
-    [RefreshTokenEntityFamilyId ==. fam, RefreshTokenEntityRevokedAt ==. Nothing]
+    [ RefreshTokenEntityFamilyId ==. fam,
+      RefreshTokenEntityRevokedAt ==. Nothing,
+      RefreshTokenEntityExpiresAt >. now
+    ]
     [RefreshTokenEntityRevokedAt =. Just now]
