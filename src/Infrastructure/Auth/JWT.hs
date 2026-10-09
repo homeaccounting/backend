@@ -52,7 +52,7 @@ where
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Crypto.Hash (SHA256 (..))
 import Crypto.MAC.HMAC (HMAC (..), hmac)
-import Data.Aeson (FromJSON (..), ToJSON (..), decode, encode, object, withObject, (.:), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), decode, encode, object, withObject, (.!=), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Bits (xor, (.|.))
 import Data.ByteArray (convert)
@@ -138,6 +138,9 @@ data JWTConfig = JWTConfig
     secret :: Text,
     -- | Token validity duration in seconds (default: 3600 = 1 hour)
     expirySeconds :: Int,
+    -- | Refresh-token validity in seconds, sliding on each rotation
+    -- (default: 5184000 = 60 days).
+    refreshExpirySeconds :: Int,
     -- | Token issuer (typically the application URL)
     issuer :: Text,
     -- | Token audience (typically the application name)
@@ -152,6 +155,7 @@ instance FromJSON JWTConfig where
     JWTConfig
       <$> v .: "jwt_secret"
       <*> v .: "jwt_expiry_seconds"
+      <*> v .:? "jwt_refresh_expiry_seconds" .!= 5184000
       <*> v .: "jwt_issuer"
       <*> v .: "jwt_audience"
 
@@ -163,6 +167,7 @@ defaultJWTConfig =
   JWTConfig
     { secret = "CHANGE_THIS_TO_A_SECURE_SECRET_KEY_AT_LEAST_32_BYTES",
       expirySeconds = 3600, -- 1 hour
+      refreshExpirySeconds = 5184000, -- 60 days
       issuer = "accounting-api",
       audience = "accounting-app"
     }

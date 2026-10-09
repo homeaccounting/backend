@@ -50,6 +50,7 @@ auth:
   # JWT settings (use environment variables for secrets!)
   jwt_secret: ${JWT_SECRET:-CHANGE_THIS_TO_A_SECURE_SECRET_IN_PRODUCTION}
   jwt_expiry_seconds: 3600 # 1 hour
+  jwt_refresh_expiry_seconds: ${JWT_REFRESH_EXPIRY_SECONDS:-5184000}
   jwt_issuer: "accounting-api-dev"
   jwt_audience: "accounting-app"
 

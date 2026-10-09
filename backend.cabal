@@ -473,6 +473,7 @@ test-suite backend-test
       Domain.Transaction.StatusKindSpec
       Domain.Transaction.TransferMatchPropertySpec
       Domain.User.CommandHandlerSpec
+      Infrastructure.Auth.JWTConfigSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
       Infrastructure.Auth.RefreshTokenPropertySpec
