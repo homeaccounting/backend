@@ -79,7 +79,7 @@ Orchestration: services, process managers (sagas), read models. Services coordin
 
 ### Infrastructure Layer (`src/Infrastructure/`)
 
-External world adapters: `App.hs` (AppM monad), `Config.hs`, `Database.hs`, `Eventium.hs`, `Auth/` (JWT, OAuth, Password, Telegram), `Json.hs`.
+External world adapters: `App.hs` (AppM monad), `Config.hs`, `Database.hs`, `Eventium.hs`, `Auth/` (JWT, OAuth, Password, Telegram, RefreshToken*), `Json.hs`.
 
 ### Web Layer (`src/Web/`)
 
@@ -174,7 +174,7 @@ Config path set via `CONFIG_PATH` env var. Environment variables loaded via dire
 
 ## Event Sourcing (Eventium)
 
-- Event store is the source of truth; no mutable state tables
+- Event store is the source of truth; no mutable *domain* state tables. Auth-session state (refresh_tokens, refresh_token_families) is the documented exception — see ADR 007
 - Aggregates are rebuilt from events via projections
 - Optimistic concurrency via `(uuid, version)` unique constraint
 - Read models are in-memory projections from events

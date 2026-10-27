@@ -1,0 +1,175 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+
+-- |
+-- Module      : Infrastructure.Auth.RefreshTokenStore
+-- Description : Persistent refresh-token families and tokens (ADR 007).
+--
+-- Auth-session state, not a read model: nothing here is projected from
+-- events, and read-model rebuilds never touch it. Rotation and revocation
+-- contend on the family row, so a revocation can't miss a successor being
+-- issued concurrently.
+--
+-- Lock order: every path locks the family row before any token row. Callers
+-- must 'claimFamily' before 'markRotated'; 'revokeFamily' already updates the
+-- family first. Taking them in the other order can deadlock on PostgreSQL and
+-- aborts (and so loses) a revocation. 'revokeFamily' only touches unexpired
+-- token rows, so it never overlaps the user-wide prune of expired rows in
+-- 'insertToken'; expired tokens are rejected anyway, so revoking them adds nothing.
+module Infrastructure.Auth.RefreshTokenStore
+  ( migrateRefreshTokens,
+    startFamily,
+    issueSuccessor,
+    claimFamily,
+    findRefreshToken,
+    markRotated,
+    revokeFamily,
+  )
+where
+
+import Database.Persist
+  ( Entity (..),
+    deleteWhere,
+    getBy,
+    insert_,
+    updateWhere,
+    (<=.),
+    (=.),
+    (==.),
+    (>.),
+  )
+import Database.Persist.Sql (SqlPersistT, rawExecute, runMigrationQuiet, updateWhereCount)
+import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
+import Domain.Core.Types (UserId)
+import Infrastructure.Auth.RefreshToken
+import Infrastructure.Database.Orphans ()
+import RIO
+import RIO.Time (NominalDiffTime, UTCTime, addUTCTime)
+
+share
+  [mkPersist sqlSettings, mkMigrate "migrateRefreshTokenTables"]
+  [persistLowerCase|
+RefreshTokenFamilyEntity sql=refresh_token_families
+    familyId FamilyId
+    userId UserId
+    createdAt UTCTime
+    revokedAt UTCTime Maybe
+    UniqueRefreshTokenFamily familyId
+    deriving Show Eq
+RefreshTokenEntity sql=refresh_tokens
+    tokenHash Text
+    familyId FamilyId
+    userId UserId
+    createdAt UTCTime
+    expiresAt UTCTime
+    rotatedAt UTCTime Maybe
+    revokedAt UTCTime Maybe
+    UniqueRefreshTokenHash tokenHash
+    deriving Show Eq
+|]
+
+-- | Tables plus secondary indexes. Idempotent; valid on PostgreSQL and SQLite.
+migrateRefreshTokens :: (MonadIO m) => SqlPersistT m ()
+migrateRefreshTokens = do
+  void (runMigrationQuiet migrateRefreshTokenTables)
+  forM_
+    [ "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id)",
+      "CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON refresh_tokens (family_id)"
+    ]
+    (`rawExecute` [])
+
+startFamily :: (MonadIO m) => NominalDiffTime -> UserId -> UTCTime -> SqlPersistT m RefreshToken
+startFamily ttl uid now = do
+  fam <- newFamilyId
+  insert_ (RefreshTokenFamilyEntity fam uid now Nothing)
+  insertToken ttl uid fam now
+
+-- | Claim the family, then insert the successor. A concurrent 'revokeFamily'
+-- serialises on the family row, so it either sees the successor or the claim
+-- fails.
+issueSuccessor :: (MonadIO m) => NominalDiffTime -> UserId -> FamilyId -> UTCTime -> SqlPersistT m (Maybe RefreshToken)
+issueSuccessor ttl uid fam now = do
+  claimed <- claimFamily fam
+  if claimed then Just <$> insertToken ttl uid fam now else pure Nothing
+
+-- | Take the family row's lock; True iff the family is not revoked. The
+-- update is a deliberate no-op write (it only matches unrevoked rows and sets
+-- them unrevoked) so the row lock is held until the transaction ends.
+--
+-- Lock order: the family row is always locked before any token row, so call
+-- this before 'markRotated'. Re-claiming within the same transaction is free.
+claimFamily :: (MonadIO m) => FamilyId -> SqlPersistT m Bool
+claimFamily fam =
+  (== 1)
+    <$> updateWhereCount
+      [RefreshTokenFamilyEntityFamilyId ==. fam, RefreshTokenFamilyEntityRevokedAt ==. Nothing]
+      [RefreshTokenFamilyEntityRevokedAt =. Nothing]
+
+-- | Insert a token row, first pruning this user's expired rows.
+insertToken :: (MonadIO m) => NominalDiffTime -> UserId -> FamilyId -> UTCTime -> SqlPersistT m RefreshToken
+insertToken ttl uid fam now = do
+  deleteWhere [RefreshTokenEntityUserId ==. uid, RefreshTokenEntityExpiresAt <=. now]
+  tok <- newRefreshToken
+  insert_
+    RefreshTokenEntity
+      { refreshTokenEntityTokenHash = unRefreshTokenHash (hashRefreshToken tok),
+        refreshTokenEntityFamilyId = fam,
+        refreshTokenEntityUserId = uid,
+        refreshTokenEntityCreatedAt = now,
+        refreshTokenEntityExpiresAt = addUTCTime ttl now,
+        refreshTokenEntityRotatedAt = Nothing,
+        refreshTokenEntityRevokedAt = Nothing
+      }
+  pure tok
+
+findRefreshToken :: (MonadIO m) => RefreshTokenHash -> SqlPersistT m (Maybe StoredRefreshToken)
+findRefreshToken h = fmap (toStored . entityVal) <$> getBy (UniqueRefreshTokenHash (unRefreshTokenHash h))
+  where
+    toStored e =
+      StoredRefreshToken
+        { userId = e.refreshTokenEntityUserId,
+          familyId = e.refreshTokenEntityFamilyId,
+          expiresAt = e.refreshTokenEntityExpiresAt,
+          rotatedAt = e.refreshTokenEntityRotatedAt,
+          revokedAt = e.refreshTokenEntityRevokedAt
+        }
+
+-- | Set rotated_at while it is still unset and the token is unrevoked.
+-- True iff this call won.
+markRotated :: (MonadIO m) => RefreshTokenHash -> UTCTime -> SqlPersistT m Bool
+markRotated h now =
+  (== 1)
+    <$> updateWhereCount
+      [ RefreshTokenEntityTokenHash ==. unRefreshTokenHash h,
+        RefreshTokenEntityRotatedAt ==. Nothing,
+        RefreshTokenEntityRevokedAt ==. Nothing
+      ]
+      [RefreshTokenEntityRotatedAt =. Just now]
+
+-- | Revoke the family row and all its unrevoked, unexpired tokens. The
+-- statement order (family, then tokens) is the lock order and must not be
+-- swapped. Expired rows are skipped on purpose: 'insertToken' prunes them
+-- user-wide, so touching them here could deadlock with that prune, and
+-- 'decideRefresh' already rejects them.
+revokeFamily :: (MonadIO m) => FamilyId -> UTCTime -> SqlPersistT m ()
+revokeFamily fam now = do
+  updateWhere
+    [RefreshTokenFamilyEntityFamilyId ==. fam, RefreshTokenFamilyEntityRevokedAt ==. Nothing]
+    [RefreshTokenFamilyEntityRevokedAt =. Just now]
+  updateWhere
+    [ RefreshTokenEntityFamilyId ==. fam,
+      RefreshTokenEntityRevokedAt ==. Nothing,
+      RefreshTokenEntityExpiresAt >. now
+    ]
+    [RefreshTokenEntityRevokedAt =. Just now]

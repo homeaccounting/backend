@@ -31,6 +31,7 @@ module Testkit.HspecWai
 
     -- * Auth helpers
     registerAndGetToken,
+    registerAndGetTokens,
 
     -- * Account helpers
     createAccount,
@@ -98,7 +99,12 @@ deleteAuth path token =
 -- and return the issued JWT token. Throws via 'throwString' if the response
 -- body cannot be decoded.
 registerAndGetToken :: WaiSession st Text
-registerAndGetToken = do
+registerAndGetToken = fst <$> registerAndGetTokens
+
+-- | Like 'registerAndGetToken', but also returns the refresh token:
+-- @(jwt, refreshToken)@.
+registerAndGetTokens :: WaiSession st (Text, Text)
+registerAndGetTokens = do
   uid <- liftIO UUID.nextRandom
   let email = "test+" <> T.pack (UUID.toString uid) <> "@example.com" :: Text
       body =
@@ -109,16 +115,17 @@ registerAndGetToken = do
             ]
   resp <- request "POST" "/api/auth/register" [(hContentType, "application/json")] body
   case eitherDecode (simpleBody resp) :: Either String TokenResponse of
-    Left err -> liftIO $ throwString $ "registerAndGetToken: " <> err
-    Right r -> pure r.token
+    Left err -> liftIO $ throwString $ "registerAndGetTokens: " <> err
+    Right r -> pure (r.token, r.refreshToken)
 
--- | Minimal decoder to extract the @token@ field from the registration
--- response. Private to this module.
-newtype TokenResponse = TokenResponse {token :: Text}
+-- | Minimal decoder to extract the @token@ and @refreshToken@ fields from
+-- the registration response. Private to this module.
+data TokenResponse = TokenResponse {token :: Text, refreshToken :: Text}
   deriving (Show)
 
 instance FromJSON TokenResponse where
-  parseJSON = withObject "TokenResponse" $ \o -> TokenResponse <$> o .: "token"
+  parseJSON = withObject "TokenResponse" $ \o ->
+    TokenResponse <$> o .: "token" <*> o .: "refreshToken"
 
 -- | Create an account owned by the caller and return its @id@ (UUID text).
 -- POSTs @{name, initialBalance: 0, currency}@ to @\/api\/accounts@, asserts

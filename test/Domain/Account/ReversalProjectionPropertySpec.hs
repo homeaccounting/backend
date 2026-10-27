@@ -51,8 +51,8 @@ applyEvents = latestProjection accountProjection
 -- | Generate a UTCTime derived from the Arbitrary Day instance already in
 -- Testkit.Generators. The time-of-day component is fixed at midnight so that
 -- shrinking stays simple.
-genUTCTime :: Gen UTCTime
-genUTCTime = do
+genMidnightUTCTime :: Gen UTCTime
+genMidnightUTCTime = do
   day <- arbitrary
   pure $ UTCTime day (secondsToDiffTime 0)
 
@@ -66,7 +66,7 @@ debitReversalSpec =
     it "restores balance after AccountDebited"
       $ property
       $ \(ownerId :: UserId) (txId :: TransactionId) ->
-        forAll genUTCTime $ \t ->
+        forAll genMidnightUTCTime $ \t ->
           forAll (genPositiveMoneyIn USD) $ \amt ->
             let baseEvents =
                   [ AccountCreatedAccountEvent
@@ -97,7 +97,7 @@ creditReversalSpec =
     it "restores balance after AccountCredited"
       $ property
       $ \(ownerId :: UserId) (txId :: TransactionId) ->
-        forAll genUTCTime $ \t ->
+        forAll genMidnightUTCTime $ \t ->
           forAll (genPositiveMoneyIn USD) $ \amt ->
             let baseEvents =
                   [ AccountCreatedAccountEvent

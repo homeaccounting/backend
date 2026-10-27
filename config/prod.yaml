@@ -39,6 +39,7 @@ process_managers:
 auth:
   jwt_secret: "${JWT_SECRET}"
   jwt_expiry_seconds: 3600
+  jwt_refresh_expiry_seconds: ${JWT_REFRESH_EXPIRY_SECONDS:-5184000}
   jwt_issuer: "accounting-api"
   jwt_audience: "accounting-app"
 

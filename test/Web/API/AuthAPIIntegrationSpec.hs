@@ -18,19 +18,21 @@
 module Web.API.AuthAPIIntegrationSpec (spec) where
 
 import Application.LinkCodeStore (mkLinkCodeToken, redeemAt)
-import Data.Aeson (eitherDecode)
+import Data.Aeson (decode, eitherDecode, encode, object, withObject, (.:), (.=))
+import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Auth.JWT (defaultJWTConfig, generateToken)
-import Network.HTTP.Types (hAuthorization, hContentType, status200, status401, status404)
+import Network.HTTP.Types (hAuthorization, hContentType, status200, status204, status401, status404)
 import qualified Network.Wai as Wai
 import Network.Wai.Test (SRequest (..), SResponse (..), defaultRequest, runSession, setPath, srequest)
 import RIO
 import Test.Hspec
-import Test.Hspec.Wai (request, with)
+import Test.Hspec.Wai (request, shouldRespondWith, with)
 import Testkit.AppEnv (mkApp)
 import Testkit.Fixtures (registerUser)
+import Testkit.HspecWai (postJSON, registerAndGetTokens)
 import Testkit.InMemoryEventStore (createTestAppEnv)
 import Web.API.AuthAPI (TelegramLinkCodeResponse (..))
 import Web.Server (buildApplication)
@@ -44,6 +46,7 @@ spec = do
   unauthenticatedSpec
   authenticatedSpec
   removedWidgetEndpointsSpec
+  refreshTokensSpec
 
 -- -----------------------------------------------------------------------------
 -- Unauthenticated → 401
@@ -150,3 +153,38 @@ removedWidgetEndpointsSpec =
             [(hContentType, "application/json")]
             "{}"
         liftIO $ simpleStatus resp `shouldBe` status404
+
+-- -----------------------------------------------------------------------------
+-- Refresh tokens over HTTP
+-- -----------------------------------------------------------------------------
+
+refreshTokensSpec :: Spec
+refreshTokensSpec =
+  describe "refresh tokens over HTTP"
+    $ with mkApp
+    $ do
+      it "rotates on POST /api/auth/refresh" $ do
+        (_, rt) <- registerAndGetTokens
+        resp <- postJSON "/api/auth/refresh" (encode (object ["refreshToken" .= rt]))
+        liftIO $ simpleStatus resp `shouldBe` status200
+        let newRt = decode (simpleBody resp) >>= parseMaybe (withObject "tokens" (.: "refreshToken"))
+        liftIO $ (isJust newRt && newRt /= Just rt) `shouldBe` True
+
+      it "returns 401 UNAUTHENTICATED for a reused token" $ do
+        (_, rt) <- registerAndGetTokens
+        _ <- postJSON "/api/auth/refresh" (encode (object ["refreshToken" .= rt]))
+        resp <- postJSON "/api/auth/refresh" (encode (object ["refreshToken" .= rt]))
+        liftIO $ simpleStatus resp `shouldBe` status401
+        let code = decode (simpleBody resp) >>= parseMaybe (withObject "error" (.: "code"))
+        liftIO $ code `shouldBe` Just ("UNAUTHENTICATED" :: Text)
+
+      it "logs out with 204, then refresh fails" $ do
+        (_, rt) <- registerAndGetTokens
+        postJSON "/api/auth/logout" (encode (object ["refreshToken" .= rt]))
+          `shouldRespondWith` 204
+        postJSON "/api/auth/refresh" (encode (object ["refreshToken" .= rt]))
+          `shouldRespondWith` 401
+
+      it "returns 204 for an unknown token on logout" $ do
+        resp <- postJSON "/api/auth/logout" (encode (object ["refreshToken" .= ("nope" :: Text)]))
+        liftIO $ simpleStatus resp `shouldBe` status204

@@ -69,8 +69,8 @@ completed = TransactionPostingCompletedTransactionEvent TransactionPostingComple
 
 -- | QuickCheck-friendly 'UTCTime' built from an arbitrary 'Day' plus a clamped
 -- second-of-day component.
-genUTCTime :: Gen UTCTime
-genUTCTime = do
+genAnyUTCTime :: Gen UTCTime
+genAnyUTCTime = do
   day <- arbitrary
   secs <- choose (0, 86399) :: Gen Integer
   pure $ UTCTime day (secondsToDiffTime secs)
@@ -101,7 +101,7 @@ spec = do
 
   describe "Property: last TransactionDateChanged wins" $ do
     it "fold of N date-change events yields the last event's date"
-      $ forAll (listOf1 genUTCTime)
+      $ forAll (listOf1 genAnyUTCTime)
       $ \dates ->
         let changeEvents =
               [ TransactionDateChangedTransactionEvent

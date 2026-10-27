@@ -20,7 +20,8 @@
 --   - GET /api/auth/oauth/:provider - Initiate OAuth flow
 --   - GET /api/auth/oauth/:provider/callback - OAuth callback
 --   - POST /api/auth/link-oauth - Link OAuth to existing account
---   - POST /api/auth/refresh - Refresh JWT token
+--   - POST /api/auth/refresh - Rotate refresh token, issue new JWT
+--   - POST /api/auth/logout - Revoke a refresh token family
 --   - POST /api/auth/telegram/link-code - Issue Telegram deep-link code
 module Web.API.AuthAPI
   ( -- * API Type
@@ -47,6 +48,7 @@ import Data.Aeson (FromJSON, ToJSON)
 import Data.Time (UTCTime)
 import Domain.Core.Types (OAuthProvider (..), UserId)
 import Infrastructure.App (AppM)
+import Infrastructure.Auth.RefreshToken (mkRefreshToken, unRefreshToken)
 import RIO hiding (Handler)
 import Servant
 import Web.ErrorMapping (throwDomainError)
@@ -99,6 +101,12 @@ type AuthAPI =
       :> "refresh"
       :> ReqBody '[JSON] RefreshTokenRequest
       :> Post '[JSON] AuthResponse
+    -- Revoke a refresh token's family (public: works with an expired access token)
+    :<|> "api"
+      :> "auth"
+      :> "logout"
+      :> ReqBody '[JSON] RefreshTokenRequest
+      :> PostNoContent
     -- Issue Telegram deep-link code (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -147,7 +155,7 @@ instance FromJSON LinkOAuthRequest
 
 -- | Token refresh request.
 data RefreshTokenRequest = RefreshTokenRequest
-  { token :: Text
+  { refreshToken :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -162,6 +170,7 @@ instance FromJSON RefreshTokenRequest
 -- | Authentication response with JWT token.
 data AuthResponse = AuthResponse
   { token :: Text,
+    refreshToken :: Text,
     userId :: UserId,
     email :: Maybe Text,
     expiresIn :: Int -- seconds
@@ -207,6 +216,7 @@ authServer =
     :<|> handleOAuthCallbackEndpoint
     :<|> handleLinkOAuth
     :<|> handleRefreshToken
+    :<|> handleLogout
     :<|> handleIssueTelegramLinkCode
 
 -- -----------------------------------------------------------------------------
@@ -268,10 +278,16 @@ handleLinkOAuth user LinkOAuthRequest {..} = do
 -- | Handle token refresh.
 handleRefreshToken :: RefreshTokenRequest -> AppM AuthResponse
 handleRefreshToken RefreshTokenRequest {..} = do
-  result <- AuthService.refreshToken token
+  result <- AuthService.refresh (mkRefreshToken refreshToken)
   case result of
     Right r -> return $ toAuthResponse r
     Left err -> throwDomainError err
+
+-- | Handle logout. Always 204, even for unknown tokens.
+handleLogout :: RefreshTokenRequest -> AppM NoContent
+handleLogout RefreshTokenRequest {..} = do
+  AuthService.logout (mkRefreshToken refreshToken)
+  return NoContent
 
 -- | Handle issuance of a Telegram deep-link code for the authenticated user.
 handleIssueTelegramLinkCode :: AuthenticatedUser -> AppM TelegramLinkCodeResponse
@@ -295,6 +311,7 @@ toAuthResponse :: AuthService.AuthResult -> AuthResponse
 toAuthResponse r =
   AuthResponse
     { token = r.token,
+      refreshToken = unRefreshToken r.refreshToken,
       userId = r.userId,
       email = r.email,
       expiresIn = r.expiresIn

@@ -51,11 +51,10 @@ import Application.ReadModels.User ()
 import Control.Monad.Logger (LoggingT, runNoLoggingT)
 import qualified Data.Set as Set
 import qualified Data.Vault.Lazy as Vault
-import Database.Persist.Sql (SqlPersistT, runMigrationSilent)
+import Database.Persist.Sql (SqlPersistT)
 import Database.Persist.Sqlite (createSqlitePool)
 import Domain.Models (AccountingEvent, isTransactionSagaEvent)
 import Eventium (GlobalStreamEvent, ReadModel (..), silentTelemetry)
-import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Memory
   ( EventMap,
     emptyEventMap,
@@ -63,7 +62,6 @@ import Eventium.Store.Memory
     tvarEventStoreWriter,
     tvarGlobalEventStoreReader,
   )
-import Eventium.Store.Sql (migrateSqlEvent)
 import Eventium.Store.Sqlite (sqliteTaggedEventStoreWriter)
 import Infrastructure.App (AppEnv (..), BankingEnv (..), appMetrics, bankingKeyRingFromConfig, runAppM, runDb)
 import Infrastructure.Auth.JWT (defaultJWTConfig)
@@ -86,7 +84,7 @@ import Infrastructure.Config
     ServerConfig (..),
     defaultLlmConfig,
   )
-import Infrastructure.Database (defaultSqlEventStoreConfig, runDbDirect)
+import Infrastructure.Database (defaultSqlEventStoreConfig, runDbDirect, runMigrations)
 import Infrastructure.Eventium
   ( AccountingGlobalEventStoreReader,
     AccountingVersionedEventStoreReader,
@@ -237,8 +235,7 @@ mkAppEnv withProcessManager = do
   -- transaction as the event append, exactly as in production.
   pool <- runNoLoggingT (createSqlitePool ":memory:" 1)
   runDbDirect pool $ do
-    _ <- runMigrationSilent migrateSqlEvent
-    _ <- runMigrationSilent migrateProjectionSnapshot
+    runMigrations
     -- Migrate every persistent read model's tables (each model's 'initialize').
     mapM_ (\(_, ReadModel {initialize = initRM}) -> initRM) persistentReadModels
 

@@ -101,6 +101,7 @@ import Database.Persist.Postgresql
   )
 import Eventium.ProjectionCache.Sql (migrateProjectionSnapshot)
 import Eventium.Store.Sql (SqlEventStoreConfig, defaultSqlEventStoreConfig, migrateSqlEvent)
+import Infrastructure.Auth.RefreshTokenStore (migrateRefreshTokens)
 import qualified Infrastructure.Config as Config
 import Infrastructure.Database.Orphans ()
 import Infrastructure.Observability.Logging (sqlJsonLogSink)
@@ -385,8 +386,13 @@ runMigrations = do
   void $ runMigration migrateSqlEvent
   -- Projection checkpoints (eventium): per read-model catch-up watermark.
   void $ runMigration migrateProjectionSnapshot
+  -- Auth-session tables (refresh tokens); Infrastructure-owned, not read models.
+  migrateRefreshTokens
 
--- NOTE: Persistent read-model table migrations (e.g. 'migrateBankImport',
+-- NOTE: @refresh_tokens@ and @refresh_token_families@ are Infrastructure-owned
+-- auth-session tables (ADR 007), migrated by 'runMigrations' above.
+--
+-- Persistent read-model table migrations (e.g. 'migrateBankImport',
 -- 'migrateAccount', 'migrateTransaction', 'migrateUser') are Application-layer
 -- artifacts run from the composition root (@app/Main.hs@) via each read model's
 -- 'initialize', since Infrastructure must not import Application. The remaining

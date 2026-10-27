@@ -19,13 +19,18 @@ import Application.Services.AuthService
     issueTelegramLinkCode,
     linkOAuthIdentityToUser,
     linkOrSignInWithOAuth,
+    login,
+    logout,
     redeemTelegramLinkCode,
+    refresh,
+    refreshAt,
   )
 import Data.Time (addUTCTime, getCurrentTime)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (OAuthProvider (..), TelegramIdentity (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import qualified Infrastructure.Auth.OAuth as OAuth
+import Infrastructure.Auth.RefreshToken (mkRefreshToken, unRefreshToken)
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import RIO
 import qualified RIO.Text as T
@@ -308,3 +313,53 @@ spec = do
         Right r -> pure $ extractToken r env.telegramConfig
       res2 <- runAppM env $ redeemTelegramLinkCode tok2 tgIdentY
       res2 `shouldSatisfy` isLeft
+
+  describe "refresh tokens" $ do
+    let signIn env email = do
+          _ <- registerUser env email
+          Right auth <- runAppM env (login email "password123")
+          pure auth
+
+    it "login returns a refresh token" $ do
+      env <- createTestAppEnv
+      auth <- signIn env "rt-login@example.com"
+      T.length (unRefreshToken auth.refreshToken) `shouldBe` 43
+
+    it "refresh returns a new pair and kills the old token" $ do
+      env <- createTestAppEnv
+      auth <- signIn env "rt-rotate@example.com"
+      Right next <- runAppM env (refresh auth.refreshToken)
+      unRefreshToken next.refreshToken `shouldNotBe` unRefreshToken auth.refreshToken
+      next.userId `shouldBe` auth.userId
+      next.email `shouldBe` auth.email
+
+    it "reusing a rotated token revokes the family, including the successor" $ do
+      env <- createTestAppEnv
+      auth <- signIn env "rt-reuse@example.com"
+      Right next <- runAppM env (refresh auth.refreshToken)
+      runAppM env (refresh auth.refreshToken) >>= ((`shouldBe` True) . isUnauthenticated)
+      runAppM env (refresh next.refreshToken) >>= ((`shouldBe` True) . isUnauthenticated)
+
+    it "logout makes the token unusable" $ do
+      env <- createTestAppEnv
+      auth <- signIn env "rt-logout@example.com"
+      runAppM env (logout auth.refreshToken)
+      runAppM env (refresh auth.refreshToken) >>= ((`shouldBe` True) . isUnauthenticated)
+
+    it "logout of an unknown token is a no-op" $ do
+      env <- createTestAppEnv
+      runAppM env (logout (mkRefreshToken "not-a-real-token")) `shouldReturn` ()
+
+    it "an expired token is rejected" $ do
+      env <- createTestAppEnv
+      auth <- signIn env "rt-expired@example.com"
+      later <- addUTCTime (61 * 86400) <$> getCurrentTime
+      runAppM env (refreshAt later auth.refreshToken) >>= ((`shouldBe` True) . isUnauthenticated)
+
+    it "an unknown token is rejected" $ do
+      env <- createTestAppEnv
+      runAppM env (refresh (mkRefreshToken "nope")) >>= ((`shouldBe` True) . isUnauthenticated)
+
+isUnauthenticated :: Either DomainError a -> Bool
+isUnauthenticated (Left (Unauthenticated _)) = True
+isUnauthenticated _ = False

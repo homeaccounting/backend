@@ -15,6 +15,7 @@
 --   - ConfigurationError -> 400 Bad Request
 --   - InsufficientFunds -> 422 Unprocessable Entity
 --   - NotFound          -> 404 Not Found
+--   - Unauthenticated   -> 401 Unauthorized
 --
 -- Usage:
 -- >>> case serviceResult of
@@ -41,7 +42,7 @@ import Domain.Core.Errors
     ValidationError (..),
   )
 import RIO
-import Servant.Server (ServerError, err400, err404, err409, err422, errBody)
+import Servant.Server (ServerError, err400, err401, err404, err409, err422, errBody)
 import Web.Types (ErrorResponse (..), ValidationErrorResponse (..))
 
 -- | Render a UTCTime as ISO-8601 so client-side parsers (and round-trip
@@ -62,6 +63,7 @@ iso8601 = T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"
 --   - ConfigurationError -> 400 with error message
 --   - InsufficientFunds -> 422 with source/required amounts
 --   - NotFound          -> 404 with entity type and ID
+--   - Unauthenticated   -> 401 with error message
 mapDomainError :: DomainError -> ServerError
 mapDomainError (ValidationErr ve) =
   err400
@@ -102,6 +104,16 @@ mapDomainError (UserError msg) =
           ErrorResponse
             { message = msg,
               code = "USER_ERROR",
+              details = Nothing
+            }
+    }
+mapDomainError (Unauthenticated msg) =
+  err401
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = msg,
+              code = "UNAUTHENTICATED",
               details = Nothing
             }
     }

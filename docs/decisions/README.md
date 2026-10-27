@@ -12,6 +12,7 @@ This directory contains Architecture Decision Records documenting significant te
 | [004](./004-synthesized-external-ids-are-pinned-idempotency-keys.md) | Provider-synthesized external ids are pinned idempotency keys | Accepted | 2026-09-15 |
 | [005](./005-statement-times-are-provider-local.md) | Statement wall-clock times are provider-local | Accepted | 2026-09-15 |
 | [006](./006-import-attribution-capacity-replaces-boolean-reconciled.md) | Import attribution is capacity-limited, not once-only | Accepted | 2026-09-16 |
+| [007](./007-rotating-refresh-tokens.md) | Rotating refresh tokens live in Infrastructure tables | Accepted | 2026-10-09 |
 
 ## ADR Format
 
