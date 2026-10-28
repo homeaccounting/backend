@@ -82,6 +82,60 @@ spec = describe "newCachingKeySource" $ do
     getKeys src Google False >>= (`shouldSatisfy` isLeft)
     readIORef calls `shouldReturn` 1
 
+  it "serves the stale set when a forced refetch fails" $ do
+    (src, clock, answer, calls, set) <- setup (Just 60)
+    _ <- getKeys src Google False
+    writeIORef answer (Left "boom")
+    advance clock 61
+    getKeys src Google True `shouldReturn` Right set
+    readIORef calls `shouldReturn` 2
+
+  it "moves the expiry forward after a successful forced refetch" $ do
+    (src, clock, _, calls, _) <- setup (Just 300)
+    _ <- getKeys src Google False
+    advance clock 100
+    _ <- getKeys src Google True
+    readIORef calls `shouldReturn` 2
+    -- Past the first set's expiry (300 s), within the refetched one's (400 s).
+    advance clock 250
+    _ <- getKeys src Google False
+    readIORef calls `shouldReturn` 2
+
+  it "runs one fetch for concurrent first requests" $ do
+    k <- testRsaKey
+    t0 <- getCurrentTime
+    started <- newEmptyMVar
+    release <- newEmptyMVar
+    calls <- newIORef (0 :: Int)
+    let fetcher _ = do
+          modifyIORef' calls (+ 1)
+          _ <- tryPutMVar started ()
+          readMVar release
+          pure (Right (testJwkSet k, Nothing))
+    src <- newCachingKeySource (pure t0) fetcher
+    callers <- mapM (const (async (getKeys src Google False))) [1 .. 8 :: Int]
+    takeMVar started
+    -- Give the other callers time to reach the cache while the fetch is in flight.
+    threadDelay 100000
+    putMVar release ()
+    results <- mapM wait callers
+    results `shouldBe` replicate 8 (Right (testJwkSet k))
+    readIORef calls `shouldReturn` 1
+
+  it "releases the provider when the fetcher throws" $ do
+    k <- testRsaKey
+    t0 <- getCurrentTime
+    clock <- newIORef t0
+    failing <- newIORef True
+    let fetcher _ = do
+          f <- readIORef failing
+          if f then throwString "fetcher crashed" else pure (Right (testJwkSet k, Nothing))
+    src <- newCachingKeySource (readIORef clock) fetcher
+    (getKeys src Google False :: IO (Either Text JWKSet)) `shouldThrow` anyException
+    writeIORef failing False
+    advance clock 61
+    timeout 1000000 (getKeys src Google False) `shouldReturn` Just (Right (testJwkSet k))
+
   describe "fixedKeySource"
     $ it "always returns its set"
     $ do

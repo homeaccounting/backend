@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
@@ -9,7 +11,9 @@
 -- Keys are fetched lazily and cached per provider for the response's
 -- Cache-Control max-age (else an hour). An unknown kid forces a refetch at most
 -- once a minute, so key rotation is picked up without letting forged kids
--- hammer the provider.
+-- hammer the provider. At most one fetch per provider runs at a time:
+-- concurrent callers wait for it (or keep using a cached set), so a slow
+-- provider cannot pile up requests on this public endpoint.
 module Infrastructure.Auth.JwksCache
   ( KeySource (..),
     getKeys,
@@ -25,7 +29,7 @@ import Crypto.JOSE (JWKSet)
 import qualified Data.Aeson as Aeson
 import Data.Time (NominalDiffTime, UTCTime, addUTCTime, diffUTCTime)
 import Domain.Core.Types (OAuthProvider (..))
-import Network.HTTP.Client (Manager, httpLbs, parseRequest, responseBody, responseHeaders, responseStatus)
+import Network.HTTP.Client (Manager, httpLbs, parseRequest, responseBody, responseHeaders, responseStatus, responseTimeout, responseTimeoutMicro)
 import Network.HTTP.Types (statusIsSuccessful)
 import RIO
 import qualified RIO.Map as Map
@@ -44,8 +48,11 @@ type Fetcher = OAuthProvider -> IO (Either Text (JWKSet, Maybe NominalDiffTime))
 
 data Entry = Entry
   { cached :: !(Maybe (JWKSet, UTCTime)), -- keySet and its expiry
-    lastAttempt :: !UTCTime
+    lastAttempt :: !UTCTime,
+    inFlight :: !Bool
   }
+
+data Step = Serve (Either Text JWKSet) | Fetch (Maybe (JWKSet, UTCTime))
 
 refetchInterval, defaultLifetime :: NominalDiffTime
 refetchInterval = 60
@@ -54,27 +61,42 @@ defaultLifetime = 3600
 newCachingKeySource :: IO UTCTime -> Fetcher -> IO KeySource
 newCachingKeySource clock fetch = do
   var <- newTVarIO (Map.empty :: Map OAuthProvider Entry)
+  let store provider e = modifyTVar' var (Map.insert provider e)
+      -- Decide, and claim the fetch, in one transaction so that no two
+      -- callers fetch the same provider at once.
+      step provider forced now = do
+        entry <- Map.lookup provider <$> readTVar var
+        let held = entry >>= (.cached)
+            fresh = maybe False (\(_, expiry) -> now < expiry) held
+            busy = maybe False (.inFlight) entry
+            -- Failed attempts count too, so an unreachable provider is not hammered.
+            throttled = maybe False (\e -> diffUTCTime now e.lastAttempt < refetchInterval) entry
+            wanted = isNothing held || not fresh || forced
+            serve = Serve (fallback "no keys cached" held)
+        if
+          | not wanted -> pure serve
+          -- A stale set is still usable; an unknown kid or no set waits for
+          -- the fetch in flight, then decides again.
+          | busy -> if isJust held && not forced then pure serve else retrySTM
+          | throttled -> pure serve
+          | otherwise -> store provider (Entry held now True) $> Fetch held
   pure $ KeySource $ \provider forced -> do
     now <- clock
-    entry <- Map.lookup provider <$> readTVarIO var
-    let held = entry >>= (.cached)
-        fresh = maybe False (\(_, expiry) -> now < expiry) held
-        -- Failed attempts count too, so an unreachable provider is not hammered.
-        throttled = maybe False (\e -> diffUTCTime now e.lastAttempt < refetchInterval) entry
-        wanted = isNothing held || not fresh || forced
-        fallback err = maybe (Left err) (Right . fst) held
-    if throttled || not wanted
-      then pure (fallback "no keys cached")
-      else do
-        res <- fetch provider
-        case res of
-          Right (keySet, maxAge) -> do
-            let expiry = addUTCTime (fromMaybe defaultLifetime maxAge) now
-            atomically $ modifyTVar' var (Map.insert provider (Entry (Just (keySet, expiry)) now))
-            pure (Right keySet)
-          Left err -> do
-            atomically $ modifyTVar' var (Map.insert provider (Entry held now))
-            pure (fallback err)
+    mask $ \restore ->
+      atomically (step provider forced now) >>= \case
+        Serve r -> pure r
+        Fetch held -> do
+          res <- restore (fetch provider) `onException` atomically (store provider (Entry held now False))
+          case res of
+            Right (keySet, maxAge) -> do
+              let expiry = addUTCTime (fromMaybe defaultLifetime maxAge) now
+              atomically $ store provider (Entry (Just (keySet, expiry)) now False)
+              pure (Right keySet)
+            Left err -> do
+              atomically $ store provider (Entry held now False)
+              pure (fallback err held)
+  where
+    fallback err = maybe (Left err) (Right . fst)
 
 fixedKeySource :: JWKSet -> KeySource
 fixedKeySource keySet = KeySource (\_ _ -> pure (Right keySet))
@@ -89,7 +111,8 @@ httpFetcher mgr provider = case jwksUrl provider of
   Nothing -> pure (Left "provider has no JWKS")
   Just url -> handleAny (pure . Left . tshow) $ do
     req <- parseRequest url
-    resp <- httpLbs req mgr
+    -- Far below the shared manager's timeout: sign-in requests wait on this.
+    resp <- httpLbs req {responseTimeout = responseTimeoutMicro 5000000} mgr
     pure
       $ if not (statusIsSuccessful (responseStatus resp))
         then Left ("JWKS HTTP " <> tshow (responseStatus resp))
