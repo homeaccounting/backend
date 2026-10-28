@@ -136,10 +136,13 @@ instance FromJSON OAuthConfig where
       <*> v .:? "id_token" .!= defaultIdTokenConfig
 
 -- | Audiences accepted on native ID tokens, per provider. An empty list
--- disables ID-token sign-in for that provider.
+-- disables ID-token sign-in for that provider. 'serverUrls' are extra URLs
+-- (besides @api_base_url@) a token's nonce may be bound to, as configured;
+-- see 'Infrastructure.Auth.IdToken.acceptedServerUrls'.
 data IdTokenConfig = IdTokenConfig
   { googleAudiences :: [Text],
-    appleAudiences :: [Text]
+    appleAudiences :: [Text],
+    serverUrls :: [Text]
   }
   deriving (Show, Eq, Generic)
 
@@ -147,27 +150,29 @@ instance ToJSON IdTokenConfig
 
 instance FromJSON IdTokenConfig where
   parseJSON = withObject "IdTokenConfig" $ \v -> do
-    let audiences def key = maybe def (\(Audiences xs) -> xs) <$> v .:? key
+    let list def key = maybe def (\(CommaList xs) -> xs) <$> v .:? key
     IdTokenConfig
-      <$> audiences defaultIdTokenConfig.googleAudiences "google_audiences"
-      <*> audiences defaultIdTokenConfig.appleAudiences "apple_audiences"
+      <$> list defaultIdTokenConfig.googleAudiences "google_audiences"
+      <*> list defaultIdTokenConfig.appleAudiences "apple_audiences"
+      <*> list defaultIdTokenConfig.serverUrls "server_urls"
 
 -- | The official app's public identifiers: the web OAuth client ID (Android
 -- passes it as serverClientId, so it is the token's aud) and the iOS bundle ID.
--- Keep in sync with config/*.yaml (IdTokenConfigSpec checks local.yaml).
+-- Keep in sync with config/*.yaml (IdTokenConfigSpec checks local.yaml and prod.yaml).
 defaultIdTokenConfig :: IdTokenConfig
 defaultIdTokenConfig =
   IdTokenConfig
     { googleAudiences = ["624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com"],
-      appleAudiences = ["com.homeaccounting.app"]
+      appleAudiences = ["com.homeaccounting.app"],
+      serverUrls = []
     }
 
 -- | A comma-separated string (what env substitution produces) or an array.
-newtype Audiences = Audiences [Text]
+newtype CommaList = CommaList [Text]
 
-instance FromJSON Audiences where
-  parseJSON (Aeson.String s) = pure (Audiences (filter (not . T.null) (map T.strip (T.splitOn "," s))))
-  parseJSON v = Audiences . filter (not . T.null) . map T.strip <$> parseJSON v
+instance FromJSON CommaList where
+  parseJSON (Aeson.String s) = pure (CommaList (filter (not . T.null) (map T.strip (T.splitOn "," s))))
+  parseJSON v = CommaList . filter (not . T.null) . map T.strip <$> parseJSON v
 
 idTokenAudiences :: IdTokenConfig -> OAuthProvider -> [Text]
 idTokenAudiences c Google = c.googleAudiences

@@ -66,6 +66,7 @@ import Eventium.Store.Memory
   )
 import Eventium.Store.Sqlite (sqliteTaggedEventStoreWriter)
 import Infrastructure.App (AppEnv (..), BankingEnv (..), appMetrics, bankingKeyRingFromConfig, runAppM, runDb)
+import Infrastructure.Auth.IdToken (acceptedServerUrls)
 import Infrastructure.Auth.JWT (defaultJWTConfig)
 import Infrastructure.Auth.JwksCache (fixedKeySource)
 import Infrastructure.Auth.OAuth (IdTokenConfig (..), OAuthConfig (..))
@@ -284,6 +285,8 @@ mkAppEnv withProcessManager = do
   linkCodeStore <- newLinkCodeStore
   testLoggerSet <- newStdoutLoggerSet
   testContextVaultKey <- Vault.newKey
+  -- Resolved as Main does: ["http://localhost:8080"] for testAppConfig.
+  testIdTokenServerUrls <- either (throwString . T.unpack) pure (acceptedServerUrls config.server.apiBaseUrl config.oauth.idToken)
 
   return
     AppEnv
@@ -315,6 +318,7 @@ mkAppEnv withProcessManager = do
             },
         linkCodeStore = linkCodeStore,
         idTokenKeys = fixedKeySource (JWKSet []),
+        idTokenServerUrls = testIdTokenServerUrls,
         loggerSet = testLoggerSet,
         requestContext = nilRequestContext,
         contextVaultKey = testContextVaultKey,
@@ -377,7 +381,8 @@ testAppConfig =
             idToken =
               IdTokenConfig
                 { googleAudiences = ["test-google-aud"],
-                  appleAudiences = ["test.apple.aud"]
+                  appleAudiences = ["test.apple.aud"],
+                  serverUrls = []
                 }
           },
       telegram =

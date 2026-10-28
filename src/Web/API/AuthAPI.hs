@@ -172,10 +172,11 @@ instance ToJSON LinkOAuthRequest
 
 instance FromJSON LinkOAuthRequest
 
--- | Native ID-token sign-in request.
+-- | Native ID-token sign-in request. The token's nonce claim is 'rawNonce'
+-- bound to this server's URL (ADR 008).
 data IdTokenRequest = IdTokenRequest
   { idToken :: Text,
-    nonce :: Text
+    rawNonce :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -317,7 +318,7 @@ handleIdTokenSignIn providerText IdTokenRequest {..} = do
   provider <- case AuthService.parseOAuthProvider providerText of
     Nothing -> throwIO err400 {errBody = "Unknown OAuth provider"}
     Just p -> return p
-  result <- AuthService.signInWithIdToken provider idToken nonce
+  result <- AuthService.signInWithIdToken provider idToken rawNonce
   case result of
     Right r -> return $ toAuthResponse r
     Left AuthService.IdTokenRejected -> throwDomainError (Unauthenticated "Invalid ID token")

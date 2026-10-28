@@ -101,6 +101,7 @@ import Infrastructure.App
   ( AppM,
     HasAuthConfig (..),
     HasIdTokenKeys (..),
+    HasIdTokenServerUrls (..),
     HasLinkCodeStore (..),
     runDb,
   )
@@ -294,11 +295,12 @@ data IdTokenSignInError
 signInWithIdToken ::
   OAuthProvider ->
   Text -> -- ID token
-  Text -> -- Nonce
+  Text -> -- Raw nonce (the token's nonce claim is it bound to this server)
   AppM (Either IdTokenSignInError AuthResult)
-signInWithIdToken provider token nonce = runExceptT $ do
+signInWithIdToken provider token rawNonce = runExceptT $ do
   cfg <- lift (view oauthConfigL)
   src <- lift (view idTokenKeysL)
+  serverUrls <- lift (view idTokenServerUrlsL)
   when (null (idTokenAudiences cfg.idToken provider))
     $ throwE (IdTokenDomainError (AccountError "OAuth configuration error"))
   let reject r = do
@@ -317,7 +319,7 @@ signInWithIdToken provider token nonce = runExceptT $ do
     Just k | not (jwkSetHasKeyId keys k) -> fetch True
     _ -> pure keys
   now <- liftIO getCurrentTime
-  userInfo <- either reject pure (verifyIdToken cfg.idToken provider keySet now token nonce)
+  userInfo <- either reject pure (verifyIdToken cfg.idToken provider keySet now serverUrls token rawNonce)
   withExceptT IdTokenDomainError (ExceptT (linkOrSignInWithOAuth provider userInfo))
 
 -- | Find-or-create a user from an already-resolved 'OAuth.OAuthUserInfo'.

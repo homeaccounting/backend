@@ -9,6 +9,8 @@ module Testkit.IdTokens
     signIdTokenWithAlg,
     baseClaims,
     testIdTokenConfig,
+    testRawNonce,
+    testServerUrl,
   )
 where
 
@@ -36,13 +38,22 @@ import qualified Data.Aeson.KeyMap as KM
 import Data.Time (UTCTime, addUTCTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Domain.Core.Types (OAuthProvider (..))
+import Infrastructure.Auth.IdToken (bindNonce)
 import Infrastructure.Auth.OAuth (IdTokenConfig (..))
 import RIO
 import qualified RIO.ByteString.Lazy as BL
 import RIO.Partial (fromJust)
 
 testIdTokenConfig :: IdTokenConfig
-testIdTokenConfig = IdTokenConfig {googleAudiences = ["test-google-aud"], appleAudiences = ["test.apple.aud"]}
+testIdTokenConfig = IdTokenConfig {googleAudiences = ["test-google-aud"], appleAudiences = ["test.apple.aud"], serverUrls = []}
+
+-- | The raw nonce the app sends; 'baseClaims' carries it bound to 'testServerUrl'.
+testRawNonce :: Text
+testRawNonce = "raw-nonce-0123456789"
+
+-- | test.yaml's (and 'Testkit.InMemoryEventStore.testAppConfig''s) @api_base_url@.
+testServerUrl :: Text
+testServerUrl = "http://localhost:8080"
 
 -- | A fresh RSA-2048 key with kid "k1".
 testRsaKey :: IO JWK
@@ -72,6 +83,6 @@ baseClaims p now =
       ("sub", "sub-1"),
       ("email", "u@example.com"),
       ("email_verified", Aeson.Bool True),
-      ("nonce", "n-1"),
+      ("nonce", Aeson.String (bindNonce testServerUrl testRawNonce)),
       ("exp", Aeson.Number (fromIntegral (floor (utcTimeToPOSIXSeconds (addUTCTime 600 now)) :: Integer)))
     ]

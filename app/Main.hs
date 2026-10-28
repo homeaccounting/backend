@@ -103,6 +103,7 @@ import Infrastructure.App
     initializeAppEnv,
     runAppM,
   )
+import Infrastructure.Auth.IdToken (acceptedServerUrls)
 import Infrastructure.Auth.JwksCache (httpFetcher, newCachingKeySource)
 import Infrastructure.Auth.Telegram (TelegramConfig (..), webhookSecret)
 import qualified Infrastructure.Banking.Providers as BankProviders
@@ -113,6 +114,7 @@ import Infrastructure.Config
     ExchangeRateConfig (..),
     LlmConfig (..),
     LoggingConfig (..),
+    OAuthConfig (..),
     ServerConfig (..),
     llmActive,
     loadConfigWithEnv,
@@ -409,6 +411,9 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
   -- 7. Build application environment
   linkCodeStore <- liftIO newLinkCodeStore
   idTokenKeys <- liftIO (newCachingKeySource getCurrentTime (httpFetcher httpManager))
+  idTokenServerUrls <- case acceptedServerUrls config.server.apiBaseUrl oauthConfig.idToken of
+    Left err -> throwString $ "Invalid ID-token server URL (api_base_url / oauth.id_token.server_urls): " <> T.unpack err
+    Right urls -> pure urls
   -- Minted once here so every middleware/handler that reads or writes the
   -- per-request 'RequestContext' on a WAI request's 'Vault.Vault' agrees on
   -- the same key.
@@ -432,6 +437,7 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
           bankingEnv'
           linkCodeStore
           idTokenKeys
+          idTokenServerUrls
           llmClient
           loggerSet
           nilRequestContext

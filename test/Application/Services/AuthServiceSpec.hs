@@ -28,11 +28,14 @@ import Application.Services.AuthService
     refreshAt,
     signInWithIdToken,
   )
-import Crypto.JOSE (JWKSet (..))
+import Crypto.JOSE (JWKSet (..), jwkKid)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KM
 import Data.Time (addUTCTime, getCurrentTime)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (OAuthProvider (..), TelegramIdentity (..))
 import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.Auth.IdToken (bindNonce)
 import Infrastructure.Auth.JwksCache (KeySource (..))
 import Infrastructure.Auth.OAuth (IdTokenConfig (..), OAuthConfig (..))
 import qualified Infrastructure.Auth.OAuth as OAuth
@@ -43,7 +46,7 @@ import qualified RIO.Text as T
 import Test.Hspec
 import Testkit.Fixtures (registerUser)
 import Testkit.Helpers (mockTelegramId)
-import Testkit.IdTokens (baseClaims, signIdToken, testJwkSet, testRsaKey)
+import Testkit.IdTokens (baseClaims, signIdToken, testJwkSet, testRawNonce, testRsaKey, testServerUrl)
 import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithKeys, runDbIn)
 
 -- -----------------------------------------------------------------------------
@@ -382,32 +385,48 @@ spec = do
 
     it "creates a new user from a valid Google token" $ withKey $ \k env now -> do
       tok <- signIdToken k (baseClaims Google now)
-      res <- runAppM env (signInWithIdToken Google tok "n-1")
+      res <- runAppM env (signInWithIdToken Google tok testRawNonce)
       void res `shouldSatisfy` isRight
       linked <- runDbIn env (getUserByOAuthIdentity Google "sub-1")
       linked `shouldSatisfy` isJust
 
     it "signs in the same user again (existing identity)" $ withKey $ \k env now -> do
       tok <- signIdToken k (baseClaims Apple now)
-      Right a1 <- runAppM env (signInWithIdToken Apple tok "n-1")
-      Right a2 <- runAppM env (signInWithIdToken Apple tok "n-1")
+      Right a1 <- runAppM env (signInWithIdToken Apple tok testRawNonce)
+      Right a2 <- runAppM env (signInWithIdToken Apple tok testRawNonce)
       a1.userId `shouldBe` a2.userId
 
     it "auto-links a verified email to the existing password user" $ withKey $ \k env now -> do
       uid <- registerUser env "u@example.com"
       tok <- signIdToken k (baseClaims Google now)
-      fmap (.userId) <$> runAppM env (signInWithIdToken Google tok "n-1") `shouldReturn` Right uid
+      fmap (.userId) <$> runAppM env (signInWithIdToken Google tok testRawNonce) `shouldReturn` Right uid
 
     it "rejects a bad token as IdTokenRejected" $ withKey $ \k env now -> do
       tok <- signIdToken k (baseClaims Google now)
-      void <$> runAppM env (signInWithIdToken Google tok "wrong-nonce") `shouldReturn` Left IdTokenRejected
+      void <$> runAppM env (signInWithIdToken Google tok "wrong-raw-nonce-00") `shouldReturn` Left IdTokenRejected
+
+    -- C1 regression: a malicious server replaying a token minted for itself.
+    it "rejects a token whose nonce is bound to another server" $ withKey $ \k env now -> do
+      tok <- signIdToken k (KM.insert "nonce" (Aeson.String (bindNonce "https://evil.example" testRawNonce)) (baseClaims Google now))
+      void <$> runAppM env (signInWithIdToken Google tok testRawNonce) `shouldReturn` Left IdTokenRejected
+
+    it "accepts a token bound to an extra configured server URL" $ withKey $ \k env now -> do
+      let lan = "http://192.168.1.10:8080"
+      tok <- signIdToken k (KM.insert "nonce" (Aeson.String (bindNonce lan testRawNonce)) (baseClaims Google now))
+      void <$> runAppM env (signInWithIdToken Google tok testRawNonce) `shouldReturn` Left IdTokenRejected
+      res <- runAppM env {idTokenServerUrls = [testServerUrl, lan]} (signInWithIdToken Google tok testRawNonce)
+      void res `shouldSatisfy` isRight
+
+    it "rejects a raw nonce shorter than 16 characters" $ withKey $ \k env now -> do
+      tok <- signIdToken k (KM.insert "nonce" (Aeson.String (bindNonce testServerUrl "short")) (baseClaims Google now))
+      void <$> runAppM env (signInWithIdToken Google tok "short") `shouldReturn` Left IdTokenRejected
 
     it "refuses GitHub and a disabled provider with the configuration error" $ withKey $ \k env now -> do
       tok <- signIdToken k (baseClaims Google now)
       let disabled = env {oauthConfig = env.oauthConfig {idToken = env.oauthConfig.idToken {googleAudiences = []}}}
-      void <$> runAppM disabled (signInWithIdToken Google tok "n-1")
+      void <$> runAppM disabled (signInWithIdToken Google tok testRawNonce)
         `shouldReturn` Left (IdTokenDomainError (AccountError "OAuth configuration error"))
-      void <$> runAppM env (signInWithIdToken GitHub tok "n-1")
+      void <$> runAppM env (signInWithIdToken GitHub tok testRawNonce)
         `shouldReturn` Left (IdTokenDomainError (AccountError "OAuth configuration error"))
 
     it "reports unavailable keys" $ do
@@ -416,7 +435,7 @@ spec = do
       now <- getCurrentTime
       let env = env0 {idTokenKeys = KeySource (\_ _ -> pure (Left "down"))}
       tok <- signIdToken k (baseClaims Google now)
-      void <$> runAppM env (signInWithIdToken Google tok "n-1") `shouldReturn` Left IdTokenKeysUnavailable
+      void <$> runAppM env (signInWithIdToken Google tok testRawNonce) `shouldReturn` Left IdTokenKeysUnavailable
 
     it "refetches once on an unknown kid" $ do
       k <- testRsaKey
@@ -427,9 +446,31 @@ spec = do
             if forced then modifyIORef' forcedCalls (+ 1) >> pure (Right (testJwkSet k)) else pure (Right (JWKSet []))
           env = env0 {idTokenKeys = src}
       tok <- signIdToken k (baseClaims Google now)
-      res <- runAppM env (signInWithIdToken Google tok "n-1")
+      res <- runAppM env (signInWithIdToken Google tok testRawNonce)
       void res `shouldSatisfy` isRight
       readIORef forcedCalls `shouldReturn` 1
+
+    it "does not force a refetch when the kid is already known" $ do
+      k <- testRsaKey
+      env0 <- createTestAppEnv
+      now <- getCurrentTime
+      forcedCalls <- newIORef (0 :: Int)
+      let src = KeySource $ \_ forced -> when forced (modifyIORef' forcedCalls (+ 1)) >> pure (Right (testJwkSet k))
+      tok <- signIdToken k (baseClaims Google now)
+      res <- runAppM env0 {idTokenKeys = src} (signInWithIdToken Google tok testRawNonce)
+      void res `shouldSatisfy` isRight
+      readIORef forcedCalls `shouldReturn` 0
+
+    it "does not force a refetch for a token without a kid" $ do
+      k <- testRsaKey
+      env0 <- createTestAppEnv
+      now <- getCurrentTime
+      forcedCalls <- newIORef (0 :: Int)
+      let src = KeySource $ \_ forced -> when forced (modifyIORef' forcedCalls (+ 1)) >> pure (Right (testJwkSet k))
+      tok <- signIdToken (set jwkKid Nothing k) (baseClaims Google now)
+      res <- runAppM env0 {idTokenKeys = src} (signInWithIdToken Google tok testRawNonce)
+      void res `shouldBe` Left IdTokenRejected
+      readIORef forcedCalls `shouldReturn` 0
 
 isUnauthenticated :: Either DomainError a -> Bool
 isUnauthenticated (Left (Unauthenticated _)) = True

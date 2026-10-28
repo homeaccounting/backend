@@ -19,11 +19,14 @@ module Web.API.AuthAPIIntegrationSpec (spec) where
 
 import Application.LinkCodeStore (mkLinkCodeToken, redeemAt)
 import Data.Aeson (decode, eitherDecode, encode, object, withObject, (.:), (.=))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types (parseMaybe)
 import qualified Data.Text as T
 import Data.Time (addUTCTime, getCurrentTime)
 import Domain.Core.Types (OAuthProvider (..))
 import Infrastructure.App (AppEnv (..))
+import Infrastructure.Auth.IdToken (bindNonce)
 import Infrastructure.Auth.JWT (defaultJWTConfig, generateToken)
 import Infrastructure.Auth.OAuth (IdTokenConfig (..), OAuthConfig (..))
 import Network.HTTP.Types (hAuthorization, hContentType, status200, status204, status401, status404)
@@ -35,7 +38,7 @@ import Test.Hspec.Wai (request, shouldRespondWith, with)
 import Testkit.AppEnv (mkApp, mkAppWith)
 import Testkit.Fixtures (registerUser)
 import Testkit.HspecWai (getJSON, postJSON, registerAndGetTokens)
-import Testkit.IdTokens (baseClaims, signIdToken, testJwkSet, testRsaKey)
+import Testkit.IdTokens (baseClaims, signIdToken, testJwkSet, testRawNonce, testRsaKey, testServerUrl)
 import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithKeys)
 import Web.API.AuthAPI (TelegramLinkCodeResponse (..))
 import Web.Server (buildApplication)
@@ -201,12 +204,12 @@ refreshTokensSpec =
 idTokenSpec :: Spec
 idTokenSpec = describe "POST /api/auth/oauth/:provider/id-token" $ do
   k <- runIO testRsaKey
-  let body tok nonce = encode (object ["idToken" .= (tok :: Text), "nonce" .= (nonce :: Text)])
+  let body tok raw = encode (object ["idToken" .= (tok :: Text), "rawNonce" .= (raw :: Text)])
   with (mkAppWith (createTestAppEnvWithKeys (testJwkSet k))) $ do
     it "returns an AuthResponse with a refresh token for a valid token" $ do
       now <- liftIO getCurrentTime
       tok <- liftIO $ signIdToken k (baseClaims Google now)
-      resp <- postJSON "/api/auth/oauth/google/id-token" (body tok "n-1")
+      resp <- postJSON "/api/auth/oauth/google/id-token" (body tok testRawNonce)
       liftIO $ simpleStatus resp `shouldBe` status200
       let rt = decode (simpleBody resp) >>= parseMaybe (withObject "auth" (.: "refreshToken")) :: Maybe Text
       liftIO $ rt `shouldSatisfy` isJust
@@ -214,10 +217,26 @@ idTokenSpec = describe "POST /api/auth/oauth/:provider/id-token" $ do
     it "returns 401 UNAUTHENTICATED for a nonce mismatch" $ do
       now <- liftIO getCurrentTime
       tok <- liftIO $ signIdToken k (baseClaims Google now)
-      resp <- postJSON "/api/auth/oauth/google/id-token" (body tok "other")
+      resp <- postJSON "/api/auth/oauth/google/id-token" (body tok "other-raw-nonce-00")
       liftIO $ simpleStatus resp `shouldBe` status401
       let code = decode (simpleBody resp) >>= parseMaybe (withObject "error" (.: "code"))
       liftIO $ code `shouldBe` Just ("UNAUTHENTICATED" :: Text)
+
+    it "returns 401 for a nonce bound to another server" $ do
+      now <- liftIO getCurrentTime
+      tok <- liftIO $ signIdToken k (KM.insert "nonce" (Aeson.String (bindNonce "https://evil.example" testRawNonce)) (baseClaims Google now))
+      postJSON "/api/auth/oauth/google/id-token" (body tok testRawNonce) `shouldRespondWith` 401
+
+    it "returns 401 for a raw nonce shorter than 16 characters" $ do
+      now <- liftIO getCurrentTime
+      tok <- liftIO $ signIdToken k (KM.insert "nonce" (Aeson.String (bindNonce testServerUrl "short")) (baseClaims Google now))
+      postJSON "/api/auth/oauth/google/id-token" (body tok "short") `shouldRespondWith` 401
+
+    it "does not accept the old nonce key" $ do
+      now <- liftIO getCurrentTime
+      tok <- liftIO $ signIdToken k (baseClaims Google now)
+      resp <- postJSON "/api/auth/oauth/google/id-token" (encode (object ["idToken" .= tok, "nonce" .= testRawNonce]))
+      liftIO $ simpleStatus resp `shouldNotBe` status200
 
     it "returns 400 for an unknown provider and for github" $ do
       postJSON "/api/auth/oauth/myspace/id-token" (body "x" "n") `shouldRespondWith` 400

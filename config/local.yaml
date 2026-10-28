@@ -74,6 +74,10 @@ oauth:
   id_token:
     google_audiences: ${GOOGLE_ID_TOKEN_AUDIENCES:-624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com}
     apple_audiences: ${APPLE_ID_TOKEN_AUDIENCES:-com.homeaccounting.app}
+    # Extra URLs users type into the app for this server (besides
+    # api_base_url), comma-separated, e.g. a LAN IP and a hostname. The token's
+    # nonce is bound to the URL, so a missing one rejects sign-in.
+    server_urls: ${ID_TOKEN_SERVER_URLS:-}
 
 # Telegram bot configuration
 telegram:
