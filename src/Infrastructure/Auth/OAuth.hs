@@ -10,6 +10,7 @@
 --   - Google
 --   - GitHub
 --   - Microsoft
+--   - Apple (ID-token sign-in only; no redirect flow)
 --
 -- Key Functions:
 --   - getAuthorizationUrl: Generate URL to redirect user for authentication
@@ -182,16 +183,22 @@ applyOAuthDefaults cfg =
   where
     applyProviderDefaults :: OAuthProvider -> OAuthProviderConfig -> OAuthProviderConfig
     applyProviderDefaults provider c =
-      let defaults = case provider of
-            Google -> defaultGoogleConfig c.clientId c.clientSecret c.redirectUri
-            GitHub -> defaultGitHubConfig c.clientId c.clientSecret c.redirectUri
-            Microsoft -> defaultMicrosoftConfig c.clientId c.clientSecret c.redirectUri
-       in c
+      case providerDefaults provider c of
+        Nothing -> c
+        Just defaults ->
+          c
             { authorizeUrl = if T.null c.authorizeUrl then defaults.authorizeUrl else c.authorizeUrl,
               tokenUrl = if T.null c.tokenUrl then defaults.tokenUrl else c.tokenUrl,
               userInfoUrl = if T.null c.userInfoUrl then defaults.userInfoUrl else c.userInfoUrl,
               scopes = if null c.scopes then defaults.scopes else c.scopes
             }
+
+    providerDefaults :: OAuthProvider -> OAuthProviderConfig -> Maybe OAuthProviderConfig
+    providerDefaults provider c = case provider of
+      Google -> Just (defaultGoogleConfig c.clientId c.clientSecret c.redirectUri)
+      GitHub -> Just (defaultGitHubConfig c.clientId c.clientSecret c.redirectUri)
+      Microsoft -> Just (defaultMicrosoftConfig c.clientId c.clientSecret c.redirectUri)
+      Apple -> Nothing
 
 -- -----------------------------------------------------------------------------
 -- User Info
@@ -400,6 +407,8 @@ parseUserInfo provider body =
     Google -> parseGoogleUserInfo body
     GitHub -> parseGitHubUserInfo body
     Microsoft -> parseMicrosoftUserInfo body
+    -- Apple has no userinfo endpoint; it signs in via ID tokens only.
+    Apple -> Nothing
 
 parseGoogleUserInfo :: LBS.ByteString -> Maybe OAuthUserInfo
 parseGoogleUserInfo body = do
@@ -521,3 +530,4 @@ getProviderConfig :: OAuthConfig -> OAuthProvider -> Maybe OAuthProviderConfig
 getProviderConfig config Google = config.google
 getProviderConfig config GitHub = config.gitHub
 getProviderConfig config Microsoft = config.microsoft
+getProviderConfig _ Apple = Nothing

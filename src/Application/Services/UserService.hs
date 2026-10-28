@@ -203,4 +203,5 @@ parseOAuthProvider t = case T.toLower t of
   "google" -> Just Google
   "github" -> Just GitHub
   "microsoft" -> Just Microsoft
+  "apple" -> Just Apple
   _ -> Nothing

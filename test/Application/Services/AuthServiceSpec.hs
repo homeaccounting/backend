@@ -21,6 +21,7 @@ import Application.Services.AuthService
     linkOrSignInWithOAuth,
     login,
     logout,
+    parseOAuthProvider,
     redeemTelegramLinkCode,
     refresh,
     refreshAt,
@@ -359,6 +360,12 @@ spec = do
     it "an unknown token is rejected" $ do
       env <- createTestAppEnv
       runAppM env (refresh (mkRefreshToken "nope")) >>= ((`shouldBe` True) . isUnauthenticated)
+
+  describe "parseOAuthProvider"
+    $ it "accepts apple case-insensitively"
+    $ do
+      parseOAuthProvider "apple" `shouldBe` Just Apple
+      parseOAuthProvider "Apple" `shouldBe` Just Apple
 
 isUnauthenticated :: Either DomainError a -> Bool
 isUnauthenticated (Left (Unauthenticated _)) = True

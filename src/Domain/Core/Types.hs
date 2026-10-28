@@ -1313,6 +1313,7 @@ data OAuthProvider
   = Google
   | GitHub
   | Microsoft
+  | Apple
   deriving (Show, Eq, Ord, Generic)
 
 instance ToJSON OAuthProvider
