@@ -128,6 +128,7 @@ library
       Infrastructure.App
       Infrastructure.Auth
       Infrastructure.Auth.IdToken
+      Infrastructure.Auth.JwksCache
       Infrastructure.Auth.JWT
       Infrastructure.Auth.OAuth
       Infrastructure.Auth.Password
@@ -479,6 +480,7 @@ test-suite backend-test
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.IdTokenConfigSpec
       Infrastructure.Auth.IdTokenSpec
+      Infrastructure.Auth.JwksCacheSpec
       Infrastructure.Auth.JWTConfigSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
