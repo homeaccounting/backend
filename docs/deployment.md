@@ -94,6 +94,26 @@ audiences:
   disable that provider (the endpoint then returns 400, and `GET /api/auth/providers`
   reports it as `false`).
 - Set it to your own client IDs or bundle ID to serve a self-built app.
+- Pass a variable to the container only when it is set. A compose entry like
+  `GOOGLE_ID_TOKEN_AUDIENCES=${GOOGLE_ID_TOKEN_AUDIENCES:-}` sets it to an empty
+  string when the host has no value, and that **disables** the provider. Either
+  omit the entry, or repeat the default:
+  `${GOOGLE_ID_TOKEN_AUDIENCES:-624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com}`.
+- The `homeaccounting/docker` compose files don't pass these variables (nor
+  `ID_TOKEN_SERVER_URLS`) yet; until that follow-up lands, the defaults apply.
+
+**Server URLs.** The app binds each token's nonce to the server URL the user
+typed in, so a token issued for one server can't be replayed to another. The
+backend accepts only its own URLs:
+
+- `API_BASE_URL` must be exactly the URL users type into the app (scheme, host and
+  port; the app's canonical form drops a default port and a trailing slash).
+- `ID_TOKEN_SERVER_URLS` (optional, comma-separated) lists any other URLs users
+  reach the same server by, e.g. `http://192.168.1.10:8080,http://homebox.local:8080`
+  when some type the LAN IP and others the hostname.
+- Every URL must be `http` or `https`, without userinfo, query or fragment; an
+  invalid one stops the server at startup. Sign-in from a URL not in the list
+  fails with 401 `Invalid ID token`.
 
 ### 5. Log Into GHCR on the Server
 
