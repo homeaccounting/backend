@@ -26,6 +26,7 @@
 module Testkit.InMemoryEventStore
   ( -- * Test Environment Creation
     createTestAppEnv,
+    createTestAppEnvWithKeys,
     createTestAppEnvWithProcessManager,
     createInMemoryEventStores,
 
@@ -49,6 +50,7 @@ import Application.ProcessManagers (transactionCancellationProcessManager, trans
 import Application.ReadModels.Persist (persistentReadModels)
 import Application.ReadModels.User ()
 import Control.Monad.Logger (LoggingT, runNoLoggingT)
+import Crypto.JOSE (JWKSet (..))
 import qualified Data.Set as Set
 import qualified Data.Vault.Lazy as Vault
 import Database.Persist.Sql (SqlPersistT)
@@ -65,6 +67,7 @@ import Eventium.Store.Memory
 import Eventium.Store.Sqlite (sqliteTaggedEventStoreWriter)
 import Infrastructure.App (AppEnv (..), BankingEnv (..), appMetrics, bankingKeyRingFromConfig, runAppM, runDb)
 import Infrastructure.Auth.JWT (defaultJWTConfig)
+import Infrastructure.Auth.JwksCache (fixedKeySource)
 import Infrastructure.Auth.OAuth (IdTokenConfig (..), OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import qualified Infrastructure.Banking.Monobank as Monobank
@@ -204,6 +207,10 @@ seedGlobals apply events = do
 createTestAppEnv :: IO AppEnv
 createTestAppEnv = mkAppEnv False
 
+-- | Like 'createTestAppEnv', but ID-token sign-in verifies against the given keys.
+createTestAppEnvWithKeys :: JWKSet -> IO AppEnv
+createTestAppEnvWithKeys keys = (\e -> e {idTokenKeys = fixedKeySource keys}) <$> createTestAppEnv
+
 -- | Create a test 'AppEnv' with the Transfer Process Manager enabled.
 --
 -- Like 'createTestAppEnv', but also wires the TransactionPostingManager event handler
@@ -307,6 +314,7 @@ mkAppEnv withProcessManager = do
               bankProviderRegistry = registryFromList [Monobank.descriptor "http://127.0.0.1:1" testHttpManager]
             },
         linkCodeStore = linkCodeStore,
+        idTokenKeys = fixedKeySource (JWKSet []),
         loggerSet = testLoggerSet,
         requestContext = nilRequestContext,
         contextVaultKey = testContextVaultKey,

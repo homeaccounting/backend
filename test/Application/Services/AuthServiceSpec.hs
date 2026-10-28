@@ -15,6 +15,7 @@ import Application.LinkCodeStore (LinkCodeToken, mkLinkCodeToken, redeemAt)
 import Application.ReadModels.User (getUserByOAuthIdentity, getUserByTelegramId)
 import Application.Services.AuthService
   ( AuthResult (..),
+    IdTokenSignInError (..),
     TelegramLinkCodeResult (..),
     issueTelegramLinkCode,
     linkOAuthIdentityToUser,
@@ -25,11 +26,15 @@ import Application.Services.AuthService
     redeemTelegramLinkCode,
     refresh,
     refreshAt,
+    signInWithIdToken,
   )
+import Crypto.JOSE (JWKSet (..))
 import Data.Time (addUTCTime, getCurrentTime)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (OAuthProvider (..), TelegramIdentity (..))
 import Infrastructure.App (AppEnv (..), runAppM)
+import Infrastructure.Auth.JwksCache (KeySource (..))
+import Infrastructure.Auth.OAuth (IdTokenConfig (..), OAuthConfig (..))
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.RefreshToken (mkRefreshToken, unRefreshToken)
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
@@ -38,7 +43,8 @@ import qualified RIO.Text as T
 import Test.Hspec
 import Testkit.Fixtures (registerUser)
 import Testkit.Helpers (mockTelegramId)
-import Testkit.InMemoryEventStore (createTestAppEnv, runDbIn)
+import Testkit.IdTokens (baseClaims, signIdToken, testJwkSet, testRsaKey)
+import Testkit.InMemoryEventStore (createTestAppEnv, createTestAppEnvWithKeys, runDbIn)
 
 -- -----------------------------------------------------------------------------
 -- Test data
@@ -366,6 +372,64 @@ spec = do
     $ do
       parseOAuthProvider "apple" `shouldBe` Just Apple
       parseOAuthProvider "Apple" `shouldBe` Just Apple
+
+  describe "signInWithIdToken" $ do
+    let withKey act = do
+          k <- testRsaKey
+          env <- createTestAppEnvWithKeys (testJwkSet k)
+          now <- getCurrentTime
+          act k env now
+
+    it "creates a new user from a valid Google token" $ withKey $ \k env now -> do
+      tok <- signIdToken k (baseClaims Google now)
+      res <- runAppM env (signInWithIdToken Google tok "n-1")
+      void res `shouldSatisfy` isRight
+      linked <- runDbIn env (getUserByOAuthIdentity Google "sub-1")
+      linked `shouldSatisfy` isJust
+
+    it "signs in the same user again (existing identity)" $ withKey $ \k env now -> do
+      tok <- signIdToken k (baseClaims Apple now)
+      Right a1 <- runAppM env (signInWithIdToken Apple tok "n-1")
+      Right a2 <- runAppM env (signInWithIdToken Apple tok "n-1")
+      a1.userId `shouldBe` a2.userId
+
+    it "auto-links a verified email to the existing password user" $ withKey $ \k env now -> do
+      uid <- registerUser env "u@example.com"
+      tok <- signIdToken k (baseClaims Google now)
+      fmap (.userId) <$> runAppM env (signInWithIdToken Google tok "n-1") `shouldReturn` Right uid
+
+    it "rejects a bad token as IdTokenRejected" $ withKey $ \k env now -> do
+      tok <- signIdToken k (baseClaims Google now)
+      void <$> runAppM env (signInWithIdToken Google tok "wrong-nonce") `shouldReturn` Left IdTokenRejected
+
+    it "refuses GitHub and a disabled provider with the configuration error" $ withKey $ \k env now -> do
+      tok <- signIdToken k (baseClaims Google now)
+      let disabled = env {oauthConfig = env.oauthConfig {idToken = env.oauthConfig.idToken {googleAudiences = []}}}
+      void <$> runAppM disabled (signInWithIdToken Google tok "n-1")
+        `shouldReturn` Left (IdTokenDomainError (AccountError "OAuth configuration error"))
+      void <$> runAppM env (signInWithIdToken GitHub tok "n-1")
+        `shouldReturn` Left (IdTokenDomainError (AccountError "OAuth configuration error"))
+
+    it "reports unavailable keys" $ do
+      k <- testRsaKey
+      env0 <- createTestAppEnv
+      now <- getCurrentTime
+      let env = env0 {idTokenKeys = KeySource (\_ _ -> pure (Left "down"))}
+      tok <- signIdToken k (baseClaims Google now)
+      void <$> runAppM env (signInWithIdToken Google tok "n-1") `shouldReturn` Left IdTokenKeysUnavailable
+
+    it "refetches once on an unknown kid" $ do
+      k <- testRsaKey
+      env0 <- createTestAppEnv
+      now <- getCurrentTime
+      forcedCalls <- newIORef (0 :: Int)
+      let src = KeySource $ \_ forced ->
+            if forced then modifyIORef' forcedCalls (+ 1) >> pure (Right (testJwkSet k)) else pure (Right (JWKSet []))
+          env = env0 {idTokenKeys = src}
+      tok <- signIdToken k (baseClaims Google now)
+      res <- runAppM env (signInWithIdToken Google tok "n-1")
+      void res `shouldSatisfy` isRight
+      readIORef forcedCalls `shouldReturn` 1
 
 isUnauthenticated :: Either DomainError a -> Bool
 isUnauthenticated (Left (Unauthenticated _)) = True
