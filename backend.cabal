@@ -127,6 +127,7 @@ library
       Domain.User.Projection
       Infrastructure.App
       Infrastructure.Auth
+      Infrastructure.Auth.IdToken
       Infrastructure.Auth.JWT
       Infrastructure.Auth.OAuth
       Infrastructure.Auth.Password
@@ -477,6 +478,7 @@ test-suite backend-test
       Domain.Transaction.TransferMatchPropertySpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.IdTokenConfigSpec
+      Infrastructure.Auth.IdTokenSpec
       Infrastructure.Auth.JWTConfigSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
@@ -543,6 +545,7 @@ test-suite backend-test
       Testkit.Generators
       Testkit.Helpers
       Testkit.HspecWai
+      Testkit.IdTokens
       Testkit.InMemoryEventStore
       Testkit.Llm
       Testkit.Time
