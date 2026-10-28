@@ -33,6 +33,9 @@ module Infrastructure.Auth.OAuth
   ( -- * Configuration
     OAuthConfig (..),
     OAuthProviderConfig (..),
+    IdTokenConfig (..),
+    defaultIdTokenConfig,
+    idTokenAudiences,
 
     -- * OAuth Flow
     getAuthorizationUrl,
@@ -117,7 +120,8 @@ instance FromJSON OAuthProviderConfig where
 data OAuthConfig = OAuthConfig
   { google :: Maybe OAuthProviderConfig,
     gitHub :: Maybe OAuthProviderConfig,
-    microsoft :: Maybe OAuthProviderConfig
+    microsoft :: Maybe OAuthProviderConfig,
+    idToken :: IdTokenConfig
   }
   deriving (Show, Eq, Generic)
 
@@ -129,6 +133,47 @@ instance FromJSON OAuthConfig where
       <$> v .:? "google"
       <*> v .:? "github"
       <*> v .:? "microsoft"
+      <*> v .:? "id_token" .!= defaultIdTokenConfig
+
+-- | Audiences accepted on native ID tokens, per provider. An empty list
+-- disables ID-token sign-in for that provider.
+data IdTokenConfig = IdTokenConfig
+  { googleAudiences :: [Text],
+    appleAudiences :: [Text]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON IdTokenConfig
+
+instance FromJSON IdTokenConfig where
+  parseJSON = withObject "IdTokenConfig" $ \v -> do
+    let audiences def key = maybe def (\(Audiences xs) -> xs) <$> v .:? key
+    IdTokenConfig
+      <$> audiences defaultIdTokenConfig.googleAudiences "google_audiences"
+      <*> audiences defaultIdTokenConfig.appleAudiences "apple_audiences"
+
+-- | The official app's public identifiers: the web OAuth client ID (Android
+-- passes it as serverClientId, so it is the token's aud) and the iOS bundle ID.
+-- Keep in sync with config/*.yaml (IdTokenConfigSpec checks local.yaml).
+defaultIdTokenConfig :: IdTokenConfig
+defaultIdTokenConfig =
+  IdTokenConfig
+    { googleAudiences = ["624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com"],
+      appleAudiences = ["com.homeaccounting.app"]
+    }
+
+-- | A comma-separated string (what env substitution produces) or an array.
+newtype Audiences = Audiences [Text]
+
+instance FromJSON Audiences where
+  parseJSON (Aeson.String s) = pure (Audiences (filter (not . T.null) (map T.strip (T.splitOn "," s))))
+  parseJSON v = Audiences . filter (not . T.null) . map T.strip <$> parseJSON v
+
+idTokenAudiences :: IdTokenConfig -> OAuthProvider -> [Text]
+idTokenAudiences c Google = c.googleAudiences
+idTokenAudiences c Apple = c.appleAudiences
+idTokenAudiences _ GitHub = []
+idTokenAudiences _ Microsoft = []
 
 -- | Default OAuth configuration with well-known provider URLs.
 --

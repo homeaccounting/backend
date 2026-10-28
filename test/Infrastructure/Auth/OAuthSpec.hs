@@ -9,6 +9,7 @@ import Infrastructure.Auth.OAuth
   ( OAuthConfig (..),
     OAuthError (..),
     OAuthUserInfo (..),
+    defaultIdTokenConfig,
     getAuthorizationUrl,
     parseUserInfo,
   )
@@ -71,4 +72,4 @@ spec = do
       parseUserInfo Apple "{\"sub\":\"x\"}" `shouldBe` Nothing
 
 emptyOAuthConfig :: OAuthConfig
-emptyOAuthConfig = OAuthConfig {google = Nothing, gitHub = Nothing, microsoft = Nothing}
+emptyOAuthConfig = OAuthConfig {google = Nothing, gitHub = Nothing, microsoft = Nothing, idToken = defaultIdTokenConfig}

@@ -232,6 +232,7 @@ library
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
+    , jose ==0.12.*
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
@@ -316,6 +317,7 @@ executable backend
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
+    , jose ==0.12.*
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
@@ -474,6 +476,7 @@ test-suite backend-test
       Domain.Transaction.StatusKindSpec
       Domain.Transaction.TransferMatchPropertySpec
       Domain.User.CommandHandlerSpec
+      Infrastructure.Auth.IdTokenConfigSpec
       Infrastructure.Auth.JWTConfigSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
@@ -619,6 +622,7 @@ test-suite backend-test
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
+    , jose ==0.12.*
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4

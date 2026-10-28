@@ -65,7 +65,7 @@ import Eventium.Store.Memory
 import Eventium.Store.Sqlite (sqliteTaggedEventStoreWriter)
 import Infrastructure.App (AppEnv (..), BankingEnv (..), appMetrics, bankingKeyRingFromConfig, runAppM, runDb)
 import Infrastructure.Auth.JWT (defaultJWTConfig)
-import Infrastructure.Auth.OAuth (OAuthConfig (..))
+import Infrastructure.Auth.OAuth (IdTokenConfig (..), OAuthConfig (..))
 import Infrastructure.Auth.Telegram (TelegramConfig (..))
 import qualified Infrastructure.Banking.Monobank as Monobank
 import Infrastructure.Banking.Registry (registryFromList)
@@ -365,7 +365,12 @@ testAppConfig =
         OAuthConfig
           { google = Nothing,
             gitHub = Nothing,
-            microsoft = Nothing
+            microsoft = Nothing,
+            idToken =
+              IdTokenConfig
+                { googleAudiences = ["test-google-aud"],
+                  appleAudiences = ["test.apple.aud"]
+                }
           },
       telegram =
         TelegramConfig

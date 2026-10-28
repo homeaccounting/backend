@@ -62,6 +62,12 @@ oauth:
     client_id: "${MICROSOFT_CLIENT_ID}"
     client_secret: "${MICROSOFT_CLIENT_SECRET}"
     redirect_uri: "${APP_BASE_URL}/app/auth/oauth/microsoft/callback"
+  # Native ID-token sign-in (mobile). Comma-separated accepted audiences; an
+  # empty value disables the provider. Defaults are the official app's public
+  # IDs, so self-hosted servers accept the official app unchanged.
+  id_token:
+    google_audiences: ${GOOGLE_ID_TOKEN_AUDIENCES:-624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com}
+    apple_audiences: ${APPLE_ID_TOKEN_AUDIENCES:-com.homeaccounting.app}
 
 # Telegram bot configuration
 telegram:

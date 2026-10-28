@@ -69,6 +69,9 @@ oauth:
     client_id: ${MICROSOFT_CLIENT_ID:-}
     client_secret: ${MICROSOFT_CLIENT_SECRET:-}
     redirect_uri: "${APP_BASE_URL:-http://localhost:5173}/app/auth/oauth/microsoft/callback"
+  id_token:
+    google_audiences: "test-google-aud"
+    apple_audiences: "test.apple.aud"
 
 # Telegram bot configuration
 telegram:
