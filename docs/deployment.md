@@ -77,6 +77,24 @@ $EDITOR infra/.env
 > **Note:** `infra/.env` contains secrets. It is committed to git for convenience (private repo).
 > If you change secrets later, edit `infra/.env` and run `just deploy-sync` to push the update.
 
+#### Mobile sign-in (Google / Apple)
+
+The mobile app signs in with a Google or Apple ID token that the backend verifies
+against the provider's public keys (see [ADR 008](decisions/008-native-id-token-sign-in.md)).
+No client secret is needed. Two optional variables list the accepted token
+audiences:
+
+| Variable | Default (official app) |
+|----------|------------------------|
+| `GOOGLE_ID_TOKEN_AUDIENCES` | `624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com` |
+| `APPLE_ID_TOKEN_AUDIENCES` | `com.homeaccounting.app` |
+
+- Values are comma-separated; entries are trimmed and empty ones dropped.
+- Leave a variable unset to accept the official app. Set it to an empty string to
+  disable that provider (the endpoint then returns 400, and `GET /api/auth/providers`
+  reports it as `false`).
+- Set it to your own client IDs or bundle ID to serve a self-built app.
+
 ### 5. Log Into GHCR on the Server
 
 Still on the server, authenticate Docker with GitHub Container Registry:

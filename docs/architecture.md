@@ -104,6 +104,8 @@ src/
 │   ├── Database.hs         # PostgreSQL connection
 │   ├── Eventium.hs         # Event store integration
 │   └── Auth/               # Authentication providers
+│       ├── IdToken.hs      # Google/Apple ID-token verification
+│       ├── JwksCache.hs    # Provider signing-key cache
 │       ├── JWT.hs
 │       ├── OAuth.hs
 │       ├── Password.hs
@@ -361,7 +363,7 @@ The Application Services layer sits between the Web handlers and the Domain laye
 |---------|---------------|
 | `AccountService` | Account CRUD, sharing, access revocation. Accepts domain commands, returns `Either DomainError (AccountId, AccountSummaryData)` |
 | `TransactionService` | Transfer initiation and status queries. Accepts domain commands, returns `Either DomainError (TransactionId, TransactionSummaryData)` |
-| `AuthService` | Registration, login, OAuth, Telegram link-code issue/redeem, token refresh. Returns `Either DomainError AuthResult` |
+| `AuthService` | Registration, login, OAuth, native Google/Apple ID-token sign-in (`signInWithIdToken`), Telegram link-code issue/redeem, token refresh. Returns `Either DomainError AuthResult` |
 | `UserService` | User profile queries, password change, OAuth/Telegram unlinking. Returns `Either DomainError (UserId, UserSummaryData)` or `Either DomainError ()` |
 | `AuthorizationService` | Pure RBAC access control. No IO — evaluates permissions from data |
 | `PromptService` | Backs `POST /api/prompt` — natural-language transaction creation. Parses free text via a free open-weights LLM through an OpenAI-compatible provider (`Infrastructure.Llm`), then routes the recognised intent through an extensible intent architecture (`Application.Services.Prompt.*`). Reuses `TransactionService` to execute the resulting command |
@@ -482,7 +484,7 @@ Refresh tokens are stored in two Postgres tables, `refresh_token_families` (one 
 | Password (Argon2) | Email/password login |
 | JWT | Session tokens |
 | Refresh tokens | Rotating per-device sessions (60-day sliding) |
-| OAuth2 | Google, GitHub, Microsoft |
+| OAuth2 | Google, GitHub, Microsoft, Apple (native ID token only) |
 | Telegram | Bot deep-link account linking (`POST /auth/telegram/link-code` issues a short-lived code; bot's `/start LINK_<token>` redeems it and runs `LinkTelegramAccount`) |
 
 ### Configuration

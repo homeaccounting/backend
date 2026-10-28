@@ -13,6 +13,7 @@ This directory contains Architecture Decision Records documenting significant te
 | [005](./005-statement-times-are-provider-local.md) | Statement wall-clock times are provider-local | Accepted | 2026-09-15 |
 | [006](./006-import-attribution-capacity-replaces-boolean-reconciled.md) | Import attribution is capacity-limited, not once-only | Accepted | 2026-09-16 |
 | [007](./007-rotating-refresh-tokens.md) | Rotating refresh tokens live in Infrastructure tables | Accepted | 2026-10-09 |
+| [008](./008-native-id-token-sign-in.md) | Native ID-token sign-in for Google and Apple | Accepted | 2026-10-28 |
 
 ## ADR Format
 
