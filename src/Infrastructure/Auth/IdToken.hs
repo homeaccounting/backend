@@ -22,7 +22,6 @@ module Infrastructure.Auth.IdToken
     jwkSetHasKeyId,
     verifyIdToken,
     bindNonce,
-    canonicalServerUrl,
     acceptedServerUrls,
   )
 where
@@ -52,11 +51,11 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString.Base64.URL as B64URL
+import Data.Url (canonicalBaseUrl)
 import Domain.Core.Types (OAuthProvider (..))
 import Infrastructure.Auth.OAuth (IdTokenConfig (..), OAuthUserInfo (..), idTokenAudiences)
 import RIO
 import qualified RIO.ByteString.Lazy as BL
-import RIO.Char (isAlphaNum, isAscii, isDigit, isHexDigit, isSpace)
 import qualified RIO.List as L
 import qualified RIO.Set as Set
 import qualified RIO.Text as T
@@ -170,7 +169,7 @@ minRawNonceLength = 16
 
 -- | The nonce the app gives the provider for a server:
 -- @base64url_unpadded(SHA-256(UTF-8(serverUrl <> "\\n" <> rawNonce)))@.
--- @serverUrl@ must be canonical ('canonicalServerUrl'); the mobile app computes
+-- @serverUrl@ must be canonical ('canonicalBaseUrl'); the mobile app computes
 -- the same value (spec known-answer vectors in IdTokenSpec).
 bindNonce :: Text -> Text -> Text
 bindNonce serverUrl rawNonce =
@@ -178,57 +177,10 @@ bindNonce serverUrl rawNonce =
   where
     digest = hash (encodeUtf8 (serverUrl <> "\n" <> rawNonce)) :: Digest SHA256
 
--- | @scheme://host[:port][/path]@: scheme and host lower-cased, the default
--- port dropped, trailing slashes stripped. Matches the mobile app's
--- @parseServerUrl@, so both sides bind the nonce to the same string. Only
--- http(s); userinfo, query and fragment are refused rather than dropped.
-canonicalServerUrl :: Text -> Either Text Text
-canonicalServerUrl input = do
-  (scheme, rest) <- case T.break (== ':') raw of
-    (sch, r) | Just after <- T.stripPrefix "://" r -> Right (T.toLower sch, after)
-    _ -> invalid "missing scheme"
-  defaultPort <- case scheme of
-    "http" -> Right 80
-    "https" -> Right 443
-    _ -> invalid "scheme must be http or https"
-  when (T.any isSpace raw) (invalid "contains whitespace")
-  when (T.any (`elem` ['?', '#']) rest) (invalid "has a query or fragment")
-  let (authority, path) = T.break (== '/') rest
-  when (T.any (== '@') authority) (invalid "has userinfo")
-  (host, mPort) <- splitHostPort authority
-  unless (validHost host) (invalid "bad host")
-  port <- traverse parsePort mPort
-  let portPart = case port of
-        Just p | p /= defaultPort -> ":" <> tshow p
-        _ -> ""
-  pure (scheme <> "://" <> T.toLower host <> portPart <> T.dropWhileEnd (== '/') path)
-  where
-    raw = T.strip input
-    invalid :: Text -> Either Text a
-    invalid why = Left ("invalid server URL " <> tshow raw <> ": " <> why)
-    splitHostPort a
-      | "[" `T.isPrefixOf` a = case T.break (== ']') a of
-          (h, r) | Just after <- T.stripPrefix "]" r -> (,) (h <> "]") <$> portSuffix after
-          _ -> invalid "unterminated IPv6 address"
-      | otherwise = case T.split (== ':') a of
-          [h] -> Right (h, Nothing)
-          [h, p] -> Right (h, Just p)
-          _ -> invalid "bad authority"
-    portSuffix r
-      | T.null r = Right Nothing
-      | Just p <- T.stripPrefix ":" r = Right (Just p)
-      | otherwise = invalid "bad authority"
-    validHost h = case T.stripPrefix "[" h >>= T.stripSuffix "]" of
-      Just v6 -> not (T.null v6) && T.all (\c -> isHexDigit c || c == ':' || c == '.') v6
-      Nothing -> not (T.null h) && T.all (\c -> isAscii c && (isAlphaNum c || c == '-' || c == '.')) h
-    parsePort p = case readMaybe (T.unpack p) :: Maybe Int of
-      Just n | T.all isDigit p, n >= 1, n <= 65535 -> Right n
-      _ -> invalid "bad port"
-
 -- | The canonical URLs a nonce may be bound to on this server: @api_base_url@
 -- plus the configured extras. 'Left' names the first invalid one.
 acceptedServerUrls :: Text -> IdTokenConfig -> Either Text [Text]
-acceptedServerUrls apiBaseUrl cfg = L.nub <$> traverse canonicalServerUrl (apiBaseUrl : cfg.serverUrls)
+acceptedServerUrls apiBaseUrl cfg = L.nub <$> traverse canonicalBaseUrl (apiBaseUrl : cfg.serverUrls)
 
 matchesAny :: [Text] -> StringOrURI -> Bool
 matchesAny xs v = any (\x -> x ^? stringOrUri == Just v) xs

@@ -23,7 +23,6 @@ spec :: Spec
 spec = do
   verifySpec
   bindNonceSpec
-  canonicalServerUrlSpec
   acceptedServerUrlsSpec
 
 verifySpec :: Spec
@@ -161,26 +160,6 @@ bindNonceSpec = describe "bindNonce" $ do
   it "matches the LAN-server vector"
     $ bindNonce "http://192.168.1.10:8080" "r-123"
     `shouldBe` "QQmXHq-J6DZRuqC0ijWP2ps2PRHuAk4sFTxarI5iiSQ"
-
-canonicalServerUrlSpec :: Spec
-canonicalServerUrlSpec = describe "canonicalServerUrl" $ do
-  let ok i o = it (T.unpack i) $ canonicalServerUrl i `shouldBe` Right o
-      bad i = it ("rejects " <> T.unpack i) $ canonicalServerUrl i `shouldSatisfy` isLeft
-  ok "HTTPS://HomeAccounting.com:443/" "https://homeaccounting.com"
-  ok "http://192.168.1.10:8080/" "http://192.168.1.10:8080"
-  ok "https://x.example/base/" "https://x.example/base"
-  ok "http://h:80" "http://h"
-  ok "https://h:80" "https://h:80"
-  ok "http://[::1]:8080" "http://[::1]:8080"
-  bad "ftp://h"
-  bad "https://h/?q=1"
-  bad "https://h/#f"
-  bad "https://user@h"
-  bad "not a url"
-  bad "https://"
-  bad "https://h:"
-  bad "https://h:x"
-  bad "https://h:99999"
 
 acceptedServerUrlsSpec :: Spec
 acceptedServerUrlsSpec = describe "acceptedServerUrls" $ do
