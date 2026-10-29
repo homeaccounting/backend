@@ -78,6 +78,7 @@ library
       Data.Embed
       Data.Text.Display
       Data.Text.Match
+      Data.Url
       Domain.Account
       Domain.Account.CommandHandler
       Domain.Account.Commands
@@ -127,6 +128,8 @@ library
       Domain.User.Projection
       Infrastructure.App
       Infrastructure.Auth
+      Infrastructure.Auth.IdToken
+      Infrastructure.Auth.JwksCache
       Infrastructure.Auth.JWT
       Infrastructure.Auth.OAuth
       Infrastructure.Auth.Password
@@ -232,9 +235,11 @@ library
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
+    , jose ==0.12.*
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
+    , network-uri ==2.6.*
     , optics ==0.4.*
     , optics-th ==0.4.*
     , persistent >=2.13 && <2.15
@@ -316,9 +321,11 @@ executable backend
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
+    , jose ==0.12.*
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
+    , network-uri ==2.6.*
     , optics ==0.4.*
     , optics-th ==0.4.*
     , persistent >=2.13 && <2.15
@@ -425,6 +432,7 @@ test-suite backend-test
       Application.Services.UserServiceSpec
       Data.Text.MatchPropertySpec
       Data.Text.MatchSpec
+      Data.UrlSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
       Domain.Account.ReversalCommandHandlerSpec
@@ -474,6 +482,9 @@ test-suite backend-test
       Domain.Transaction.StatusKindSpec
       Domain.Transaction.TransferMatchPropertySpec
       Domain.User.CommandHandlerSpec
+      Infrastructure.Auth.IdTokenConfigSpec
+      Infrastructure.Auth.IdTokenSpec
+      Infrastructure.Auth.JwksCacheSpec
       Infrastructure.Auth.JWTConfigSpec
       Infrastructure.Auth.OAuthSpec
       Infrastructure.Auth.PasswordSpec
@@ -540,6 +551,7 @@ test-suite backend-test
       Testkit.Generators
       Testkit.Helpers
       Testkit.HspecWai
+      Testkit.IdTokens
       Testkit.InMemoryEventStore
       Testkit.Llm
       Testkit.Time
@@ -619,9 +631,11 @@ test-suite backend-test
     , http-client ==0.7.*
     , http-client-tls ==0.3.*
     , http-types ==0.12.*
+    , jose ==0.12.*
     , memory >=0.17 && <0.19
     , monad-logger ==0.3.*
     , mtl >=2.2 && <2.4
+    , network-uri ==2.6.*
     , optics ==0.4.*
     , optics-th ==0.4.*
     , persistent >=2.13 && <2.15

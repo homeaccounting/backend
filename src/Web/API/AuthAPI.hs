@@ -19,6 +19,8 @@
 --   - POST /api/auth/login - Email + password login
 --   - GET /api/auth/oauth/:provider - Initiate OAuth flow
 --   - GET /api/auth/oauth/:provider/callback - OAuth callback
+--   - POST /api/auth/oauth/:provider/id-token - Sign in with a native Google/Apple ID token
+--   - GET /api/auth/providers - Sign-in methods enabled on this server
 --   - POST /api/auth/link-oauth - Link OAuth to existing account
 --   - POST /api/auth/refresh - Rotate refresh token, issue new JWT
 --   - POST /api/auth/logout - Revoke a refresh token family
@@ -32,10 +34,12 @@ module Web.API.AuthAPI
     LoginRequest (..),
     LinkOAuthRequest (..),
     RefreshTokenRequest (..),
+    IdTokenRequest (..),
 
     -- * Response Types
     AuthResponse (..),
     OAuthRedirectResponse (..),
+    ProvidersResponse (..),
     TelegramLinkCodeResponse (..),
 
     -- * Server
@@ -46,8 +50,10 @@ where
 import qualified Application.Services.AuthService as AuthService
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Time (UTCTime)
+import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types (OAuthProvider (..), UserId)
-import Infrastructure.App (AppM)
+import Infrastructure.App (AppM, HasAuthConfig (..))
+import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.RefreshToken (mkRefreshToken, unRefreshToken)
 import RIO hiding (Handler)
 import Servant
@@ -88,6 +94,19 @@ type AuthAPI =
       :> QueryParam "code" Text
       :> QueryParam "state" Text
       :> Get '[JSON] AuthResponse
+    -- Sign in with a native ID token
+    :<|> "api"
+      :> "auth"
+      :> "oauth"
+      :> Capture "provider" Text
+      :> "id-token"
+      :> ReqBody '[JSON] IdTokenRequest
+      :> Post '[JSON] AuthResponse
+    -- Sign-in methods enabled on this server
+    :<|> "api"
+      :> "auth"
+      :> "providers"
+      :> Get '[JSON] ProvidersResponse
     -- Link OAuth to existing account (requires auth)
     :<|> AuthProtect "jwt"
       :> "api"
@@ -153,6 +172,18 @@ instance ToJSON LinkOAuthRequest
 
 instance FromJSON LinkOAuthRequest
 
+-- | Native ID-token sign-in request. The token's nonce claim is 'rawNonce'
+-- bound to this server's URL (ADR 008).
+data IdTokenRequest = IdTokenRequest
+  { idToken :: Text,
+    rawNonce :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON IdTokenRequest
+
+instance FromJSON IdTokenRequest
+
 -- | Token refresh request.
 data RefreshTokenRequest = RefreshTokenRequest
   { refreshToken :: Text
@@ -192,6 +223,18 @@ instance ToJSON OAuthRedirectResponse
 
 instance FromJSON OAuthRedirectResponse
 
+-- | Which sign-in methods this server offers.
+data ProvidersResponse = ProvidersResponse
+  { password :: Bool,
+    google :: Bool,
+    apple :: Bool
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON ProvidersResponse
+
+instance FromJSON ProvidersResponse
+
 -- | Telegram link-code issuance response.
 data TelegramLinkCodeResponse = TelegramLinkCodeResponse
   { deepLink :: Text,
@@ -214,6 +257,8 @@ authServer =
     :<|> handleLogin
     :<|> handleOAuthInitiate
     :<|> handleOAuthCallbackEndpoint
+    :<|> handleIdTokenSignIn
+    :<|> handleProviders
     :<|> handleLinkOAuth
     :<|> handleRefreshToken
     :<|> handleLogout
@@ -266,6 +311,26 @@ handleOAuthCallbackEndpoint providerText maybeCode maybeState = do
   case result of
     Right r -> return $ toAuthResponse r
     Left err -> throwDomainError err
+
+-- | Handle native ID-token sign-in.
+handleIdTokenSignIn :: Text -> IdTokenRequest -> AppM AuthResponse
+handleIdTokenSignIn providerText IdTokenRequest {..} = do
+  provider <- case AuthService.parseOAuthProvider providerText of
+    Nothing -> throwIO err400 {errBody = "Unknown OAuth provider"}
+    Just p -> return p
+  result <- AuthService.signInWithIdToken provider idToken rawNonce
+  case result of
+    Right r -> return $ toAuthResponse r
+    Left AuthService.IdTokenRejected -> throwDomainError (Unauthenticated "Invalid ID token")
+    Left AuthService.IdTokenKeysUnavailable -> throwIO err503 {errBody = "Sign-in provider unavailable"}
+    Left (AuthService.IdTokenDomainError e) -> throwDomainError e
+
+-- | Handle the enabled-providers query.
+handleProviders :: AppM ProvidersResponse
+handleProviders = do
+  cfg <- view oauthConfigL
+  let enabled p = not (null (OAuth.idTokenAudiences cfg.idToken p))
+  return ProvidersResponse {password = True, google = enabled Google, apple = enabled Apple}
 
 -- | Handle link OAuth to existing account.
 handleLinkOAuth :: AuthenticatedUser -> LinkOAuthRequest -> AppM NoContent

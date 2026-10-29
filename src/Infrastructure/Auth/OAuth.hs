@@ -10,6 +10,7 @@
 --   - Google
 --   - GitHub
 --   - Microsoft
+--   - Apple (ID-token sign-in only; no redirect flow)
 --
 -- Key Functions:
 --   - getAuthorizationUrl: Generate URL to redirect user for authentication
@@ -32,6 +33,9 @@ module Infrastructure.Auth.OAuth
   ( -- * Configuration
     OAuthConfig (..),
     OAuthProviderConfig (..),
+    IdTokenConfig (..),
+    defaultIdTokenConfig,
+    idTokenAudiences,
 
     -- * OAuth Flow
     getAuthorizationUrl,
@@ -116,7 +120,8 @@ instance FromJSON OAuthProviderConfig where
 data OAuthConfig = OAuthConfig
   { google :: Maybe OAuthProviderConfig,
     gitHub :: Maybe OAuthProviderConfig,
-    microsoft :: Maybe OAuthProviderConfig
+    microsoft :: Maybe OAuthProviderConfig,
+    idToken :: IdTokenConfig
   }
   deriving (Show, Eq, Generic)
 
@@ -128,6 +133,52 @@ instance FromJSON OAuthConfig where
       <$> v .:? "google"
       <*> v .:? "github"
       <*> v .:? "microsoft"
+      <*> v .:? "id_token" .!= defaultIdTokenConfig
+
+-- | Audiences accepted on native ID tokens, per provider. An empty list
+-- disables ID-token sign-in for that provider. 'serverUrls' are extra URLs
+-- (besides @api_base_url@) a token's nonce may be bound to, as configured;
+-- see 'Infrastructure.Auth.IdToken.acceptedServerUrls'.
+data IdTokenConfig = IdTokenConfig
+  { googleAudiences :: [Text],
+    appleAudiences :: [Text],
+    serverUrls :: [Text]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON IdTokenConfig
+
+instance FromJSON IdTokenConfig where
+  parseJSON = withObject "IdTokenConfig" $ \v -> do
+    let list def key = maybe def (\(CommaList xs) -> xs) <$> v .:? key
+    IdTokenConfig
+      <$> list defaultIdTokenConfig.googleAudiences "google_audiences"
+      <*> list defaultIdTokenConfig.appleAudiences "apple_audiences"
+      <*> list defaultIdTokenConfig.serverUrls "server_urls"
+
+-- | The official app's public identifiers: the web OAuth client ID (Android
+-- passes it as serverClientId, so it is the token's aud) and the iOS bundle ID.
+-- Keep in sync with config/*.yaml (IdTokenConfigSpec checks local.yaml and prod.yaml).
+defaultIdTokenConfig :: IdTokenConfig
+defaultIdTokenConfig =
+  IdTokenConfig
+    { googleAudiences = ["624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com"],
+      appleAudiences = ["com.homeaccounting.app"],
+      serverUrls = []
+    }
+
+-- | A comma-separated string (what env substitution produces) or an array.
+newtype CommaList = CommaList [Text]
+
+instance FromJSON CommaList where
+  parseJSON (Aeson.String s) = pure (CommaList (filter (not . T.null) (map T.strip (T.splitOn "," s))))
+  parseJSON v = CommaList . filter (not . T.null) . map T.strip <$> parseJSON v
+
+idTokenAudiences :: IdTokenConfig -> OAuthProvider -> [Text]
+idTokenAudiences c Google = c.googleAudiences
+idTokenAudiences c Apple = c.appleAudiences
+idTokenAudiences _ GitHub = []
+idTokenAudiences _ Microsoft = []
 
 -- | Default OAuth configuration with well-known provider URLs.
 --
@@ -182,16 +233,22 @@ applyOAuthDefaults cfg =
   where
     applyProviderDefaults :: OAuthProvider -> OAuthProviderConfig -> OAuthProviderConfig
     applyProviderDefaults provider c =
-      let defaults = case provider of
-            Google -> defaultGoogleConfig c.clientId c.clientSecret c.redirectUri
-            GitHub -> defaultGitHubConfig c.clientId c.clientSecret c.redirectUri
-            Microsoft -> defaultMicrosoftConfig c.clientId c.clientSecret c.redirectUri
-       in c
+      case providerDefaults provider c of
+        Nothing -> c
+        Just defaults ->
+          c
             { authorizeUrl = if T.null c.authorizeUrl then defaults.authorizeUrl else c.authorizeUrl,
               tokenUrl = if T.null c.tokenUrl then defaults.tokenUrl else c.tokenUrl,
               userInfoUrl = if T.null c.userInfoUrl then defaults.userInfoUrl else c.userInfoUrl,
               scopes = if null c.scopes then defaults.scopes else c.scopes
             }
+
+    providerDefaults :: OAuthProvider -> OAuthProviderConfig -> Maybe OAuthProviderConfig
+    providerDefaults provider c = case provider of
+      Google -> Just (defaultGoogleConfig c.clientId c.clientSecret c.redirectUri)
+      GitHub -> Just (defaultGitHubConfig c.clientId c.clientSecret c.redirectUri)
+      Microsoft -> Just (defaultMicrosoftConfig c.clientId c.clientSecret c.redirectUri)
+      Apple -> Nothing
 
 -- -----------------------------------------------------------------------------
 -- User Info
@@ -400,6 +457,8 @@ parseUserInfo provider body =
     Google -> parseGoogleUserInfo body
     GitHub -> parseGitHubUserInfo body
     Microsoft -> parseMicrosoftUserInfo body
+    -- Apple has no userinfo endpoint; it signs in via ID tokens only.
+    Apple -> Nothing
 
 parseGoogleUserInfo :: LBS.ByteString -> Maybe OAuthUserInfo
 parseGoogleUserInfo body = do
@@ -521,3 +580,4 @@ getProviderConfig :: OAuthConfig -> OAuthProvider -> Maybe OAuthProviderConfig
 getProviderConfig config Google = config.google
 getProviderConfig config GitHub = config.gitHub
 getProviderConfig config Microsoft = config.microsoft
+getProviderConfig _ Apple = Nothing

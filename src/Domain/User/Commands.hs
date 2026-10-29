@@ -119,7 +119,7 @@ data RegisterViaTelegram = RegisterViaTelegram
 
 -- | Command to link an OAuth account to an existing user.
 --
--- Represents the intent to add an OAuth identity (Google, GitHub, Microsoft)
+-- Represents the intent to add an OAuth identity (Google, GitHub, Microsoft, Apple)
 -- to an existing user account.
 --
 -- If accepted, produces an OAuthAccountLinked event.

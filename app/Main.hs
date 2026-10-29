@@ -87,6 +87,7 @@ import Application.ReadModels.User (countUsers)
 import Application.Services.ConfigurationService (seedDefaultConfiguration)
 import Application.Services.ExchangeRatePublisher (spawnRatePublisher)
 import Data.Text.Display (displayText)
+import Data.Time (getCurrentTime)
 import qualified Data.Vault.Lazy as Vault
 import Domain.ExchangeRate.Events (unProvider)
 import Domain.Models (isTransactionSagaEvent)
@@ -102,6 +103,8 @@ import Infrastructure.App
     initializeAppEnv,
     runAppM,
   )
+import Infrastructure.Auth.IdToken (acceptedServerUrls)
+import Infrastructure.Auth.JwksCache (httpFetcher, newCachingKeySource)
 import Infrastructure.Auth.Telegram (TelegramConfig (..), webhookSecret)
 import qualified Infrastructure.Banking.Providers as BankProviders
 import Infrastructure.Bootstrap (configureProcess)
@@ -111,6 +114,7 @@ import Infrastructure.Config
     ExchangeRateConfig (..),
     LlmConfig (..),
     LoggingConfig (..),
+    OAuthConfig (..),
     ServerConfig (..),
     llmActive,
     loadConfigWithEnv,
@@ -406,6 +410,10 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
 
   -- 7. Build application environment
   linkCodeStore <- liftIO newLinkCodeStore
+  idTokenKeys <- liftIO (newCachingKeySource getCurrentTime (httpFetcher httpManager))
+  idTokenServerUrls <- case acceptedServerUrls config.server.apiBaseUrl oauthConfig.idToken of
+    Left err -> throwString $ "Invalid ID-token server URL (api_base_url / oauth.id_token.server_urls): " <> T.unpack err
+    Right urls -> pure urls
   -- Minted once here so every middleware/handler that reads or writes the
   -- per-request 'RequestContext' on a WAI request's 'Vault.Vault' agrees on
   -- the same key.
@@ -428,6 +436,8 @@ initializeEnvironment loggerSet logFunc config versionInfo = do
           versionInfo
           bankingEnv'
           linkCodeStore
+          idTokenKeys
+          idTokenServerUrls
           llmClient
           loggerSet
           nilRequestContext

@@ -28,12 +28,14 @@ module Application.Services.AuthService
     AuthResult (..),
     OAuthRedirectResult (..),
     TelegramLinkCodeResult (..),
+    IdTokenSignInError (..),
 
     -- * Service Functions
     register,
     login,
     initiateOAuth,
     handleOAuthCallback,
+    signInWithIdToken,
     linkOrSignInWithOAuth,
     linkOAuth,
     linkOAuthIdentityToUser,
@@ -68,7 +70,7 @@ import Application.Services.Internal
     runAccountCmd,
     runUserCmd,
   )
-import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE)
+import Control.Monad.Trans.Except (ExceptT (..), runExceptT, throwE, withExceptT)
 import Data.Time (NominalDiffTime, UTCTime, getCurrentTime)
 import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (..))
@@ -98,13 +100,18 @@ import Domain.User.Commands
 import Infrastructure.App
   ( AppM,
     HasAuthConfig (..),
+    HasIdTokenKeys (..),
+    HasIdTokenServerUrls (..),
     HasLinkCodeStore (..),
     runDb,
   )
+import Infrastructure.Auth.IdToken (jwkSetHasKeyId, tokenKeyId, verifyIdToken)
 import Infrastructure.Auth.JWT (JWTConfig (..))
 import qualified Infrastructure.Auth.JWT as JWT
+import Infrastructure.Auth.JwksCache (getKeys)
 import Infrastructure.Auth.OAuth
   ( OAuthUserInfo (..),
+    idTokenAudiences,
   )
 import qualified Infrastructure.Auth.OAuth as OAuth
 import Infrastructure.Auth.Password (hashPassword, verifyPassword)
@@ -273,6 +280,47 @@ handleOAuthCallback provider code state = runExceptT $ do
       lift $ logError $ "OAuth callback error: " <> displayShow err
       throwE (AccountError "OAuth authentication failed")
   ExceptT (linkOrSignInWithOAuth provider userInfo)
+
+-- | Why 'signInWithIdToken' failed. The constructors map to distinct HTTP
+-- outcomes, so the reason for a rejection stays in the logs.
+data IdTokenSignInError
+  = IdTokenRejected
+  | IdTokenKeysUnavailable
+  | IdTokenDomainError DomainError
+  deriving (Show, Eq)
+
+-- | Sign in with a Google/Apple ID token obtained natively by the mobile app
+-- (see ADR 008). Verifies the token against the provider's cached signing
+-- keys, then continues as the OAuth callback does.
+signInWithIdToken ::
+  OAuthProvider ->
+  Text -> -- ID token
+  Text -> -- Raw nonce (the token's nonce claim is it bound to this server)
+  AppM (Either IdTokenSignInError AuthResult)
+signInWithIdToken provider token rawNonce = runExceptT $ do
+  cfg <- lift (view oauthConfigL)
+  src <- lift (view idTokenKeysL)
+  serverUrls <- lift (view idTokenServerUrlsL)
+  when (null (idTokenAudiences cfg.idToken provider))
+    $ throwE (IdTokenDomainError (AccountError "OAuth configuration error"))
+  let reject r = do
+        lift $ logWarn $ "ID token rejected: " <> displayShow r
+        throwE IdTokenRejected
+      fetch forced = do
+        r <- liftIO (getKeys src provider forced)
+        case r of
+          Right ks -> pure ks
+          Left e -> do
+            lift $ logWarn $ "ID token signing keys unavailable: " <> display e
+            throwE IdTokenKeysUnavailable
+  mKid <- either reject pure (tokenKeyId token)
+  keys <- fetch False
+  keySet <- case mKid of
+    Just k | not (jwkSetHasKeyId keys k) -> fetch True
+    _ -> pure keys
+  now <- liftIO getCurrentTime
+  userInfo <- either reject pure (verifyIdToken cfg.idToken provider keySet now serverUrls token rawNonce)
+  withExceptT IdTokenDomainError (ExceptT (linkOrSignInWithOAuth provider userInfo))
 
 -- | Find-or-create a user from an already-resolved 'OAuth.OAuthUserInfo'.
 --
@@ -499,6 +547,7 @@ parseOAuthProvider t = case T.toLower t of
   "google" -> Just Google
   "github" -> Just GitHub
   "microsoft" -> Just Microsoft
+  "apple" -> Just Apple
   _ -> Nothing
 
 -- | Start a refresh-token family and sign the access JWT for it.

@@ -8,7 +8,7 @@
 -- Available Modules:
 --   - Password: Argon2 password hashing
 --   - JWT: JSON Web Token generation and verification
---   - OAuth: OAuth2 provider integration (Google, GitHub, Microsoft)
+--   - OAuth: OAuth2 provider integration (Google, GitHub, Microsoft, Apple)
 --   - Telegram: Telegram Login Widget and Bot authentication
 --
 -- Usage:

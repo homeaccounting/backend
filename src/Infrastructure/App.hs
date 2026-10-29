@@ -98,6 +98,8 @@ module Infrastructure.App
     HasBankingKeyRing (..),
     HasBankProviderRegistry (..),
     HasLinkCodeStore (..),
+    HasIdTokenKeys (..),
+    HasIdTokenServerUrls (..),
     HasRequestContext (..),
     HasMetrics (..),
     HasLoggerSet (..),
@@ -137,6 +139,7 @@ import qualified Data.Vault.Lazy as Vault
 import Database.Persist.Postgresql (ConnectionPool, SqlBackend, runSqlPool)
 import Domain.Core.Types (UserId)
 import Infrastructure.Auth.JWT (JWTConfig)
+import Infrastructure.Auth.JwksCache (KeySource)
 import Infrastructure.Auth.OAuth (OAuthConfig)
 import Infrastructure.Auth.Telegram (TelegramConfig)
 import Infrastructure.Banking.Registry (BankProviderRegistry)
@@ -235,6 +238,13 @@ data AppEnv = AppEnv
     -- | In-memory store for short-lived, single-use Telegram link codes
     -- used in the bot deep-link account-linking flow.
     linkCodeStore :: !LinkCodeStore,
+    -- | Google/Apple signing keys for native ID-token sign-in (cached, see
+    -- "Infrastructure.Auth.JwksCache").
+    idTokenKeys :: !KeySource,
+    -- | Canonical server URLs an ID token's nonce may be bound to
+    -- ('Infrastructure.Auth.IdToken.acceptedServerUrls'), resolved once at
+    -- startup from @api_base_url@ and @oauth.id_token.server_urls@.
+    idTokenServerUrls :: ![Text],
     -- | Shared, thread-safe, buffered 'FastLogger.LoggerSet' backing every
     -- 'LogFunc' built via 'Infrastructure.Observability.Logging.mkContextLogFunc' — the
     -- process-base one built in @Main@ and any per-request one built with a
@@ -315,13 +325,15 @@ initializeAppEnv ::
   VersionInfo ->
   BankingEnv ->
   LinkCodeStore ->
+  KeySource ->
+  [Text] ->
   Maybe LlmClient ->
   LoggerSet ->
   RequestContext ->
   Vault.Key RequestContext ->
   Metrics ->
   AppEnv
-initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' llmClient' loggerSet' requestContext' contextVaultKey' metrics' =
+initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConfig oauthConfig telegramConfig botState telegramClientEnv versionInfo bankingEnv linkCodeStore' idTokenKeys' idTokenServerUrls' llmClient' loggerSet' requestContext' contextVaultKey' metrics' =
   AppEnv
     { logFunc = logFunc,
       config = config,
@@ -339,6 +351,8 @@ initializeAppEnv logFunc config dbConfig pool writer reader globalReader jwtConf
       versionInfo = versionInfo,
       bankingEnv = bankingEnv,
       linkCodeStore = linkCodeStore',
+      idTokenKeys = idTokenKeys',
+      idTokenServerUrls = idTokenServerUrls',
       loggerSet = loggerSet',
       requestContext = requestContext',
       contextVaultKey = contextVaultKey',
@@ -638,6 +652,21 @@ class HasLinkCodeStore env where
 
 instance HasLinkCodeStore AppEnv where
   linkCodeStoreL = lens (.linkCodeStore) (\x y -> x {linkCodeStore = y})
+
+-- | Type class for environments that have the ID-token signing-key source.
+class HasIdTokenKeys env where
+  idTokenKeysL :: Lens' env KeySource
+
+instance HasIdTokenKeys AppEnv where
+  idTokenKeysL = lens (.idTokenKeys) (\x y -> x {idTokenKeys = y})
+
+-- | Type class for environments that know this server's accepted ID-token
+-- server URLs (the nonce binding, ADR 008).
+class HasIdTokenServerUrls env where
+  idTokenServerUrlsL :: Lens' env [Text]
+
+instance HasIdTokenServerUrls AppEnv where
+  idTokenServerUrlsL = lens (.idTokenServerUrls) (\x y -> x {idTokenServerUrls = y})
 
 -- | 'AppEnv' carries the observability 'RequestContext' — see
 -- "Infrastructure.Observability.Context" for the class and its purpose.

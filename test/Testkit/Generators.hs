@@ -340,7 +340,7 @@ instance Arbitrary TelegramIdentity where
 
 -- | Generate a valid OAuthProvider.
 genOAuthProvider :: Gen OAuthProvider
-genOAuthProvider = elements [Google, GitHub, Microsoft]
+genOAuthProvider = elements [Google, GitHub, Microsoft, Apple]
 
 instance Arbitrary OAuthProvider where
   arbitrary = genOAuthProvider

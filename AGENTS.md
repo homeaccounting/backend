@@ -79,7 +79,7 @@ Orchestration: services, process managers (sagas), read models. Services coordin
 
 ### Infrastructure Layer (`src/Infrastructure/`)
 
-External world adapters: `App.hs` (AppM monad), `Config.hs`, `Database.hs`, `Eventium.hs`, `Auth/` (JWT, OAuth, Password, Telegram, RefreshToken*), `Json.hs`.
+External world adapters: `App.hs` (AppM monad), `Config.hs`, `Database.hs`, `Eventium.hs`, `Auth/` (JWT, OAuth, Password, Telegram, RefreshToken*, IdToken, JwksCache), `Json.hs`.
 
 ### Web Layer (`src/Web/`)
 

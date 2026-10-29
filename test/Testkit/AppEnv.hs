@@ -14,6 +14,7 @@
 module Testkit.AppEnv
   ( -- * Application bootstrap
     mkApp,
+    mkAppWith,
     mkAppWithProcessManager,
     mkAppBankingEnabled,
     mkAppBankingEnabledSeeded,
@@ -63,7 +64,12 @@ import Web.Server (buildApplication)
 -- previously copied across @WebAPISpec@, @TransactionAPISpec@,
 -- @BankingAPISpec@, and @ConfigurationBankingAPISpec@.
 mkApp :: IO Application
-mkApp = buildApplication <$> createTestAppEnv
+mkApp = mkAppWith createTestAppEnv
+
+-- | Build a 'Wai.Application' from a caller-supplied env action, for specs
+-- that tweak the base env (config, key source) before serving it.
+mkAppWith :: IO AppEnv -> IO Application
+mkAppWith = fmap buildApplication
 
 -- | Like 'mkApp' but with the transfer process manager wired into the
 -- synchronous event bus, so saga-driven scenarios complete end-to-end.

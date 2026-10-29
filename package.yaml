@@ -92,7 +92,11 @@ dependencies:
   # Authentication & Security
   - cryptonite >= 0.29 && < 0.31
   - memory >= 0.17 && < 0.19
+  # ID-token (JWS/JWK) verification for native Google/Apple sign-in. 0.12 is the
+  # last release on crypton 1.0 + memory, which tls already pulls in.
+  - jose >= 0.12 && < 0.13
   - http-client >= 0.7 && < 0.8
+  - network-uri >= 2.6 && < 2.7
   - http-client-tls >= 0.3 && < 0.4
   - http-types >= 0.12 && < 0.13
   - xml-conduit >= 1.9 && < 2
