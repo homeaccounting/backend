@@ -109,7 +109,7 @@ jobs:
       - name: Build accounting project
         run: |
           cabal update
-          cabal build all -j -fci
+          cabal build all -j -fci --enable-tests
 
       - name: Wait for Postgres to be ready
         env:
