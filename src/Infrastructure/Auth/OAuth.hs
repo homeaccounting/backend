@@ -164,8 +164,8 @@ defaultIdTokenConfig :: IdTokenConfig
 defaultIdTokenConfig =
   IdTokenConfig
     { googleAudiences =
-        [ "624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com",
-          "624843376934-4efrpvculkt7d06vvcl3ofcqb4pu0hc1.apps.googleusercontent.com"
+        [ "441898724340-fhja46snuelu6fdu58supust0md60egu.apps.googleusercontent.com",
+          "441898724340-p6uqk6e2um1afkgiliddr3c6ncrq7v6f.apps.googleusercontent.com"
         ],
       appleAudiences = ["com.homeaccounting.app"],
       serverUrls = []
