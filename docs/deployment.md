@@ -86,7 +86,7 @@ audiences:
 
 | Variable | Default (official app) |
 |----------|------------------------|
-| `GOOGLE_ID_TOKEN_AUDIENCES` | `624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com` |
+| `GOOGLE_ID_TOKEN_AUDIENCES` | `624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com,624843376934-4efrpvculkt7d06vvcl3ofcqb4pu0hc1.apps.googleusercontent.com` |
 | `APPLE_ID_TOKEN_AUDIENCES` | `com.homeaccounting.app` |
 
 - Values are comma-separated; entries are trimmed and empty ones dropped.
@@ -98,7 +98,7 @@ audiences:
   `GOOGLE_ID_TOKEN_AUDIENCES=${GOOGLE_ID_TOKEN_AUDIENCES:-}` sets it to an empty
   string when the host has no value, and that **disables** the provider. Either
   omit the entry, or repeat the default:
-  `${GOOGLE_ID_TOKEN_AUDIENCES:-624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com}`.
+  `${GOOGLE_ID_TOKEN_AUDIENCES:-624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com,624843376934-4efrpvculkt7d06vvcl3ofcqb4pu0hc1.apps.googleusercontent.com}`.
 - The `homeaccounting/docker` compose files don't pass these variables (nor
   `ID_TOKEN_SERVER_URLS`) yet; until that follow-up lands, the defaults apply.
 
