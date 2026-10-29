@@ -157,12 +157,16 @@ instance FromJSON IdTokenConfig where
       <*> list defaultIdTokenConfig.serverUrls "server_urls"
 
 -- | The official app's public identifiers: the web OAuth client ID (Android
--- passes it as serverClientId, so it is the token's aud) and the iOS bundle ID.
+-- passes it as serverClientId, so it is the token's aud), the iOS OAuth client
+-- ID (the aud of tokens from the iOS Google SDK) and the iOS bundle ID.
 -- Keep in sync with config/*.yaml (IdTokenConfigSpec checks local.yaml and prod.yaml).
 defaultIdTokenConfig :: IdTokenConfig
 defaultIdTokenConfig =
   IdTokenConfig
-    { googleAudiences = ["624843376934-ka36ohra7e5l4oaj82dua6417jq1j2n1.apps.googleusercontent.com"],
+    { googleAudiences =
+        [ "441898724340-fhja46snuelu6fdu58supust0md60egu.apps.googleusercontent.com",
+          "441898724340-p6uqk6e2um1afkgiliddr3c6ncrq7v6f.apps.googleusercontent.com"
+        ],
       appleAudiences = ["com.homeaccounting.app"],
       serverUrls = []
     }

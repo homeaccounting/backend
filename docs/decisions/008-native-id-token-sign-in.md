@@ -43,7 +43,9 @@ redirect, code or client secret.
 
 3. **Audiences default to the official app.** `GOOGLE_ID_TOKEN_AUDIENCES` defaults
    to the official web OAuth client ID (Android passes it as `serverClientId`, so it
-   is the token `aud`) and `APPLE_ID_TOKEN_AUDIENCES` to the iOS bundle ID. Both are
+   is the token `aud`; the Android client ID only appears as `azp`) plus the iOS OAuth
+   client ID (the iOS SDK signs in as that client, so it is the `aud`), and
+   `APPLE_ID_TOKEN_AUDIENCES` to the iOS bundle ID. All are
    public identifiers, so a self-hosted server accepts the official app with no
    Google or Apple setup. Values are comma-separated, trimmed, with empty entries
    dropped. Setting a variable to an empty string disables that provider; an unset
