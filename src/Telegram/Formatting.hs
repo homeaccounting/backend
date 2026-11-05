@@ -24,10 +24,12 @@ module Telegram.Formatting
     formatCommandList,
 
     -- * Confirmation Renderer
+    accountShortNames,
     formatRecordedTransaction,
   )
 where
 
+import Application.ReadModels.Account (RegularAccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
 import Data.List (sort)
 import Data.Map.Strict (Map)
@@ -38,6 +40,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import qualified Data.UUID as UUID
+import Domain.Account.Naming (ShownByContext (..), accountNameParts, shortAccountName)
 import Domain.Core.Types
   ( AccountId,
     Allocation (..),
@@ -148,6 +151,18 @@ formatCommandList :: Language -> [Text]
 formatCommandList lang = map (\(cmd, desc) -> cmd <> " - " <> desc) (botCommands lang)
 
 -- Confirmation Renderer
+
+-- | The account names a confirmation shows: the short form (ADR 009), so two
+-- same-named accounts at different banks read apart. The amount beside each
+-- name already shows the currency, so it is name and qualifier.
+accountShortNames :: Language -> [(AccountId, RegularAccountData)] -> Map AccountId Text
+accountShortNames lang accounts =
+  Map.fromList
+    [ (aid, shortAccountName shown (accountNameParts lang a.name (moneyCurrency a.balance) a.subtype))
+    | (aid, a) <- accounts
+    ]
+  where
+    shown = ShownByContext {qualifierShown = False, currencyShown = True}
 
 -- | Render a just-recorded transaction as a multi-line confirmation used by
 -- all Telegram recording paths (@/income@, @/expense@, @/transfer@, and the

@@ -15,7 +15,7 @@
 -- 'ResolveError' naming the offending field.
 --
 -- Resolution follows the design's rules table (§5): name matching for accounts
--- and categories, currency defaulting to the account's native currency, decimal
+-- (on full names, ADR 009) and categories, currency defaulting to the account's native currency, decimal
 -- normalization (comma → dot), strict ISO date parsing, and a category default
 -- fallback. Labels are a reserved slot (empty in v1). All domain construction
 -- goes through the smart constructors so the domain invariants hold.
@@ -38,9 +38,18 @@ import Data.Ratio (denominator, numerator)
 import Data.Scientific (Scientific)
 import qualified Data.Set as Set
 import qualified Data.Text as DT
-import Data.Text.Match (MatchResult (..), matchByName)
+import Data.Text.Match (MatchResult (..), matchByName, normalizeName)
 import Data.Time (UTCTime (..), defaultTimeLocale, parseTimeM)
 import Data.Time.Calendar (Day)
+import Domain.Account.Naming
+  ( AccountNameParts,
+    ShownByContext (..),
+    accountMatches,
+    accountNameParts,
+    foldForSearch,
+    fullAccountName,
+    shortAccountName,
+  )
 import Domain.Configuration.Projection (ConfigurationDefaults (..))
 import Domain.Core.Types
   ( AccountId,
@@ -52,11 +61,13 @@ import Domain.Core.Types
     Money,
     mkAllocation,
     mkAllocations,
+    accountSubtypeKind,
     mkMoney,
     moneyCurrency,
     parseCurrency,
     unMoney,
   )
+import Domain.Localization.Language (Language)
 import Numeric (showFFloat)
 import RIO
 import qualified RIO.Text as T
@@ -82,7 +93,9 @@ data ResolveContext = ResolveContext
     -- resolver's inference — but an explicit account __name__ in the prompt
     -- still wins over it. An unknown id here is ignored (falls back to
     -- inference). Never fills a transfer's destination.
-    selectedAccount :: !(Maybe AccountId)
+    selectedAccount :: !(Maybe AccountId),
+    -- | The user's language, for the localized segments of account names.
+    language :: !Language
   }
 
 -- | A fully-resolved, validated transaction ready for the write path.
@@ -183,24 +196,48 @@ resolvePrimaryAccount ctx fld mname
   | Just acc <- ctx.selectedAccount >>= accountById ctx = Right acc
   | otherwise = resolveAccount ctx fld mname
   where
-    explicitMatch name = case matchByName accountName name ctx.accounts of
-      Matched a -> Just (projectAccount a)
+    explicitMatch name = case matchAccount ctx name of
+      Matched a -> Just (projectAccount ctx a)
       _ -> Nothing
 
--- | The name projection used to match accounts by name, over the
--- @(id, data)@ pairs 'ResolveContext.accounts' now carries.
-accountName :: (AccountId, RegularAccountData) -> Text
-accountName (_, a) = a.name
+-- | The account's name segments (ADR 009) in the user's language.
+accountParts :: ResolveContext -> (AccountId, RegularAccountData) -> AccountNameParts
+accountParts ctx (_, a) = accountNameParts ctx.language a.name (moneyCurrency a.balance) a.subtype
 
--- | Project a resolved account to @(id, canonical name, native currency)@.
-projectAccount :: (AccountId, RegularAccountData) -> (AccountId, Text, Currency)
-projectAccount (aid, a) = (aid, a.name, moneyCurrency a.balance)
+-- | Match an account reference by name (ADR 009). An exact full or bare name
+-- wins, since the prompt lists full names for the model to copy; otherwise
+-- every token of the reference must appear in the full name, so "privat usd"
+-- finds the PrivatBank USD card. Comparison ignores case and accents.
+matchAccount :: ResolveContext -> Text -> MatchResult (AccountId, RegularAccountData)
+matchAccount ctx query
+  | T.null q = NoMatch
+  | otherwise = case exact of
+      [x] -> Matched x
+      (_ : _) -> Ambiguous exact
+      [] -> case byTokens of
+        [x] -> Matched x
+        (_ : _) -> Ambiguous byTokens
+        [] -> NoMatch
+  where
+    key = foldForSearch . normalizeName
+    q = key query
+    exact = [a | a@(_, r) <- ctx.accounts, q `elem` [key (fullAccountName (accountParts ctx a)), key r.name]]
+    byTokens = [a | a <- ctx.accounts, accountMatches query (accountParts ctx a)]
+
+-- | Project a resolved account to @(id, display name, native currency)@. The
+-- display name drops the currency, which the interpretation shows beside it.
+projectAccount :: ResolveContext -> (AccountId, RegularAccountData) -> (AccountId, Text, Currency)
+projectAccount ctx acc@(aid, a) =
+  ( aid,
+    shortAccountName ShownByContext {qualifierShown = False, currencyShown = True} (accountParts ctx acc),
+    moneyCurrency a.balance
+  )
 
 -- | Look up one of the user's accounts by id, projected. 'Nothing' when the id
 -- is not among the user's regular accounts (e.g. a stale selection).
 accountById :: ResolveContext -> AccountId -> Maybe (AccountId, Text, Currency)
 accountById ctx aid = case [a | a@(i, _) <- ctx.accounts, i == aid] of
-  (a : _) -> Just (projectAccount a)
+  (a : _) -> Just (projectAccount ctx a)
   [] -> Nothing
 
 -- | Resolve an account reference against the context. Precedence:
@@ -216,7 +253,7 @@ accountById ctx aid = case [a | a@(i, _) <- ctx.accounts, i == aid] of
 -- (e.g. "card" when several accounts are named "… card", which name-matching
 -- alone reports as ambiguous) or an otherwise-unknown name falls back to the
 -- per-type default and then the global default rather than erroring. Returns
--- @(id, canonical name, native currency)@, dropping the subtype kind.
+-- @(id, display name, native currency)@ (see 'projectAccount').
 resolveAccount ::
   ResolveContext ->
   Text ->
@@ -225,17 +262,17 @@ resolveAccount ::
 resolveAccount ctx fld = \case
   -- Omitted account: global default, else a clean "not specified".
   Nothing -> maybe (Left (ResolveError fld "no account specified")) Right globalDefault
-  Just name -> case matchByName accountName name ctx.accounts of
-    Matched acc -> Right (projectAccount acc)
+  Just name -> case matchAccount ctx name of
+    Matched acc -> Right (projectAccount ctx acc)
     Ambiguous _ -> fallback name (ambiguousErr name)
     NoMatch -> fallback name (noMatch name)
   where
-    accountNames = T.intercalate ", " [a.name | (_, a) <- ctx.accounts]
+    accountNames = T.intercalate "; " [fullAccountName (accountParts ctx a) | a <- ctx.accounts]
     ambiguousErr name = ResolveError fld ("Account name '" <> name <> "' is ambiguous. Your accounts: " <> accountNames)
     noMatch name = ResolveError fld ("No account matches '" <> name <> "'. Your accounts: " <> accountNames)
     globalDefault = ctx.defaults.account >>= accountById ctx
     subtypeDefault kind = Map.lookup kind ctx.defaults.subtypeAccounts >>= accountById ctx
-    accountsOfKind kind = [a | a@(_, r) <- ctx.accounts, r.subtype == kind]
+    accountsOfKind kind = [a | a@(_, r) <- ctx.accounts, accountSubtypeKind r.subtype == kind]
     -- No exact/unique name matched. Prefer the account for a recognised subtype
     -- keyword (its default, else the unique account of that kind); otherwise, and
     -- as the final fallback, the global default. Only fail (@onFail@) when there
@@ -246,7 +283,7 @@ resolveAccount ctx fld = \case
     subtypeAccount kind = case subtypeDefault kind of
       Just acc -> Just acc
       Nothing -> case accountsOfKind kind of
-        [only] -> Just (projectAccount only)
+        [only] -> Just (projectAccount ctx only)
         _ -> Nothing
 
 -- | Recognise an account-subtype keyword in the free-text account field. The

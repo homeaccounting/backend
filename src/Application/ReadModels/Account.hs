@@ -100,12 +100,11 @@ import Domain.Core.Types
     AccountId,
     AccountRole (..),
     AccountStatus (..),
-    AccountSubtypeKind,
+    AccountSubtype,
     AccountType (..),
     Money,
     TransactionId,
     UserId,
-    accountTypeSubtypeKind,
     addMoney,
     mkAccountIdSafe,
     subtractMoney,
@@ -151,11 +150,12 @@ instance FromJSON AccountData
 
 -- | A user's own regular (non-'External') account, projected to the fields
 -- callers need for name/subtype resolution (the prompt resolver, Telegram).
--- Carries the payload-free 'AccountSubtypeKind' rather than the full subtype.
+-- Carries the full subtype: its properties hold the qualifier of the account's
+-- full name (ADR 009); 'accountSubtypeKind' gives the kind.
 data RegularAccountData = RegularAccountData
   { name :: Text,
     balance :: Money,
-    subtype :: AccountSubtypeKind
+    subtype :: AccountSubtype
   }
   deriving (Show, Eq, Generic)
 
@@ -393,11 +393,11 @@ getRegularAccounts userId = do
         RegularAccountData
           { name = ad.name,
             balance = ad.balance,
-            subtype = kind
+            subtype = st
           }
       )
     | (aid, ad, _role) <- accounts,
-      Just kind <- [accountTypeSubtypeKind ad.accountType]
+      Regular st <- [ad.accountType]
     ]
 
 -- | Whether an account exists.

@@ -49,6 +49,7 @@ import Application.Services.Prompt.Types
   )
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
+import Domain.Account.Naming (accountNameParts, fullAccountName)
 import Domain.Configuration.Defaults
   ( expenseCategoryDictKind,
     incomeCategoryDictKind,
@@ -59,6 +60,7 @@ import Domain.Core.Types
   ( AccountId,
     DictionaryEntryId,
     UserId,
+    moneyCurrency,
   )
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Infrastructure.App (AppM, runDb)
@@ -101,7 +103,9 @@ buildContexts accts cfg selected =
       labelEntries = entriesOf labelsDictKind
       pctx =
         PromptContext
-          { accountNames = [a.name | (_, a) <- accts],
+          { -- Full names (ADR 009), so the model can name one of two same-named
+            -- accounts and the resolver matches its pick exactly.
+            accountNames = [fullName a | a <- accts],
             incomeCategoryNames = [n | (_, n) <- incomeCats],
             expenseCategoryNames = [n | (_, n) <- expenseCats],
             labelNames = [n | (_, n) <- labelEntries]
@@ -113,8 +117,11 @@ buildContexts accts cfg selected =
             expenseCategories = resolveCatsOf expenseCategoryDictKind,
             labels = resolveCatsOf labelsDictKind,
             defaults = cfg.defaults,
-            selectedAccount = selected
+            selectedAccount = selected,
+            language = cfg.language
           }
+      fullName (_, a) =
+        fullAccountName (accountNameParts cfg.language a.name (moneyCurrency a.balance) a.subtype)
    in (pctx, rctx)
 
 -- | The dictionary's assignable (item) entries as @(leaf id, group-qualified

@@ -2,6 +2,7 @@
 
 module Telegram.FormattingSpec (spec) where
 
+import Application.ReadModels.Account (RegularAccountData (..))
 import Application.ReadModels.Transaction (TransactionData (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
@@ -12,10 +13,13 @@ import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
+    AccountSubtype (..),
+    BankAccountProperties (..),
     CategoryId,
     Currency (..),
     LabelId,
     TransactionType (..),
+    defaultBankAccountProperties,
     mkAllocation,
     mkExchangeRate,
     mkExpenseAllocations,
@@ -26,7 +30,7 @@ import Domain.Core.Types
   )
 import Domain.Localization.Language (Language (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Telegram.Formatting (formatRecordedTransaction, formatTransactionLine)
+import Telegram.Formatting (accountShortNames, formatRecordedTransaction, formatTransactionLine)
 import Test.Hspec
 import Testkit.Helpers (singletonExpense, singletonIncome)
 
@@ -167,6 +171,21 @@ lineSpec = describe "formatTransactionLine" $ do
 
 recordedSpec :: Spec
 recordedSpec = describe "formatRecordedTransaction" $ do
+  it "tells same-named accounts at different banks apart (ADR 009 short names)" $ do
+    let cardAt n bank =
+          ( unsafeAccountId (uuidFromInt n),
+            RegularAccountData
+              { name = "Card",
+                balance = unsafeMoney USD 0,
+                subtype = BankAccount defaultBankAccountProperties {bankName = Just bank}
+              }
+          )
+        names' = accountShortNames En [cardAt 1 "PrivatBank", cardAt 2 "Monobank"]
+        out = formatRecordedTransaction En names names' (sampleTxn Transfer)
+    out `shouldSatisfy` T.isInfixOf "Card \xB7 PrivatBank \x2192 Card \xB7 Monobank"
+    formatRecordedTransaction En names names' (sampleTxn (expenseFor foodCat))
+      `shouldSatisfy` T.isInfixOf "300.00 USD \xB7 Card \xB7 PrivatBank"
+
   it "renders an expense header, total-account line, bullet, and date" $ do
     let out = formatRecordedTransaction En names acctNames (sampleTxn (expenseFor foodCat))
     out `shouldSatisfy` T.isInfixOf "\9989 Expense recorded"
