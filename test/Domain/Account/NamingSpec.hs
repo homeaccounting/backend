@@ -24,7 +24,10 @@ import Domain.Core.Types
   )
 import Domain.Localization.Language (Language (..))
 import RIO
+import qualified RIO.Text as T
 import Test.Hspec
+import Test.Hspec.QuickCheck (prop)
+import Test.QuickCheck (elements, forAll, sublistOf)
 
 bank :: Maybe Text -> AccountSubtype
 bank b = BankAccount defaultBankAccountProperties {bankName = b}
@@ -95,6 +98,16 @@ spec = describe "Domain.Account.Naming" $ do
     it "does not match when a token is missing" $
       forM_ ["mono", "privat eur"] $ \q ->
         (q, accountMatches q usdCard) `shouldBe` (q, False)
+
+    prop "matches any selection of the full name's words, in any case" $
+      forAll (elements [card, usdCard, parts "Caf\xE9" UAH defaultCash]) $ \p ->
+        forAll (sublistOf (T.words (fullAccountName p))) $ \ws ->
+          accountMatches (T.unwords ws) p && accountMatches (T.toUpper (T.unwords ws)) p
+
+    prop "never matches a token absent from the full name" $
+      forAll (elements [card, usdCard]) $ \p ->
+        forAll (sublistOf (T.words (fullAccountName p))) $ \ws ->
+          not (accountMatches (T.unwords ("zzz" : ws)) p)
 
     it "ignores accents on both sides" $ do
       accountMatches "cafe" (parts "Caf\xE9" UAH defaultCash) `shouldBe` True
