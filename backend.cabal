@@ -18,6 +18,8 @@ license:        AGPL-3.0-or-later
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
+    locales/accounts/en/labels.json
+    locales/accounts/uk/labels.json
     locales/categories/en/default.json
     locales/categories/uk/default.json
     locales/telegram/en/accounts.json
@@ -57,6 +59,7 @@ library
       Application.ReadModels.Transaction
       Application.ReadModels.User
       Application.Services
+      Application.Services.AccountNaming
       Application.Services.AccountService
       Application.Services.AuthorizationService
       Application.Services.AuthService
@@ -84,7 +87,6 @@ library
       Domain.Account.Commands
       Domain.Account.Errors
       Domain.Account.Events
-      Domain.Account.Naming
       Domain.Account.Projection
       Domain.Banking.Import
       Domain.Banking.Signal
@@ -401,6 +403,7 @@ test-suite backend-test
       Application.ReadModels.TransactionListPropertySpec
       Application.ReadModels.TransactionListSpec
       Application.ReadModels.TransactionRelationsSpec
+      Application.Services.AccountNamingSpec
       Application.Services.AccountServiceIntegrationSpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
@@ -438,7 +441,6 @@ test-suite backend-test
       Data.UrlSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
-      Domain.Account.NamingSpec
       Domain.Account.ReversalCommandHandlerSpec
       Domain.Account.ReversalProjectionPropertySpec
       Domain.Banking.TypesPropertySpec

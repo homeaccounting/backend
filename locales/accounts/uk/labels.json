@@ -1,0 +1,18 @@
+{
+  "subtype": {
+    "cash": "Готівка",
+    "bankAccount": "Банківський рахунок",
+    "eWallet": "Електронний гаманець",
+    "asset": "Актив",
+    "loan": "Кредит"
+  },
+  "assetType": {
+    "property": "Нерухомість",
+    "vehicle": "Транспорт",
+    "stocks": "Акції",
+    "retirementFund": "Пенсійний фонд",
+    "electronics": "Електроніка",
+    "equipment": "Обладнання",
+    "furniture": "Меблі"
+  }
+}

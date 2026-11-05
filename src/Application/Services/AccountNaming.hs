@@ -1,19 +1,26 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : Domain.Account.Naming
+-- Module      : Application.Services.AccountNaming
 -- Description : The universal account naming scheme (ADR 009).
 --
 -- Full name: @{Kind} › {Qualifier} › {Name} · {Currency}@. Short forms drop the
 -- segments the surrounding text already shows. Search matches when every query
 -- token is a case- and accent-insensitive substring of the full name.
 --
+-- Application rather than Domain: a name is a localized display string, not an
+-- identity or invariant (no uniqueness, never a key), used by the prompt
+-- resolver and Telegram. Kind and asset-type labels live in
+-- @locales\/accounts\/<locale>\/labels.json@, mirroring web's
+-- @accounts:subtype.*@ and @accounts:assetType.*@, embedded at compile time.
+--
 -- Clients implement the same ADR (web @src\/features\/accounts\/accountName.ts@);
--- keep the labels and rules in step with it. Change the ADR first.
-module Domain.Account.Naming
+-- keep the rules in step with it. Change the ADR first.
+module Application.Services.AccountNaming
   ( AccountNameParts (..),
     ShownByContext (..),
     accountNameParts,
@@ -24,7 +31,10 @@ module Domain.Account.Naming
   )
 where
 
+import Data.Aeson (eitherDecodeStrict)
 import qualified Data.Char as Char
+import Data.Embed (embedFileBytes)
+import qualified Data.Map.Strict as Map
 import qualified Data.Text.Normalize as Normalize
 import Domain.Core.Types
   ( AccountSubtype (..),
@@ -36,6 +46,7 @@ import Domain.Core.Types
     EWalletProperties (..),
     LoanProperties (..),
   )
+import Domain.Localization.Catalog (resolve)
 import Domain.Localization.Language (Language (..))
 import RIO
 import qualified RIO.Text as T
@@ -108,40 +119,40 @@ qualifierOf lang = \case
   where
     nonBlank = mfilter (not . T.null) . fmap T.strip
 
--- Labels match the web catalog (accounts:subtype.*, accounts:assetType.*).
-
 kindLabel :: Language -> AccountSubtype -> Text
-kindLabel = \case
-  En -> \case
-    Cash _ -> "Cash"
-    BankAccount _ -> "Bank account"
-    EWallet _ -> "E-wallet"
-    Asset _ -> "Asset"
-    Loan _ -> "Loan"
-  Uk -> \case
-    Cash _ -> "Готівка"
-    BankAccount _ -> "Банківський рахунок"
-    EWallet _ -> "Електронний гаманець"
-    Asset _ -> "Актив"
-    Loan _ -> "Кредит"
+kindLabel lang =
+  label lang "subtype" . \case
+    Cash _ -> "cash"
+    BankAccount _ -> "bankAccount"
+    EWallet _ -> "eWallet"
+    Asset _ -> "asset"
+    Loan _ -> "loan"
 
+-- | A freeform asset type has no label and shows as typed.
 assetTypeLabel :: Language -> AssetType -> Text
-assetTypeLabel = \case
-  En -> \case
-    Property -> "Property"
-    Vehicle -> "Vehicle"
-    Stocks -> "Stocks"
-    RetirementFund -> "Retirement fund"
-    Electronics -> "Electronics"
-    Equipment -> "Equipment"
-    Furniture -> "Furniture"
-    OtherAsset t -> t
-  Uk -> \case
-    Property -> "Нерухомість"
-    Vehicle -> "Транспорт"
-    Stocks -> "Акції"
-    RetirementFund -> "Пенсійний фонд"
-    Electronics -> "Електроніка"
-    Equipment -> "Обладнання"
-    Furniture -> "Меблі"
-    OtherAsset t -> t
+assetTypeLabel lang = \case
+  Property -> known "property"
+  Vehicle -> known "vehicle"
+  Stocks -> known "stocks"
+  RetirementFund -> known "retirementFund"
+  Electronics -> known "electronics"
+  Equipment -> known "equipment"
+  Furniture -> known "furniture"
+  OtherAsset t -> t
+  where
+    known = label lang "assetType"
+
+-- | A label from the locale's catalog, falling back to English, then the key.
+label :: Language -> Text -> Text -> Text
+label lang section = resolve overrides base lang
+  where
+    lookupIn labels k = Map.lookup section labels >>= Map.lookup k
+    overrides En = lookupIn enLabels
+    overrides Uk = lookupIn ukLabels
+    base k = fromMaybe k (lookupIn enLabels k)
+
+-- | Section ("subtype", "assetType") -> key -> label. A decode failure yields an
+-- empty catalog, which the spec catches.
+enLabels, ukLabels :: Map Text (Map Text Text)
+enLabels = fromRight Map.empty (eitherDecodeStrict $(embedFileBytes "locales/accounts/en/labels.json"))
+ukLabels = fromRight Map.empty (eitherDecodeStrict $(embedFileBytes "locales/accounts/uk/labels.json"))

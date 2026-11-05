@@ -46,7 +46,7 @@ tell them apart (tracker#97).
    key or identifier. The API does not carry a formatted name: kind labels are
    localized, clients switch language live, and the short form depends on context.
    Each client implements this ADR (web `src/features/accounts/accountName.ts`; mobile
-   ports it). The backend applies it to its own text (`src/Domain/Account/Naming.hs`):
+   ports it). The backend applies it to its own text (`src/Application/Services/AccountNaming.hs`):
    Telegram messages use the short form, and the prompt resolver matches on the full
    name and lists full names in ambiguity errors.
 

@@ -3,9 +3,9 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- | Mirrors web's @src\/features\/accounts\/accountName.test.ts@ (ADR 009).
-module Domain.Account.NamingSpec (spec) where
+module Application.Services.AccountNamingSpec (spec) where
 
-import Domain.Account.Naming
+import Application.Services.AccountNaming
 import Domain.Core.Types
   ( AccountSubtype (..),
     AssetProperties (..),
@@ -23,6 +23,7 @@ import Domain.Core.Types
     defaultLoanProperties,
   )
 import Domain.Localization.Language (Language (..))
+import Data.Char (toLower)
 import RIO
 import qualified RIO.Text as T
 import Test.Hspec
@@ -41,8 +42,12 @@ card = parts "Card" UAH (bank (Just "PrivatBank"))
 shows :: Bool -> Bool -> ShownByContext
 shows q c = ShownByContext {qualifierShown = q, currencyShown = c}
 
+lowerFirst :: String -> String
+lowerFirst (c : cs) = toLower c : cs
+lowerFirst [] = []
+
 spec :: Spec
-spec = describe "Domain.Account.Naming" $ do
+spec = describe "Application.Services.AccountNaming" $ do
   describe "accountNameParts" $ do
     it "reads each kind's qualifier field" $ do
       let qualifierAndKind st = let p = parts "Main" UAH st in (p.kind, p.qualifier)
@@ -59,6 +64,26 @@ spec = describe "Domain.Account.Naming" $ do
       (parts "Flat" UAH flat).qualifier `shouldBe` Just "Property"
       (accountNameParts Uk "Flat" UAH flat).qualifier `shouldBe` Just "Нерухомість"
       (accountNameParts Uk "Flat" UAH flat).kind `shouldBe` "Актив"
+
+    it "labels every kind and asset type in each locale's catalog" $ do
+      let kinds =
+            [ ("Cash", defaultCash),
+              ("Bank account", bank Nothing),
+              ("E-wallet", EWallet defaultEWalletProperties),
+              ("Asset", Asset defaultAssetProperties),
+              ("Loan", Loan defaultLoanProperties)
+            ]
+          assetLabel lang t =
+            (accountNameParts lang "A" UAH (Asset defaultAssetProperties {assetType = Just t})).qualifier
+      forM_ kinds $ \(en, st) -> do
+        (parts "A" UAH st).kind `shouldBe` en
+        -- A missing uk entry would fall back to the English label.
+        (accountNameParts Uk "A" UAH st).kind `shouldNotBe` en
+      forM_ [Property, Vehicle, Stocks, RetirementFund, Electronics, Equipment, Furniture] $ \t -> do
+        -- A missing en entry would fall back to the camelCase key.
+        assetLabel En t `shouldNotBe` Just (T.pack (lowerFirst (show t)))
+        assetLabel Uk t `shouldNotBe` assetLabel En t
+      assetLabel Uk (OtherAsset "Paintings") `shouldBe` Just "Paintings"
 
     it "treats a blank qualifier as missing and trims the rest" $ do
       (parts "Card" UAH (bank (Just "   "))).qualifier `shouldBe` Nothing

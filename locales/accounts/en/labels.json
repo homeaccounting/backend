@@ -1,0 +1,18 @@
+{
+  "subtype": {
+    "cash": "Cash",
+    "bankAccount": "Bank account",
+    "eWallet": "E-wallet",
+    "asset": "Asset",
+    "loan": "Loan"
+  },
+  "assetType": {
+    "property": "Property",
+    "vehicle": "Vehicle",
+    "stocks": "Stocks",
+    "retirementFund": "Retirement fund",
+    "electronics": "Electronics",
+    "equipment": "Equipment",
+    "furniture": "Furniture"
+  }
+}
