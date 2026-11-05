@@ -49,7 +49,7 @@ import Application.Services.Prompt.Types
   )
 import qualified Application.Services.TransactionService as TransactionService
 import qualified Data.Map.Strict as Map
-import Application.Services.AccountNaming (accountNameParts, fullAccountName)
+import Domain.Account.Naming (accountNameParts, fullAccountName)
 import Domain.Configuration.Defaults
   ( expenseCategoryDictKind,
     incomeCategoryDictKind,

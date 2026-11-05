@@ -3,9 +3,9 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- | Mirrors web's @src\/features\/accounts\/accountName.test.ts@ (ADR 009).
-module Application.Services.AccountNamingSpec (spec) where
+module Domain.Account.NamingSpec (spec) where
 
-import Application.Services.AccountNaming
+import Domain.Account.Naming
 import Domain.Core.Types
   ( AccountSubtype (..),
     AssetProperties (..),
@@ -47,7 +47,7 @@ lowerFirst (c : cs) = toLower c : cs
 lowerFirst [] = []
 
 spec :: Spec
-spec = describe "Application.Services.AccountNaming" $ do
+spec = describe "Domain.Account.Naming" $ do
   describe "accountNameParts" $ do
     it "reads each kind's qualifier field" $ do
       let qualifierAndKind st = let p = parts "Main" UAH st in (p.kind, p.qualifier)
@@ -65,7 +65,7 @@ spec = describe "Application.Services.AccountNaming" $ do
       (accountNameParts Uk "Flat" UAH flat).qualifier `shouldBe` Just "Нерухомість"
       (accountNameParts Uk "Flat" UAH flat).kind `shouldBe` "Актив"
 
-    it "labels every kind and asset type in each locale's catalog" $ do
+    it "maps every kind and asset type to a catalog label" $ do
       let kinds =
             [ ("Cash", defaultCash),
               ("Bank account", bank Nothing),

@@ -1,26 +1,20 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 -- |
--- Module      : Application.Services.AccountNaming
+-- Module      : Domain.Account.Naming
 -- Description : The universal account naming scheme (ADR 009).
 --
 -- Full name: @{Kind} › {Qualifier} › {Name} · {Currency}@. Short forms drop the
 -- segments the surrounding text already shows. Search matches when every query
--- token is a case- and accent-insensitive substring of the full name.
---
--- Application rather than Domain: a name is a localized display string, not an
--- identity or invariant (no uniqueness, never a key), used by the prompt
--- resolver and Telegram. Kind and asset-type labels live in
--- @locales\/accounts\/<locale>\/labels.json@, mirroring web's
--- @accounts:subtype.*@ and @accounts:assetType.*@, embedded at compile time.
+-- token is a case- and accent-insensitive substring of the full name. Kind and
+-- asset-type labels come from 'Domain.Localization.AccountCatalog'.
 --
 -- Clients implement the same ADR (web @src\/features\/accounts\/accountName.ts@);
 -- keep the rules in step with it. Change the ADR first.
-module Application.Services.AccountNaming
+module Domain.Account.Naming
   ( AccountNameParts (..),
     ShownByContext (..),
     accountNameParts,
@@ -31,10 +25,7 @@ module Application.Services.AccountNaming
   )
 where
 
-import Data.Aeson (eitherDecodeStrict)
 import qualified Data.Char as Char
-import Data.Embed (embedFileBytes)
-import qualified Data.Map.Strict as Map
 import qualified Data.Text.Normalize as Normalize
 import Domain.Core.Types
   ( AccountSubtype (..),
@@ -46,8 +37,8 @@ import Domain.Core.Types
     EWalletProperties (..),
     LoanProperties (..),
   )
-import Domain.Localization.Catalog (resolve)
-import Domain.Localization.Language (Language (..))
+import Domain.Localization.AccountCatalog (localizedAccountLabel)
+import Domain.Localization.Language (Language)
 import RIO
 import qualified RIO.Text as T
 
@@ -121,7 +112,7 @@ qualifierOf lang = \case
 
 kindLabel :: Language -> AccountSubtype -> Text
 kindLabel lang =
-  label lang "subtype" . \case
+  localizedAccountLabel lang . \case
     Cash _ -> "cash"
     BankAccount _ -> "bankAccount"
     EWallet _ -> "eWallet"
@@ -140,19 +131,4 @@ assetTypeLabel lang = \case
   Furniture -> known "furniture"
   OtherAsset t -> t
   where
-    known = label lang "assetType"
-
--- | A label from the locale's catalog, falling back to English, then the key.
-label :: Language -> Text -> Text -> Text
-label lang section = resolve overrides base lang
-  where
-    lookupIn labels k = Map.lookup section labels >>= Map.lookup k
-    overrides En = lookupIn enLabels
-    overrides Uk = lookupIn ukLabels
-    base k = fromMaybe k (lookupIn enLabels k)
-
--- | Section ("subtype", "assetType") -> key -> label. A decode failure yields an
--- empty catalog, which the spec catches.
-enLabels, ukLabels :: Map Text (Map Text Text)
-enLabels = fromRight Map.empty (eitherDecodeStrict $(embedFileBytes "locales/accounts/en/labels.json"))
-ukLabels = fromRight Map.empty (eitherDecodeStrict $(embedFileBytes "locales/accounts/uk/labels.json"))
+    known = localizedAccountLabel lang

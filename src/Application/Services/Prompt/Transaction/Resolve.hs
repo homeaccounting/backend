@@ -41,7 +41,7 @@ import qualified Data.Text as DT
 import Data.Text.Match (MatchResult (..), matchByName, normalizeName)
 import Data.Time (UTCTime (..), defaultTimeLocale, parseTimeM)
 import Data.Time.Calendar (Day)
-import Application.Services.AccountNaming
+import Domain.Account.Naming
   ( AccountNameParts,
     ShownByContext (..),
     accountMatches,

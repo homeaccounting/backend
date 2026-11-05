@@ -40,7 +40,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, defaultTimeLocale, formatTime)
 import qualified Data.UUID as UUID
-import Application.Services.AccountNaming (ShownByContext (..), accountNameParts, shortAccountName)
+import Domain.Account.Naming (ShownByContext (..), accountNameParts, shortAccountName)
 import Domain.Core.Types
   ( AccountId,
     Allocation (..),

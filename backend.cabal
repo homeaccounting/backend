@@ -18,8 +18,8 @@ license:        AGPL-3.0-or-later
 license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
-    locales/accounts/en/labels.json
-    locales/accounts/uk/labels.json
+    locales/accounts/en/default.json
+    locales/accounts/uk/default.json
     locales/categories/en/default.json
     locales/categories/uk/default.json
     locales/telegram/en/accounts.json
@@ -59,7 +59,6 @@ library
       Application.ReadModels.Transaction
       Application.ReadModels.User
       Application.Services
-      Application.Services.AccountNaming
       Application.Services.AccountService
       Application.Services.AuthorizationService
       Application.Services.AuthService
@@ -87,6 +86,7 @@ library
       Domain.Account.Commands
       Domain.Account.Errors
       Domain.Account.Events
+      Domain.Account.Naming
       Domain.Account.Projection
       Domain.Banking.Import
       Domain.Banking.Signal
@@ -107,6 +107,7 @@ library
       Domain.Core.Types
       Domain.Events
       Domain.ExchangeRate.Events
+      Domain.Localization.AccountCatalog
       Domain.Localization.Catalog
       Domain.Localization.CategoryCatalog
       Domain.Localization.Country
@@ -403,7 +404,6 @@ test-suite backend-test
       Application.ReadModels.TransactionListPropertySpec
       Application.ReadModels.TransactionListSpec
       Application.ReadModels.TransactionRelationsSpec
-      Application.Services.AccountNamingSpec
       Application.Services.AccountServiceIntegrationSpec
       Application.Services.AccountServiceSpec
       Application.Services.AuthorizationServiceSpec
@@ -441,6 +441,7 @@ test-suite backend-test
       Data.UrlSpec
       Domain.Account.CommandHandlerPropertySpec
       Domain.Account.CommandHandlerSpec
+      Domain.Account.NamingSpec
       Domain.Account.ReversalCommandHandlerSpec
       Domain.Account.ReversalProjectionPropertySpec
       Domain.Banking.TypesPropertySpec
@@ -461,6 +462,7 @@ test-suite backend-test
       Domain.Core.TransactionTypePropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
+      Domain.Localization.AccountCatalogSpec
       Domain.Localization.CatalogSpec
       Domain.Localization.CategoryCatalogSpec
       Domain.Localization.CountrySpec
