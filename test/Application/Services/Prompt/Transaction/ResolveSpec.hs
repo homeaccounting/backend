@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -24,15 +25,24 @@ import Data.Time (UTCTime (..), fromGregorian)
 import Domain.Configuration.Projection (ConfigurationDefaults (..))
 import Domain.Core.Types
   ( AccountId,
+    AccountSubtype (..),
     AccountSubtypeKind (..),
+    BankAccountProperties (..),
     Allocation (..),
     Allocations (..),
     CategoryId,
     Currency (..),
     Money,
+    defaultAsset,
+    defaultBankAccount,
+    defaultBankAccountProperties,
+    defaultCash,
+    defaultEWallet,
+    defaultLoan,
     mkMoney,
     unMoney,
   )
+import Domain.Localization.Language (Language (..))
 import RIO
 import qualified RIO.Text as T
 import Test.Hspec
@@ -41,11 +51,30 @@ import Test.QuickCheck ((==>))
 import Testkit.Helpers (mockAccountIdN, mockCategoryIdN)
 
 -- | Build an @(id, 'RegularAccountData')@ pair with a zero UAH balance (the
--- resolver only reads the currency off the balance). The id is carried
--- outside the record, matching every other read-model @*Data@ convention.
+-- resolver only reads the currency off the balance) and a subtype of the given
+-- kind with no properties. The id is carried outside the record, matching
+-- every other read-model @*Data@ convention.
 acct :: Word32 -> Text -> AccountSubtypeKind -> (AccountId, RegularAccountData)
 acct n nm k =
-  (mockAccountIdN n, RegularAccountData {name = nm, balance = uah 0, subtype = k})
+  (mockAccountIdN n, RegularAccountData {name = nm, balance = uah 0, subtype = subtypeOf k})
+  where
+    subtypeOf = \case
+      CashKind -> defaultCash
+      BankAccountKind -> defaultBankAccount
+      EWalletKind -> defaultEWallet
+      AssetKind -> defaultAsset
+      LoanKind -> defaultLoan
+
+-- | A bank account at the named bank with a zero balance in the given currency.
+bankAt :: Word32 -> Text -> Text -> Money -> (AccountId, RegularAccountData)
+bankAt n nm bank bal =
+  ( mockAccountIdN n,
+    RegularAccountData
+      { name = nm,
+        balance = bal,
+        subtype = BankAccount defaultBankAccountProperties {bankName = Just bank}
+      }
+  )
 
 -- | Sample context: two accounts (both UAH), one expense category "Food", one
 -- income category "Salary", and an "Other" default (id 9) for both categories.
@@ -66,7 +95,8 @@ sampleCtx =
             account = Nothing,
             subtypeAccounts = Map.empty
           },
-      selectedAccount = Nothing
+      selectedAccount = Nothing,
+      language = En
     }
 
 -- | The "Food" expense category id and the "Other" default category id used by
@@ -401,6 +431,38 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
       $ errField (resolveIntent sampleCtx "x" baseExpense {date = Just "nope"})
       `shouldBe` Just "date"
 
+  describe "full account names (ADR 009)" $ do
+    let banks =
+          sampleCtx
+            { accounts =
+                [ bankAt 1 "Card" "PrivatBank" (uah 0),
+                  bankAt 2 "Card" "PrivatBank" (usd 0),
+                  bankAt 3 "Card" "Monobank" (uah 0),
+                  bankAt 4 "Caf\xE9 tips" "Monobank" (uah 0)
+                ]
+            }
+        srcOf name = resolvedAccount (resolveIntent banks "x" baseExpense {sourceAccount = Just name})
+
+    it "resolves when every token appears in the full name" $ do
+      srcOf "privat usd" `shouldBe` Right (mockAccountIdN 2)
+      srcOf "mono card" `shouldBe` Right (mockAccountIdN 3)
+
+    it "resolves the exact full name the prompt lists" $
+      srcOf "Bank account \x203A PrivatBank \x203A Card \xB7 UAH" `shouldBe` Right (mockAccountIdN 1)
+
+    it "ignores case and accents" $
+      srcOf "CAFE" `shouldBe` Right (mockAccountIdN 4)
+
+    it "lists full names when a reference is ambiguous or unknown" $ do
+      let listed = "Bank account \x203A PrivatBank \x203A Card \xB7 UAH; Bank account \x203A PrivatBank \x203A Card \xB7 USD"
+          errMessage name = either (Just . (.message)) (const Nothing) (resolveIntent banks "x" baseExpense {sourceAccount = Just name})
+      fmap (T.isInfixOf listed) (errMessage "privat") `shouldBe` Just True
+      fmap (T.isInfixOf listed) (errMessage "Nope") `shouldBe` Just True
+
+    it "names the account with its qualifier in the interpretation" $
+      fmap snd (resolveIntent banks "x" baseExpense {sourceAccount = Just "privat usd", currency = Just "USD"})
+        `shouldSatisfy` either (const False) (T.isInfixOf "\x2018\&Card \xB7 PrivatBank\x2019")
+
   describe "account precedence (#26)" $ do
     it "1. a specific name match wins over a subtype default"
       $
@@ -554,7 +616,8 @@ precedenceCtx =
             account = Just (mockAccountIdN 9),
             subtypeAccounts = Map.fromList [(BankAccountKind, mockAccountIdN 2)]
           },
-      selectedAccount = Nothing
+      selectedAccount = Nothing,
+      language = En
     }
 
 -- | Resolve 'baseExpense' with the given source account against 'precedenceCtx'.

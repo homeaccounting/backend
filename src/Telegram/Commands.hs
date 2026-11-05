@@ -113,6 +113,7 @@ import Telegram.Api (answerCallback, registerChatCommands, sendMessageWithKeyboa
 import qualified Telegram.Bot.API as TG
 import Telegram.Formatting
   ( formatCommandList,
+    accountShortNames,
     formatRecordedTransaction,
     formatTransactionLine,
     showCurrency,
@@ -912,15 +913,13 @@ getDictionaryEntryNames telegramId = do
 -- names from existing read-model helpers, then delegates rendering to the
 -- pure 'formatRecordedTransaction'. The displayed account is always a regular
 -- account the user can access (source for expense, target for income, both
--- for transfer), so 'accessibleAccountsForTelegram' suffices — no
--- External-account lookup is needed.
+-- for transfer), so the regular accounts suffice — no External-account lookup
+-- is needed.
 replyRecordedTransaction :: Language -> TelegramId -> Int64 -> TransactionData -> AppM ()
 replyRecordedTransaction lang telegramId chatId td = do
   entryNames <- getDictionaryEntryNames telegramId
-  maybeAccounts <- accessibleAccountsForTelegram telegramId
-  let accountNames =
-        Map.fromList [(aid, n) | (aid, n, _) <- fromMaybe [] maybeAccounts]
-  sendMsg chatId (formatRecordedTransaction lang entryNames accountNames td)
+  accounts <- maybe (pure []) (runDb . AccountRM.getRegularAccounts) =<< getUserIdForTelegram telegramId
+  sendMsg chatId (formatRecordedTransaction lang entryNames (accountShortNames lang accounts) td)
 
 -- -----------------------------------------------------------------------------
 -- User/Account Lookup Helpers

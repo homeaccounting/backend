@@ -45,6 +45,8 @@ dependencies:
 
   # Core utilities
   - text >= 1.2 && < 2.2
+  # NFD for accent-insensitive account search (ADR 009).
+  - unicode-transforms >= 0.4 && < 0.5
   - bytestring >= 0.10 && < 0.13
   - base64-bytestring >= 1.2 && < 1.3
   - containers >= 0.6 && < 0.8
