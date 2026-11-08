@@ -365,8 +365,9 @@ transferHandler user request = do
   cur <- validateField "currency" $ parseCurrency request.currency
   let money = toDomainMoney cur request.amount
   labelSet <- validateField "labels" $ parseLabelIds request.labels
+  let fees = fromAllocationsDTO <$> request.allocations
   let maybeRate = fmap toRational request.exchangeRate
-  result <- TransactionService.initiateTransfer userId fromAccId toAccId money Nothing labelSet request.description maybeRate request.date Nothing
+  result <- TransactionService.initiateTransfer userId fromAccId toAccId money fees labelSet request.description maybeRate request.date Nothing
   case result of
     Right (txId, transaction) -> return $ fromTransactionData txId transaction
     Left err -> throwDomainError err

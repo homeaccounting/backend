@@ -471,7 +471,10 @@ data TransferRequest
     description :: Text,
     exchangeRate :: Maybe Scientific,
     date :: Maybe UTCTime,
-    labels :: Maybe [UUID]
+    labels :: Maybe [UUID],
+    -- | Optional fees, expense bucket only. 'amount' is the total debited
+    -- from the source; the target receives 'amount' minus the fees.
+    allocations :: Maybe AllocationsDTO
   }
   deriving (Show, Eq, Generic)
 

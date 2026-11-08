@@ -45,7 +45,7 @@ module Web.API.TransactionAPISpec (spec) where
 import qualified Application.Services.AccountService as AccountService
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import qualified Application.Services.TransactionService as TransactionService
-import Data.Aeson (eitherDecode)
+import Data.Aeson (Value, eitherDecode, encode, object, (.=))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.UUID.V4 as UUID4
@@ -53,6 +53,7 @@ import Domain.Core.Types
   ( TransactionId,
     UserId,
     unAccountId,
+    unDictionaryEntryId,
     unTransactionId,
     unUserId,
     unsafeMoney,
@@ -79,6 +80,7 @@ import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager)
 import Testkit.Time (utc)
 import Testkit.TransactionEditFixture
   ( Seed (..),
+    addExpenseCategory,
     authHeaders,
     httpRequest,
     mkSeed,
@@ -88,7 +90,9 @@ import Testkit.TransactionEditFixture
   )
 import Web.Server (buildApplication)
 import Web.Types
-  ( ErrorResponse (..),
+  ( AllocationResponse (..),
+    AllocationsResponse (..),
+    ErrorResponse (..),
     TransactionListResponse (..),
     TransactionResponse (..),
     ValidationErrorResponse (..),
@@ -313,6 +317,84 @@ spec = do
   -- ---------------------------------------------------------------------------
   -- GET /api/transactions ?status  (IN-filter; absent = all statuses)
   -- ---------------------------------------------------------------------------
+
+  describe "POST /api/transactions/transfer fees" $ do
+    let feeAllocs cat =
+          object
+            [ "incomes" .= ([] :: [Value]),
+              "expenses"
+                .= [ object
+                       [ "categoryId" .= uuidText (unDictionaryEntryId cat),
+                         "amount" .= object ["amount" .= (0.25 :: Double), "currency" .= ("USD" :: Text)]
+                       ]
+                   ]
+            ]
+        transferBody seed other extra =
+          encode
+            $ object
+            $ [ "sourceAccountId" .= uuidText (unAccountId seed.seedAccount),
+                "targetAccountId" .= uuidText (unAccountId other),
+                "amount" .= (50.25 :: Double),
+                "currency" .= ("USD" :: Text),
+                "description" .= ("Fee transfer" :: Text)
+              ]
+            <> extra
+        decodeTx resp = case eitherDecode (simpleBody resp) :: Either String TransactionResponse of
+          Left err -> fail $ "bad JSON: " <> err
+          Right tr -> pure tr
+
+    it "posts a transfer carrying a fee: debits the total, credits total minus fee, echoes the fee" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "transfer-fee@test.com"
+      token <- seedToken seed
+      other <- createDefaultAccount seed.seedEnv seed.seedUserId "Fee-Other"
+      cat <- addExpenseCategory seed "Bank fee"
+      resp <-
+        httpRequest seed.seedApp "POST" "/api/transactions/transfer" (authHeaders token)
+          $ transferBody seed other ["allocations" .= feeAllocs cat]
+      simpleStatus resp `shouldBe` status200
+      tr <- decodeTx resp
+      tr.sourceAmount `shouldBe` 50.25
+      tr.targetAmount `shouldBe` 50
+      length tr.allocations.expenses `shouldBe` 1
+      fmap (.categoryId) tr.allocations.expenses `shouldBe` [uuidText (unDictionaryEntryId cat)]
+
+    it "amending a fee transfer without newAllocations removes the fee" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "transfer-fee-amend@test.com"
+      token <- seedToken seed
+      other <- createDefaultAccount seed.seedEnv seed.seedUserId "Fee-Amend-Other"
+      cat <- addExpenseCategory seed "Bank fee"
+      created <-
+        httpRequest seed.seedApp "POST" "/api/transactions/transfer" (authHeaders token)
+          $ transferBody seed other ["allocations" .= feeAllocs cat]
+      tr0 <- decodeTx created
+      let amendBody =
+            encode
+              $ object
+                [ "sourceAccountId" .= uuidText (unAccountId seed.seedAccount),
+                  "targetAccountId" .= uuidText (unAccountId other),
+                  "sourceAmount" .= (50.25 :: Double),
+                  "sourceCurrency" .= ("USD" :: Text),
+                  "targetAmount" .= (50.25 :: Double),
+                  "targetCurrency" .= ("USD" :: Text)
+                ]
+          path = encodeUtf8 $ "/api/transactions/" <> uuidText tr0.id <> "/amendment"
+      resp <- httpRequest seed.seedApp "PUT" path (authHeaders token) amendBody
+      simpleStatus resp `shouldBe` status200
+      tr <- decodeTx resp
+      tr.targetAmount `shouldBe` 50.25
+      tr.allocations.expenses `shouldBe` []
+
+    it "behaves as before when allocations is absent" $ do
+      seed <- mkSeed createTestAppEnvWithProcessManager "transfer-nofee@test.com"
+      token <- seedToken seed
+      other <- createDefaultAccount seed.seedEnv seed.seedUserId "Nofee-Other"
+      resp <-
+        httpRequest seed.seedApp "POST" "/api/transactions/transfer" (authHeaders token)
+          $ transferBody seed other []
+      simpleStatus resp `shouldBe` status200
+      tr <- decodeTx resp
+      tr.targetAmount `shouldBe` 50.25
+      tr.allocations.expenses `shouldBe` []
 
   describe "GET /api/transactions ?status" $ do
     let acctPath seed extra =
