@@ -1575,6 +1575,14 @@ translateTransactionError (CommandRejected TxCh.NoCancellationInProgress) =
   TransactionError "No cancellation in progress"
 translateTransactionError (CommandRejected TxCh.CannotAmendDuringCancellation) =
   CannotAmendDuringCancellation
+translateTransactionError (CommandRejected TxCh.TransferFeeIncomeNotSupported) =
+  TransferFeeIncomeNotSupported
+translateTransactionError (CommandRejected TxCh.TransferFeesNotBelowSource) =
+  TransferFeesNotBelowSource
+translateTransactionError (CommandRejected TxCh.TransferFeesDoNotBalance) =
+  TransferFeesDoNotBalance
+translateTransactionError (CommandRejected TxCh.TransferFeeTotalChanged) =
+  TransferFeeTotalChanged
 translateTransactionError (CommandRejected TxCh.CannotAmendToAdjustmentKind) =
   CannotAmendToAdjustmentKind
 translateTransactionError (CommandRejected TxCh.RelationSelfLink) =

@@ -457,6 +457,26 @@ mapDomainError TransferFeesNotBelowSource =
               details = Nothing
             }
     }
+mapDomainError TransferFeesDoNotBalance =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transfer amount must equal the debited amount minus fees",
+              code = "TRANSFER_FEES_DO_NOT_BALANCE",
+              details = Nothing
+            }
+    }
+mapDomainError TransferFeeTotalChanged =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Allocation edits cannot change the transfer fee total; amend the transfer instead",
+              code = "TRANSFER_FEE_TOTAL_CHANGED",
+              details = Nothing
+            }
+    }
 mapDomainError CannotAmendToAdjustmentKind =
   err400
     { errBody =

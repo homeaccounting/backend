@@ -101,6 +101,14 @@ data TransactionError
     AmendTransferToSameAccountPair
   | -- | InitiateTransactionAmendment payload carried a zero source or target amount.
     AmendTransferToZeroAmount
+  | -- | A transfer fee allocation sits in the income bucket; fees are expenses.
+    TransferFeeIncomeNotSupported
+  | -- | Transfer fees sum to the debited amount or more.
+    TransferFeesNotBelowSource
+  | -- | Same-currency transfer where @source - fees /= target@.
+    TransferFeesDoNotBalance
+  | -- | 'ChangeTransactionAllocations' on a transfer changed the fee total.
+    TransferFeeTotalChanged
   | -- | A saga-completion or saga-failure command was issued without
     -- a prior 'TransactionAmendmentInitiated' on the stream.
     NoAmendmentInProgress
@@ -214,7 +222,7 @@ handleTransactionCommand transaction (InitiateTransactionPostingTransactionComma
                     Expense allocs ->
                       checkAllocationsAgainst sourceAmount allocs
                         *> (if null allocs.incomes then Right () else Left ContraIncomeNotSupported)
-                    Transfer _ -> Right ()
+                    Transfer fees -> checkTransferFeesIfAny sourceAmount targetAmount fees
                     Adjustment -> Right ()
                   let postingEvt =
                         TransactionPostingInitiatedTransactionEvent
@@ -332,16 +340,18 @@ handleTransactionCommand transaction (ChangeTransactionAllocationsTransactionCom
       case allocationsOf (transaction ^. #transactionType) of
         Nothing ->
           Left CannotSetAllocationsOnUncategorisedTransaction
-        Just _ -> do
-          existingTotal <- case transaction.transactionType of
-            Income _ -> Right transaction.targetAmount
-            Expense _ -> Right transaction.sourceAmount
-            _ -> Left CannotSetAllocationsOnUncategorisedTransaction
-          checkAllocationsAgainst existingTotal newAllocations
-          -- preserve the contra rule: an Expense must not gain an income bucket
-          _ <- case transaction.transactionType of
-            Expense _ | not (null newAllocations.incomes) -> Left ContraIncomeNotSupported
-            _ -> Right ()
+        Just oldAllocations -> do
+          case transaction.transactionType of
+            Income _ -> checkAllocationsAgainst transaction.targetAmount newAllocations
+            Expense _ -> do
+              checkAllocationsAgainst transaction.sourceAmount newAllocations
+              -- preserve the contra rule: an Expense must not gain an income bucket
+              if null newAllocations.incomes then Right () else Left ContraIncomeNotSupported
+            Transfer _ -> do
+              -- total first: a changed total would otherwise surface as a balance error
+              if allocationsTotal newAllocations == allocationsTotal oldAllocations then Right () else Left TransferFeeTotalChanged
+              checkTransferFees transaction.sourceAmount transaction.targetAmount newAllocations
+            Adjustment -> Left CannotSetAllocationsOnUncategorisedTransaction
           Right
             [ TransactionAllocationsChangedTransactionEvent
                 TransactionAllocationsChanged
@@ -399,7 +409,7 @@ handleTransactionCommand transaction (InitiateTransactionAmendmentTransactionCom
             Expense allocs ->
               checkAllocationsAgainst newSourceAmount allocs
                 *> (if null allocs.incomes then Right () else Left ContraIncomeNotSupported)
-            Transfer _ -> Right ()
+            Transfer fees -> checkTransferFeesIfAny newSourceAmount newTargetAmount fees
             Adjustment -> Left CannotAmendToAdjustmentKind
           Right
             [ TransactionAmendmentInitiatedTransactionEvent
@@ -588,6 +598,31 @@ checkAllocationsAgainst expected a =
     checkCurrency = if all (\x -> x.amount.currency == expectedCurrency) xs then Right () else Left AllocationCurrencyMismatch
     checkSum = if Money (sum (fmap (\x -> x.amount.amount) xs)) expectedCurrency == expected then Right () else Left AllocationsDoNotSumToTotal
     checkPositive = if all (\x -> unMoney x.amount > 0) xs then Right () else Left AllocationAmountNotPositive
+
+-- | Fee rules for a 'Transfer' (spec §4): expense bucket only, source
+-- currency, each fee positive, total strictly below the source amount, and —
+-- when no FX conversion is involved — @source - total == target@. Arguments:
+-- source, target, fees.
+checkTransferFees :: Money -> Money -> Allocations -> Either TransactionError ()
+checkTransferFees source target fees =
+  checkNotEmpty *> checkNoIncome *> checkCurrency *> checkPositive *> checkBelowSource *> checkBalance
+  where
+    xs = allAllocations fees
+    feeTotal = allocationsTotal fees
+    checkNotEmpty = if null xs then Left AllocationsEmpty else Right ()
+    checkNoIncome = if null fees.incomes then Right () else Left TransferFeeIncomeNotSupported
+    checkCurrency = if all (\x -> x.amount.currency == moneyCurrency source) xs then Right () else Left AllocationCurrencyMismatch
+    checkPositive = if all (\x -> unMoney x.amount > 0) xs then Right () else Left AllocationAmountNotPositive
+    checkBelowSource = if feeTotal < unMoney source then Right () else Left TransferFeesNotBelowSource
+    checkBalance
+      | moneyCurrency source == moneyCurrency target && unMoney source - feeTotal /= unMoney target = Left TransferFeesDoNotBalance
+      | otherwise = Right ()
+
+checkTransferFeesIfAny :: Money -> Money -> Maybe Allocations -> Either TransactionError ()
+checkTransferFeesIfAny source target = maybe (Right ()) (checkTransferFees source target)
+
+allocationsTotal :: Allocations -> Rational
+allocationsTotal a = sum (fmap (\x -> x.amount.amount) (allAllocations a))
 
 -- -----------------------------------------------------------------------------
 -- Command Handler

@@ -489,6 +489,7 @@ test-suite backend-test
       Domain.Transaction.RelationsCommandHandlerSpec
       Domain.Transaction.RelationsProjectionPropertySpec
       Domain.Transaction.StatusKindSpec
+      Domain.Transaction.TransferFeesCommandHandlerPropertySpec
       Domain.Transaction.TransferMatchPropertySpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.IdTokenConfigSpec
