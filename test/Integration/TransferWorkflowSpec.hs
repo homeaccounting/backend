@@ -190,7 +190,7 @@ initiateAndCompleteTransfer env fromUuid toUuid userUuid amt rsn = do
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
             at = mockTime,
-            transactionType = Transfer,
+            transactionType = Transfer Nothing,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing,
@@ -232,7 +232,7 @@ initiateTransferOnly env fromUuid toUuid userUuid amt rsn = do
             description = rsn,
             initiatedBy = unsafeUserId userUuid,
             at = mockTime,
-            transactionType = Transfer,
+            transactionType = Transfer Nothing,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing,
@@ -555,7 +555,7 @@ processManagerDrivenSpec =
                 description = "Correlation propagation test",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transactionType = Transfer,
+                transactionType = Transfer Nothing,
                 importInfo = Nothing,
                 labels = Set.empty,
                 contactId = Nothing,
@@ -869,7 +869,7 @@ categorizedTransferSpec =
                 description = "Move to savings",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transactionType = Transfer,
+                transactionType = Transfer Nothing,
                 importInfo = Nothing,
                 labels = Set.empty,
                 contactId = Nothing,
@@ -881,7 +881,7 @@ categorizedTransferSpec =
       case maybeTx of
         Nothing -> expectationFailure "Internal transfer not found in read model"
         Just txData -> do
-          txData.transactionType `shouldBe` Transfer
+          txData.transactionType `shouldBe` Transfer Nothing
           txData.status `shouldBe` Completed
 
     it "completes transfer carrying labels and externalTransactionId end-to-end" $ do
@@ -906,7 +906,7 @@ categorizedTransferSpec =
                 description = "Bank-sourced transfer",
                 initiatedBy = unsafeUserId userUuid,
                 at = mockTime,
-                transactionType = Transfer,
+                transactionType = Transfer Nothing,
                 importInfo = Just ImportInfo {externalTransactionIds = extTxId :| [], category = Nothing, contact = Nothing},
                 labels = expectedLabels,
                 contactId = Nothing,

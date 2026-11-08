@@ -40,7 +40,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
-import Database.Persist (insert)
+import Database.Persist (PersistField (..), PersistValue (..), insert)
 import Database.Persist.Sql (Single (..), rawSql)
 import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Signal (mkByMcc, parseMcc, unsafeMcc)
@@ -58,6 +58,7 @@ import Domain.Transaction.Events
 import Domain.Transaction.Projection (StatusKind (..))
 import qualified Eventium
 import Infrastructure.App (AppEnv)
+import Infrastructure.Database.Orphans ()
 import RIO
 import Test.Hspec
 import Testkit.Helpers
@@ -184,8 +185,8 @@ spec = describe "Persistent Transaction read model" $ do
       let acctB2 = mockAccountId (UUID.fromWords 22 0 0 0)
       env <-
         seedEnv
-          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
-            initiated (tx 2) acctB acctB2 Transfer Set.empty 1
+          [ initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0,
+            initiated (tx 2) acctB acctB2 (Transfer Nothing) Set.empty 1
           ]
       (_, results) <- runDbIn env (listTransactions (Set.singleton acctA) emptyTransactionFilter allPage)
       map fst results `shouldBe` [tx 1]
@@ -194,9 +195,9 @@ spec = describe "Persistent Transaction read model" $ do
       let acctB2 = mockAccountId (UUID.fromWords 22 0 0 0)
       env <-
         seedEnv
-          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+          [ initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0,
             completed (tx 1) 1,
-            initiated (tx 2) acctB acctB2 Transfer Set.empty 2,
+            initiated (tx 2) acctB acctB2 (Transfer Nothing) Set.empty 2,
             completed (tx 2) 3
           ]
       reportA <- runDbIn env (reportableTransactions (Set.singleton acctA) Nothing Nothing)
@@ -205,7 +206,7 @@ spec = describe "Persistent Transaction read model" $ do
   describe "idempotency (re-apply == apply once)" $ do
     it "re-applying the same event stream leaves one row with the same fields and labels" $ do
       let events =
-            [ initiated (tx 1) acctA acctB Transfer (Set.fromList [lbl 7, lbl 8]) 0,
+            [ initiated (tx 1) acctA acctB (Transfer Nothing) (Set.fromList [lbl 7, lbl 8]) 0,
               completed (tx 1) 1
             ]
       -- Apply the whole stream twice.
@@ -215,23 +216,40 @@ spec = describe "Persistent Transaction read model" $ do
       mTd <- runDbIn env (getTransaction (tx 1))
       (.labels) <$> mTd `shouldBe` Just (Set.fromList [lbl 7, lbl 8])
 
+  describe "transfer fees" $ do
+    let fees = mkExpenseAllocations (Allocation (cat 51) (unsafeMoney USD 1) Nothing NE.:| [])
+    it "round-trips a fee transfer through the TransactionType column"
+      $ fromPersistValue (toPersistValue (Transfer (Just fees)))
+      `shouldBe` Right (Transfer (Just fees))
+    it "decodes a legacy {\"kind\":\"transfer\"} row as a plain transfer"
+      $ fromPersistValue (PersistText "{\"kind\":\"transfer\"}")
+      `shouldBe` Right (Transfer Nothing)
+    it "referencesEntry sees transfer fee categories" $ do
+      env <-
+        seedEnv
+          [ initiated (tx 1) acctA acctB (Transfer (Just fees)) Set.empty 0,
+            completed (tx 1) 1
+          ]
+      runDbIn env (findReferencingTransactions (cat 51)) `shouldReturn` 1
+      runDbIn env (findReferencingTransactions (cat 52)) `shouldReturn` 0
+
   describe "contactId" $ do
     it "TransactionPostingInitiated with a contact projects it onto the row" $ do
       env <-
         seedEnv
-          [postingInitiatedGlobal (tx 1) acctA acctB Transfer Set.empty day day 0 (Just (contact 5))]
+          [postingInitiatedGlobal (tx 1) acctA acctB (Transfer Nothing) Set.empty day day 0 (Just (contact 5))]
       mTd <- runDbIn env (getTransaction (tx 1))
       (.contactId) <$> mTd `shouldBe` Just (Just (contact 5))
 
     it "TransactionPostingInitiated without a contact leaves the row's contact as Nothing" $ do
-      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      env <- seedEnv [initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0]
       mTd <- runDbIn env (getTransaction (tx 1))
       (.contactId) <$> mTd `shouldBe` Just Nothing
 
     it "TransactionContactSet updates the contact, and a subsequent Nothing clears it" $ do
       env <-
         seedEnv
-          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+          [ initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0,
             transactionEditGlobal
               (tx 1)
               (TransactionContactSetEvent TransactionContactSet {transactionId = tx 1, contactId = Just (contact 5)})
@@ -255,7 +273,7 @@ spec = describe "Persistent Transaction read model" $ do
     it "TransactionAmendmentCompleted replaces the contact" $ do
       env <-
         seedEnv
-          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+          [ initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0,
             transactionEditGlobal
               (tx 1)
               ( TransactionAmendmentCompletedEvent
@@ -266,7 +284,7 @@ spec = describe "Persistent Transaction read model" $ do
                       newSourceAmount = unsafeMoney USD 100,
                       newTargetAmount = unsafeMoney USD 100,
                       newExchangeRate = Nothing,
-                      newTransactionType = Transfer,
+                      newTransactionType = Transfer Nothing,
                       contactId = Just (contact 9),
                       by = mockUserId (UUID.fromWords 9 0 0 0)
                     }
@@ -278,7 +296,7 @@ spec = describe "Persistent Transaction read model" $ do
 
   describe "transactionAccounts (change-signal attribution)" $ do
     it "returns both distinct accounts for a transfer transaction, order-insensitive" $ do
-      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      env <- seedEnv [initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0]
       accs <- runDbIn env (transactionAccounts (tx 1))
       accs `shouldMatchList` [acctA, acctB]
 
@@ -292,7 +310,7 @@ spec = describe "Persistent Transaction read model" $ do
     -- against a hand-built row that coincides source/target on the same
     -- account, bypassing the command layer entirely.
     it "dedupes to a single account when a stored row has source == target" $ do
-      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      env <- seedEnv [initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0]
       _ <-
         runDbIn env
           $ insert
@@ -306,7 +324,7 @@ spec = describe "Persistent Transaction read model" $ do
                 transactionEntityDescription = "same-account row (test-only, unreachable via commands)",
                 transactionEntityStatusKind = PendingKind,
                 transactionEntityFailureReason = Nothing,
-                transactionEntityTransactionType = Transfer,
+                transactionEntityTransactionType = Transfer Nothing,
                 transactionEntityDate = day,
                 transactionEntityBankProviderCategory = Nothing,
                 transactionEntityBankProviderContact = Nothing,
@@ -318,7 +336,7 @@ spec = describe "Persistent Transaction read model" $ do
       accs `shouldBe` [acctA]
 
     it "returns [] for an unknown transaction id" $ do
-      env <- seedEnv [initiated (tx 1) acctA acctB Transfer Set.empty 0]
+      env <- seedEnv [initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0]
       case mkTransactionId (UUID.fromWords 999 0 0 0) of
         Left err -> expectationFailure (T.unpack err)
         Right unknown -> do
@@ -331,10 +349,10 @@ spec = describe "Persistent Transaction read model" $ do
         seedEnv
           [ -- tx1: carries label 7 and is cancelled → still counts (cancelled
             -- transactions remain retrievable via the API)
-            initiated (tx 1) acctA acctB Transfer (Set.singleton (lbl 7)) 0,
+            initiated (tx 1) acctA acctB (Transfer Nothing) (Set.singleton (lbl 7)) 0,
             cancelled (tx 1) 1,
             -- tx2: carries label 8 but failed to post → excluded
-            initiated (tx 2) acctA acctB Transfer (Set.singleton (lbl 8)) 2,
+            initiated (tx 2) acctA acctB (Transfer Nothing) (Set.singleton (lbl 8)) 2,
             failed (tx 2) 3,
             -- tx3: expense allocation against category 50 (completed, live)
             initiated (tx 3) acctA acctB (expenseOn (cat 50)) Set.empty 4,
@@ -353,10 +371,10 @@ spec = describe "Persistent Transaction read model" $ do
       env <-
         seedEnv
           [ -- tx1: carries contact 5 and is cancelled → still counts
-            postingInitiatedGlobal (tx 1) acctA acctB Transfer Set.empty day day 0 (Just (contact 5)),
+            postingInitiatedGlobal (tx 1) acctA acctB (Transfer Nothing) Set.empty day day 0 (Just (contact 5)),
             cancelled (tx 1) 1,
             -- tx2: carries contact 6 but failed to post → excluded
-            postingInitiatedGlobal (tx 2) acctA acctB Transfer Set.empty day day 2 (Just (contact 6)),
+            postingInitiatedGlobal (tx 2) acctA acctB (Transfer Nothing) Set.empty day day 2 (Just (contact 6)),
             failed (tx 2) 3
           ]
       -- Contact 5 is referenced only by the cancelled tx1 → still counts.
@@ -370,8 +388,8 @@ spec = describe "Persistent Transaction read model" $ do
     it "counts all transaction rows, including cancelled" $ do
       env <-
         seedEnv
-          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
-            initiated (tx 2) acctA acctB Transfer Set.empty 1,
+          [ initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0,
+            initiated (tx 2) acctA acctB (Transfer Nothing) Set.empty 1,
             cancelled (tx 2) 2
           ]
       runDbIn env countTransactions `shouldReturn` 2
@@ -429,7 +447,7 @@ spec = describe "Persistent Transaction read model" $ do
     it "returns a completed manual transfer matching the account pair/amount/window" $ do
       env <-
         seedEnv
-          [ initiated (tx 1) acctA acctB Transfer Set.empty 0,
+          [ initiated (tx 1) acctA acctB (Transfer Nothing) Set.empty 0,
             completed (tx 1) 1
           ]
       let query src tgt amt lo hi =

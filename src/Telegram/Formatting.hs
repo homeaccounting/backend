@@ -117,7 +117,7 @@ formatTransactionLine lang entryNames (_txId, td) =
       typeLabel = case td.transactionType of
         Income allocs -> withAllocations s.incomeLabel allocs
         Expense allocs -> withAllocations s.expenseLabel allocs
-        Transfer -> s.transferLabel
+        Transfer _ -> s.transferLabel
         Adjustment -> s.adjustmentLabel
       amt = formatMoney td.sourceAmount <> " " <> showCurrency (moneyCurrency td.sourceAmount)
       statusSuffix = case td.status of
@@ -182,7 +182,7 @@ formatRecordedTransaction lang entryNames accountNames td =
   case td.transactionType of
     Income allocs -> categorised s.incomeLabel td.targetAmount td.targetAccountId allocs
     Expense allocs -> categorised s.expenseLabel td.sourceAmount td.sourceAccountId allocs
-    Transfer -> transfer
+    Transfer _ -> transfer
     Adjustment -> adjustment
   where
     strings :: TelegramStrings

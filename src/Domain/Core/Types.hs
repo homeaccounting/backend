@@ -112,6 +112,8 @@ module Domain.Core.Types
     deriveTransactionKind,
     mkIncome,
     mkExpense,
+    mkTransfer,
+    transferFeeTotal,
     allocationsOf,
     isCategorised,
     validateAllocations,
@@ -1108,12 +1110,13 @@ mkMixedAllocations incs exps = Allocations (toList incs) (toList exps)
 -- sum to the transaction's categorised total. Construct via 'mkIncome'
 -- / 'mkExpense' smart constructors to ensure the invariants hold.
 --
--- 'Transfer' (internal account-to-account) and 'Adjustment' (balance
--- reconciliation) have no category side.
+-- 'Transfer' (internal account-to-account) optionally carries bank fees as
+-- expense-bucket 'Allocations' (see 'mkTransfer'); 'Adjustment' (balance
+-- reconciliation) has no category side.
 data TransactionType
   = Income Allocations
   | Expense Allocations
-  | Transfer
+  | Transfer (Maybe Allocations)
   | Adjustment
   deriving (Show, Eq, Generic)
 
@@ -1134,7 +1137,7 @@ instance FromJSON TransactionKind
 kindOf :: TransactionType -> TransactionKind
 kindOf (Income _) = IncomeKind
 kindOf (Expense _) = ExpenseKind
-kindOf Transfer = TransferKind
+kindOf (Transfer _) = TransferKind
 kindOf Adjustment = AdjustmentKind
 
 -- | Derive the 'TransactionKind' from the account types of the two endpoints.
@@ -1159,10 +1162,10 @@ deriveTransactionKind External External = TransferKind -- DEAD: unreachable; val
 allocationsOf :: TransactionType -> Maybe Allocations
 allocationsOf (Income xs) = Just xs
 allocationsOf (Expense xs) = Just xs
-allocationsOf Transfer = Nothing
+allocationsOf (Transfer fees) = fees
 allocationsOf Adjustment = Nothing
 
--- | True for Income / Expense; False for Transfer / Adjustment.
+-- | True for Income / Expense / fee-carrying Transfer; False otherwise.
 isCategorised :: TransactionType -> Bool
 isCategorised = isJust . allocationsOf
 
@@ -1209,7 +1212,7 @@ validateAllocations expectedTotal a =
 
 -- | Replace the allocations payload of a categorised 'TransactionType'.
 --
--- No-op on 'Transfer' / 'Adjustment' (their structure has no allocations).
+-- No-op on a fee-less 'Transfer' and on 'Adjustment' (no allocations to replace).
 -- The new allocations must already satisfy the smart-constructor
 -- invariants for the surrounding kind (sum-equals-total, currency
 -- consistency, amount > 0); this helper does not re-validate.
@@ -1217,8 +1220,56 @@ replaceAllocations :: Allocations -> TransactionType -> TransactionType
 replaceAllocations new tt = case tt of
   Income _ -> Income new
   Expense _ -> Expense new
-  Transfer -> Transfer
+  Transfer (Just _) -> Transfer (Just new)
+  Transfer Nothing -> Transfer Nothing
   Adjustment -> Adjustment
+
+-- | Construct a Transfer 'TransactionType' from the debited (source) amount
+-- and optional fee allocations.
+--
+-- Fees must be expense-bucket only, positive, in the source currency, and sum
+-- to strictly less than the source amount. The target-side equation depends on
+-- the target account and is checked by the command handler, not here.
+mkTransfer :: Money -> Maybe Allocations -> Either DomainError TransactionType
+mkTransfer _ Nothing = Right (Transfer Nothing)
+mkTransfer source (Just a) = do
+  checkNoIncome
+  checkNotEmpty
+  checkPositive
+  checkCurrency
+  checkBelowSource
+  pure (Transfer (Just a))
+  where
+    fees = a.expenses
+
+    checkNoIncome
+      | null a.incomes = Right ()
+      | otherwise = Left TransferFeeIncomeNotSupported
+
+    checkNotEmpty
+      | null fees = Left AllocationsEmpty
+      | otherwise = Right ()
+
+    checkPositive = case filter (\x -> x.amount.amount <= 0) fees of
+      [] -> Right ()
+      (bad : _) ->
+        Left . ValidationErr $
+          mkValidationError "amount" "Transfer fee must be positive" (T.pack (show bad.amount.amount))
+
+    checkCurrency = case filter (\x -> x.amount.currency /= source.currency) fees of
+      [] -> Right ()
+      (bad : _) ->
+        Left . ValidationErr $
+          mkValidationError "currency" "Transfer fees must be in the source currency" (T.pack (show bad.amount.currency))
+
+    checkBelowSource
+      | sum (fmap (\x -> x.amount.amount) fees) < source.amount = Right ()
+      | otherwise = Left TransferFeesNotBelowSource
+
+-- | Total of the fee allocations on a 'Transfer'; 0 for anything else.
+transferFeeTotal :: TransactionType -> Rational
+transferFeeTotal (Transfer (Just a)) = sum (fmap (\x -> x.amount.amount) (allAllocations a))
+transferFeeTotal _ = 0
 
 -- | Construct an Income 'TransactionType'.
 --

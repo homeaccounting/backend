@@ -157,6 +157,10 @@ data DomainError
   | -- | 'InitiateTransactionAmendment' supplied allocations but the derived new kind
     --   is Transfer. Transfer carries no allocations.
     AllocationsNotAllowedForTransferKind
+  | -- | A transfer fee allocation sits in the income bucket; fees are expenses.
+    TransferFeeIncomeNotSupported
+  | -- | Transfer fees sum to the debited amount or more.
+    TransferFeesNotBelowSource
   | -- | The synthesised 'newTransactionType' is 'Adjustment'. Reachable
     --   only via a service-layer programming bug (the service rejects
     --   @source == target@ before deriving the kind), so this is a
@@ -360,6 +364,10 @@ renderDomainError err = case err of
     "Allocations are required when amending into an Income or Expense kind"
   AllocationsNotAllowedForTransferKind ->
     "Allocations cannot be supplied when amending into a Transfer kind"
+  TransferFeeIncomeNotSupported ->
+    "Transfer fees must be expenses"
+  TransferFeesNotBelowSource ->
+    "Transfer fees must be less than the debited amount"
   CannotAmendToAdjustmentKind ->
     "Cross-kind amendment into Adjustment is not supported; use AdjustAccountBalance"
   InsufficientFundsForAmendment r ->

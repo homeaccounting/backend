@@ -432,7 +432,7 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
                   description = description,
                   initiatedBy = userId,
                   at = date,
-                  transactionType = Transfer,
+                  transactionType = Transfer Nothing,
                   importInfo = Nothing,
                   labels = labels,
                   contactId = Nothing,
@@ -875,7 +875,7 @@ mergeTransactions userId targetId sourceIds = runExceptT $ do
                 newAllocations = Just combinedAllocs,
                 -- Placeholder; 'resolveAmendment' synthesises the real kind from the
                 -- (unchanged) account pair.
-                newTransactionType = Transfer,
+                newTransactionType = Transfer Nothing,
                 contactId = resolvedContact,
                 allowOverdraft = False,
                 by = userId
@@ -1025,7 +1025,7 @@ transferMerge userId incomeId income expenseId expense = runExceptT $ do
             newTargetAmount = income.targetAmount,
             newExchangeRate = Nothing,
             newAllocations = Nothing,
-            newTransactionType = Transfer,
+            newTransactionType = Transfer Nothing,
             contactId = Nothing,
             allowOverdraft = False, -- discarded; the saga's amendEffect sets True
             by = userId
@@ -1349,7 +1349,7 @@ synthesiseAmendmentTransactionType userId derivedKind _existingTT cmd = runExcep
     (Just _, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
     (Nothing, IncomeKind) -> throwE AllocationsRequiredForCategorisedKind
     (Nothing, ExpenseKind) -> throwE AllocationsRequiredForCategorisedKind
-    (Nothing, TransferKind) -> pure Transfer
+    (Nothing, TransferKind) -> pure (Transfer Nothing)
     (Nothing, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
 
 -- | Require Editor+ access on each of the two new accounts, returning the resolved data.

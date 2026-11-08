@@ -460,6 +460,7 @@ test-suite backend-test
       Domain.Core.PageSpec
       Domain.Core.RangeSpec
       Domain.Core.TransactionTypePropertySpec
+      Domain.Core.TransferFeesPropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
       Domain.Localization.AccountCatalogSpec

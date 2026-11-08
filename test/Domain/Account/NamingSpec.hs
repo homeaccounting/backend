@@ -5,6 +5,7 @@
 -- | Mirrors web's @src\/features\/accounts\/accountName.test.ts@ (ADR 009).
 module Domain.Account.NamingSpec (spec) where
 
+import Data.Char (toLower)
 import Domain.Account.Naming
 import Domain.Core.Types
   ( AccountSubtype (..),
@@ -23,7 +24,6 @@ import Domain.Core.Types
     defaultLoanProperties,
   )
 import Domain.Localization.Language (Language (..))
-import Data.Char (toLower)
 import RIO
 import qualified RIO.Text as T
 import Test.Hspec
@@ -91,46 +91,57 @@ spec = describe "Domain.Account.Naming" $ do
       (parts "Card" UAH (bank (Just "  Mono "))).qualifier `shouldBe` Just "Mono"
 
   describe "fullAccountName" $ do
-    it "joins kind, qualifier and name as a path with the currency suffix" $
-      fullAccountName card `shouldBe` "Bank account \x203A PrivatBank \x203A Card \xB7 UAH"
+    it "joins kind, qualifier and name as a path with the currency suffix"
+      $ fullAccountName card
+      `shouldBe` "Bank account \x203A PrivatBank \x203A Card \xB7 UAH"
 
-    it "omits a missing qualifier segment" $
-      fullAccountName (parts "Pocket" USD defaultCash) `shouldBe` "Cash \x203A Pocket \xB7 USD"
+    it "omits a missing qualifier segment"
+      $ fullAccountName (parts "Pocket" USD defaultCash)
+      `shouldBe` "Cash \x203A Pocket \xB7 USD"
 
   describe "shortAccountName" $ do
-    it "shows name, qualifier and currency when the context shows nothing" $
-      shortAccountName (shows False False) card `shouldBe` "Card \xB7 PrivatBank \xB7 UAH"
+    it "shows name, qualifier and currency when the context shows nothing"
+      $ shortAccountName (shows False False) card
+      `shouldBe` "Card \xB7 PrivatBank \xB7 UAH"
 
-    it "drops the qualifier when the context shows it" $
-      shortAccountName (shows True False) card `shouldBe` "Card \xB7 UAH"
+    it "drops the qualifier when the context shows it"
+      $ shortAccountName (shows True False) card
+      `shouldBe` "Card \xB7 UAH"
 
-    it "drops the currency when the context shows it" $
-      shortAccountName (shows False True) card `shouldBe` "Card \xB7 PrivatBank"
+    it "drops the currency when the context shows it"
+      $ shortAccountName (shows False True) card
+      `shouldBe` "Card \xB7 PrivatBank"
 
-    it "is the bare name when the context shows both" $
-      shortAccountName (shows True True) card `shouldBe` "Card"
+    it "is the bare name when the context shows both"
+      $ shortAccountName (shows True True) card
+      `shouldBe` "Card"
 
-    it "skips a missing qualifier" $
-      shortAccountName (shows False False) (parts "Pocket" USD defaultCash) `shouldBe` "Pocket \xB7 USD"
+    it "skips a missing qualifier"
+      $ shortAccountName (shows False False) (parts "Pocket" USD defaultCash)
+      `shouldBe` "Pocket \xB7 USD"
 
   describe "accountMatches" $ do
     let usdCard = parts "Card" USD (bank (Just "PrivatBank"))
 
-    it "matches when every token appears in the full name" $
-      forM_ ["card", "PRIVAT", "usd", "bank", "privat usd", "  card  ", ""] $ \q ->
+    it "matches when every token appears in the full name"
+      $ forM_ ["card", "PRIVAT", "usd", "bank", "privat usd", "  card  ", ""]
+      $ \q ->
         (q, accountMatches q usdCard) `shouldBe` (q, True)
 
-    it "does not match when a token is missing" $
-      forM_ ["mono", "privat eur"] $ \q ->
+    it "does not match when a token is missing"
+      $ forM_ ["mono", "privat eur"]
+      $ \q ->
         (q, accountMatches q usdCard) `shouldBe` (q, False)
 
-    prop "matches any selection of the full name's words, in any case" $
-      forAll (elements [card, usdCard, parts "Caf\xE9" UAH defaultCash]) $ \p ->
+    prop "matches any selection of the full name's words, in any case"
+      $ forAll (elements [card, usdCard, parts "Caf\xE9" UAH defaultCash])
+      $ \p ->
         forAll (sublistOf (T.words (fullAccountName p))) $ \ws ->
           accountMatches (T.unwords ws) p && accountMatches (T.toUpper (T.unwords ws)) p
 
-    prop "never matches a token absent from the full name" $
-      forAll (elements [card, usdCard]) $ \p ->
+    prop "never matches a token absent from the full name"
+      $ forAll (elements [card, usdCard])
+      $ \p ->
         forAll (sublistOf (T.words (fullAccountName p))) $ \ws ->
           not (accountMatches (T.unwords ("zzz" : ws)) p)
 

@@ -484,7 +484,7 @@ amendTransactionHandler user rawId req = do
             -- Placeholder; overwritten by synthesiseAmendmentTransactionType
             -- in TransactionService.amendTransaction before dispatch. The
             -- DTO does not expose this field; it's service-internal.
-            newTransactionType = Transfer,
+            newTransactionType = Transfer Nothing,
             -- InitiateTransactionAmendment.contactId is full-replacement (Nothing =
             -- clear), so the request must always carry the client's full
             -- desired contact state — resend the current value to preserve

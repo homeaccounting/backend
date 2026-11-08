@@ -179,7 +179,7 @@ spec = do
       (userU, acctA) <- registerWithAccount env "transferu@test.com" "A"
       (userV, acctB) <- registerWithAccount env "transferv@test.com" "B"
 
-      let event = postingInitiatedGlobal (tx 3) acctA acctB Transfer Set.empty day day 0 Nothing
+      let event = postingInitiatedGlobal (tx 3) acctA acctB (Transfer Nothing) Set.empty day day 0 Nothing
       deltas <- deltasAround env [userU, userV] (runDbIn env (applyDataVersionEvent event))
       deltas `shouldBe` [1, 1]
 
@@ -191,7 +191,7 @@ spec = do
       -- Seed the transaction row so 'transactionAccounts' can resolve it. Fed
       -- straight through the transaction read model's apply (not the writer),
       -- so this seeding does not itself fire the DataVersion handler.
-      let seedEvent = postingInitiatedGlobal (tx 4) acctA acctB Transfer Set.empty day day 0 Nothing
+      let seedEvent = postingInitiatedGlobal (tx 4) acctA acctB (Transfer Nothing) Set.empty day day 0 Nothing
       runDbIn env (applyTransactionEvent seedEvent)
 
       let labelEvent =

@@ -27,9 +27,9 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtype (..),
     AccountSubtypeKind (..),
-    BankAccountProperties (..),
     Allocation (..),
     Allocations (..),
+    BankAccountProperties (..),
     CategoryId,
     Currency (..),
     Money,
@@ -447,11 +447,13 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
       srcOf "privat usd" `shouldBe` Right (mockAccountIdN 2)
       srcOf "mono card" `shouldBe` Right (mockAccountIdN 3)
 
-    it "resolves the exact full name the prompt lists" $
-      srcOf "Bank account \x203A PrivatBank \x203A Card \xB7 UAH" `shouldBe` Right (mockAccountIdN 1)
+    it "resolves the exact full name the prompt lists"
+      $ srcOf "Bank account \x203A PrivatBank \x203A Card \xB7 UAH"
+      `shouldBe` Right (mockAccountIdN 1)
 
-    it "ignores case and accents" $
-      srcOf "CAFE" `shouldBe` Right (mockAccountIdN 4)
+    it "ignores case and accents"
+      $ srcOf "CAFE"
+      `shouldBe` Right (mockAccountIdN 4)
 
     it "lists full names when a reference is ambiguous or unknown" $ do
       let listed = "Bank account \x203A PrivatBank \x203A Card \xB7 UAH; Bank account \x203A PrivatBank \x203A Card \xB7 USD"
@@ -459,9 +461,9 @@ spec = describe "Application.Services.Prompt.Transaction.Resolve" $ do
       fmap (T.isInfixOf listed) (errMessage "privat") `shouldBe` Just True
       fmap (T.isInfixOf listed) (errMessage "Nope") `shouldBe` Just True
 
-    it "names the account with its qualifier in the interpretation" $
-      fmap snd (resolveIntent banks "x" baseExpense {sourceAccount = Just "privat usd", currency = Just "USD"})
-        `shouldSatisfy` either (const False) (T.isInfixOf "\x2018\&Card \xB7 PrivatBank\x2019")
+    it "names the account with its qualifier in the interpretation"
+      $ fmap snd (resolveIntent banks "x" baseExpense {sourceAccount = Just "privat usd", currency = Just "USD"})
+      `shouldSatisfy` either (const False) (T.isInfixOf "\x2018\&Card \xB7 PrivatBank\x2019")
 
   describe "account precedence (#26)" $ do
     it "1. a specific name match wins over a subtype default"

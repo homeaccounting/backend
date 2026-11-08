@@ -96,7 +96,7 @@ buildAmend txId src tgt srcAmt tgtAmt mAllocs uid =
       newTargetAmount = unsafeMoney Core.USD tgtAmt,
       newExchangeRate = Nothing,
       newAllocations = mAllocs,
-      newTransactionType = Transfer, -- placeholder; overwritten by service
+      newTransactionType = Transfer Nothing, -- placeholder; overwritten by service
       contactId = Nothing,
       allowOverdraft = False,
       by = uid
@@ -221,7 +221,7 @@ spec = describe "amendTransaction — cross-kind synthesis" $ do
             fx.userId
     result <- runAppM env (amendTransaction fx.userId txId cmd)
     case result of
-      Right td -> td.transactionType `shouldBe` Transfer
+      Right td -> td.transactionType `shouldBe` Transfer Nothing
       Left err -> expectationFailure $ "expected Right, got: " <> show err
 
   it "(3) cross-kind Transfer → Income with supplied allocations" $ do

@@ -217,7 +217,8 @@ allocsParser = withObject "Allocations" $ \o -> do
   pure (Allocations incs exps)
 
 transactionTypeToValue :: TransactionType -> Value
-transactionTypeToValue Transfer = object ["kind" .= ("transfer" :: Text)]
+transactionTypeToValue (Transfer fees) =
+  object (["kind" .= ("transfer" :: Text)] <> maybe [] (\a -> ["allocations" .= allocsToValue a]) fees)
 transactionTypeToValue Adjustment = object ["kind" .= ("adjustment" :: Text)]
 transactionTypeToValue (Income a) = object ["kind" .= ("income" :: Text), "allocations" .= allocsToValue a]
 transactionTypeToValue (Expense a) = object ["kind" .= ("expense" :: Text), "allocations" .= allocsToValue a]
@@ -226,7 +227,7 @@ transactionTypeParser :: Value -> Parser TransactionType
 transactionTypeParser = withObject "TransactionType" $ \o -> do
   kind <- o .: "kind" :: Parser Text
   case kind of
-    "transfer" -> pure Transfer
+    "transfer" -> Transfer <$> ((o .:? "allocations") >>= traverse allocsParser)
     "adjustment" -> pure Adjustment
     "income" -> Income <$> ((o .: "allocations") >>= allocsParser)
     "expense" -> Expense <$> ((o .: "allocations") >>= allocsParser)

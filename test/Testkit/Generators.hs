@@ -45,6 +45,7 @@ module Testkit.Generators
     genExchangeRate,
     genPositiveRational,
     genAllocationsSummingTo,
+    genTransferFees,
     genAllocationListSummingTo,
     partitionMoneyExact,
     genTransactionData,
@@ -450,14 +451,36 @@ genAllocationsSummingTo moneyTotal
 -- Transfer Type Generators
 -- -----------------------------------------------------------------------------
 
+-- | Fee allocations valid for a transfer debiting 'source' (expense bucket,
+-- source currency, total strictly below 'source'). 'Nothing' about a third of
+-- the time, and whenever 'source' is not positive.
+genTransferFees :: Money -> Gen (Maybe Allocations)
+genTransferFees source
+  | not (moneyIsPositive source) = pure Nothing
+  | otherwise =
+      frequency
+        [ (1, pure Nothing),
+          ( 2,
+            do
+              tenths <- choose (1, 9 :: Integer)
+              let total = unsafeMoney (moneyCurrency source) (unMoney source * fromInteger tenths / 10)
+              fees <- genAllocationListSummingTo total
+              pure (either (const Nothing) Just (mkAllocations [] fees))
+          )
+        ]
+
 -- | Generate a valid TransactionType. Income / Expense are constructed via
 -- their smart constructors with two-bucket allocations that satisfy the
 -- invariants; generation falls back to Transfer / Adjustment if no positive
 -- amount could be produced or a constructor rejected the shape.
 genTransactionType :: Gen TransactionType
 genTransactionType =
-  oneof [buildIncome, buildExpense, pure Transfer, pure Adjustment]
+  oneof [buildIncome, buildExpense, buildTransfer, pure Adjustment]
   where
+    buildTransfer = do
+      src <- genPositiveMoney
+      fees <- genTransferFees src
+      pure (fromRight (Transfer Nothing) (mkTransfer src fees))
     buildIncome = do
       incTotal <- genPositiveMoney
       -- optionally carve a contra-expense slice out of the income total
@@ -477,13 +500,13 @@ genTransactionType =
             pure (i, [])
       case mkAllocations incs exps >>= mkIncome incTotal of
         Right tt -> pure tt
-        Left _ -> pure Transfer
+        Left _ -> pure (Transfer Nothing)
     buildExpense = do
       expTotal <- genPositiveMoney
       exps <- genAllocationListSummingTo expTotal
       case mkAllocations [] exps >>= mkExpense expTotal of
         Right tt -> pure tt
-        Left _ -> pure Transfer
+        Left _ -> pure (Transfer Nothing)
 
 instance Arbitrary TransactionType where
   arbitrary = genTransactionType
@@ -556,7 +579,12 @@ genTransactionData = do
   src <- genAccountId
   tgt <- genAccountId
   case shape of
-    ShTransfer -> uncategorised src tgt regCur Transfer
+    ShTransfer -> do
+      amt <- genPositiveMoneyIn regCur
+      fees <- genTransferFees amt
+      let tt = fromRight (Transfer Nothing) (mkTransfer amt fees)
+          tgtAmt = unsafeMoney regCur (unMoney amt - transferFeeTotal tt)
+      pure (mockTransactionData src tgt amt tgtAmt Nothing tt)
     ShAdjustment -> uncategorised src tgt regCur Adjustment
     _ -> do
       -- Build the allocation buckets and the regular-leg total they sum to.

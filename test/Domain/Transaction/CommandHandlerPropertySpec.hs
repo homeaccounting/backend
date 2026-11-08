@@ -71,7 +71,7 @@ createPendingTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             at = mockTime,
-            transactionType = Transfer,
+            transactionType = Transfer Nothing,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing
@@ -90,7 +90,7 @@ determinismSpec = describe "Determinism Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) (rsn :: Text) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId amt amt Nothing rsn testUserId mockTime Transfer Nothing Set.empty Nothing Nothing
+              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId amt amt Nothing rsn testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing Nothing
               events1 = handleTransactionCommand transaction command
               events2 = handleTransactionCommand transaction command
            in events1 === events2
@@ -104,7 +104,7 @@ determinismSpec = describe "Determinism Properties" $ do
               let transaction = applyEvents []
                   extTxId = unsafeExternalTransactionId extRaw
                   info = ImportInfo {externalTransactionIds = extTxId :| [], category = Just (mkByMcc (unsafeMcc 5411)), contact = Nothing}
-                  command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId amt amt Nothing rsn testUserId mockTime Transfer (Just info) labels Nothing Nothing
+                  command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId amt amt Nothing rsn testUserId mockTime (Transfer Nothing) (Just info) labels Nothing Nothing
                in case handleTransactionCommand transaction command of
                     Right (TransactionPostingInitiatedTransactionEvent initiated : _) ->
                       initiated.labels === labels
@@ -144,7 +144,7 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty Nothing,
+                [ TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId amt amt Nothing "Test" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing,
                   TransactionPostingCompletedTransactionEvent TransactionPostingCompleted
                 ]
               transaction = applyEvents initialEvents
@@ -161,7 +161,7 @@ stateMachineSpec = describe "State Machine Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId ==>
           let initialEvents =
-                [ TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId amt amt Nothing "Test" testUserId mockTime Transfer Nothing Set.empty Nothing,
+                [ TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId amt amt Nothing "Test" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing,
                   TransactionPostingFailedTransactionEvent $ TransactionPostingFailed "Error"
                 ]
               transaction = applyEvents initialEvents
@@ -221,7 +221,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(accountId :: AccountId) (amt :: Money) ->
         unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting accountId accountId amt amt Nothing "Self-transfer" testUserId mockTime Transfer Nothing Set.empty Nothing Nothing
+              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting accountId accountId amt amt Nothing "Self-transfer" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing Nothing
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -230,7 +230,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) ->
         fromId /= toId ==>
           let transaction = applyEvents []
-              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId mockTime Transfer Nothing Set.empty Nothing Nothing
+              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId (mockMoney 0) (mockMoney 0) Nothing "Zero" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing Nothing
               result = handleTransactionCommand transaction command
            in isLeft result
 
@@ -239,7 +239,7 @@ validationSpec = describe "Validation Properties" $ do
       $ \(fromId :: AccountId) (toId :: AccountId) (amt :: Money) ->
         fromId /= toId && unMoney amt > 0 ==>
           let transaction = applyEvents []
-              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId amt amt Nothing "Valid" testUserId mockTime Transfer Nothing Set.empty Nothing Nothing
+              command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId toId amt amt Nothing "Valid" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing Nothing
               result = handleTransactionCommand transaction command
            in case result of
                 Right [TransactionPostingInitiatedTransactionEvent _] -> property True
@@ -256,7 +256,7 @@ validationSpec = describe "Validation Properties" $ do
          (amount2 :: Money) ->
           fromId1 /= toId1 && fromId2 /= toId2 ==>
             let transaction = createPendingTransaction fromId1 toId1 amount1
-                command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId2 toId2 amount2 amount2 Nothing "Second" testUserId mockTime Transfer Nothing Set.empty Nothing Nothing
+                command = InitiateTransactionPostingTransactionCommand $ InitiateTransactionPosting fromId2 toId2 amount2 amount2 Nothing "Second" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing Nothing
                 result = handleTransactionCommand transaction command
              in isLeft result
 
@@ -309,7 +309,7 @@ newtype UncategorisedTransactionType = UncategorisedTransactionType {unUncategor
   deriving (Show)
 
 instance Arbitrary UncategorisedTransactionType where
-  arbitrary = UncategorisedTransactionType <$> elements [Transfer, Adjustment]
+  arbitrary = UncategorisedTransactionType <$> elements [Transfer Nothing, Adjustment]
 
 allocationsSpec :: Spec
 allocationsSpec = describe "Allocation invariants" $ do

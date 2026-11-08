@@ -18,9 +18,10 @@ spec = describe "ReportingService aggregation properties" $ do
   prop "allocationBase over all allocations sums exactly to the external leg"
     $ forAll genTransactionData
     $ \td ->
-      case allocationsOf td.transactionType of
-        Nothing -> property Discard
-        Just allocs ->
+      case (td.transactionType, allocationsOf td.transactionType) of
+        (Transfer _, _) -> property Discard
+        (_, Nothing) -> property Discard
+        (_, Just allocs) ->
           let summed =
                 sum [unMoney (R.allocationBase td a.amount) | a <- allAllocations allocs]
            in summed === unMoney (R.externalLeg td)

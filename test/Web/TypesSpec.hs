@@ -208,7 +208,7 @@ spec = do
     let txId = mockTransactionId (UUID.fromWords 1 0 0 0)
         acc = mockAccountId (UUID.fromWords 2 0 0 0)
         amt = unsafeMoney USD 100
-        baseTd = mockTransactionData acc acc amt amt Nothing Transfer
+        baseTd = mockTransactionData acc acc amt amt Nothing (Transfer Nothing)
         -- Encode a response, then pull out just the @bankProviderCategory@ field.
         bankProviderCategoryField td =
           case Aeson.toJSON (fromTransactionData txId td) of
@@ -251,7 +251,7 @@ spec = do
     let txId = mockTransactionId (UUID.fromWords 1 0 0 0)
         acc = mockAccountId (UUID.fromWords 2 0 0 0)
         amt = unsafeMoney USD 100
-        baseTd = mockTransactionData acc acc amt amt Nothing Transfer
+        baseTd = mockTransactionData acc acc amt amt Nothing (Transfer Nothing)
         -- Encode a response, then pull out just the @bankProviderContact@ field.
         bankProviderContactField td =
           case Aeson.toJSON (fromTransactionData txId td) of

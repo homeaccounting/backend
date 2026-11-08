@@ -353,7 +353,7 @@ crossCurrencySpec =
         total `shouldBe` 1
         case rows of
           [(_, txData)] -> do
-            txData.transactionType `shouldBe` Transfer
+            txData.transactionType `shouldBe` Transfer Nothing
             -- Debit (USD, negative) leg is the source; credit (UAH) is target.
             txData.sourceAccountId `shouldBe` accountIdUsd
             txData.targetAccountId `shouldBe` accountIdUah
@@ -398,7 +398,7 @@ sameCurrencySpec =
         total `shouldBe` 1
         case rows of
           [(_, txData)] -> do
-            txData.transactionType `shouldBe` Transfer
+            txData.transactionType `shouldBe` Transfer Nothing
             txData.sourceAccountId `shouldBe` accountIdA
             txData.targetAccountId `shouldBe` accountIdB
             unMoney txData.sourceAmount `shouldBe` (50000 % 100)

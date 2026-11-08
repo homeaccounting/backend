@@ -214,7 +214,7 @@ handleTransactionCommand transaction (InitiateTransactionPostingTransactionComma
                     Expense allocs ->
                       checkAllocationsAgainst sourceAmount allocs
                         *> (if null allocs.incomes then Right () else Left ContraIncomeNotSupported)
-                    Transfer -> Right ()
+                    Transfer _ -> Right ()
                     Adjustment -> Right ()
                   let postingEvt =
                         TransactionPostingInitiatedTransactionEvent
@@ -399,7 +399,7 @@ handleTransactionCommand transaction (InitiateTransactionAmendmentTransactionCom
             Expense allocs ->
               checkAllocationsAgainst newSourceAmount allocs
                 *> (if null allocs.incomes then Right () else Left ContraIncomeNotSupported)
-            Transfer -> Right ()
+            Transfer _ -> Right ()
             Adjustment -> Left CannotAmendToAdjustmentKind
           Right
             [ TransactionAmendmentInitiatedTransactionEvent

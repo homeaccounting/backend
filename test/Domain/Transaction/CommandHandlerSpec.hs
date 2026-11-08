@@ -70,7 +70,7 @@ pendingTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             at = mockTime,
-            transactionType = Transfer,
+            transactionType = Transfer Nothing,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing
@@ -91,7 +91,7 @@ completedTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             at = mockTime,
-            transactionType = Transfer,
+            transactionType = Transfer Nothing,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing
@@ -113,7 +113,7 @@ failedTransaction fromId toId amt =
             description = "Test transfer",
             by = testUserId,
             at = mockTime,
-            transactionType = Transfer,
+            transactionType = Transfer Nothing,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing
@@ -144,7 +144,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     description = "Payment",
                     initiatedBy = testUserId,
                     at = mockTime,
-                    transactionType = Transfer,
+                    transactionType = Transfer Nothing,
                     importInfo = Nothing,
                     labels = Set.empty,
                     contactId = Nothing,
@@ -183,7 +183,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     description = "Bank import",
                     initiatedBy = testUserId,
                     at = mockTime,
-                    transactionType = Transfer,
+                    transactionType = Transfer Nothing,
                     importInfo = Just ImportInfo {externalTransactionIds = extTxId :| [], category = Nothing, contact = Nothing},
                     labels = labels,
                     contactId = Nothing,
@@ -212,7 +212,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     description = "Test",
                     initiatedBy = testUserId,
                     at = mockTime,
-                    transactionType = Transfer,
+                    transactionType = Transfer Nothing,
                     importInfo = Nothing,
                     labels = Set.empty,
                     contactId = Nothing,
@@ -241,7 +241,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     description = "Self-transfer",
                     initiatedBy = testUserId,
                     at = mockTime,
-                    transactionType = Transfer,
+                    transactionType = Transfer Nothing,
                     importInfo = Nothing,
                     labels = Set.empty,
                     contactId = Nothing,
@@ -267,7 +267,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     description = "Zero transfer",
                     initiatedBy = testUserId,
                     at = mockTime,
-                    transactionType = Transfer,
+                    transactionType = Transfer Nothing,
                     importInfo = Nothing,
                     labels = Set.empty,
                     contactId = Nothing,
@@ -296,7 +296,7 @@ initiateTransferSpec = describe "InitiateTransactionPosting Command" $ do
                     description = "Second attempt",
                     initiatedBy = testUserId,
                     at = mockTime,
-                    transactionType = Transfer,
+                    transactionType = Transfer Nothing,
                     importInfo = Nothing,
                     labels = Set.empty,
                     contactId = Nothing,
@@ -338,7 +338,7 @@ completeTransferSpec = describe "CompleteTransactionPosting Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId mockTime Transfer Nothing Set.empty Nothing] <> events
+            let newTransaction = applyEvents $ [TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing] <> events
             newTransaction ^. #status `shouldBe` Completed
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 
@@ -397,7 +397,7 @@ failTransferSpec = describe "FailTransactionPosting Command" $ do
 
         case result of
           Right events -> do
-            let newTransaction = applyEvents $ [TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId mockTime Transfer Nothing Set.empty Nothing] <> events
+            let newTransaction = applyEvents $ [TransactionPostingInitiatedTransactionEvent $ TransactionPostingInitiated fromId toId (mockMoney 500) (mockMoney 500) Nothing "Test" testUserId mockTime (Transfer Nothing) Nothing Set.empty Nothing] <> events
             newTransaction ^. #status `shouldBe` Failed "Error"
           Left err -> expectationFailure $ "Expected Right, got Left: " ++ show err
 

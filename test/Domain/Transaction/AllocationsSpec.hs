@@ -87,7 +87,7 @@ completedTransfer =
     & #status
     .~ Completed
     & #transactionType
-    .~ Transfer
+    .~ Transfer Nothing
 
 spec :: Spec
 spec = describe "Allocations / worked examples" $ do

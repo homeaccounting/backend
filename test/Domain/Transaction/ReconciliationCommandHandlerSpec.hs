@@ -65,7 +65,7 @@ completedTransactionOfType txType fromId toId amt =
 -- | A Completed transfer between the two given accounts — capacity 2, one
 -- attribution per leg.
 completedTransaction :: AccountId -> AccountId -> Money -> Transaction
-completedTransaction = completedTransactionOfType Transfer
+completedTransaction = completedTransactionOfType (Transfer Nothing)
 
 -- | A Completed expense between the two given accounts — capacity 1, the shape
 -- every income/expense import reconciliation targets.

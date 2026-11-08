@@ -112,8 +112,8 @@ import Servant.Client (ClientEnv)
 import Telegram.Api (answerCallback, registerChatCommands, sendMessageWithKeyboard, sendTextMessage)
 import qualified Telegram.Bot.API as TG
 import Telegram.Formatting
-  ( formatCommandList,
-    accountShortNames,
+  ( accountShortNames,
+    formatCommandList,
     formatRecordedTransaction,
     formatTransactionLine,
     showCurrency,

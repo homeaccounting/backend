@@ -95,7 +95,7 @@ spec = describe "ReportingService pure aggregation" $ do
     let visible = Set.fromList [mockAccountIdN 1, mockAccountIdN 9]
         completed = expenseTo (mockCategoryIdN 1) 100
         pendingTd = (completed :: TransactionData) {status = Pending}
-        transferTd = mockTransactionData (mockAccountIdN 1) (mockAccountIdN 2) (unsafeMoney UAH 5) (unsafeMoney UAH 5) Nothing Transfer
+        transferTd = mockTransactionData (mockAccountIdN 1) (mockAccountIdN 2) (unsafeMoney UAH 5) (unsafeMoney UAH 5) Nothing (Transfer Nothing)
         m = Map.fromList [(mockTransactionIdN 1, completed), (mockTransactionIdN 2, pendingTd), (mockTransactionIdN 3, transferTd)]
     length (R.reportableTxns visible Nothing Nothing m) `shouldBe` 1
     all (isCategorised . (.transactionType)) (R.reportableTxns visible Nothing Nothing m) `shouldBe` True

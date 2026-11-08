@@ -134,7 +134,7 @@ importInfoContact ImportInfo {contact = c} = c
 -- catch-all, so that adding a 'TransactionType' is a compile error here instead
 -- of silently inheriting a capacity of one.
 importAttributionCapacity :: TransactionType -> Int
-importAttributionCapacity Transfer = 2
+importAttributionCapacity (Transfer _) = 2
 importAttributionCapacity (Income _) = 1
 importAttributionCapacity (Expense _) = 1
 importAttributionCapacity Adjustment = 1

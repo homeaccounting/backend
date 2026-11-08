@@ -111,7 +111,7 @@ postingInitiatedImportGlobal txId src tgt extIds businessAt seqNo =
                   description = "seed",
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = businessAt,
-                  transactionType = Transfer,
+                  transactionType = Transfer Nothing,
                   importInfo =
                     Just
                       ImportInfo

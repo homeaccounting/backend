@@ -78,7 +78,7 @@ completedTransfer =
     & #status
     .~ Completed
     & #transactionType
-    .~ Transfer
+    .~ Transfer Nothing
 
 pendingIncome :: Transaction
 pendingIncome = completedIncome & #status .~ Pending

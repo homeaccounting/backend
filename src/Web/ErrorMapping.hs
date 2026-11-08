@@ -437,6 +437,26 @@ mapDomainError AllocationsNotAllowedForTransferKind =
               details = Nothing
             }
     }
+mapDomainError TransferFeeIncomeNotSupported =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transfer fees must be expenses",
+              code = "TRANSFER_FEE_INCOME_NOT_SUPPORTED",
+              details = Nothing
+            }
+    }
+mapDomainError TransferFeesNotBelowSource =
+  err400
+    { errBody =
+        encode $
+          ErrorResponse
+            { message = "Transfer fees must be less than the debited amount",
+              code = "TRANSFER_FEES_NOT_BELOW_SOURCE",
+              details = Nothing
+            }
+    }
 mapDomainError CannotAmendToAdjustmentKind =
   err400
     { errBody =

@@ -471,7 +471,7 @@ postInternalTransfer userId dLocal cLocal dLeg cLeg =
                 description = dLeg.description,
                 initiatedBy = userId,
                 at = dLeg.time,
-                transactionType = Transfer,
+                transactionType = Transfer Nothing,
                 importInfo =
                   Just
                     ImportInfo

@@ -107,7 +107,7 @@ mkMergeInitiated sources =
             newTargetAmount = m 65,
             newExchangeRate = Nothing,
             newAllocations = Nothing,
-            newTransactionType = Transfer,
+            newTransactionType = Transfer Nothing,
             contactId = Nothing,
             sourceTransactionIds = sources,
             by = userId_
@@ -129,7 +129,7 @@ mkAmendmentCompleted =
             newSourceAmount = m 65,
             newTargetAmount = m 65,
             newExchangeRate = Nothing,
-            newTransactionType = Transfer,
+            newTransactionType = Transfer Nothing,
             contactId = Nothing,
             by = userId_
           }
