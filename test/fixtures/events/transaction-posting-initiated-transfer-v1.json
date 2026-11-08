@@ -1,0 +1,17 @@
+{
+  "tag": "TransactionPostingInitiated",
+  "contents": {
+    "sourceAccountId": "0300598b-de0c-4fb2-af66-4548e9089ef8",
+    "targetAccountId": "c446755b-863e-4b30-be3e-ff2d1359d58e",
+    "sourceAmount": { "amount": "10000 % 1", "currency": "UAH" },
+    "targetAmount": { "amount": "10000 % 1", "currency": "UAH" },
+    "exchangeRate": null,
+    "description": "Transfer to savings",
+    "by": "072bf081-d5df-4422-9850-838c3d0fafa6",
+    "at": "2026-07-20T07:37:16Z",
+    "transactionType": { "tag": "Transfer" },
+    "importInfo": null,
+    "labels": [],
+    "contactId": null
+  }
+}
