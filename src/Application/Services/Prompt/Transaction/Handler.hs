@@ -180,4 +180,4 @@ runRecordTransactions uid rctx userText rows = do
       ResolvedExpense source total allocs labels desc date ->
         TransactionService.initiateExpense uid source total allocs labels desc date Nothing Nothing
       ResolvedTransfer source dest amount labels desc date ->
-        TransactionService.initiateTransfer uid source dest amount labels desc Nothing date Nothing
+        TransactionService.initiateTransfer uid source dest amount Nothing labels desc Nothing date Nothing

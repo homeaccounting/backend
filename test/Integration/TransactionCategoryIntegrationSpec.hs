@@ -116,6 +116,7 @@ seedTransfer h = do
         h.harnessAccount
         other
         (unsafeMoney Core.USD 10)
+        Nothing
         Set.empty
         "Move funds"
         Nothing

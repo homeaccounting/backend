@@ -301,12 +301,12 @@ data ChangeTransactionDate = ChangeTransactionDate
 --   * 'Nothing', kind = Income\/Expense (whether unchanged or newly
 --     derived): caller must supply allocations; rejected with
 --     'AllocationsRequiredForCategorisedKind'.
---   * 'Nothing', kind = Transfer: pure 'Transfer'.
+--   * 'Nothing', kind = Transfer: fee-free 'Transfer'.
 --   * 'Just allocs', kind = Income\/Expense: 'Income allocs' or
 --     'Expense allocs'. Each 'categoryId' is validated against the
 --     matching dictionary.
---   * 'Just _', kind = Transfer: rejected with
---     'AllocationsNotAllowedForTransferKind'.
+--   * 'Just allocs', kind = Transfer: the allocations are the transfer's
+--     fees (expense bucket only, validated by 'mkTransfer').
 --
 -- @newTransactionType@ is the **service-internal** field carrying the
 -- synthesised full 'TransactionType' (kind ⊕ allocations). The web

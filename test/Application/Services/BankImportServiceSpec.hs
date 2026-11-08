@@ -438,6 +438,7 @@ seedManualTransfer env source target amt date = do
         source
         target
         (fromRight' (mkMoney UAH amt))
+        Nothing
         Set.empty
         "Manual transfer"
         Nothing

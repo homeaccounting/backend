@@ -252,6 +252,7 @@ spec = describe "TransactionService / labels" $ do
             fx.regularAccountId
             otherAccId
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Pending edit probe"
             Nothing
@@ -375,6 +376,7 @@ spec = describe "TransactionService / labels" $ do
             fx.regularAccountId
             accB
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Move funds"
             Nothing

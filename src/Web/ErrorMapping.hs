@@ -427,16 +427,6 @@ mapDomainError AllocationsRequiredForCategorisedKind =
               details = Nothing
             }
     }
-mapDomainError AllocationsNotAllowedForTransferKind =
-  err400
-    { errBody =
-        encode $
-          ErrorResponse
-            { message = "Allocations cannot be supplied when amending into a Transfer kind",
-              code = "AMENDMENT_ALLOCATIONS_NOT_ALLOWED",
-              details = Nothing
-            }
-    }
 mapDomainError TransferFeeIncomeNotSupported =
   err400
     { errBody =

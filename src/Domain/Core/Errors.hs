@@ -154,9 +154,6 @@ data DomainError
     --   change into Income or Expense. Caller must supply the new
     --   allocations covering the new categorised total.
     AllocationsRequiredForCategorisedKind
-  | -- | 'InitiateTransactionAmendment' supplied allocations but the derived new kind
-    --   is Transfer. Transfer carries no allocations.
-    AllocationsNotAllowedForTransferKind
   | -- | A transfer fee allocation sits in the income bucket; fees are expenses.
     TransferFeeIncomeNotSupported
   | -- | Transfer fees sum to the debited amount or more.
@@ -366,8 +363,6 @@ renderDomainError err = case err of
     "Transfer amount cannot be amended to zero"
   AllocationsRequiredForCategorisedKind ->
     "Allocations are required when amending into an Income or Expense kind"
-  AllocationsNotAllowedForTransferKind ->
-    "Allocations cannot be supplied when amending into a Transfer kind"
   TransferFeeIncomeNotSupported ->
     "Transfer fees must be expenses"
   TransferFeesNotBelowSource ->

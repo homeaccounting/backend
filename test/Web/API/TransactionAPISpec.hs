@@ -225,6 +225,7 @@ spec = do
             accId
             otherAccId
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Test"
             Nothing
@@ -257,6 +258,7 @@ spec = do
             src
             tgt
             (unsafeMoney Core.USD 50)
+            Nothing
             Set.empty
             "Backdated"
             Nothing
@@ -413,6 +415,7 @@ seedFailedTransfer seed = do
         seed.seedAccount
         other
         (unsafeMoney Core.USD 999999)
+        Nothing
         Set.empty
         "Seed failed transfer"
         Nothing
