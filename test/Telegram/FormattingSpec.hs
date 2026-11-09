@@ -110,6 +110,10 @@ multiExpense =
       a2 = either (error . show) id (mkAllocation salaryCat (unsafeMoney USD 16) Nothing)
    in Expense (mkExpenseAllocations (a1 :| [a2]))
 
+-- | A transfer whose 4.00 fee is booked to Food.
+feeTransfer :: TransactionType
+feeTransfer = Transfer (Just (mkExpenseAllocations (either (error . show) id (mkAllocation foodCat (unsafeMoney USD 4) Nothing) :| [])))
+
 spec :: Spec
 spec = do
   lineSpec
@@ -129,6 +133,10 @@ lineSpec = describe "formatTransactionLine" $ do
     let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 7), sampleTxn (Transfer Nothing))
     line `shouldSatisfy` T.isInfixOf "Transfer"
     line `shouldNotSatisfy` T.isInfixOf "\x00B7"
+
+  it "shows a fee transfer's fees like allocations" $ do
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 8), sampleTxn feeTransfer)
+    line `shouldSatisfy` T.isInfixOf "Transfer \x00B7 Food: 4.00"
 
   it "renders the amount when the category isn't in the map" $ do
     -- With allocations, an unresolved category still renders the amount
@@ -192,6 +200,12 @@ recordedSpec = describe "formatRecordedTransaction" $ do
     out `shouldSatisfy` T.isInfixOf "300.00 USD \xB7 Cash"
     out `shouldSatisfy` T.isInfixOf "\x2022 Food 300.00"
     out `shouldSatisfy` T.isInfixOf "2026-04-18 14:30"
+
+  it "renders a fee transfer's fee as a bullet; a plain transfer has none" $ do
+    let fee = formatRecordedTransaction En names acctNames (sampleTxn feeTransfer)
+        plain = formatRecordedTransaction En names acctNames (sampleTxn (Transfer Nothing))
+    fee `shouldSatisfy` T.isInfixOf "\x2022 Food 4.00"
+    plain `shouldNotSatisfy` T.isInfixOf "\x2022"
 
   it "renders income against the target account" $ do
     let out = formatRecordedTransaction En names acctNames (sampleTxn (incomeFor salaryCat))

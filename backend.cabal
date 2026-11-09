@@ -546,6 +546,7 @@ test-suite backend-test
       Integration.TransactionMetadataEditIntegrationSpec
       Integration.TransactionPromptIntegrationSpec
       Integration.TransactionRelationsIntegrationSpec
+      Integration.TransferFeesIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.CommandsSpec
