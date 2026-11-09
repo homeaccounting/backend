@@ -92,9 +92,9 @@ formatDate = T.pack . formatTime defaultTimeLocale "%Y-%m-%d %H:%M"
 -- Income and Expense rows are annotated with the category name resolved
 -- from the supplied lookup map; a transfer's fees are listed the same
 -- way. Plain transfers and unresolved categories (stale maps, missing
--- entries) fall back to the bare type label. The
--- same map is used to render label names after the description as a
--- comma-separated list; unresolved label ids are dropped.
+-- entries) fall back to the bare type label. The same map is used to
+-- render label names after the description as a comma-separated list;
+-- unresolved label ids are dropped.
 --
 -- The @Completed@ status is omitted — transfers settle fast, so the bar
 -- is redundant. Pending and Failed rows still carry a trailing

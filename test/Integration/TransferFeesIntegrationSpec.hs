@@ -31,6 +31,7 @@ import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import qualified Domain.Transaction.Events as Ev
+import Domain.Transaction.Projection (TransactionStatus (..))
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec
@@ -39,6 +40,7 @@ import Testkit.Fixtures
     createDefaultAccount,
     expenseAllocs,
     setupMetadataFixture,
+    statusOf,
   )
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 
@@ -70,8 +72,9 @@ amendment txId td src fees uid =
     }
 
 spec :: Spec
-spec = describe "TransferFees" $
-  it "creates, re-categorises, amends, strips the fee and cancels" $ do
+spec = describe "TransferFees"
+  $ it "creates, re-categorises, amends, strips the fee and cancels"
+  $ do
     env <- createTestAppEnvWithProcessManager
     fx <- setupMetadataFixture env "transfer-fees-e2e@test.com"
     walletB <- createDefaultAccount env fx.userId "WalletB"
@@ -125,3 +128,7 @@ spec = describe "TransferFees" $
     -- 5. cancel restores both balances
     _ <- runAppM env (cancelTransaction fx.userId txId) >>= orFail
     balances `shouldReturn` (5000, 5000)
+    statusOf env txId `shouldReturn` Cancelled
+    h5 <- history txId
+    length [() | HistoryCancellationInitiated _ <- h5] `shouldBe` 1
+    length [() | HistoryCancellationCompleted _ <- h5] `shouldBe` 1
