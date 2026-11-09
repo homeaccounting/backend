@@ -254,6 +254,8 @@ currency later needs **no storage change/migration**; only boundary work
 (currency set + a precise API money representation with a per-currency rounding
 policy) — a future additive/versioned change de-risked by this fix.
 
+Since these exceptions, `accountingSchemaRegistry` carries live chains again: `ConfigurationCreated` v1→v2 and the transfer-fee v1→v2 hop on the four `TransactionType`-embedding events (see `Infrastructure.Eventium.Schema`).
+
 #### Upcaster vs. custom `FromJSON` — the rule
 
 The dividing line is **where the JSON comes from**, not how big the change is:
