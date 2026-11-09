@@ -290,7 +290,7 @@ refundNettingSpec =
       purchaseId <- postExpense env fx 100
       _refundId <- postContraRefund env fx 30 purchaseId
 
-      (_total, perCat) <- runAppM env (spendingByCategory fx.userId Nothing Nothing)
+      (_total, perCat) <- runAppM env (spendingByCategory fx.userId Nothing Nothing) >>= either (fail . show) pure
       lookupCategory fx.expenseCategory perCat `shouldBe` Just 70
 
 -- | Look up a category's net spend (as a plain Rational) in the breakdown.

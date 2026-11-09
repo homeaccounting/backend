@@ -6,6 +6,7 @@ module Application.Services.ReportingServicePropertySpec (spec) where
 
 import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.Services.ReportingService as R
+import qualified Data.Map.Strict as Map
 import Domain.Core.Types
 import RIO
 import Test.Hspec
@@ -29,7 +30,7 @@ spec = describe "ReportingService aggregation properties" $ do
   prop "aggregateIncomeExpense net equals income minus expense"
     $ forAll (listOf genTransactionData)
     $ \txs ->
-      let (i, e, n) = R.aggregateIncomeExpense UAH txs
+      let (i, e, n) = R.aggregateIncomeExpense UAH Map.empty txs
        in unMoney n === unMoney i - unMoney e
 
   prop "allocationBase is identity when exchangeRate is Nothing"

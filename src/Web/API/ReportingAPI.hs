@@ -114,7 +114,7 @@ spendingByCategoryHandler ::
   Maybe UTCTime ->
   AppM SpendingByCategoryResponse
 spendingByCategoryHandler user mFrom mTo = do
-  (total, cats) <- ReportingService.spendingByCategory user.userId mFrom mTo
+  (total, cats) <- either throwDomainError pure =<< ReportingService.spendingByCategory user.userId mFrom mTo
   pure
     SpendingByCategoryResponse
       { categories =
@@ -131,7 +131,7 @@ incomeVsExpenseHandler ::
   Maybe UTCTime ->
   AppM IncomeVsExpenseResponse
 incomeVsExpenseHandler user mFrom mTo = do
-  (income, expense, net) <- ReportingService.incomeVsExpense user.userId mFrom mTo
+  (income, expense, net) <- either throwDomainError pure =<< ReportingService.incomeVsExpense user.userId mFrom mTo
   pure
     IncomeVsExpenseResponse
       { income = toMoneyDTO income,

@@ -22,6 +22,7 @@ module Integration.ReportingWorkflowIntegrationSpec (spec) where
 import Application.ReadModels.Transaction (TransactionData (..), getTransaction)
 import Application.Services.ExchangeRatePublisher (publishRates)
 import qualified Application.Services.ReportingService as ReportingService
+import Application.Services.TransactionService (initiateTransfer)
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (UUID)
@@ -56,12 +57,19 @@ import Domain.Transaction.CommandHandler
   )
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
-import Infrastructure.App (AppEnv (..))
+import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
 import Infrastructure.ExchangeRate.Provider (RateProvider (..))
 import RIO
 import qualified RIO.Map as Map
 import Test.Hspec
+import Testkit.Fixtures
+  ( MetadataFixture (..),
+    createAccount,
+    createDefaultAccount,
+    expenseAllocs,
+    setupMetadataFixture,
+  )
 import Testkit.Helpers (mockExchangeRate, singletonExpense, singletonIncome)
 import Testkit.InMemoryEventStore (createTestAppEnvWithProcessManager, runDbIn)
 import Web.API.ReportingAPI (incomeVsExpenseHandler)
@@ -259,6 +267,41 @@ expectCompleted env txUuid = do
 
 spec :: Spec
 spec = describe "Reporting Workflow Integration" $ do
+  describe "transfer fees" $ do
+    it "counts a transfer fee as spending under the fee category and as expense" $ do
+      env <- createTestAppEnvWithProcessManager
+      fx <- setupMetadataFixture env "report-fee@test.com"
+      walletB <- createDefaultAccount env fx.userId "WalletB"
+      let fees = expenseAllocs fx (unsafeMoney USD (1 / 4))
+      res <-
+        runAppM env
+          $ initiateTransfer fx.userId fx.regularAccountId walletB (unsafeMoney USD (201 / 4)) (Just fees) Set.empty "Fee transfer" Nothing Nothing Nothing
+      either (fail . show) (const (pure ())) res
+      (total, perCat) <- runAppM env (ReportingService.spendingByCategory fx.userId Nothing Nothing) >>= either (fail . show) pure
+      lookup fx.expenseCategory perCat `shouldBe` Just (unsafeMoney USD (1 / 4))
+      total `shouldBe` unsafeMoney USD (1 / 4)
+      (_inc, expn, _net) <- runAppM env (ReportingService.incomeVsExpense fx.userId Nothing Nothing) >>= either (fail . show) pure
+      expn `shouldBe` unsafeMoney USD (1 / 4)
+
+    it "reports ExchangeRateUnavailable when a non-base fee has no rate" $ do
+      env <- createTestAppEnvWithProcessManager
+      fx <- setupMetadataFixture env "report-fee-norate@test.com"
+      src <- createAccount env fx.userId "Hryvnia" defaultCash UAH 5000
+      tgt <- createAccount env fx.userId "Hryvnia2" defaultCash UAH 5000
+      let fees = expenseAllocs fx (unsafeMoney UAH 10)
+      res <-
+        runAppM env
+          $ initiateTransfer fx.userId src tgt (unsafeMoney UAH 100) (Just fees) Set.empty "UAH fee" Nothing Nothing Nothing
+      either (fail . show) (const (pure ())) res
+      spent <- runAppM env (ReportingService.spendingByCategory fx.userId Nothing Nothing)
+      case spent of
+        Left (ExchangeRateUnavailable _) -> pure ()
+        other -> expectationFailure $ "expected ExchangeRateUnavailable, got: " <> show other
+      inc <- runAppM env (ReportingService.incomeVsExpense fx.userId Nothing Nothing)
+      case inc of
+        Left (ExchangeRateUnavailable _) -> pure ()
+        other -> expectationFailure $ "expected ExchangeRateUnavailable, got: " <> show other
+
   it "incomeVsExpense aggregates completed income and expense in base currency" $ do
     (env, userUuid, extUuid, regUuid) <- setupReportingEnv
 
@@ -289,7 +332,7 @@ spec = describe "Reporting Workflow Integration" $ do
     expectCompleted env expenseTx
 
     let userId = unsafeUserId userUuid
-    (inc, expn, net) <- runRIO env (ReportingService.incomeVsExpense userId Nothing Nothing)
+    (inc, expn, net) <- runRIO env (ReportingService.incomeVsExpense userId Nothing Nothing) >>= either (fail . show) pure
     inc `shouldBe` unsafeMoney USD 500
     expn `shouldBe` unsafeMoney USD 200
     net `shouldBe` unsafeMoney USD 300
@@ -329,7 +372,7 @@ spec = describe "Reporting Workflow Integration" $ do
     expectCompleted env expenseTx
 
     let userId = unsafeUserId userUuid
-    (total, perCat) <- runRIO env (ReportingService.spendingByCategory userId Nothing Nothing)
+    (total, perCat) <- runRIO env (ReportingService.spendingByCategory userId Nothing Nothing) >>= either (fail . show) pure
     total `shouldBe` unsafeMoney USD 200
     lookup testRentCatId perCat `shouldBe` Just (unsafeMoney USD 200)
 
@@ -393,12 +436,12 @@ spec = describe "Reporting Workflow Integration" $ do
 
     let userId = unsafeUserId userUuid
     -- spendingByCategory: the EUR 100 expense reports as its USD external leg, 200.
-    (total, perCat) <- runRIO env (ReportingService.spendingByCategory userId Nothing Nothing)
+    (total, perCat) <- runRIO env (ReportingService.spendingByCategory userId Nothing Nothing) >>= either (fail . show) pure
     total `shouldBe` unsafeMoney USD 200
     lookup testRentCatId perCat `shouldBe` Just (unsafeMoney USD 200)
 
     -- incomeVsExpense: income normalises to 600 USD, expense to 200 USD.
-    (inc, expn, net) <- runRIO env (ReportingService.incomeVsExpense userId Nothing Nothing)
+    (inc, expn, net) <- runRIO env (ReportingService.incomeVsExpense userId Nothing Nothing) >>= either (fail . show) pure
     inc `shouldBe` unsafeMoney USD 600
     expn `shouldBe` unsafeMoney USD 200
     net `shouldBe` unsafeMoney USD 400
@@ -449,11 +492,11 @@ spec = describe "Reporting Workflow Integration" $ do
     let userId = unsafeUserId userUuid
 
     -- Accessible-scoped: the shared account's expense IS reported.
-    (total, perCat) <- runRIO env (ReportingService.spendingByCategory userId Nothing Nothing)
+    (total, perCat) <- runRIO env (ReportingService.spendingByCategory userId Nothing Nothing) >>= either (fail . show) pure
     total `shouldBe` unsafeMoney USD 150
     lookup testRentCatId perCat `shouldBe` Just (unsafeMoney USD 150)
 
-    (_inc, expn, _net) <- runRIO env (ReportingService.incomeVsExpense userId Nothing Nothing)
+    (_inc, expn, _net) <- runRIO env (ReportingService.incomeVsExpense userId Nothing Nothing) >>= either (fail . show) pure
     expn `shouldBe` unsafeMoney USD 150
 
     -- Owner-scoped: net worth includes ONLY the user's own account, not the
