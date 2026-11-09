@@ -75,6 +75,17 @@ spec = describe "ReportingService pure aggregation" $ do
           m = Map.fromList [(mockTransactionIdN 1, feeTransfer c (unsafeMoney UAH 5)), (mockTransactionIdN 2, plain)]
       length (R.reportableTxns visible Nothing Nothing m) `shouldBe` 1
 
+    it "counts a fee only when the transfer's source account is visible" $ do
+      let td = feeTransfer c (unsafeMoney UAH 5)
+          m = Map.singleton (mockTransactionIdN 1) td
+          feeOf visible =
+            (\(_, e, _) -> e)
+              . R.aggregateIncomeExpense UAH Map.empty
+              $ R.reportableTxns (Set.fromList visible) Nothing Nothing m
+      feeOf [mockAccountIdN 1] `shouldBe` unsafeMoney UAH 5
+      feeOf [mockAccountIdN 1, mockAccountIdN 2] `shouldBe` unsafeMoney UAH 5
+      feeOf [mockAccountIdN 2] `shouldBe` unsafeMoney UAH 0
+
   it "allocationBase is identity when same-currency (exchangeRate Nothing)" $ do
     let m = unsafeMoney UAH 100
     R.allocationBase (expenseTo (mockCategoryIdN 1) 100) m `shouldBe` m

@@ -36,6 +36,7 @@ module Application.Services.ReportingService
     FeeRates,
     resolveFeeRates,
     reportableTxns,
+    withVisibleFees,
     aggregateIncomeExpense,
     aggregateSpending,
     spendingByCategory,
@@ -101,15 +102,16 @@ allocationBase td alloc = case td.exchangeRate of
 -- | Select the transactions eligible for reporting from a read-model map.
 --
 -- A transaction is reportable when it is 'Completed', categorised
--- (Income / Expense), touches at least one visible account, and falls within
--- the optional inclusive business-date window.
+-- (Income / Expense) or a fee transfer (@'Transfer' ('Just' _)@), touches at
+-- least one visible account, and falls within the optional inclusive
+-- business-date window. Fee transfers are passed through 'withVisibleFees'.
 reportableTxns ::
   Set AccountId ->
   Maybe UTCTime ->
   Maybe UTCTime ->
   Map TransactionId TransactionData ->
   [TransactionData]
-reportableTxns visible mFrom mTo = filter keep . Map.elems
+reportableTxns visible mFrom mTo = withVisibleFees visible . filter keep . Map.elems
   where
     keep td =
       td.status
@@ -119,6 +121,16 @@ reportableTxns visible mFrom mTo = filter keep . Map.elems
         && maybe True (<= td.date) mFrom
         && maybe True (td.date <=) mTo
 
+-- | A fee is paid from the transfer's source account, so a fee transfer whose
+-- source account is not visible keeps no fee (it becomes a plain transfer and
+-- contributes nothing). Income / Expense and plain transfers are unchanged.
+withVisibleFees :: Set AccountId -> [TransactionData] -> [TransactionData]
+withVisibleFees visible = map strip
+  where
+    strip td = case td.transactionType of
+      Transfer (Just _) | not (Set.member td.sourceAccountId visible) -> td {transactionType = Transfer Nothing}
+      _ -> td
+
 -- | Aggregate income, expense, and net totals (all in base currency) across a
 -- list of transactions. Income comes from income-bucket allocations on
 -- 'Income' txns. Expense is expense-bucket allocations on 'Expense' txns,
@@ -126,6 +138,10 @@ reportableTxns visible mFrom mTo = filter keep . Map.elems
 -- @income - expense@.
 --
 -- Fees on a @'Transfer' ('Just' _)@ add to expense (see 'transferFees').
+--
+-- Precondition: 'FeeRates' holds a rate for every non-base fee currency/day in
+-- the list (as produced by 'resolveFeeRates'); a missing key falls back to the
+-- unconverted amount.
 aggregateIncomeExpense :: Currency -> FeeRates -> [TransactionData] -> (Money, Money, Money)
 aggregateIncomeExpense base rates txs =
   let incomeR =
@@ -151,7 +167,8 @@ aggregateIncomeExpense base rates txs =
    in (unsafeMoney base incomeR, unsafeMoney base expenseR, unsafeMoney base (incomeR - expenseR))
 
 -- | Source-currency → base rates per transaction day, needed only for fee
--- transfers whose source currency differs from base.
+-- transfers whose source currency differs from base. Must contain an entry for
+-- every non-base fee (build it with 'resolveFeeRates').
 type FeeRates = Map (Day, Currency) ExchangeRate
 
 -- | Expense-bucket fee allocations of fee transfers, as positive base-currency
@@ -202,6 +219,10 @@ resolveFeeRates base txs = do
 -- Expense-bucket allocations on 'Expense' txns add; the same on 'Income' txns
 -- (reimbursements) subtract. Categories net out per the two-bucket semantics.
 -- Transfer fees add to their category like an expense.
+--
+-- Precondition: 'FeeRates' holds a rate for every non-base fee currency/day in
+-- the list (as produced by 'resolveFeeRates'); a missing key falls back to the
+-- unconverted amount.
 aggregateSpending :: Currency -> FeeRates -> [TransactionData] -> Map CategoryId Money
 aggregateSpending base rates txs =
   let pos =
@@ -241,7 +262,7 @@ spendingByCategory :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Either D
 spendingByCategory userId mFrom mTo = do
   base <- resolveBaseCurrency userId
   visible <- visibleAccounts userId
-  txs <- runDb (reportableTransactions visible mFrom mTo)
+  txs <- withVisibleFees visible <$> runDb (reportableTransactions visible mFrom mTo)
   fmap
     ( \rates ->
         let perCat = aggregateSpending base rates txs
@@ -256,7 +277,7 @@ incomeVsExpense :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Either Doma
 incomeVsExpense userId mFrom mTo = do
   base <- resolveBaseCurrency userId
   visible <- visibleAccounts userId
-  txs <- runDb (reportableTransactions visible mFrom mTo)
+  txs <- withVisibleFees visible <$> runDb (reportableTransactions visible mFrom mTo)
   fmap (\rates -> aggregateIncomeExpense base rates txs) <$> resolveFeeRates base txs
 
 -- | Restrict an @(AccountId, AccountData)@ list to the accounts that count
