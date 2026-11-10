@@ -32,13 +32,14 @@ import Domain.Account.Events
     AccountDebited (..),
   )
 import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
-import Domain.Core.Types (Currency (..), TransactionType (..), unsafeAccountId, unsafeDictionaryEntryId, unsafeMoney, unsafeTransactionId, unsafeUserId)
+import Domain.Core.Types (Currency (..), unsafeAccountId, unsafeDictionaryEntryId, unsafeMoney, unsafeTransactionId, unsafeUserId)
 import Domain.Models
   ( AccountingCommand (..),
     AccountingEvent (..),
   )
 import Domain.Transaction.Commands (FailTransactionPosting (..))
 import Domain.Transaction.Events (TransactionPostingCompleted (..), TransactionPostingInitiated (..))
+import Domain.Transaction.Types (TransactionType (..))
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
 import RIO hiding (view, (^.))

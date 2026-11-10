@@ -43,7 +43,6 @@ import Domain.Core.Types
     DictionaryEntryId,
     Money,
     TransactionId,
-    TransactionType,
     UserId,
     unEntryName,
     unsafeDictionaryEntryId,
@@ -51,6 +50,9 @@ import Domain.Core.Types
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
+import Domain.Transaction.Types
+  ( TransactionType,
+  )
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import qualified RIO.List as List

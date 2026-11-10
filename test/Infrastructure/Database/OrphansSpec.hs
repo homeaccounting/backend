@@ -15,9 +15,10 @@ import qualified Data.Map.Strict as Map
 import Data.UUID (fromWords)
 import Database.Persist (PersistField (..), PersistValue (..))
 import Domain.Banking.Import (ExternalTransactionId, unsafeExternalTransactionId)
-import Domain.Core.Types (AccountRole (..), AccountStatus (..), AccountSubtypeKind (..), AccountType (..), Allocation (..), Allocations (..), Currency (..), DefaultSubtypeAccounts (..), TransactionType (..), defaultBankAccount, mkAllocation, mkAllocations, mkIncome, unsafeDictionaryEntryId, unsafeMoney)
+import Domain.Core.Types (AccountRole (..), AccountStatus (..), AccountSubtypeKind (..), AccountType (..), Currency (..), DefaultSubtypeAccounts (..), defaultBankAccount, unsafeDictionaryEntryId, unsafeMoney)
 import Domain.ExchangeRate.Events (Provider (..))
 import Domain.Transaction.Projection (StatusKind (..))
+import Domain.Transaction.Types (Allocation (..), Allocations (..), TransactionType (..), mkAllocation, mkAllocations, mkIncome)
 import Infrastructure.Database.Orphans ()
 import RIO
 import qualified RIO.ByteString.Lazy as BL

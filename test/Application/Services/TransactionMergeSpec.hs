@@ -52,15 +52,17 @@ import Domain.Core.Types
     Money,
     RelationKind (..),
     TransactionId,
-    TransactionKind (..),
     UserId,
     defaultCash,
-    kindOf,
     unMoney,
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
+  ( TransactionKind (..),
+    kindOf,
+  )
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec

@@ -10,13 +10,8 @@ module Domain.Transaction.LabelsAndCategorySpec (spec) where
 import qualified Data.Set as Set
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( Allocation (..),
-    Allocations,
-    Currency (..),
+  ( Currency (..),
     DictionaryEntryId,
-    TransactionType (..),
-    mkExpenseAllocations,
-    mkIncomeAllocations,
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -35,6 +30,13 @@ import Domain.Transaction.Projection
   ( Transaction,
     TransactionStatus (..),
     transactionDefault,
+  )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations,
+    TransactionType (..),
+    mkExpenseAllocations,
+    mkIncomeAllocations,
   )
 import Optics ((&), (.~))
 import RIO hiding ((&), (.~))

@@ -27,8 +27,6 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtype (..),
     AccountSubtypeKind (..),
-    Allocation (..),
-    Allocations (..),
     BankAccountProperties (..),
     CategoryId,
     Currency (..),
@@ -43,6 +41,10 @@ import Domain.Core.Types
     unMoney,
   )
 import Domain.Localization.Language (Language (..))
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations (..),
+  )
 import RIO
 import qualified RIO.Text as T
 import Test.Hspec

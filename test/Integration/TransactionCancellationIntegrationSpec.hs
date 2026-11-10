@@ -53,7 +53,6 @@ import Domain.Core.Page (Page (..))
 import Domain.Core.Types
   ( AccountId,
     TransactionId,
-    TransactionType (..),
     UserId,
     unMoney,
     unsafeMoney,
@@ -61,6 +60,9 @@ import Domain.Core.Types
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec

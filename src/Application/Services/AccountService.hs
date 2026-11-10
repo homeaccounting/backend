@@ -90,7 +90,6 @@ import Domain.Core.Types
     Money (..),
     TelegramIdentity (..),
     TransactionId,
-    TransactionType (..),
     UserId,
     mkAccountId,
     mkUserId,
@@ -101,6 +100,9 @@ import Domain.Core.Types
     unAccountId,
   )
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Infrastructure.App
   ( AppM,
     HasEventStore (..),

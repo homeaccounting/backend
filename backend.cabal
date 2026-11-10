@@ -124,6 +124,7 @@ library
       Domain.Transaction.Matching.Reconciliation
       Domain.Transaction.Matching.Transfer
       Domain.Transaction.Projection
+      Domain.Transaction.Types
       Domain.User
       Domain.User.CommandHandler
       Domain.User.Commands

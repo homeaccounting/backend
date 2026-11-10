@@ -26,6 +26,7 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Banking.Import (ExternalTransactionId, mkExternalTransactionId, unExternalTransactionId)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, bankProviderCategory, bankProviderCategoryMcc, bankProviderContactText, mkBankProviderContact, mkByCounterparty, mkByLabel, mkByMcc, mkMcc, parseBankProviderCategoryKey, parseBankProviderContactKey, parseMcc, renderBankProviderCategoryKey, renderBankProviderContactKey, renderMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Core.Types
+import Domain.Transaction.Types
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)

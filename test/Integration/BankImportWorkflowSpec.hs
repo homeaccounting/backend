@@ -47,10 +47,11 @@ import Domain.Configuration.Defaults
     income,
   )
 import Domain.Configuration.Dictionary (EntryRole (ItemRole))
-import Domain.Core.Types (AccountId, AccountType (..), Currency (..), DictionaryEntryId, Money, TransactionType (Transfer), UserId, defaultBankAccount, defaultConfigurationId, mkMoney, moneyCurrency, unConfigurationId, unsafeDictionaryEntryId, unsafeEntryName)
+import Domain.Core.Types (AccountId, AccountType (..), Currency (..), DictionaryEntryId, Money, UserId, defaultBankAccount, defaultConfigurationId, mkMoney, moneyCurrency, unConfigurationId, unsafeDictionaryEntryId, unsafeEntryName)
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Projection (TransactionStatus (Completed))
+import Domain.Transaction.Types (TransactionType (Transfer))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Banking.Provider

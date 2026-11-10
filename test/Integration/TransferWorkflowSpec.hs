@@ -48,7 +48,7 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Account.CommandHandler (AccountCommand (CreateAccountAccountCommand))
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
-import Domain.Core.Types (AccountAccess (..), AccountRole (..), AccountType (..), Currency (..), DictionaryEntryId, TransactionType (..), defaultCash, unsafeAccountId, unsafeDictionaryEntryId, unsafeMoney, unsafeTransactionId, unsafeUserId)
+import Domain.Core.Types (AccountAccess (..), AccountRole (..), AccountType (..), Currency (..), DictionaryEntryId, defaultCash, unsafeAccountId, unsafeDictionaryEntryId, unsafeMoney, unsafeTransactionId, unsafeUserId)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.CommandHandler
   ( TransactionCommand
@@ -58,6 +58,7 @@ import Domain.Transaction.CommandHandler
   )
 import Domain.Transaction.Commands (CompleteTransactionPosting (..), InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types (TransactionType (..))
 import Eventium (EventMetadata (..), EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App (AppEnv (..))
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)

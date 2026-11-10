@@ -68,7 +68,7 @@ import Domain.Configuration.Projection
     emptyBankingConfiguration,
     emptyConfigurationDefaults,
   )
-import Domain.Core.Types (AccountId, AccountType (..), CreatedBy (..), Currency (..), DictionaryEntryId, Money, TransactionId, TransactionKind (..), TransactionType (..), UserId, defaultBankAccount, mkMoney, unTransactionId, unsafeDictionaryEntryId, unsafeEntryName)
+import Domain.Core.Types (AccountId, AccountType (..), CreatedBy (..), Currency (..), DictionaryEntryId, Money, TransactionId, UserId, defaultBankAccount, mkMoney, unTransactionId, unsafeDictionaryEntryId, unsafeEntryName)
 import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
@@ -77,6 +77,7 @@ import Domain.Transaction.Events
     TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Projection (TransactionStatus (Completed))
+import Domain.Transaction.Types (TransactionKind (..), TransactionType (..))
 import Eventium (Codec (..), EventHandler (..), GlobalStreamEvent, ReadModel (..), SequenceNumber, StreamEvent (..), catchUpReadModel, emptyMetadata, rebuildReadModel)
 import Eventium.Store.Postgresql (jsonStringCodec)
 import Eventium.Store.Sql (SqlEvent (..), defaultSqlEventStoreConfig)

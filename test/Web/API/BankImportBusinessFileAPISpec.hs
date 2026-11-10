@@ -51,12 +51,8 @@ import Domain.Configuration.Defaults
 import Domain.Core.Page (mkPage)
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
     Currency (..),
     DictionaryEntryId,
-    TransactionType (Transfer),
-    allAllocations,
-    allocationsOf,
     exchangeRateSource,
     exchangeRateTarget,
     exchangeRateValue,
@@ -64,6 +60,12 @@ import Domain.Core.Types
     moneyCurrency,
     unDictionaryEntryId,
     unMoney,
+  )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    TransactionType (Transfer),
+    allAllocations,
+    allocationsOf,
   )
 import qualified Infrastructure.Banking.PrivatBankBusiness as PrivatBankBusiness
 import Network.HTTP.Types (hContentType, status200, status204)

@@ -23,6 +23,7 @@ import qualified Data.UUID as UUID
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
+import Domain.Transaction.Types
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec

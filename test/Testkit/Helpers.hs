@@ -68,6 +68,7 @@ import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Core.Types
 import Domain.Models (AccountingEvent)
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
 import Eventium (EventVersion, GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
 import RIO
 import RIO.Time (UTCTime (..), fromGregorian)

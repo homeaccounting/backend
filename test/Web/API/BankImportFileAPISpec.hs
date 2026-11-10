@@ -42,9 +42,10 @@ import Data.Time (getCurrentTime, utctDay)
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 import Domain.Core.Page (mkPage)
-import Domain.Core.Types (AccountId, Currency (..), TransactionType (Transfer), mkAccountId)
+import Domain.Core.Types (AccountId, Currency (..), mkAccountId)
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
+import Domain.Transaction.Types (TransactionType (Transfer))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import qualified Infrastructure.Banking.PrivatBank as PrivatBank
 import Network.HTTP.Types (hContentType, status200, status204, status404, status422)

@@ -17,7 +17,6 @@ import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( RelationKind (..),
     TransactionId,
-    TransactionType,
     unsafeAccountId,
     unsafeMoney,
     unsafeUserId,
@@ -32,6 +31,9 @@ import Domain.Transaction.Projection
     TransactionEvent (..),
     handleTransactionEvent,
     transactionProjection,
+  )
+import Domain.Transaction.Types
+  ( TransactionType,
   )
 import Eventium (latestProjection)
 import RIO

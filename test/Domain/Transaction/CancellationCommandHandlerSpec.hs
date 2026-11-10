@@ -28,7 +28,6 @@ import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
     TransactionId,
-    TransactionType (..),
     UserId,
     unsafeTransactionId,
     unsafeUserId,
@@ -54,6 +53,9 @@ import Domain.Transaction.Projection
     TransactionEvent (..),
     TransactionStatus (..),
     transactionDefault,
+  )
+import Domain.Transaction.Types
+  ( TransactionType (..),
   )
 import Optics ((&), (.~))
 import RIO hiding ((&), (.~))

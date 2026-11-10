@@ -26,7 +26,6 @@ import Domain.Core.Types
   ( AccountId,
     RelationKind (Refund),
     TransactionId,
-    TransactionType (Transfer),
     UserId,
     mkTransactionIdSafe,
   )
@@ -38,6 +37,9 @@ import Domain.Transaction.Events
     TransactionPostingCompleted (..),
     TransactionPostingInitiated (..),
     TransactionRelationAdded (..),
+  )
+import Domain.Transaction.Types
+  ( TransactionType (Transfer),
   )
 import RIO
 import Test.Hspec

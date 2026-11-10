@@ -18,11 +18,8 @@ import Domain.Core.Types
     CategoryId,
     Currency (..),
     LabelId,
-    TransactionType (..),
     defaultBankAccountProperties,
-    mkAllocation,
     mkExchangeRate,
-    mkExpenseAllocations,
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
@@ -30,6 +27,11 @@ import Domain.Core.Types
   )
 import Domain.Localization.Language (Language (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+    mkAllocation,
+    mkExpenseAllocations,
+  )
 import Telegram.Formatting (accountShortNames, formatRecordedTransaction, formatTransactionLine)
 import Test.Hspec
 import Testkit.Helpers (singletonExpense, singletonIncome)

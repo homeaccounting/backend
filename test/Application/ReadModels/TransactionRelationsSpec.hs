@@ -29,12 +29,14 @@ import Domain.Core.Types
   ( AccountId,
     RelationKind (..),
     TransactionId,
-    TransactionType (..),
   )
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionCancellationCompleted (..),
     TransactionRelationAdded (..),
+  )
+import Domain.Transaction.Types
+  ( TransactionType (..),
   )
 import qualified Eventium
 import Infrastructure.App (AppEnv)

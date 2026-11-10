@@ -11,6 +11,7 @@ import qualified Data.Set as Set
 import Data.Time (utctDay)
 import Domain.Core.Types
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
 import RIO
 import Test.Hspec
 import Testkit.Helpers

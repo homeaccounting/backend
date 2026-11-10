@@ -30,17 +30,14 @@ import qualified Data.Time as Time
 import qualified Data.UUID as UUID
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
-  ( Allocation (..),
-    Currency (..),
+  ( Currency (..),
     DictionaryEntryId,
-    TransactionType (..),
     unsafeAccountId,
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
     unsafeUserId,
   )
-import qualified Domain.Core.Types as Core (mkAllocations, mkExpense, mkExpenseAllocations, mkIncome, mkIncomeAllocations, mkMixedAllocations)
 import Domain.Transaction.CommandHandler
   ( TransactionCommand (..),
     handleTransactionCommand,
@@ -57,6 +54,11 @@ import Domain.Transaction.Projection
     TransactionStatus (..),
     transactionDefault,
   )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    TransactionType (..),
+  )
+import qualified Domain.Transaction.Types as Core (mkAllocations, mkExpense, mkExpenseAllocations, mkIncome, mkIncomeAllocations, mkMixedAllocations)
 import Optics ((&), (.~))
 import RIO hiding ((&), (.~))
 import Test.Hspec

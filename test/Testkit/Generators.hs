@@ -71,6 +71,7 @@ import Domain.Configuration.Dictionary (Dictionary (..), DictionaryEntry (..), D
 import Domain.Core.Types
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Domain.Transaction.Projection (StatusKind (..))
+import Domain.Transaction.Types
 import RIO
 import qualified RIO.NonEmpty as NE
 import Test.QuickCheck

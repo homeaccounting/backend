@@ -45,7 +45,7 @@ import Database.Persist.Sql (Single (..), rawSql)
 import Domain.Banking.Import (unsafeExternalTransactionId)
 import Domain.Banking.Signal (mkByMcc, parseMcc, unsafeMcc)
 import Domain.Core.Page (Page (..), defaultLimit)
-import Domain.Core.Types (AccountId, Allocation (..), CategoryId, ContactId, Currency (..), LabelId, Money, TransactionId, TransactionKind (..), TransactionType (..), mkExpenseAllocations, mkTransactionId, unsafeMoney)
+import Domain.Core.Types (AccountId, CategoryId, ContactId, Currency (..), LabelId, Money, TransactionId, mkTransactionId, unsafeMoney)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
@@ -56,6 +56,7 @@ import Domain.Transaction.Events
     TransactionPostingFailed (..),
   )
 import Domain.Transaction.Projection (StatusKind (..))
+import Domain.Transaction.Types (Allocation (..), TransactionKind (..), TransactionType (..), mkExpenseAllocations)
 import qualified Eventium
 import Infrastructure.App (AppEnv)
 import Infrastructure.Database.Orphans ()

@@ -61,18 +61,20 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Domain.Core.Types
   ( AccountId,
-    Allocations,
     ContactId,
     ExchangeRate,
     Money,
     RelationKind (Merge),
     TransactionId,
-    TransactionType,
     UserId,
     mkTransactionIdSafe,
     unTransactionId,
   )
 import Domain.Models
+import Domain.Transaction.Types
+  ( Allocations,
+    TransactionType,
+  )
 import Eventium
   ( EventMetadata,
     ProcessManager (..),

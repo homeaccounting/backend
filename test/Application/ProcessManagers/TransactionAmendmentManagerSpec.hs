@@ -38,7 +38,6 @@ import Domain.Core.Types
     Currency (..),
     Money,
     TransactionId,
-    TransactionType (..),
     UserId,
     unAccountId,
     unsafeAccountId,
@@ -52,6 +51,9 @@ import Domain.Models
   )
 import Domain.Transaction.Commands (FailTransactionAmendment (..))
 import Domain.Transaction.Events (TransactionAmendmentInitiated (..), TransactionPostingInitiated (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))
 import RIO hiding (view, (^.))

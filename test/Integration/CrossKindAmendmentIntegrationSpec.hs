@@ -27,9 +27,10 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as Set
 import Data.Time (getCurrentTime)
 import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
-import Domain.Core.Types (AccountId, TransactionId, mkIncome, unAccountId, unDictionaryEntryId, unTransactionId, unsafeMoney)
+import Domain.Core.Types (AccountId, TransactionId, unAccountId, unDictionaryEntryId, unTransactionId, unsafeMoney)
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
+import Domain.Transaction.Types (mkIncome)
 import Infrastructure.App (runAppM)
 import Network.HTTP.Types (Status, status200)
 import Network.Wai.Test (SResponse (..), simpleBody, simpleStatus)

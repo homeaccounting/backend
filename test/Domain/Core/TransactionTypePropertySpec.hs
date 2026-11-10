@@ -13,6 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
+import Domain.Transaction.Types
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck

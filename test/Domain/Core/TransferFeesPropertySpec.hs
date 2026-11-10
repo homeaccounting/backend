@@ -7,6 +7,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
+import Domain.Transaction.Types
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)

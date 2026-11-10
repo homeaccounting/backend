@@ -41,20 +41,22 @@ import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
-    Allocations (..),
     Currency (..),
     DictionaryEntryId,
     Money (..),
     TransactionId,
-    TransactionType (..),
     UserId,
-    allAllocations,
-    allocationsOf,
     unsafeEntryName,
     unsafeMoney,
   )
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations (..),
+    TransactionType (..),
+    allAllocations,
+    allocationsOf,
+  )
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec

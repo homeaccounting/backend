@@ -32,6 +32,7 @@ import Domain.Core.Types
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import qualified Domain.Transaction.Events as Ev
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec

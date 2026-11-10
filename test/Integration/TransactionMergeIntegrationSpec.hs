@@ -42,19 +42,21 @@ import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (CannotRemoveLineageRelation))
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
     DictionaryEntryId,
     RelationKind (..),
     TransactionId,
     UserId,
-    allAllocations,
-    allocationsOf,
     defaultCash,
     unMoney,
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
+  ( Allocation (..),
+    allAllocations,
+    allocationsOf,
+  )
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec

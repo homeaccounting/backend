@@ -11,7 +11,6 @@ import Domain.Core.Types
     RelationKind (..),
     RelationSpec (..),
     TransactionId,
-    TransactionType (..),
     parseRelationKind,
     renderRelationKind,
     unsafeAccountId,
@@ -20,6 +19,9 @@ import Domain.Core.Types
     unsafeUserId,
   )
 import Domain.Transaction
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Eventium (latestProjection)
 import Test.Hspec
 

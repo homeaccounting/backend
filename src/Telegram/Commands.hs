@@ -91,10 +91,7 @@ import Domain.Core.Types
     TelegramIdentity (..),
     UserId,
     defaultCash,
-    mkAllocation,
     mkDictionaryEntryId,
-    mkExpenseAllocations,
-    mkIncomeAllocations,
     mkMoney,
     moneyCurrency,
     parseCurrency,
@@ -104,6 +101,11 @@ import Domain.Core.Types
   )
 import Domain.Localization.Language (Language (..))
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..))
+import Domain.Transaction.Types
+  ( mkAllocation,
+    mkExpenseAllocations,
+    mkIncomeAllocations,
+  )
 import Infrastructure.App (AppM, HasTelegramClient (..), runDb)
 import RIO
 import qualified RIO.Map as Map

@@ -29,7 +29,6 @@ import Domain.Core.Types
     Money,
     RelationKind (..),
     TransactionId,
-    TransactionType (..),
     UserId,
     unsafeAccountId,
     unsafeMoney,
@@ -54,6 +53,9 @@ import Domain.Transaction.Events
     TransactionCancellationCompleted (..),
     TransactionMergeCompleted (..),
     TransactionMergeInitiated (..),
+  )
+import Domain.Transaction.Types
+  ( TransactionType (..),
   )
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))

@@ -34,17 +34,19 @@ import Domain.Configuration.Defaults
   )
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
-    Allocations (..),
     CategoryId,
     UserId,
-    allocationsOf,
     defaultCash,
     unAccountId,
     unMoney,
     unUserId,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations (..),
+    allocationsOf,
+  )
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import qualified RIO.Text as T

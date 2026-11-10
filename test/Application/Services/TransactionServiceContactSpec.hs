@@ -46,7 +46,6 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( DictionaryEntryId,
     TransactionId,
-    TransactionKind (..),
     unTransactionId,
     unsafeDictionaryEntryId,
     unsafeEntryName,
@@ -60,6 +59,9 @@ import Domain.Models
     TransactionPostingInitiated (..),
   )
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
+import Domain.Transaction.Types
+  ( TransactionKind (..),
+  )
 import Eventium (EventStoreReader (..), StreamEvent (..), allEvents)
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO

@@ -18,7 +18,6 @@ import qualified Data.Map.Strict as Map
 import Domain.Banking.Import (ExternalTransactionId, importInfoCategory, importInfoContact, importInfoExternalTransactionIds, unsafeExternalTransactionId)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, mkByLabel, mkByMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Configuration.Events (BankProviderContactMapSet (..), BankProviderExpenseCategoryMapSet (..), BankProviderIncomeCategoryMapSet (..), ConfigurationCreated (..))
-import Domain.Core.Types (TransactionType (..))
 import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
@@ -28,6 +27,7 @@ import Domain.Transaction.Events
     TransactionMergeInitiated (..),
     TransactionPostingInitiated (..),
   )
+import Domain.Transaction.Types (TransactionType (..))
 import Eventium.Codec (Codec (..))
 import Eventium.Store.Postgresql (JSONString, encodeJSON)
 import Eventium.Store.Types (eventTypeName)
