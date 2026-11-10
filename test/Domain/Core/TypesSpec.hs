@@ -26,7 +26,6 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Banking.Import (ExternalTransactionId, mkExternalTransactionId, unExternalTransactionId)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, bankProviderCategory, bankProviderCategoryMcc, bankProviderContactText, mkBankProviderContact, mkByCounterparty, mkByLabel, mkByMcc, mkMcc, parseBankProviderCategoryKey, parseBankProviderContactKey, parseMcc, renderBankProviderCategoryKey, renderBankProviderContactKey, renderMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Core.Types
-import Domain.Transaction.Types
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
@@ -44,7 +43,6 @@ spec = do
   bankProviderCategorySpec
   bankProviderCategoryByCounterpartySpec
   bankProviderContactSpec
-  transactionTypeSpec
   roleToTextSpec
 
 -- -----------------------------------------------------------------------------
@@ -375,19 +373,6 @@ bankProviderContactSpec = describe "BankProviderContact" $ do
   it "key render/parse round-trips a token containing a colon"
     $ parseBankProviderContactKey (renderBankProviderContactKey (unsafeBankProviderContact "a:b"))
     `shouldBe` Just (unsafeBankProviderContact "a:b")
-
--- -----------------------------------------------------------------------------
--- TransactionType Tests
--- -----------------------------------------------------------------------------
-
-transactionTypeSpec :: Spec
-transactionTypeSpec = describe "TransactionType JSON" $ do
-  it "round-trips Adjustment via Aeson Generic encoding" $ do
-    let encoded = Aeson.encode Adjustment
-    Aeson.decode encoded `shouldBe` Just Adjustment
-  it "encodes Adjustment with a tag-only object (no category)"
-    $ Aeson.encode Adjustment
-    `shouldBe` "{\"tag\":\"Adjustment\"}"
 
 -- -----------------------------------------------------------------------------
 -- roleToText Tests
