@@ -531,7 +531,7 @@ spec = describe "Bank Import Workflow" $ do
       [[idA], [idB]] -> do
         idA `shouldBe` idB
         txData <- fromJustIO "transfer tx" =<< runDbIn env (TransactionRM.getTransaction idA)
-        txData.transactionType `shouldBe` Transfer
+        txData.transactionType `shouldBe` Transfer Nothing
         -- Debit leg (A) is the source, credit leg (B) is the target.
         txData.sourceAccountId `shouldBe` bankAccIdA
         txData.targetAccountId `shouldBe` bankAccIdB

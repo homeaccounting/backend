@@ -125,6 +125,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.regularAccountId
             otherAccId
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Pending"
             Nothing
@@ -257,6 +258,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.regularAccountId
             otherAccId
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Pending"
             Nothing
@@ -355,6 +357,7 @@ spec = describe "TransactionService / metadata edits + books-close gating" $ do
             fx.regularAccountId
             otherAccId
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Backdated"
             Nothing

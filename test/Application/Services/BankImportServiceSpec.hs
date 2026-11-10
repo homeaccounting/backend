@@ -438,6 +438,7 @@ seedManualTransfer env source target amt date = do
         source
         target
         (fromRight' (mkMoney UAH amt))
+        Nothing
         Set.empty
         "Manual transfer"
         Nothing
@@ -792,7 +793,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transfer transaction not found" >> error "unreachable"
-      txData.transactionType `shouldBe` Transfer
+      txData.transactionType `shouldBe` Transfer Nothing
       txData.sourceAccountId `shouldBe` accA
       txData.targetAccountId `shouldBe` accB
 
@@ -822,7 +823,7 @@ spec = describe "BankImportService" $ do
       txData <- case maybeTxData of
         Just d -> pure d
         Nothing -> expectationFailure "transfer transaction not found" >> error "unreachable"
-      txData.transactionType `shouldBe` Transfer
+      txData.transactionType `shouldBe` Transfer Nothing
       txData.sourceAccountId `shouldBe` accA
       txData.targetAccountId `shouldBe` accB
 
@@ -1619,7 +1620,7 @@ mkInitiatedEventWithIds txId mExtIds seqNo =
                   description = "seed",
                   by = mockUserId (UUID.fromWords 9 0 0 0),
                   at = testTime,
-                  transactionType = Transfer,
+                  transactionType = Transfer Nothing,
                   importInfo = fmap (\es -> ImportInfo {externalTransactionIds = es, category = Nothing, contact = Nothing}) mExtIds,
                   labels = Set.empty,
                   contactId = Nothing
@@ -1643,7 +1644,7 @@ storeInitiatedEvent env txId extId =
               description = "seed",
               by = mockUserId (UUID.fromWords 9 0 0 0),
               at = testTime,
-              transactionType = Transfer,
+              transactionType = Transfer Nothing,
               importInfo = Just ImportInfo {externalTransactionIds = extId :| [], category = Nothing, contact = Nothing},
               labels = Set.empty,
               contactId = Nothing

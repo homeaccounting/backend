@@ -13,11 +13,12 @@
 --     using this app's tagging convention (the Aeson @tag@ field produced by
 --     'Domain.Models.AccountingEvent'\'s derived JSON).
 --   * 'accountingSchemaRegistry' — the registered single-hop upcasters, one
---     entry per event type whose shape has changed across a release. Currently
---     empty: every historical stored-shape change was cleared by a one-time
---     pre-launch DB recreate (see @CLAUDE.md@ "Backward compatibility"), so there
---     are no live migrations. The seam is kept so a post-launch shape change can
---     register its @v(N)→v(N+1)@ upcaster here with no wiring changes.
+--     entry per event type whose shape has changed across a release:
+--     'ConfigurationCreated' (language/country) and the four events embedding a
+--     TransactionType (plain @Transfer@ gained an optional fee allocation).
+--     Earlier stored-shape changes were cleared by a one-time pre-launch DB
+--     recreate (see @CLAUDE.md@ "Backward compatibility"). Register further
+--     @v(N)→v(N+1)@ upcasters here with no wiring changes.
 --   * 'accountingEventCodec' — the drop-in codec used at the event store
 --     reader/writer call sites, replacing the plain @jsonStringCodec@.
 --
@@ -34,9 +35,16 @@ module Infrastructure.Eventium.Schema
 where
 
 import Data.Aeson (Value (..))
+import Data.Aeson.Key (Key)
 import qualified Data.Aeson.KeyMap as KeyMap
 import Domain.Configuration.Events (ConfigurationCreated)
 import Domain.Models (AccountingEvent)
+import Domain.Transaction.Events
+  ( TransactionAmendmentCompleted,
+    TransactionAmendmentInitiated,
+    TransactionMergeInitiated,
+    TransactionPostingInitiated,
+  )
 import Eventium.Codec (Codec)
 import Eventium.SchemaEvolution.Json (addFieldIfAbsent, atKey)
 import Eventium.SchemaEvolution.Types (SchemaRegistry, emptyRegistry, registerUpcasters)
@@ -65,16 +73,31 @@ configurationCreatedV1toV2 :: Value -> Value
 configurationCreatedV1toV2 =
   atKey "contents" (addFieldIfAbsent "language" (String "en") . addFieldIfAbsent "country" Null)
 
+-- | v1→v2 upcaster for events embedding a TransactionType under the given
+-- field (@"transactionType"@ or @"newTransactionType"@): @Transfer@ gained an
+-- optional fee 'Allocations' payload, so a legacy plain @{"tag":"Transfer"}@
+-- becomes @{"tag":"Transfer","contents":null}@ ('Transfer' 'Nothing').
+--
+-- @addFieldIfAbsent@ is idempotent, and Income/Expense already carry
+-- @contents@ so they pass through untouched.
+transferFeesV1toV2 :: Key -> Value -> Value
+transferFeesV1toV2 field =
+  atKey "contents" (atKey field (addFieldIfAbsent "contents" Null))
+
 -- | The registry of single-hop upcasters keyed by 'AccountingEvent' tag.
 --
--- Holds the 'ConfigurationCreated' @v1→v2@ chain — the first live entry, which
--- re-activates the upcast-on-read seam that a one-time pre-launch DB recreate had
--- left empty (see @CLAUDE.md@ "Backward compatibility"). Register further
--- @v(N)→v(N+1)@ upcasters here (keyed by @eventTypeName \@T@) with no other
--- wiring changes.
+-- Holds the 'ConfigurationCreated' @v1→v2@ chain and the transfer-fee
+-- @v1→v2@ chain for each event type embedding a TransactionType. Register
+-- further @v(N)→v(N+1)@ upcasters here (keyed by @eventTypeName \@T@) with no
+-- other wiring changes.
 accountingSchemaRegistry :: SchemaRegistry Value
 accountingSchemaRegistry =
-  registerUpcasters (eventTypeName @ConfigurationCreated) [configurationCreatedV1toV2] emptyRegistry
+  registerUpcasters (eventTypeName @ConfigurationCreated) [configurationCreatedV1toV2]
+    . registerUpcasters (eventTypeName @TransactionPostingInitiated) [transferFeesV1toV2 "transactionType"]
+    . registerUpcasters (eventTypeName @TransactionAmendmentInitiated) [transferFeesV1toV2 "newTransactionType"]
+    . registerUpcasters (eventTypeName @TransactionAmendmentCompleted) [transferFeesV1toV2 "newTransactionType"]
+    . registerUpcasters (eventTypeName @TransactionMergeInitiated) [transferFeesV1toV2 "newTransactionType"]
+    $ emptyRegistry
 
 -- | The event codec for the accounting store: schema-evolving drop-in for
 -- @jsonStringCodec@. Reads normalize older stored events to the current shape;

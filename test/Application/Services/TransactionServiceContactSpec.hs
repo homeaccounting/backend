@@ -353,6 +353,7 @@ spec = describe "TransactionService / contacts" $ do
             fx.base.regularAccountId
             otherAccId
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Move funds"
             Nothing
@@ -509,6 +510,7 @@ spec = describe "TransactionService / contacts" $ do
             fx.base.regularAccountId
             otherAccId
             (unsafeMoney Core.USD 10)
+            Nothing
             Set.empty
             "Move funds"
             Nothing

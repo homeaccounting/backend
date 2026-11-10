@@ -90,10 +90,11 @@ formatDate = T.pack . formatTime defaultTimeLocale "%Y-%m-%d %H:%M"
 -- > • 2026-04-18 14:30  Expense · Food  300.0 USD — McDonald's  [lunch, kyiv]
 --
 -- Income and Expense rows are annotated with the category name resolved
--- from the supplied lookup map. Transfer rows and unresolved categories
--- (stale maps, missing entries) fall back to the bare type label. The
--- same map is used to render label names after the description as a
--- comma-separated list; unresolved label ids are dropped.
+-- from the supplied lookup map; a transfer's fees are listed the same
+-- way. Plain transfers and unresolved categories (stale maps, missing
+-- entries) fall back to the bare type label. The same map is used to
+-- render label names after the description as a comma-separated list;
+-- unresolved label ids are dropped.
 --
 -- The @Completed@ status is omitted — transfers settle fast, so the bar
 -- is redundant. Pending and Failed rows still carry a trailing
@@ -117,7 +118,8 @@ formatTransactionLine lang entryNames (_txId, td) =
       typeLabel = case td.transactionType of
         Income allocs -> withAllocations s.incomeLabel allocs
         Expense allocs -> withAllocations s.expenseLabel allocs
-        Transfer -> s.transferLabel
+        Transfer (Just fees) -> withAllocations s.transferLabel fees
+        Transfer Nothing -> s.transferLabel
         Adjustment -> s.adjustmentLabel
       amt = formatMoney td.sourceAmount <> " " <> showCurrency (moneyCurrency td.sourceAmount)
       statusSuffix = case td.status of
@@ -182,7 +184,7 @@ formatRecordedTransaction lang entryNames accountNames td =
   case td.transactionType of
     Income allocs -> categorised s.incomeLabel td.targetAmount td.targetAccountId allocs
     Expense allocs -> categorised s.expenseLabel td.sourceAmount td.sourceAccountId allocs
-    Transfer -> transfer
+    Transfer fees -> transfer fees
     Adjustment -> adjustment
   where
     strings :: TelegramStrings
@@ -239,8 +241,8 @@ formatRecordedTransaction lang entryNames accountNames td =
           <> labelLines
           <> [formatDate td.date]
 
-    transfer :: Text
-    transfer =
+    transfer :: Maybe Allocations -> Text
+    transfer fees =
       let crossCurrency = moneyCurrency td.sourceAmount /= moneyCurrency td.targetAmount
           amountLine =
             if crossCurrency
@@ -255,6 +257,7 @@ formatRecordedTransaction lang entryNames accountNames td =
               amountLine
             ]
               <> rateLines
+              <> foldMap (fmap bullet . allAllocations) fees
               <> labelLines
               <> [formatDate td.date]
 

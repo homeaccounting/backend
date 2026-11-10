@@ -405,7 +405,7 @@ genCrossKindAmendInputs = do
 --  - 'Transfer': no allocations.
 genConsistentTransactionType :: Money -> Money -> Gen TransactionType
 genConsistentTransactionType srcAmt tgtAmt =
-  oneof [buildIncome, buildExpense, pure Transfer]
+  oneof [buildIncome, buildExpense, pure (Transfer Nothing)]
   where
     -- 'discard' on a bad allocation generation makes QuickCheck retry the
     -- generator rather than silently falling back to 'Transfer'. The

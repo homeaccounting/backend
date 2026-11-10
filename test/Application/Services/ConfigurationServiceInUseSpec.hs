@@ -274,6 +274,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
           src
           tgt
           (unsafeMoney Core.USD 50)
+          Nothing
           (Set.singleton labelId)
           "holiday spending"
           Nothing
@@ -322,6 +323,7 @@ spec = describe "ConfigurationService / in-use deletion guard" $ do
           src
           tgt
           (unsafeMoney Core.USD 999999)
+          Nothing
           (Set.singleton labelId)
           "doomed transfer"
           Nothing

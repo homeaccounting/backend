@@ -200,6 +200,7 @@ seedTransfer seed = do
         seed.seedAccount
         other
         (unsafeMoney Core.USD 10)
+        Nothing
         Set.empty
         "Seed transfer"
         Nothing

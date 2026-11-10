@@ -41,6 +41,7 @@ import Web.Types
     MoneyDTO,
     TransactionRelation (..),
     TransactionRelationsResponse (..),
+    TransferRequest (..),
     fromAccountSubtype,
     fromAllocationsDTO,
     fromTransactionData,
@@ -100,6 +101,31 @@ spec = do
           case allAllocations (fromAllocationsDTO req.newAllocations) of
             [Allocation _ m _] -> unMoney m `shouldBe` (104452 % 25)
             _ -> expectationFailure "expected exactly one expense allocation"
+
+  describe "TransferRequest JSON" $ do
+    let base :: LBS.ByteString -> LBS.ByteString
+        base extra =
+          "{\"sourceAccountId\":\"00000001-0000-0000-0000-000000000000\""
+            <> ",\"targetAccountId\":\"00000002-0000-0000-0000-000000000000\""
+            <> ",\"amount\":50.25,\"currency\":\"USD\",\"description\":\"t\""
+            <> extra
+            <> "}"
+    it "decodes without allocations (back-compat)"
+      $ fmap (.allocations) (Aeson.eitherDecode (base "") :: Either String TransferRequest)
+      `shouldBe` Right Nothing
+
+    it "decodes fee allocations when present" $ do
+      let json =
+            base
+              ( ",\"allocations\":{\"incomes\":[],\"expenses\":[{\"categoryId\":\"00000001-0000-0000-0000-000000000000\""
+                  <> ",\"amount\":{\"amount\":0.25,\"currency\":\"USD\"}}]}"
+              )
+      case Aeson.eitherDecode json :: Either String TransferRequest of
+        Left err -> expectationFailure ("decode failed: " <> err)
+        Right req ->
+          case allAllocations . fromAllocationsDTO <$> req.allocations of
+            Just [Allocation _ m _] -> unMoney m `shouldBe` (1 % 4)
+            _ -> expectationFailure "expected exactly one fee allocation"
 
   describe "parseOptionalExchangeRate" $ do
     -- Same class as the money ingress: an inbound rate must become the exact
@@ -208,7 +234,7 @@ spec = do
     let txId = mockTransactionId (UUID.fromWords 1 0 0 0)
         acc = mockAccountId (UUID.fromWords 2 0 0 0)
         amt = unsafeMoney USD 100
-        baseTd = mockTransactionData acc acc amt amt Nothing Transfer
+        baseTd = mockTransactionData acc acc amt amt Nothing (Transfer Nothing)
         -- Encode a response, then pull out just the @bankProviderCategory@ field.
         bankProviderCategoryField td =
           case Aeson.toJSON (fromTransactionData txId td) of
@@ -251,7 +277,7 @@ spec = do
     let txId = mockTransactionId (UUID.fromWords 1 0 0 0)
         acc = mockAccountId (UUID.fromWords 2 0 0 0)
         amt = unsafeMoney USD 100
-        baseTd = mockTransactionData acc acc amt amt Nothing Transfer
+        baseTd = mockTransactionData acc acc amt amt Nothing (Transfer Nothing)
         -- Encode a response, then pull out just the @bankProviderContact@ field.
         bankProviderContactField td =
           case Aeson.toJSON (fromTransactionData txId td) of

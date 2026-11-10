@@ -1,0 +1,14 @@
+{
+  "tag": "TransactionAmendmentCompleted",
+  "contents": {
+    "transactionId": "5f1c9a52-6a43-4d1e-9d7b-0a7a1f3c2b10",
+    "newSourceAccountId": "0300598b-de0c-4fb2-af66-4548e9089ef8",
+    "newTargetAccountId": "c446755b-863e-4b30-be3e-ff2d1359d58e",
+    "newSourceAmount": { "amount": "10000 % 1", "currency": "UAH" },
+    "newTargetAmount": { "amount": "10000 % 1", "currency": "UAH" },
+    "newExchangeRate": null,
+    "newTransactionType": { "tag": "Transfer" },
+    "contactId": null,
+    "by": "072bf081-d5df-4422-9850-838c3d0fafa6"
+  }
+}

@@ -79,9 +79,13 @@ spec = describe "TransactionType" $ do
          in expectValidationField "amount" (mkIncome total zeroed)
 
   describe "allocationsOf / isCategorised / kindOf" $ do
-    prop "allocationsOf is Just iff kindOf is IncomeKind or ExpenseKind" $ \tt ->
+    prop "allocationsOf is Just iff Income, Expense, or a Transfer carrying fees" $ \tt ->
       isJust (allocationsOf tt)
-        === (kindOf tt == IncomeKind || kindOf tt == ExpenseKind)
+        === case tt of
+          Income _ -> True
+          Expense _ -> True
+          Transfer fees -> isJust fees
+          Adjustment -> False
 
     prop "isCategorised matches allocationsOf" $ \tt ->
       isCategorised tt === isJust (allocationsOf tt)

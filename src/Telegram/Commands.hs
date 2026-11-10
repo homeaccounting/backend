@@ -112,8 +112,8 @@ import Servant.Client (ClientEnv)
 import Telegram.Api (answerCallback, registerChatCommands, sendMessageWithKeyboard, sendTextMessage)
 import qualified Telegram.Bot.API as TG
 import Telegram.Formatting
-  ( formatCommandList,
-    accountShortNames,
+  ( accountShortNames,
+    formatCommandList,
     formatRecordedTransaction,
     formatTransactionLine,
     showCurrency,
@@ -823,7 +823,7 @@ handleTransferDescription lang botState telegramId chatId srcId tgtId money desc
   case maybeUserId of
     Nothing -> sendMsg chatId t.errors.couldNotFindUserAccount
     Just userId -> do
-      result <- initiateTransfer userId srcId tgtId money Set.empty description Nothing Nothing Nothing
+      result <- initiateTransfer userId srcId tgtId money Nothing Set.empty description Nothing Nothing Nothing
       case result of
         Left err -> do
           logError $ "Transfer failed: " <> displayShow err

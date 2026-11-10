@@ -110,6 +110,10 @@ multiExpense =
       a2 = either (error . show) id (mkAllocation salaryCat (unsafeMoney USD 16) Nothing)
    in Expense (mkExpenseAllocations (a1 :| [a2]))
 
+-- | A transfer whose 4.00 fee is booked to Food.
+feeTransfer :: TransactionType
+feeTransfer = Transfer (Just (mkExpenseAllocations (either (error . show) id (mkAllocation foodCat (unsafeMoney USD 4) Nothing) :| [])))
+
 spec :: Spec
 spec = do
   lineSpec
@@ -126,9 +130,13 @@ lineSpec = describe "formatTransactionLine" $ do
     line `shouldSatisfy` T.isInfixOf "Income \x00B7 Salary"
 
   it "leaves Transfer rows unannotated" $ do
-    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 7), sampleTxn Transfer)
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 7), sampleTxn (Transfer Nothing))
     line `shouldSatisfy` T.isInfixOf "Transfer"
     line `shouldNotSatisfy` T.isInfixOf "\x00B7"
+
+  it "shows a fee transfer's fees like allocations" $ do
+    let line = formatTransactionLine En names (unsafeTransactionId (uuidFromInt 8), sampleTxn feeTransfer)
+    line `shouldSatisfy` T.isInfixOf "Transfer \x00B7 Food: 4.00"
 
   it "renders the amount when the category isn't in the map" $ do
     -- With allocations, an unresolved category still renders the amount
@@ -181,7 +189,7 @@ recordedSpec = describe "formatRecordedTransaction" $ do
               }
           )
         names' = accountShortNames En [cardAt 1 "PrivatBank", cardAt 2 "Monobank"]
-        out = formatRecordedTransaction En names names' (sampleTxn Transfer)
+        out = formatRecordedTransaction En names names' (sampleTxn (Transfer Nothing))
     out `shouldSatisfy` T.isInfixOf "Card \xB7 PrivatBank \x2192 Card \xB7 Monobank"
     formatRecordedTransaction En names names' (sampleTxn (expenseFor foodCat))
       `shouldSatisfy` T.isInfixOf "300.00 USD \xB7 Card \xB7 PrivatBank"
@@ -192,6 +200,12 @@ recordedSpec = describe "formatRecordedTransaction" $ do
     out `shouldSatisfy` T.isInfixOf "300.00 USD \xB7 Cash"
     out `shouldSatisfy` T.isInfixOf "\x2022 Food 300.00"
     out `shouldSatisfy` T.isInfixOf "2026-04-18 14:30"
+
+  it "renders a fee transfer's fee as a bullet; a plain transfer has none" $ do
+    let fee = formatRecordedTransaction En names acctNames (sampleTxn feeTransfer)
+        plain = formatRecordedTransaction En names acctNames (sampleTxn (Transfer Nothing))
+    fee `shouldSatisfy` T.isInfixOf "\x2022 Food 4.00"
+    plain `shouldNotSatisfy` T.isInfixOf "\x2022"
 
   it "renders income against the target account" $ do
     let out = formatRecordedTransaction En names acctNames (sampleTxn (incomeFor salaryCat))
@@ -214,7 +228,7 @@ recordedSpec = describe "formatRecordedTransaction" $ do
     out `shouldNotSatisfy` T.isInfixOf "\xB7"
 
   it "renders a same-currency transfer with one amount and no rate" $ do
-    let out = formatRecordedTransaction En names acctNames (sampleTxn Transfer)
+    let out = formatRecordedTransaction En names acctNames (sampleTxn (Transfer Nothing))
     out `shouldSatisfy` T.isInfixOf "\9989 Transfer recorded"
     out `shouldSatisfy` T.isInfixOf "Cash \x2192 Savings"
     out `shouldSatisfy` T.isInfixOf "300.00 USD"
@@ -223,7 +237,7 @@ recordedSpec = describe "formatRecordedTransaction" $ do
   it "renders a cross-currency transfer with both amounts and a rate" $ do
     let er = either (error . show) id (mkExchangeRate USD UAH (toRational (41.5 :: Double)))
         txn =
-          (sampleTxn Transfer)
+          (sampleTxn (Transfer Nothing))
             { sourceAmount = unsafeMoney USD 100,
               targetAmount = unsafeMoney UAH 4150,
               exchangeRate = Just er
@@ -233,7 +247,7 @@ recordedSpec = describe "formatRecordedTransaction" $ do
     out `shouldSatisfy` T.isInfixOf "Rate: 41.50"
 
   it "falls back to a short id for an unresolved transfer endpoint" $ do
-    let out = formatRecordedTransaction En names Map.empty (sampleTxn Transfer)
+    let out = formatRecordedTransaction En names Map.empty (sampleTxn (Transfer Nothing))
     out `shouldSatisfy` T.isInfixOf "00000000 \x2192 00000000"
 
   it "appends a Pending marker but not for Completed" $ do

@@ -110,7 +110,7 @@ seedInitiated =
             description = "seed",
             by = userId_,
             at = sampleAt,
-            transactionType = Transfer,
+            transactionType = Transfer Nothing,
             importInfo = Nothing,
             labels = Set.empty,
             contactId = Nothing
@@ -160,7 +160,7 @@ mkAmendInitiated newSrcA newTgtA newSrcAmt newTgtAmt =
             newSourceAmount = newSrcAmt,
             newTargetAmount = newTgtAmt,
             newExchangeRate = Nothing,
-            newTransactionType = Transfer,
+            newTransactionType = Transfer Nothing,
             contactId = Nothing,
             allowOverdraft = False,
             by = userId_
@@ -357,7 +357,7 @@ spec = describe "TransactionAmendmentManager (Saga)" $ do
       -- Income posting: oldSrc (External) → oldTgt (Regular), 100 USD.
       -- Amendment: swap source to newSrc (Regular), kind becomes Transfer.
       -- Expected: DebitNewSource(newSrc) fallible leg + ReverseOldSource(oldSrc) non-fallible tail.
-      let amend = mkAmendInitiatedKind newSrc oldTgt (m 100) (m 100) Transfer
+      let amend = mkAmendInitiatedKind newSrc oldTgt (m 100) (m 100) (Transfer Nothing)
           st = runProjection [seedIncomeInitiated, amend]
           effects = reactToTransactionAmendmentEvent st amend
       length effects `shouldBe` 1

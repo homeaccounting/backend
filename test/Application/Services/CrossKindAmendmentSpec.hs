@@ -96,7 +96,7 @@ buildAmend txId src tgt srcAmt tgtAmt mAllocs uid =
       newTargetAmount = unsafeMoney Core.USD tgtAmt,
       newExchangeRate = Nothing,
       newAllocations = mAllocs,
-      newTransactionType = Transfer, -- placeholder; overwritten by service
+      newTransactionType = Transfer Nothing, -- placeholder; overwritten by service
       contactId = Nothing,
       allowOverdraft = False,
       by = uid
@@ -163,6 +163,7 @@ seedTransfer ck amt = do
         fx.regularAccountId
         ck.ckAccB
         (unsafeMoney Core.USD amt)
+        Nothing
         Set.empty
         "Seed"
         Nothing
@@ -221,7 +222,7 @@ spec = describe "amendTransaction — cross-kind synthesis" $ do
             fx.userId
     result <- runAppM env (amendTransaction fx.userId txId cmd)
     case result of
-      Right td -> td.transactionType `shouldBe` Transfer
+      Right td -> td.transactionType `shouldBe` Transfer Nothing
       Left err -> expectationFailure $ "expected Right, got: " <> show err
 
   it "(3) cross-kind Transfer → Income with supplied allocations" $ do
@@ -263,12 +264,13 @@ spec = describe "amendTransaction — cross-kind synthesis" $ do
     result <- runAppM env (amendTransaction fx.userId txId cmd)
     result `shouldBe` Left AllocationsRequiredForCategorisedKind
 
-  it "(5) rejects allocations supplied for Transfer-derived kind" $ do
+  it "(5) rejects income allocations supplied for Transfer-derived kind" $ do
     ck <- setupCrossKindFixture "cross-kind-5@test.com"
     let env = ck.ckEnv
         fx = ck.ckFx
     -- Seed an Income first; amend to Regular → Regular (Transfer kind)
-    -- while also supplying allocations — must reject.
+    -- while supplying income-bucket allocations — transfer fees are
+    -- expenses, so this must reject.
     (txId, _original) <- seedIncome ck 100
     let bogusAllocs = incomeAllocs fx (unsafeMoney Core.USD 100)
         cmd =
@@ -281,7 +283,7 @@ spec = describe "amendTransaction — cross-kind synthesis" $ do
             (Just bogusAllocs)
             fx.userId
     result <- runAppM env (amendTransaction fx.userId txId cmd)
-    result `shouldBe` Left AllocationsNotAllowedForTransferKind
+    result `shouldBe` Left TransferFeeIncomeNotSupported
 
   it "(6) rejects allocation with categoryId not in user's income dictionary" $ do
     ck <- setupCrossKindFixture "cross-kind-6@test.com"

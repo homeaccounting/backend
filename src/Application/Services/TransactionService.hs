@@ -89,7 +89,7 @@ import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Page (Page)
-import Domain.Core.Types (AccountId, AccountType (..), Allocation (..), Allocations (..), ContactId, Currency, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), RelationSpec (..), TransactionId, TransactionKind (..), TransactionType (..), UserId, allocationsOf, convert, deriveTransactionKind, exchangeRateValue, kindOf, mkExchangeRate, mkExpense, mkIncome, mkMoney, mkTransactionId, moneyCurrency, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountType (..), Allocation (..), Allocations (..), ContactId, Currency, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), RelationSpec (..), TransactionId, TransactionKind (..), TransactionType (..), UserId, allocationsOf, convert, deriveTransactionKind, exchangeRateValue, kindOf, mkExchangeRate, mkExpense, mkIncome, mkMoney, mkTransactionId, mkTransfer, moneyCurrency, transferGrossAmount, transferNetAmount, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Models
   ( AccountingEvent
       ( TransactionAmendmentCompletedEvent,
@@ -375,15 +375,21 @@ initiateTransfer ::
   AccountId ->
   AccountId ->
   Money ->
+  Maybe Allocations ->
   Set LabelId ->
   Text ->
   Maybe Rational ->
   Maybe UTCTime ->
   Maybe RelationSpec ->
   AppM (Either DomainError (TransactionId, TransactionData))
-initiateTransfer userId sourceAccountId targetAccountId amount labels description maybeUserRate maybeTransferDate maybeRelation =
+initiateTransfer userId sourceAccountId targetAccountId amount fees labels description maybeUserRate maybeTransferDate maybeRelation =
   runExceptT $ do
     lift $ logInfo "Initiating internal transfer..."
+    -- 'amount' is the total debited from the source; fees are carved out of
+    -- it, so only the remainder is converted and credited to the target.
+    forM_ fees $ ExceptT . validateAllocationsAgainstDictionary userId
+    transferType <- ExceptT (pure (mkTransfer amount fees))
+    creditedAnchor <- ExceptT (pure (transferNetAmount amount transferType))
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
     -- Internal transfers never carry a contact; this call has no
@@ -420,19 +426,19 @@ initiateTransfer userId sourceAccountId targetAccountId amount labels descriptio
         Just spec -> ExceptT (validateRelationTarget userId spec) >> pure (Just spec)
     -- Internal: user provides amount in source currency
     ExceptT
-      ( resolveAndInitiate maybeTransferDate now amount srcCurrency tgtCurrency True maybeUserRate
-          $ \date srcAmt tgtAmt rate ->
+      ( resolveAndInitiate maybeTransferDate now creditedAnchor srcCurrency tgtCurrency True maybeUserRate
+          $ \date _ tgtAmt rate ->
             Right
               InitiateTransactionPosting
                 { sourceAccountId = sourceAccountId,
                   targetAccountId = targetAccountId,
-                  sourceAmount = srcAmt,
+                  sourceAmount = amount,
                   targetAmount = tgtAmt,
                   exchangeRate = rate,
                   description = description,
                   initiatedBy = userId,
                   at = date,
-                  transactionType = Transfer,
+                  transactionType = transferType,
                   importInfo = Nothing,
                   labels = labels,
                   contactId = Nothing,
@@ -710,12 +716,16 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
       )
   let srcCurrency = moneyCurrency newSrcAcc.balance
       tgtCurrency = moneyCurrency newTgtAcc.balance
-      (anchorAmount, anchorIsSource) = case derivedKind of
-        IncomeKind -> (amendCmd.newTargetAmount, False)
-        _ -> (amendCmd.newSourceAmount, True)
-      maybeUserRate = exchangeRateValue <$> amendCmd.newExchangeRate
+  let anchorIsSource = derivedKind /= IncomeKind
+  -- Transfer fees are debited from the source but never converted or
+  -- credited: resolve the net amount, then add the fees back to the debit.
+  anchorAmount <-
+    if anchorIsSource
+      then ExceptT (pure (transferNetAmount amendCmd.newSourceAmount newTT))
+      else pure amendCmd.newTargetAmount
+  let maybeUserRate = exchangeRateValue <$> amendCmd.newExchangeRate
       rateDay = utctDay transaction.date
-  (resolvedSrc, resolvedTgt, resolvedRate) <-
+  (netSrc, resolvedTgt, resolvedRate) <-
     ExceptT
       ( resolveAmounts
           anchorAmount
@@ -733,7 +743,7 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
       { transactionId = amendCmd.transactionId,
         newSourceAccountId = amendCmd.newSourceAccountId,
         newTargetAccountId = amendCmd.newTargetAccountId,
-        newSourceAmount = resolvedSrc,
+        newSourceAmount = transferGrossAmount netSrc newTT,
         newTargetAmount = resolvedTgt,
         newExchangeRate = resolvedRate,
         newAllocations = amendCmd.newAllocations,
@@ -875,7 +885,7 @@ mergeTransactions userId targetId sourceIds = runExceptT $ do
                 newAllocations = Just combinedAllocs,
                 -- Placeholder; 'resolveAmendment' synthesises the real kind from the
                 -- (unchanged) account pair.
-                newTransactionType = Transfer,
+                newTransactionType = Transfer Nothing,
                 contactId = resolvedContact,
                 allowOverdraft = False,
                 by = userId
@@ -1025,7 +1035,7 @@ transferMerge userId incomeId income expenseId expense = runExceptT $ do
             newTargetAmount = income.targetAmount,
             newExchangeRate = Nothing,
             newAllocations = Nothing,
-            newTransactionType = Transfer,
+            newTransactionType = Transfer Nothing,
             contactId = Nothing,
             allowOverdraft = False, -- discarded; the saga's amendEffect sets True
             by = userId
@@ -1325,7 +1335,8 @@ isIdentityAmend td cmd =
 --
 --   * 'Just allocs' + Income / Expense kind: validate categories then
 --     build via 'mkIncome' / 'mkExpense' against the new amount.
---   * 'Just _' + Transfer kind: reject 'AllocationsNotAllowedForTransferKind'.
+--   * 'Just allocs' + Transfer kind: the allocations are fees; validate
+--     categories then build via 'mkTransfer' against the debited amount.
 --   * 'Nothing' + Income / Expense kind: reject
 --     'AllocationsRequiredForCategorisedKind'.
 --   * 'Nothing' + Transfer kind: 'Transfer'.
@@ -1345,11 +1356,13 @@ synthesiseAmendmentTransactionType userId derivedKind _existingTT cmd = runExcep
     (Just allocs, ExpenseKind) -> do
       ExceptT (validateAllocationsAgainstDictionary userId allocs)
       ExceptT (pure (mkExpense cmd.newSourceAmount allocs))
-    (Just _, TransferKind) -> throwE AllocationsNotAllowedForTransferKind
+    (Just allocs, TransferKind) -> do
+      ExceptT (validateAllocationsAgainstDictionary userId allocs)
+      ExceptT (pure (mkTransfer cmd.newSourceAmount (Just allocs)))
     (Just _, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
     (Nothing, IncomeKind) -> throwE AllocationsRequiredForCategorisedKind
     (Nothing, ExpenseKind) -> throwE AllocationsRequiredForCategorisedKind
-    (Nothing, TransferKind) -> pure Transfer
+    (Nothing, TransferKind) -> pure (Transfer Nothing)
     (Nothing, AdjustmentKind) -> throwE CannotAmendToAdjustmentKind
 
 -- | Require Editor+ access on each of the two new accounts, returning the resolved data.
@@ -1575,6 +1588,14 @@ translateTransactionError (CommandRejected TxCh.NoCancellationInProgress) =
   TransactionError "No cancellation in progress"
 translateTransactionError (CommandRejected TxCh.CannotAmendDuringCancellation) =
   CannotAmendDuringCancellation
+translateTransactionError (CommandRejected TxCh.TransferFeeIncomeNotSupported) =
+  TransferFeeIncomeNotSupported
+translateTransactionError (CommandRejected TxCh.TransferFeesNotBelowSource) =
+  TransferFeesNotBelowSource
+translateTransactionError (CommandRejected TxCh.TransferFeesDoNotBalance) =
+  TransferFeesDoNotBalance
+translateTransactionError (CommandRejected TxCh.TransferFeeTotalChanged) =
+  TransferFeeTotalChanged
 translateTransactionError (CommandRejected TxCh.CannotAmendToAdjustmentKind) =
   CannotAmendToAdjustmentKind
 translateTransactionError (CommandRejected TxCh.RelationSelfLink) =
@@ -1593,9 +1614,11 @@ assignableEntryIds :: DictionaryKind -> ConfigurationData -> Set DictionaryEntry
 assignableEntryIds dictKind cfg =
   maybe Set.empty dictionaryItemIds (Map.lookup dictKind cfg.dictionaries)
 
--- | Pick the dictionary kind matching the current transfer type. Internal
--- transfers and adjustments have no category and return 'Nothing'.
+-- | Pick the dictionary kind matching the current transfer type. Fee-free
+-- internal transfers and adjustments have no category and return 'Nothing';
+-- transfer fees are expenses.
 pickCategoryDict :: TransactionType -> Maybe DictionaryKind
+pickCategoryDict (Transfer (Just _)) = Just ConfigurationService.expenseCategoryDictKind
 pickCategoryDict tt = case kindOf tt of
   IncomeKind -> Just ConfigurationService.incomeCategoryDictKind
   ExpenseKind -> Just ConfigurationService.expenseCategoryDictKind

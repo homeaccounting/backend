@@ -583,7 +583,7 @@ multiFileTransferSpec =
         total `shouldBe` 1
         case rows of
           [(_, txData)] -> do
-            txData.transactionType `shouldBe` Transfer
+            txData.transactionType `shouldBe` Transfer Nothing
             txData.sourceAccountId `shouldBe` accountIdA
             txData.targetAccountId `shouldBe` accountIdB
           other -> expectationFailure $ "expected exactly one transfer row, got " <> show (length other)

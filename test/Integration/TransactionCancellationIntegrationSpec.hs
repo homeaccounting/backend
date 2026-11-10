@@ -95,6 +95,7 @@ seedTransfer env uid src tgt amt = do
         src
         tgt
         (unsafeMoney Core.USD amt)
+        Nothing
         Set.empty
         "Test transfer"
         Nothing
@@ -277,7 +278,7 @@ amendThenCancelSpec =
                 newTargetAmount = unsafeMoney Core.USD 250,
                 newExchangeRate = Nothing,
                 newAllocations = Nothing,
-                newTransactionType = Transfer,
+                newTransactionType = Transfer Nothing,
                 contactId = Nothing,
                 allowOverdraft = False,
                 by = uid
@@ -321,6 +322,7 @@ booksCloseSpec =
             src
             tgt
             (unsafeMoney Core.USD 100)
+            Nothing
             Set.empty
             "Backdated"
             Nothing

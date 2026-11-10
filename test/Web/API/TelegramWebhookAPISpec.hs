@@ -30,13 +30,15 @@ secretHeader s = ("X-Telegram-Bot-Api-Secret-Token", encodeUtf8 s)
 
 spec :: Spec
 spec = with mkApp $ describe "POST /api/telegram/webhook" $ do
-  it "rejects an update without the secret header" $
-    postUpdate [] `shouldRespondWith` 401
+  it "rejects an update without the secret header"
+    $ postUpdate []
+    `shouldRespondWith` 401
 
-  it "rejects an update with a wrong secret" $
-    postUpdate [secretHeader "forged"] `shouldRespondWith` 401
+  it "rejects an update with a wrong secret"
+    $ postUpdate [secretHeader "forged"]
+    `shouldRespondWith` 401
 
-  it "accepts an update with the registered secret" $
-    case webhookSecret testBotToken of
+  it "accepts an update with the registered secret"
+    $ case webhookSecret testBotToken of
       Nothing -> liftIO (expectationFailure "test bot token yields no secret")
       Just s -> postUpdate [secretHeader s] `shouldRespondWith` 200

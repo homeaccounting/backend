@@ -22,8 +22,10 @@ import Domain.Core.Types (TransactionType (..))
 import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
-  ( TransactionAmendmentInitiated (..),
+  ( TransactionAmendmentCompleted (..),
+    TransactionAmendmentInitiated (..),
     TransactionImportReconciled (..),
+    TransactionMergeInitiated (..),
     TransactionPostingInitiated (..),
   )
 import Eventium.Codec (Codec (..))
@@ -39,6 +41,7 @@ import Testkit.Helpers
     mockMoney,
     mockTransactionIdN,
     mockUserIdN,
+    singletonAllocation,
   )
 
 -- | An amendment event whose @allowOverdraft@ takes the given value. Uses a
@@ -53,7 +56,7 @@ amendEvent allowOd =
         newSourceAmount = mockMoney 100,
         newTargetAmount = mockMoney 100,
         newExchangeRate = Nothing,
-        newTransactionType = Transfer,
+        newTransactionType = Transfer Nothing,
         contactId = Nothing,
         allowOverdraft = allowOd,
         by = mockUserIdN 4
@@ -87,6 +90,14 @@ postingImportContact :: AccountingEvent -> Maybe BankProviderContact
 postingImportContact (TransactionPostingInitiatedEvent (TransactionPostingInitiated {importInfo = imp})) =
   imp >>= importInfoContact
 postingImportContact _ = Nothing
+
+-- | The 'TransactionType' embedded in any event that carries one.
+embeddedTransactionType :: AccountingEvent -> Maybe TransactionType
+embeddedTransactionType (TransactionPostingInitiatedEvent e) = Just e.transactionType
+embeddedTransactionType (TransactionAmendmentInitiatedEvent e) = Just e.newTransactionType
+embeddedTransactionType (TransactionAmendmentCompletedEvent e) = Just e.newTransactionType
+embeddedTransactionType (TransactionMergeInitiatedEvent e) = Just e.newTransactionType
+embeddedTransactionType _ = Nothing
 
 spec :: Spec
 spec = describe "accountingEventCodec (schema evolution)" $ do
@@ -253,3 +264,30 @@ spec = describe "accountingEventCodec (schema evolution)" $ do
           Object o -> KeyMap.lookup "tag" o
           _ -> Nothing
     tagField `shouldBe` Just (String (eventTypeName @TransactionImportReconciled))
+
+  -- A plain transfer was stored as @{"tag":"Transfer"}@ before 'Transfer' took
+  -- an optional fee allocation; the v1->v2 upcaster adds @"contents": null@ on
+  -- every event type that embeds a 'TransactionType'.
+  describe "legacy plain Transfer upcasting"
+    $ forM_
+      [ ("TransactionPostingInitiated", "test/fixtures/events/transaction-posting-initiated-transfer-v1.json"),
+        ("TransactionAmendmentInitiated", "test/fixtures/events/transaction-amendment-initiated-transfer-v1.json"),
+        ("TransactionAmendmentCompleted", "test/fixtures/events/transaction-amendment-completed-transfer-v1.json"),
+        ("TransactionMergeInitiated", "test/fixtures/events/transaction-merge-initiated-transfer-v1.json")
+      ]
+    $ \(name, path) ->
+      it ("decodes a legacy " <> name <> " Transfer as Transfer Nothing and round-trips it") $ do
+        stored <- loadStoredEvent path
+        case accountingEventCodec.decode stored of
+          Nothing -> expectationFailure "legacy Transfer event failed to decode"
+          Just event -> do
+            embeddedTransactionType event `shouldBe` Just (Transfer Nothing)
+            accountingEventCodec.decode (accountingEventCodec.encode event) `shouldBe` Just event
+
+  it "leaves an Income transactionType unchanged when upcasting" $ do
+    stored <- loadStoredEvent "test/fixtures/events/transaction-posting-initiated-transfer-v1.json"
+    case accountingEventCodec.decode stored of
+      Just (TransactionPostingInitiatedEvent e) -> do
+        let income = TransactionPostingInitiatedEvent e {transactionType = Income (singletonAllocation (mockCategoryIdN 1) (mockMoney 100))}
+        accountingEventCodec.decode (accountingEventCodec.encode income) `shouldBe` Just income
+      _ -> expectationFailure "fixture failed to decode"

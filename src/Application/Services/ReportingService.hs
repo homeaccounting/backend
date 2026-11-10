@@ -33,7 +33,10 @@ module Application.Services.ReportingService
   ( externalLeg,
     regularLeg,
     allocationBase,
+    FeeRates,
+    resolveFeeRates,
     reportableTxns,
+    withVisibleFees,
     aggregateIncomeExpense,
     aggregateSpending,
     spendingByCategory,
@@ -50,6 +53,7 @@ import Application.ReadModels.Transaction (TransactionData (..), reportableTrans
 import qualified Application.Services.ConfigurationService as ConfigurationService
 import Control.Monad.Except (ExceptT, runExceptT, throwError)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Time (Day, getCurrentTime, utctDay)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
@@ -98,15 +102,16 @@ allocationBase td alloc = case td.exchangeRate of
 -- | Select the transactions eligible for reporting from a read-model map.
 --
 -- A transaction is reportable when it is 'Completed', categorised
--- (Income / Expense), touches at least one visible account, and falls within
--- the optional inclusive business-date window.
+-- (Income / Expense) or a fee transfer (@'Transfer' ('Just' _)@), touches at
+-- least one visible account, and falls within the optional inclusive
+-- business-date window. Fee transfers are passed through 'withVisibleFees'.
 reportableTxns ::
   Set AccountId ->
   Maybe UTCTime ->
   Maybe UTCTime ->
   Map TransactionId TransactionData ->
   [TransactionData]
-reportableTxns visible mFrom mTo = filter keep . Map.elems
+reportableTxns visible mFrom mTo = withVisibleFees visible . filter keep . Map.elems
   where
     keep td =
       td.status
@@ -116,13 +121,29 @@ reportableTxns visible mFrom mTo = filter keep . Map.elems
         && maybe True (<= td.date) mFrom
         && maybe True (td.date <=) mTo
 
+-- | A fee is paid from the transfer's source account, so a fee transfer whose
+-- source account is not visible keeps no fee (it becomes a plain transfer and
+-- contributes nothing). Income / Expense and plain transfers are unchanged.
+withVisibleFees :: Set AccountId -> [TransactionData] -> [TransactionData]
+withVisibleFees visible = map strip
+  where
+    strip td = case td.transactionType of
+      Transfer (Just _) | not (Set.member td.sourceAccountId visible) -> td {transactionType = Transfer Nothing}
+      _ -> td
+
 -- | Aggregate income, expense, and net totals (all in base currency) across a
 -- list of transactions. Income comes from income-bucket allocations on
 -- 'Income' txns. Expense is expense-bucket allocations on 'Expense' txns,
 -- less expense-bucket allocations on 'Income' txns (reimbursements). Net is
 -- @income - expense@.
-aggregateIncomeExpense :: Currency -> [TransactionData] -> (Money, Money, Money)
-aggregateIncomeExpense base txs =
+--
+-- Fees on a @'Transfer' ('Just' _)@ add to expense (see 'transferFees').
+--
+-- Precondition: 'FeeRates' holds a rate for every non-base fee currency/day in
+-- the list (as produced by 'resolveFeeRates'); a missing key falls back to the
+-- unconverted amount.
+aggregateIncomeExpense :: Currency -> FeeRates -> [TransactionData] -> (Money, Money, Money)
+aggregateIncomeExpense base rates txs =
   let incomeR =
         sum
           [ unMoney (allocationBase td a.amount)
@@ -142,14 +163,74 @@ aggregateIncomeExpense base txs =
           Income allocs <- [td.transactionType],
           a <- allocs.expenses
         ]
-      expenseR = sum (expensePos ++ expenseNeg)
+      expenseR = sum (expensePos ++ expenseNeg ++ map snd (transferFees base rates txs))
    in (unsafeMoney base incomeR, unsafeMoney base expenseR, unsafeMoney base (incomeR - expenseR))
+
+-- | Source-currency → base rates per transaction day, needed only for fee
+-- transfers whose source currency differs from base. Must contain an entry for
+-- every non-base fee (build it with 'resolveFeeRates').
+type FeeRates = Map (Day, Currency) ExchangeRate
+
+-- | Expense-bucket fee allocations of fee transfers, as positive base-currency
+-- amounts. A fee already in base counts as is; otherwise it is converted with
+-- the 'FeeRates' entry for the transaction day. 'resolveFeeRates' guarantees
+-- the entry exists; the unconverted fallback is unreachable and only keeps
+-- this total.
+transferFees :: Currency -> FeeRates -> [TransactionData] -> [(CategoryId, Rational)]
+transferFees base rates txs =
+  [(a.categoryId, toBase day a.amount) | (day, a) <- feeAllocations txs]
+  where
+    toBase day m
+      | m.currency == base = unMoney m
+      | otherwise = maybe (unMoney m) (\er -> unMoney (convert er m)) (Map.lookup (day, m.currency) rates)
+
+-- | Every expense-bucket fee allocation on a fee transfer, tagged with its
+-- transaction day (the day its FX rate is looked up for).
+feeAllocations :: [TransactionData] -> [(Day, Allocation)]
+feeAllocations txs =
+  [ (utctDay td.date, a)
+  | td <- txs,
+    Transfer (Just allocs) <- [td.transactionType],
+    a <- allocs.expenses
+  ]
+
+-- | Look up the rate of every non-base fee currency on its transaction day.
+-- A missing rate yields @Left ('ExchangeRateUnavailable' _)@.
+resolveFeeRates :: Currency -> [TransactionData] -> AppM (Either DomainError FeeRates)
+resolveFeeRates base txs = do
+  provider <- exchangeRateProvider
+  let needed = Set.fromList [(day, a.amount.currency) | (day, a) <- feeAllocations txs, a.amount.currency /= base]
+  runExceptT . fmap Map.fromList . forM (Set.toList needed) $ \(day, cur) ->
+    (,) (day, cur) <$> rateToBase provider day cur base
+
+-- | The configured FX rate provider.
+exchangeRateProvider :: AppM Provider
+exchangeRateProvider = (\cfg -> cfg.exchangeRate.provider) <$> view appConfigL
+
+-- | The @from -> base@ rate on @day@, or @'ExchangeRateUnavailable' _@.
+rateToBase :: Provider -> Day -> Currency -> Currency -> ExceptT DomainError AppM ExchangeRate
+rateToBase provider day from base = do
+  mer <- lift (runDb (lookupHistoricalRate provider day from base))
+  case mer of
+    Just er -> pure er
+    Nothing ->
+      throwError
+        . ExchangeRateUnavailable
+        $ "No rate for "
+        <> tshow from
+        <> " -> "
+        <> tshow base
 
 -- | Aggregate signed expense-bucket spend per category (in base currency).
 -- Expense-bucket allocations on 'Expense' txns add; the same on 'Income' txns
 -- (reimbursements) subtract. Categories net out per the two-bucket semantics.
-aggregateSpending :: Currency -> [TransactionData] -> Map CategoryId Money
-aggregateSpending base txs =
+-- Transfer fees add to their category like an expense.
+--
+-- Precondition: 'FeeRates' holds a rate for every non-base fee currency/day in
+-- the list (as produced by 'resolveFeeRates'); a missing key falls back to the
+-- unconverted amount.
+aggregateSpending :: Currency -> FeeRates -> [TransactionData] -> Map CategoryId Money
+aggregateSpending base rates txs =
   let pos =
         [ (a.categoryId, unMoney (allocationBase td a.amount))
         | td <- txs,
@@ -162,7 +243,7 @@ aggregateSpending base txs =
           Income allocs <- [td.transactionType],
           a <- allocs.expenses
         ]
-   in Map.map (unsafeMoney base) (Map.fromListWith (+) (pos ++ neg))
+   in Map.map (unsafeMoney base) (Map.fromListWith (+) (pos ++ neg ++ transferFees base rates txs))
 
 -- -----------------------------------------------------------------------------
 -- Effectful service wrappers
@@ -183,23 +264,33 @@ visibleAccounts userId = runDb (getAccountIds userId)
 -- | Spending grouped by category for the user's visible accounts within the
 -- optional inclusive date window. Returns the base-currency grand total plus
 -- the per-category breakdown.
-spendingByCategory :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Money, [(CategoryId, Money)])
-spendingByCategory userId mFrom mTo = do
-  base <- resolveBaseCurrency userId
-  visible <- visibleAccounts userId
-  txs <- runDb (reportableTransactions visible mFrom mTo)
-  let perCat = aggregateSpending base txs
-      totalR = sum [unMoney m | m <- Map.elems perCat]
-  pure (unsafeMoney base totalR, Map.toList perCat)
+spendingByCategory :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Either DomainError (Money, [(CategoryId, Money)]))
+spendingByCategory userId mFrom mTo =
+  withReportInputs userId mFrom mTo $ \base rates txs ->
+    let perCat = aggregateSpending base rates txs
+        totalR = sum [unMoney m | m <- Map.elems perCat]
+     in (unsafeMoney base totalR, Map.toList perCat)
 
 -- | Income, expense, and net totals (all in base currency) for the user's
 -- visible accounts within the optional inclusive date window.
-incomeVsExpense :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Money, Money, Money)
-incomeVsExpense userId mFrom mTo = do
+incomeVsExpense :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Either DomainError (Money, Money, Money))
+incomeVsExpense userId mFrom mTo =
+  withReportInputs userId mFrom mTo aggregateIncomeExpense
+
+-- | Load the base currency, the user's reportable transactions in the window
+-- (fees kept only for visible source accounts), and the fee FX rates they
+-- need, then hand them to a pure aggregation.
+withReportInputs ::
+  UserId ->
+  Maybe UTCTime ->
+  Maybe UTCTime ->
+  (Currency -> FeeRates -> [TransactionData] -> a) ->
+  AppM (Either DomainError a)
+withReportInputs userId mFrom mTo aggregate = do
   base <- resolveBaseCurrency userId
   visible <- visibleAccounts userId
-  txs <- runDb (reportableTransactions visible mFrom mTo)
-  pure $ aggregateIncomeExpense base txs
+  txs <- withVisibleFees visible <$> runDb (reportableTransactions visible mFrom mTo)
+  fmap (\rates -> aggregate base rates txs) <$> resolveFeeRates base txs
 
 -- | Restrict an @(AccountId, AccountData)@ list to the accounts that count
 -- towards a user's net worth: 'Regular' (not 'External'), 'Opened' (not
@@ -230,32 +321,13 @@ netWorth userId = do
   base <- resolveBaseCurrency userId
   myAccts <- runDb (getOwnedAccounts userId)
   let owned = ownedRegularOpened userId (Map.toList myAccts)
-  cfg <- view appConfigL
-  now <- liftIO getCurrentTime
-  let provider = cfg.exchangeRate.provider
-      day = utctDay now
+  provider <- exchangeRateProvider
+  day <- utctDay <$> liftIO getCurrentTime
   runExceptT $ do
     rows <- forM owned $ \(aid, ad) -> do
-      baseBal <- toBase provider day base ad.balance
+      baseBal <-
+        if ad.balance.currency == base
+          then pure ad.balance
+          else (`convert` ad.balance) <$> rateToBase provider day ad.balance.currency base
       pure (aid, ad.balance, baseBal)
     pure (unsafeMoney base (sum [unMoney bb | (_, _, bb) <- rows]), rows)
-  where
-    toBase ::
-      Provider ->
-      Day ->
-      Currency ->
-      Money ->
-      ExceptT DomainError AppM Money
-    toBase provider day base bal
-      | bal.currency == base = pure bal
-      | otherwise = do
-          mer <- lift (runDb (lookupHistoricalRate provider day bal.currency base))
-          case mer of
-            Just er -> pure (convert er bal)
-            Nothing ->
-              throwError
-                . ExchangeRateUnavailable
-                $ "No rate for "
-                <> tshow bal.currency
-                <> " -> "
-                <> tshow base

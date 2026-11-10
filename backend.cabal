@@ -435,6 +435,7 @@ test-suite backend-test
       Application.Services.TransactionServiceContactSpec
       Application.Services.TransactionServiceLabelsSpec
       Application.Services.TransactionServiceSpec
+      Application.Services.TransactionTransferFeeSpec
       Application.Services.UserServiceSpec
       Data.Text.MatchPropertySpec
       Data.Text.MatchSpec
@@ -460,6 +461,7 @@ test-suite backend-test
       Domain.Core.PageSpec
       Domain.Core.RangeSpec
       Domain.Core.TransactionTypePropertySpec
+      Domain.Core.TransferFeesPropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
       Domain.Localization.AccountCatalogSpec
@@ -488,6 +490,7 @@ test-suite backend-test
       Domain.Transaction.RelationsCommandHandlerSpec
       Domain.Transaction.RelationsProjectionPropertySpec
       Domain.Transaction.StatusKindSpec
+      Domain.Transaction.TransferFeesCommandHandlerPropertySpec
       Domain.Transaction.TransferMatchPropertySpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.IdTokenConfigSpec
@@ -543,6 +546,7 @@ test-suite backend-test
       Integration.TransactionMetadataEditIntegrationSpec
       Integration.TransactionPromptIntegrationSpec
       Integration.TransactionRelationsIntegrationSpec
+      Integration.TransferFeesIntegrationSpec
       Integration.TransferWorkflowSpec
       Integration.WebAPISpec
       Telegram.CommandsSpec

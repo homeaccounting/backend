@@ -90,6 +90,7 @@ seedTransfer seed src tgt amount = do
         src
         tgt
         (unsafeMoney Core.USD (toRational amount))
+        Nothing
         Set.empty
         "Seed transfer"
         Nothing

@@ -471,7 +471,10 @@ data TransferRequest
     description :: Text,
     exchangeRate :: Maybe Scientific,
     date :: Maybe UTCTime,
-    labels :: Maybe [UUID]
+    labels :: Maybe [UUID],
+    -- | Optional fees, expense bucket only. 'amount' is the total debited
+    -- from the source; the target receives 'amount' minus the fees.
+    allocations :: Maybe AllocationsDTO
   }
   deriving (Show, Eq, Generic)
 
@@ -1363,7 +1366,7 @@ fromTransactionStatus Cancelled = "Cancelled"
 transactionTypeToText :: TransactionType -> Text
 transactionTypeToText (Income _) = "income"
 transactionTypeToText (Expense _) = "expense"
-transactionTypeToText Transfer = "transfer"
+transactionTypeToText (Transfer _) = "transfer"
 transactionTypeToText Adjustment = "adjustment"
 
 -- | Build the two-bucket 'AllocationsResponse' for a 'TransactionType'.

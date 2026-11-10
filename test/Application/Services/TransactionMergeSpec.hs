@@ -293,6 +293,7 @@ rejectionSpec = describe "rejections" $ do
           fx.regularAccountId
           otherAcc
           (unsafeMoney Core.USD 15)
+          Nothing
           Set.empty
           "Transfer"
           Nothing

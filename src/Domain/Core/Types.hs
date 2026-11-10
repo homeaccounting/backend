@@ -112,6 +112,11 @@ module Domain.Core.Types
     deriveTransactionKind,
     mkIncome,
     mkExpense,
+    mkTransfer,
+    transferFeeTotal,
+    transferNetAmount,
+    transferGrossAmount,
+    allocationsTotal,
     allocationsOf,
     isCategorised,
     validateAllocations,
@@ -1108,12 +1113,13 @@ mkMixedAllocations incs exps = Allocations (toList incs) (toList exps)
 -- sum to the transaction's categorised total. Construct via 'mkIncome'
 -- / 'mkExpense' smart constructors to ensure the invariants hold.
 --
--- 'Transfer' (internal account-to-account) and 'Adjustment' (balance
--- reconciliation) have no category side.
+-- 'Transfer' (internal account-to-account) optionally carries bank fees as
+-- expense-bucket 'Allocations' (see 'mkTransfer'); 'Adjustment' (balance
+-- reconciliation) has no category side.
 data TransactionType
   = Income Allocations
   | Expense Allocations
-  | Transfer
+  | Transfer (Maybe Allocations)
   | Adjustment
   deriving (Show, Eq, Generic)
 
@@ -1134,7 +1140,7 @@ instance FromJSON TransactionKind
 kindOf :: TransactionType -> TransactionKind
 kindOf (Income _) = IncomeKind
 kindOf (Expense _) = ExpenseKind
-kindOf Transfer = TransferKind
+kindOf (Transfer _) = TransferKind
 kindOf Adjustment = AdjustmentKind
 
 -- | Derive the 'TransactionKind' from the account types of the two endpoints.
@@ -1159,10 +1165,10 @@ deriveTransactionKind External External = TransferKind -- DEAD: unreachable; val
 allocationsOf :: TransactionType -> Maybe Allocations
 allocationsOf (Income xs) = Just xs
 allocationsOf (Expense xs) = Just xs
-allocationsOf Transfer = Nothing
+allocationsOf (Transfer fees) = fees
 allocationsOf Adjustment = Nothing
 
--- | True for Income / Expense; False for Transfer / Adjustment.
+-- | True for Income / Expense / fee-carrying Transfer; False otherwise.
 isCategorised :: TransactionType -> Bool
 isCategorised = isJust . allocationsOf
 
@@ -1178,10 +1184,23 @@ validateAllocations ::
   Allocations ->
   Either DomainError ()
 validateAllocations expectedTotal a =
-  checkNotEmpty *> checkPositive *> checkCurrency *> checkSum
+  validateAllocationItems expectedTotal.currency a *> checkSum
+  where
+    checkSum =
+      let s = Money (allocationsTotal a) expectedTotal.currency
+       in if s == expectedTotal
+            then Right ()
+            else
+              Left . ValidationErr $
+                mkValidationError "allocations" "Sum of allocations must equal categorised amount" (T.pack (show s.amount))
+
+-- | Per-item allocation invariants shared by every categorised constructor:
+-- non-empty, every amount strictly positive, every amount in 'expectedCurrency'.
+validateAllocationItems :: Currency -> Allocations -> Either DomainError ()
+validateAllocationItems expectedCurrency a =
+  checkNotEmpty *> checkPositive *> checkCurrency
   where
     xs = allAllocations a
-    expectedCurrency = expectedTotal.currency
 
     checkNotEmpty
       | null xs = Left AllocationsEmpty
@@ -1199,17 +1218,13 @@ validateAllocations expectedTotal a =
         Left . ValidationErr $
           mkValidationError "currency" "All allocations must share the categorised currency" (T.pack (show bad.amount.currency))
 
-    checkSum =
-      let s = Money (sum (fmap (\x -> x.amount.amount) xs)) expectedCurrency
-       in if s == expectedTotal
-            then Right ()
-            else
-              Left . ValidationErr $
-                mkValidationError "allocations" "Sum of allocations must equal categorised amount" (T.pack (show s.amount))
+-- | Sum of every allocation amount across both buckets.
+allocationsTotal :: Allocations -> Rational
+allocationsTotal a = sum (fmap (\x -> x.amount.amount) (allAllocations a))
 
 -- | Replace the allocations payload of a categorised 'TransactionType'.
 --
--- No-op on 'Transfer' / 'Adjustment' (their structure has no allocations).
+-- No-op on a fee-less 'Transfer' and on 'Adjustment' (no allocations to replace).
 -- The new allocations must already satisfy the smart-constructor
 -- invariants for the surrounding kind (sum-equals-total, currency
 -- consistency, amount > 0); this helper does not re-validate.
@@ -1217,8 +1232,43 @@ replaceAllocations :: Allocations -> TransactionType -> TransactionType
 replaceAllocations new tt = case tt of
   Income _ -> Income new
   Expense _ -> Expense new
-  Transfer -> Transfer
+  Transfer (Just _) -> Transfer (Just new)
+  Transfer Nothing -> Transfer Nothing
   Adjustment -> Adjustment
+
+-- | Construct a Transfer 'TransactionType' from the debited (source) amount
+-- and optional fee allocations.
+--
+-- Fees must be expense-bucket only, positive, in the source currency, and sum
+-- to strictly less than the source amount. The target-side equation depends on
+-- the target account and is checked by the command handler, not here.
+mkTransfer :: Money -> Maybe Allocations -> Either DomainError TransactionType
+mkTransfer _ Nothing = Right (Transfer Nothing)
+mkTransfer source (Just a) = do
+  if null a.incomes then Right () else Left TransferFeeIncomeNotSupported
+  validateAllocationItems source.currency a
+  if allocationsTotal a < source.amount then Right () else Left TransferFeesNotBelowSource
+  pure (Transfer (Just a))
+
+-- | Total of the fee allocations on a 'Transfer'; 0 for anything else.
+transferFeeTotal :: TransactionType -> Rational
+transferFeeTotal (Transfer (Just a)) = allocationsTotal a
+transferFeeTotal _ = 0
+
+-- | The part of a transfer's debited amount that reaches the target side
+-- (before any FX conversion): the debited amount less the transfer's fees.
+transferNetAmount :: Money -> TransactionType -> Either DomainError Money
+transferNetAmount debited tt =
+  either
+    (\msg -> Left (ValidationErr (mkValidationError "amount" msg (T.pack (show debited.amount)))))
+    Right
+    (mkMoney debited.currency (debited.amount - transferFeeTotal tt))
+
+-- | Inverse of 'transferNetAmount': the net amount plus the transfer's fees,
+-- i.e. the total debited from the source. Identity for anything but a fee
+-- transfer.
+transferGrossAmount :: Money -> TransactionType -> Money
+transferGrossAmount net tt = Money (net.amount + transferFeeTotal tt) net.currency
 
 -- | Construct an Income 'TransactionType'.
 --

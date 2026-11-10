@@ -157,7 +157,7 @@ sampleAmendmentInitiated =
       newSourceAmount = mockMoney 10,
       newTargetAmount = mockMoney 10,
       newExchangeRate = Nothing,
-      newTransactionType = Transfer,
+      newTransactionType = Transfer Nothing,
       contactId = Nothing,
       allowOverdraft = False,
       by = mockUserId (UUID.fromWords64 0 3)
@@ -173,7 +173,7 @@ sampleAmendmentCompleted =
       newSourceAmount = mockMoney 10,
       newTargetAmount = mockMoney 10,
       newExchangeRate = Nothing,
-      newTransactionType = Transfer,
+      newTransactionType = Transfer Nothing,
       contactId = Nothing,
       by = mockUserId (UUID.fromWords64 0 3)
     }

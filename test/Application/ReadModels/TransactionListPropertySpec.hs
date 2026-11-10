@@ -64,7 +64,7 @@ spec = describe "listTransactions / date bounds (property)"
                     (mockTransactionId (UUID.fromWords (fromIntegral i) 0 0 0))
                     acctA
                     acctB
-                    Transfer
+                    (Transfer Nothing)
                     Set.empty
                     d
                     d

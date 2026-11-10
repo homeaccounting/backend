@@ -70,8 +70,8 @@ telegramWebhookServer = handleWebhookUpdate
 handleWebhookUpdate :: Maybe Text -> TG.Update -> AppM NoContent
 handleWebhookUpdate secretHeader update = do
   config <- view appConfigL
-  unless (verifyWebhookSecret config.telegram.botToken secretHeader) $
-    throwIO err401 {errBody = "Invalid or missing Telegram webhook secret"}
+  unless (verifyWebhookSecret config.telegram.botToken secretHeader)
+    $ throwIO err401 {errBody = "Invalid or missing Telegram webhook secret"}
   botState <- view botStateL
   processUpdate botState update
   return NoContent

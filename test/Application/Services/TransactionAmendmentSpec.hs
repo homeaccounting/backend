@@ -89,7 +89,7 @@ amendCmd newSrc newTgt newSrcAmt newTgtAmt uid =
       newTargetAmount = unsafeMoney Core.USD newTgtAmt,
       newExchangeRate = Nothing,
       newAllocations = Nothing,
-      newTransactionType = Transfer,
+      newTransactionType = Transfer Nothing,
       contactId = Nothing,
       allowOverdraft = False,
       by = uid
@@ -184,6 +184,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             fx.regularAccountId
             walletB
             (unsafeMoney Core.USD 50)
+            Nothing
             Set.empty
             "Seed"
             Nothing
@@ -293,6 +294,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             fx.regularAccountId
             walletB
             (unsafeMoney Core.USD 50)
+            Nothing
             Set.empty
             "A→B"
             Nothing
@@ -390,6 +392,7 @@ spec = describe "TransactionService.amendTransaction" $ do
             fx.regularAccountId
             walletB
             (unsafeMoney Core.USD 50)
+            Nothing
             Set.empty
             "A→B"
             Nothing

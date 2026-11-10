@@ -271,6 +271,26 @@ it needs **no** event-store reset and old dumps remain readable:
   language/country + GET localization-options endpoints); existing clients
   unaffected.
 
+### Transfer fees — no reset needed
+
+Optional fees on transfers changed the stored `TransactionType` shape, shipped
+via an upcaster, not a recreate. Deploying it needs **no** event-store reset and
+old dumps remain readable:
+
+- **Event log:** the registered transfer-fee v1→v2 hop (`transferFeesV1toV2`)
+  migrates `TransactionPostingInitiated`, `TransactionAmendmentInitiated`,
+  `TransactionAmendmentCompleted` and `TransactionMergeInitiated`. Stored bytes
+  are untouched.
+- **Read model:** the column shape for plain transfers is unchanged. No
+  read-model rebuild required.
+- **Snapshots:** saga snapshots in `projection_snapshots` that fail to decode
+  fall back to a one-time replay.
+- **API:** additive (optional `allocations` on transfer requests). The history
+  API now renders a plain transfer as `{"tag":"Transfer","contents":null}`.
+
+> **Warning:** once a fee transfer (v2 event) is written, rolling the binary back
+> to a pre-fee version cannot decode it.
+
 ### Read-model rebuilds — `REBUILD_READ_MODELS`
 
 Persistent read models catch up from their own checkpoint at startup. Setting
