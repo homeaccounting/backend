@@ -42,21 +42,14 @@ module Domain.Transaction.CommandHandler
 where
 
 import Domain.Banking.Import (importAttributionCapacity)
-import Domain.Core.Types
-  ( Currency,
-    Money (..),
-    RelationSpec (..),
-    moneyCurrency,
-    unAccountId,
-    unMoney,
-    unTransactionId,
-  )
+import Domain.Core.Types (Currency, Money (..), moneyCurrency, unAccountId, unMoney, unTransactionId)
 import Domain.Transaction.Commands
 import Domain.Transaction.Events
 import Domain.Transaction.Projection
 import Domain.Transaction.Types
   ( Allocation (..),
     Allocations (..),
+    RelationSpec (..),
     TransactionType (..),
     allAllocations,
     allocationsOf,

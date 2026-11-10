@@ -7,7 +7,7 @@
 --
 -- The categorised shape of a transaction ('TransactionType') and its
 -- category 'Allocations', with the smart constructors that enforce their
--- invariants. Transaction-specific, so it lives in the Transaction context
+-- invariants, plus typed relationships between transactions ('RelationKind'). Transaction-specific, so it lives in the Transaction context
 -- rather than the shared 'Domain.Core.Types' kernel.
 module Domain.Transaction.Types
   ( TransactionType (..),
@@ -33,6 +33,10 @@ module Domain.Transaction.Types
     mkExpenseAllocations,
     mkMixedAllocations,
     allAllocations,
+    RelationKind (..),
+    renderRelationKind,
+    parseRelationKind,
+    RelationSpec (..),
   )
 where
 
@@ -42,7 +46,7 @@ import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Domain.Core.Errors (DomainError (..), mkValidationError)
-import Domain.Core.Types (AccountType (..), CategoryId, Currency, Money (..), mkMoney, unMoney)
+import Domain.Core.Types (AccountType (..), CategoryId, Currency, Money (..), TransactionId, mkMoney, unMoney)
 import GHC.Generics (Generic)
 
 -- | A single category slice of a transaction's categorised amount.
@@ -339,3 +343,57 @@ mkExpense categorisedTotal a = do
   if null a.incomes
     then pure (Expense a)
     else Left ContraIncomeNotSupported
+
+-- -----------------------------------------------------------------------------
+-- Transaction Relationships
+-- -----------------------------------------------------------------------------
+
+-- | The kind of a typed relationship between two transactions. See
+-- docs/specs/2026-07-05-transaction-relationships-design.md.
+--
+--   * 'Refund'     — an Income transaction partially/fully refunds an Expense.
+--   * 'Merge'      — a cancelled source transaction was merged into a target.
+--   * 'Split'      — a newly-created result was split from an origin.
+--   * 'Associated' — a generic user-declared link between two related
+--     transactions of any kind (e.g. a delivery expense tied to the goods
+--     purchase, or two incomes that are parts of one payment). Endpoint kinds
+--     are unrestricted.
+--
+-- Direction is a documented convention (the owning/self transaction is the
+-- "from" endpoint; the referenced one is 'relatedTransactionId'), not encoded
+-- in the constructor names.
+data RelationKind = Refund | Merge | Split | Associated
+  deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
+instance ToJSON RelationKind
+
+instance FromJSON RelationKind
+
+-- | An at-creation relationship request threaded through 'InitiateTransactionPosting':
+-- the referenced (pre-existing) transaction and the kind of edge to record. The
+-- owning ("from") transaction is the one being created, so it is not named here.
+data RelationSpec = RelationSpec
+  { relatedTransactionId :: TransactionId,
+    relationKind :: RelationKind
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON RelationSpec
+
+instance FromJSON RelationSpec
+
+-- | Render a 'RelationKind' to its lowercase wire/DB token.
+renderRelationKind :: RelationKind -> Text
+renderRelationKind Refund = "refund"
+renderRelationKind Merge = "merge"
+renderRelationKind Split = "split"
+renderRelationKind Associated = "associated"
+
+-- | Parse a wire/DB token (trimmed, case-insensitive) to a 'RelationKind'.
+parseRelationKind :: Text -> Maybe RelationKind
+parseRelationKind raw = case T.toLower (T.strip raw) of
+  "refund" -> Just Refund
+  "merge" -> Just Merge
+  "split" -> Just Split
+  "associated" -> Just Associated
+  _ -> Nothing

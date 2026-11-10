@@ -47,20 +47,12 @@ import Application.Services.TransactionService
   )
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types
-  ( AccountId,
-    Money,
-    RelationKind (..),
-    TransactionId,
-    UserId,
-    defaultCash,
-    unMoney,
-    unsafeMoney,
-  )
+import Domain.Core.Types (AccountId, Money, TransactionId, UserId, defaultCash, unMoney, unsafeMoney)
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
 import Domain.Transaction.Types
-  ( TransactionKind (..),
+  ( RelationKind (..),
+    TransactionKind (..),
     kindOf,
   )
 import Infrastructure.App (AppEnv, runAppM)

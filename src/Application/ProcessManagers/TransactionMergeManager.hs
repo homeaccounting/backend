@@ -59,20 +59,11 @@ where
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Domain.Core.Types
-  ( AccountId,
-    ContactId,
-    ExchangeRate,
-    Money,
-    RelationKind (Merge),
-    TransactionId,
-    UserId,
-    mkTransactionIdSafe,
-    unTransactionId,
-  )
+import Domain.Core.Types (AccountId, ContactId, ExchangeRate, Money, TransactionId, UserId, mkTransactionIdSafe, unTransactionId)
 import Domain.Models
 import Domain.Transaction.Types
   ( Allocations,
+    RelationKind (Merge),
     TransactionType,
   )
 import Eventium

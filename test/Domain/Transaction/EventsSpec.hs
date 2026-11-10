@@ -21,7 +21,7 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
 import Domain.Banking.Signal (mkByMcc, unsafeBankProviderContact, unsafeMcc)
-import Domain.Core.Types (RelationKind (..), TransactionId, unsafeDictionaryEntryId, unsafeTransactionId)
+import Domain.Core.Types (TransactionId, unsafeDictionaryEntryId, unsafeTransactionId)
 import Domain.Transaction.Events
   ( TransactionAmendmentCompleted (..),
     TransactionAmendmentInitiated (..),
@@ -29,7 +29,7 @@ import Domain.Transaction.Events
     TransactionPostingInitiated (..),
     TransactionRelationAdded (..),
   )
-import Domain.Transaction.Types (TransactionType (Transfer))
+import Domain.Transaction.Types (RelationKind (..), TransactionType (Transfer))
 import RIO
 import Test.Hspec
 import Testkit.Helpers (mockAccountId, mockMoney, mockUserId, singletonIncome)

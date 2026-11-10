@@ -25,18 +25,15 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
-import Domain.Core.Types
-  ( AccountId,
-    RelationKind (..),
-    TransactionId,
-  )
+import Domain.Core.Types (AccountId, TransactionId)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionCancellationCompleted (..),
     TransactionRelationAdded (..),
   )
 import Domain.Transaction.Types
-  ( TransactionType (..),
+  ( RelationKind (..),
+    TransactionType (..),
   )
 import qualified Eventium
 import Infrastructure.App (AppEnv)

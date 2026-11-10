@@ -141,11 +141,11 @@ import qualified Data.UUID as UUID
 import Data.Word (Word64)
 import Domain.Account.Commands (CreateAccount (..))
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
-import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, renderRelationKind, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountRole, AccountStatus (..), AccountSubtype (..), AccountType (..), AssetProperties (..), AssetType (..), BankAccountProperties (..), CardNetwork (..), CashProperties (..), CategoryId, ContactId, Currency (..), EWalletProperties (..), ExchangeRate, LabelId, LoanProperties (..), Money, TransactionId, UserId, defaultCash, exchangeRateValue, mkDictionaryEntryId, mkExchangeRate, mkMoney, moneyCurrency, parseCurrency, roleToText, unAccountId, unDictionaryEntryId, unMoney, unTransactionId)
 -- 'allAllocations' removed: response now surfaces buckets directly via
 -- 'allocationsResponseOf' (see below).
 import Domain.Transaction.Projection (Transaction (..), TransactionStatus (..))
-import Domain.Transaction.Types (Allocation (..), Allocations (..), TransactionType (..), allocationsOf)
+import Domain.Transaction.Types (Allocation (..), Allocations (..), TransactionType (..), allocationsOf, renderRelationKind)
 import Eventium (EventVersion (..))
 import GHC.Generics (Generic)
 
