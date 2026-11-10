@@ -75,9 +75,10 @@ import Data.UUID (UUID)
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Page (Page (..), mkPage)
 import Domain.Core.Range (mkRange)
-import Domain.Core.Types (Allocation (..), Allocations, Currency, Money (..), RelationKind (..), RelationSpec (..), TransactionType (..), allAllocations, mkAccountId, mkAllocation, mkAllocations, mkDictionaryEntryId, mkTransactionId, parseCurrency, parseRelationKind, renderRelationKind, unTransactionId, unsafeDictionaryEntryId)
+import Domain.Core.Types (Currency, Money (..), mkAccountId, mkDictionaryEntryId, mkTransactionId, parseCurrency, unTransactionId, unsafeDictionaryEntryId)
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
 import Domain.Transaction.Projection (StatusKind)
+import Domain.Transaction.Types (Allocation (..), Allocations, RelationKind (..), RelationSpec (..), TransactionType (..), allAllocations, mkAllocation, mkAllocations, parseRelationKind, renderRelationKind)
 import Infrastructure.App (AppM)
 import RIO
 import Servant

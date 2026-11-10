@@ -11,13 +11,8 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
 import Domain.Core.Types
-  ( Allocation (..),
-    Allocations,
-    Currency (..),
+  ( Currency (..),
     DictionaryEntryId,
-    TransactionType (..),
-    mkExpenseAllocations,
-    mkIncomeAllocations,
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -32,6 +27,13 @@ import Domain.Transaction.Projection
   ( TransactionEvent (..),
     transactionDefault,
     transactionProjection,
+  )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations,
+    TransactionType (..),
+    mkExpenseAllocations,
+    mkIncomeAllocations,
   )
 import Eventium (latestProjection)
 import Optics ((^.))

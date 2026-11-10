@@ -29,12 +29,14 @@ import Domain.Core.Types
     Currency (..),
     LabelId,
     TransactionId,
-    TransactionType (..),
     unTransactionId,
     unsafeMoney,
   )
 import Domain.Models (AccountingEvent (..), TransactionPostingInitiated (..))
 import Domain.Transaction.Events (TransactionImportReconciled (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Eventium (GlobalStreamEvent, SequenceNumber, StreamEvent (..), emptyMetadata)
 import qualified Eventium
 import RIO

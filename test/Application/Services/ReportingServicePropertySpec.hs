@@ -8,6 +8,7 @@ import Application.ReadModels.Transaction (TransactionData (..))
 import qualified Application.Services.ReportingService as R
 import qualified Data.Map.Strict as Map
 import Domain.Core.Types
+import Domain.Transaction.Types
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)

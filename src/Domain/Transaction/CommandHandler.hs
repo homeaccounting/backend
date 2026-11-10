@@ -42,24 +42,19 @@ module Domain.Transaction.CommandHandler
 where
 
 import Domain.Banking.Import (importAttributionCapacity)
-import Domain.Core.Types
+import Domain.Core.Types (Currency, Money (..), moneyCurrency, unAccountId, unMoney, unTransactionId)
+import Domain.Transaction.Commands
+import Domain.Transaction.Events
+import Domain.Transaction.Projection
+import Domain.Transaction.Types
   ( Allocation (..),
     Allocations (..),
-    Currency,
-    Money (..),
     RelationSpec (..),
     TransactionType (..),
     allAllocations,
     allocationsOf,
     allocationsTotal,
-    moneyCurrency,
-    unAccountId,
-    unMoney,
-    unTransactionId,
   )
-import Domain.Transaction.Commands
-import Domain.Transaction.Events
-import Domain.Transaction.Projection
 import Eventium (CommandHandler (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import Optics ((^.))
@@ -588,7 +583,7 @@ handleTransactionCommand transaction (RemoveTransactionRelationTransactionComman
 -- currency equality, sum equality, and per-allocation positivity. Used by
 -- 'InitiateTransactionPosting', 'ChangeTransactionAllocations', and 'InitiateTransactionAmendment'
 -- handler arms as a defensive boundary check (the smart constructors in
--- 'Domain.Core.Types' already enforce these — the re-check covers
+-- 'Domain.Transaction.Types' already enforce these — the re-check covers
 -- direct constructions bypassing them).
 checkAllocationsAgainst :: Money -> Allocations -> Either TransactionError ()
 checkAllocationsAgainst expected a =

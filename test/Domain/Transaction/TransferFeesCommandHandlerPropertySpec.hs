@@ -11,6 +11,7 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import Domain.Core.Types
 import Domain.Transaction
+import Domain.Transaction.Types
 import Optics ((&), (.~))
 import RIO hiding ((&), (.~))
 import Test.Hspec

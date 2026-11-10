@@ -27,7 +27,6 @@ import Domain.Core.Types
     Currency (..),
     Money,
     TransactionId,
-    TransactionType (..),
     UserId,
     unMoney,
     unsafeAccountId,
@@ -36,6 +35,9 @@ import Domain.Core.Types
     unsafeUserId,
   )
 import Domain.Transaction.Events (TransactionAmendmentInitiated (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)

@@ -39,20 +39,22 @@ import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError)
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
-    Allocations (..),
     Currency (..),
     DictionaryEntryId,
     Money (..),
     TransactionId,
-    TransactionType (..),
     UserId,
-    allocationsOf,
-    mkExpenseAllocations,
-    mkMixedAllocations,
     unMoney,
     unsafeEntryName,
     unsafeMoney,
+  )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations (..),
+    TransactionType (..),
+    allocationsOf,
+    mkExpenseAllocations,
+    mkMixedAllocations,
   )
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO

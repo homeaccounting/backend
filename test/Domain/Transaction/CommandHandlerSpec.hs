@@ -22,6 +22,7 @@ import qualified Data.UUID.V4 as UUID
 import Domain.Banking.Import (ImportInfo (..), importInfoExternalTransactionIds, unsafeExternalTransactionId)
 import Domain.Core.Types
 import Domain.Transaction
+import Domain.Transaction.Types
 import Eventium (latestProjection)
 import Optics ((^.))
 import RIO hiding ((^.))

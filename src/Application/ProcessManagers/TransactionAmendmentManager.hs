@@ -64,7 +64,6 @@ import Domain.Core.Types
     ExchangeRate,
     Money,
     TransactionId,
-    TransactionType,
     UserId,
     moneyIsPositive,
     subtractMoney,
@@ -72,6 +71,9 @@ import Domain.Core.Types
     unTransactionId,
   )
 import Domain.Models
+import Domain.Transaction.Types
+  ( TransactionType,
+  )
 import Eventium
   ( EventMetadata,
     ProcessManager (..),

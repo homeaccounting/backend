@@ -1,12 +1,13 @@
 -- |
--- Module      : Domain.Core.TransferFeesPropertySpec
+-- Module      : Domain.Transaction.TransferFeesPropertySpec
 -- Description : Property tests for transfer fee allocations (mkTransfer et al.)
-module Domain.Core.TransferFeesPropertySpec (spec) where
+module Domain.Transaction.TransferFeesPropertySpec (spec) where
 
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Text as T
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
+import Domain.Transaction.Types
 import RIO
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)

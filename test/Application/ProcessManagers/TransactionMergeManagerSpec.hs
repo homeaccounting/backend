@@ -24,18 +24,7 @@ import Application.ProcessManagers.TransactionMergeManager
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.UUID as UUID
-import Domain.Core.Types
-  ( AccountId,
-    Money,
-    RelationKind (..),
-    TransactionId,
-    TransactionType (..),
-    UserId,
-    unsafeAccountId,
-    unsafeMoney,
-    unsafeTransactionId,
-    unsafeUserId,
-  )
+import Domain.Core.Types (AccountId, Money, TransactionId, UserId, unsafeAccountId, unsafeMoney, unsafeTransactionId, unsafeUserId)
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Models
   ( AccountingCommand (..),
@@ -54,6 +43,10 @@ import Domain.Transaction.Events
     TransactionCancellationCompleted (..),
     TransactionMergeCompleted (..),
     TransactionMergeInitiated (..),
+  )
+import Domain.Transaction.Types
+  ( RelationKind (..),
+    TransactionType (..),
   )
 import Eventium (ProcessManagerEffect (..), RejectionReason (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))

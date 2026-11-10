@@ -54,7 +54,8 @@ import Data.Text (Text)
 import Data.Time (UTCTime)
 import Domain.Banking.Import (ExternalTransactionId, ImportInfo)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
-import Domain.Core.Types (AccountId, Allocations, ContactId, ExchangeRate, LabelId, Money, RelationKind, TransactionId, TransactionType, UserId)
+import Domain.Core.Types (AccountId, ContactId, ExchangeRate, LabelId, Money, TransactionId, UserId)
+import Domain.Transaction.Types (Allocations, RelationKind, TransactionType)
 import Language.Haskell.TH (Name)
 
 -- -----------------------------------------------------------------------------

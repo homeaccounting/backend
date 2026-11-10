@@ -41,7 +41,6 @@ import Domain.Core.Types
   ( AccountId,
     Money,
     TransactionId,
-    TransactionType (..),
     UserId,
     unAccountId,
     unMoney,
@@ -55,6 +54,9 @@ import Domain.Transaction.Events
   ( TransactionCancellationCompleted (..),
     TransactionCancellationInitiated (..),
     TransactionPostingInitiated (..),
+  )
+import Domain.Transaction.Types
+  ( TransactionType (..),
   )
 import Eventium (ProcessManagerEffect (..), StreamEvent (..), VersionedStreamEvent, emptyMetadata)
 import Optics ((^.))

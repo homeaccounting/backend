@@ -39,7 +39,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
-import Domain.Core.Types (TransactionType (..))
+import Domain.Transaction.Types (TransactionType (..))
 import GHC.Generics (Generic)
 import RIO (Display (..))
 

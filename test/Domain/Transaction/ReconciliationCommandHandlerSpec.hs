@@ -24,6 +24,7 @@ import Domain.Banking.Import (ExternalTransactionId, unsafeExternalTransactionId
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, mkByMcc, unsafeBankProviderContact, unsafeMcc)
 import Domain.Core.Types
 import Domain.Transaction
+import Domain.Transaction.Types
 import Eventium (latestProjection)
 import RIO
 import Test.Hspec

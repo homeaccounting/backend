@@ -25,6 +25,7 @@ import Domain.Banking.Import (ImportInfo (..), unsafeExternalTransactionId)
 import Domain.Banking.Signal (mkByMcc, unsafeMcc)
 import Domain.Core.Types
 import Domain.Transaction
+import Domain.Transaction.Types
 import Eventium (latestProjection)
 import Optics ((^.))
 import RIO hiding (fromMaybe, (^.))

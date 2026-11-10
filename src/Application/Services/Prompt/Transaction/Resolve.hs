@@ -54,13 +54,10 @@ import Domain.Configuration.Projection (ConfigurationDefaults (..))
 import Domain.Core.Types
   ( AccountId,
     AccountSubtypeKind (..),
-    Allocations,
     CategoryId,
     Currency,
     LabelId,
     Money,
-    mkAllocation,
-    mkAllocations,
     accountSubtypeKind,
     mkMoney,
     moneyCurrency,
@@ -68,6 +65,11 @@ import Domain.Core.Types
     unMoney,
   )
 import Domain.Localization.Language (Language)
+import Domain.Transaction.Types
+  ( Allocations,
+    mkAllocation,
+    mkAllocations,
+  )
 import Numeric (showFFloat)
 import RIO
 import qualified RIO.Text as T

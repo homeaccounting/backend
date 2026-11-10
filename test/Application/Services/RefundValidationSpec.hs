@@ -39,16 +39,9 @@ import Application.Services.TransactionService
   )
 import qualified Data.Set as Set
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types
-  ( AccountId,
-    DictionaryEntryId,
-    RelationKind (..),
-    RelationSpec (..),
-    TransactionId,
-    UserId,
-    unsafeMoney,
-  )
+import Domain.Core.Types (AccountId, DictionaryEntryId, TransactionId, UserId, unsafeMoney)
 import qualified Domain.Core.Types as Core (Currency (..))
+import Domain.Transaction.Types (RelationKind (..), RelationSpec (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec

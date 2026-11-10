@@ -59,6 +59,7 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
 import Domain.ExchangeRate.Events (Provider)
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
 import Infrastructure.App (AppM, appConfigL, runDb)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))
 import RIO

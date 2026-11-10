@@ -2,15 +2,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module      : Domain.Core.AllocationPropertySpec
+-- Module      : Domain.Transaction.AllocationPropertySpec
 -- Description : Property tests for the Allocation value type
-module Domain.Core.AllocationPropertySpec (spec) where
+module Domain.Transaction.AllocationPropertySpec (spec) where
 
 import Data.Aeson (decode, encode)
 import Data.Either (isLeft)
 import Data.UUID (fromWords)
 import Domain.Core.Errors (DomainError (..))
-import Domain.Core.Types (Allocation (..), Currency (..), DictionaryEntryId, Money, mkAllocation, mkDefaultMoney, unMoney, unsafeDictionaryEntryId, unsafeMoney)
+import Domain.Core.Types (Currency (..), DictionaryEntryId, Money, mkDefaultMoney, unMoney, unsafeDictionaryEntryId, unsafeMoney)
+import Domain.Transaction.Types (Allocation (..), mkAllocation)
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Property, (===), (==>))

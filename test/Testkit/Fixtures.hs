@@ -67,19 +67,13 @@ import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
     AccountType (..),
-    Allocation (..),
-    Allocations,
     ContactId,
     DictionaryEntryId,
     Money,
     TransactionId,
     UserId,
-    allAllocations,
-    allocationsOf,
     defaultBankAccount,
     defaultCash,
-    mkExpenseAllocations,
-    mkIncomeAllocations,
     unAccountId,
     unMoney,
     unTransactionId,
@@ -92,6 +86,14 @@ import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Projection (TransactionStatus)
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations,
+    allAllocations,
+    allocationsOf,
+    mkExpenseAllocations,
+    mkIncomeAllocations,
+  )
 import Domain.User.Events (UserRegistered (..))
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)

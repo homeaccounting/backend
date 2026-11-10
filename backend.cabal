@@ -124,6 +124,7 @@ library
       Domain.Transaction.Matching.Reconciliation
       Domain.Transaction.Matching.Transfer
       Domain.Transaction.Projection
+      Domain.Transaction.Types
       Domain.User
       Domain.User.CommandHandler
       Domain.User.Commands
@@ -455,13 +456,9 @@ test-suite backend-test
       Domain.Configuration.LabelsDictionarySpec
       Domain.Configuration.ProjectionSpec
       Domain.Core.AccountSubtypeKindSpec
-      Domain.Core.AllocationPropertySpec
       Domain.Core.CurrencyNumericSpec
-      Domain.Core.DeriveTransactionKindSpec
       Domain.Core.PageSpec
       Domain.Core.RangeSpec
-      Domain.Core.TransactionTypePropertySpec
-      Domain.Core.TransferFeesPropertySpec
       Domain.Core.TypesPropertySpec
       Domain.Core.TypesSpec
       Domain.Localization.AccountCatalogSpec
@@ -472,6 +469,7 @@ test-suite backend-test
       Domain.Localization.PluralSpec
       Domain.Localization.PresetSpec
       Domain.ModelsSpec
+      Domain.Transaction.AllocationPropertySpec
       Domain.Transaction.AllocationsSpec
       Domain.Transaction.AmendmentCommandHandlerSpec
       Domain.Transaction.AmendmentPropertySpec
@@ -479,6 +477,7 @@ test-suite backend-test
       Domain.Transaction.CancellationPropertySpec
       Domain.Transaction.CommandHandlerPropertySpec
       Domain.Transaction.CommandHandlerSpec
+      Domain.Transaction.DeriveTransactionKindSpec
       Domain.Transaction.DescriptionAndDatePropertySpec
       Domain.Transaction.DescriptionAndDateSpec
       Domain.Transaction.EventsSpec
@@ -490,8 +489,11 @@ test-suite backend-test
       Domain.Transaction.RelationsCommandHandlerSpec
       Domain.Transaction.RelationsProjectionPropertySpec
       Domain.Transaction.StatusKindSpec
+      Domain.Transaction.TransactionTypePropertySpec
       Domain.Transaction.TransferFeesCommandHandlerPropertySpec
+      Domain.Transaction.TransferFeesPropertySpec
       Domain.Transaction.TransferMatchPropertySpec
+      Domain.Transaction.TypesSpec
       Domain.User.CommandHandlerSpec
       Infrastructure.Auth.IdTokenConfigSpec
       Infrastructure.Auth.IdTokenSpec

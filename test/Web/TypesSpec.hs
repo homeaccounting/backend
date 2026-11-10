@@ -21,7 +21,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Ratio ((%))
 import qualified Data.UUID as UUID
 import Domain.Banking.Signal (mkBankProviderContact, mkByCounterparty, mkByLabel, mkByMcc, unsafeMcc)
-import Domain.Core.Types (AccountSubtype (Asset), Allocation (..), AssetProperties (..), AssetType (..), Currency (UAH, USD), TransactionType (Transfer), allAllocations, exchangeRateValue, unMoney, unsafeMoney)
+import Domain.Core.Types (AccountSubtype (Asset), AssetProperties (..), AssetType (..), Currency (UAH, USD), exchangeRateValue, unMoney, unsafeMoney)
+import Domain.Transaction.Types (Allocation (..), TransactionType (Transfer), allAllocations)
 import RIO
 import Test.Hspec
 import Testkit.BankingHelpers (byCounterparty)

@@ -45,17 +45,19 @@ import qualified Data.UUID as UUID
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
-    Allocations,
     TransactionId,
-    TransactionType (..),
     UserId,
-    mkIncomeAllocations,
     unsafeDictionaryEntryId,
     unsafeMoney,
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations,
+    TransactionType (..),
+    mkIncomeAllocations,
+  )
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec

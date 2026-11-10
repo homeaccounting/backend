@@ -27,7 +27,6 @@ import Domain.Core.Types
     ExchangeRate,
     Money,
     TransactionId,
-    TransactionType (..),
     UserId,
     unsafeAccountId,
     unsafeDictionaryEntryId,
@@ -59,6 +58,9 @@ import Domain.Transaction.Projection
     TransactionStatus (..),
     transactionDefault,
     transactionProjection,
+  )
+import Domain.Transaction.Types
+  ( TransactionType (..),
   )
 import Eventium (Projection (..), latestProjection)
 import Optics ((&), (.~), (^.))

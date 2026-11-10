@@ -1,13 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
-module Domain.Core.DeriveTransactionKindSpec (spec) where
+module Domain.Transaction.DeriveTransactionKindSpec (spec) where
 
 import Domain.Core.Types
   ( AccountSubtype (..),
     AccountType (..),
-    TransactionKind (..),
     defaultCashProperties,
+  )
+import Domain.Transaction.Types
+  ( TransactionKind (..),
     deriveTransactionKind,
   )
 import RIO

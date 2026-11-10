@@ -33,7 +33,6 @@ import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( AccountId,
     AccountSubtype,
-    TransactionType (..),
     UserId,
     defaultBankAccount,
     defaultCash,
@@ -43,6 +42,9 @@ import Domain.Core.Types
   )
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.Commands (InitiateTransactionAmendment (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec

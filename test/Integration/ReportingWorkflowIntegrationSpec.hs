@@ -42,7 +42,6 @@ import Domain.Core.Types
     Currency (..),
     DictionaryEntryId,
     ExchangeRate,
-    TransactionType,
     defaultCash,
     unsafeAccountId,
     unsafeDictionaryEntryId,
@@ -57,6 +56,9 @@ import Domain.Transaction.CommandHandler
   )
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
+  ( TransactionType,
+  )
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Eventium (applyAccountCommand, applyTransactionCommand)
 import Infrastructure.ExchangeRate.Provider (RateProvider (..))

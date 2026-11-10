@@ -14,14 +14,7 @@ module Domain.Transaction.RelationsProjectionPropertySpec (spec) where
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
 import qualified Data.UUID as UUID
-import Domain.Core.Types
-  ( RelationKind (..),
-    TransactionId,
-    TransactionType,
-    unsafeAccountId,
-    unsafeMoney,
-    unsafeUserId,
-  )
+import Domain.Core.Types (TransactionId, unsafeAccountId, unsafeMoney, unsafeUserId)
 import qualified Domain.Core.Types as Core
 import Domain.Transaction.Events
   ( TransactionPostingInitiated (..),
@@ -32,6 +25,10 @@ import Domain.Transaction.Projection
     TransactionEvent (..),
     handleTransactionEvent,
     transactionProjection,
+  )
+import Domain.Transaction.Types
+  ( RelationKind (..),
+    TransactionType,
   )
 import Eventium (latestProjection)
 import RIO

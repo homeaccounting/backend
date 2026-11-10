@@ -6,20 +6,15 @@ module Domain.Transaction.RelationsCommandHandlerSpec (spec) where
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import qualified Data.UUID as UUID
-import Domain.Core.Types
-  ( Currency (..),
-    RelationKind (..),
+import Domain.Core.Types (Currency (..), TransactionId, unsafeAccountId, unsafeMoney, unsafeTransactionId, unsafeUserId)
+import Domain.Transaction
+import Domain.Transaction.Types
+  ( RelationKind (..),
     RelationSpec (..),
-    TransactionId,
     TransactionType (..),
     parseRelationKind,
     renderRelationKind,
-    unsafeAccountId,
-    unsafeMoney,
-    unsafeTransactionId,
-    unsafeUserId,
   )
-import Domain.Transaction
 import Eventium (latestProjection)
 import Test.Hspec
 

@@ -62,8 +62,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.UUID (nil)
-import Domain.Core.Types (AccountId, ContactId, ExchangeRate, LabelId, Money, TransactionType, UserId, mkAccountId, mkAllocation, mkAllocations, mkDefaultMoney, mkIncome, replaceAllocations, unsafeDictionaryEntryId, unsafeUserId)
+import Domain.Core.Types (AccountId, ContactId, ExchangeRate, LabelId, Money, UserId, mkAccountId, mkDefaultMoney, unsafeDictionaryEntryId, unsafeUserId)
 import Domain.Transaction.Events
+import Domain.Transaction.Types (TransactionType, mkAllocation, mkAllocations, mkIncome, replaceAllocations)
 import Eventium (Projection (..))
 import Eventium.TH.SumType (SumTypeTagOptions (AppendTypeNameToTags), constructSumType, defaultSumTypeOptions, withTagOptions)
 import GHC.Generics (Generic)

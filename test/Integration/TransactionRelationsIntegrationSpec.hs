@@ -55,19 +55,9 @@ import Domain.Core.Errors
         RelationNotFound
       ),
   )
-import Domain.Core.Types
-  ( AccountId,
-    CategoryId,
-    DictionaryEntryId,
-    Money,
-    RelationKind (..),
-    RelationSpec (..),
-    TransactionId,
-    UserId,
-    unMoney,
-    unsafeMoney,
-  )
+import Domain.Core.Types (AccountId, CategoryId, DictionaryEntryId, Money, TransactionId, UserId, unMoney, unsafeMoney)
 import qualified Domain.Core.Types as Core (Currency (..))
+import Domain.Transaction.Types (RelationKind (..), RelationSpec (..))
 import Infrastructure.App (AppEnv (..), runAppM)
 import RIO
 import Test.Hspec

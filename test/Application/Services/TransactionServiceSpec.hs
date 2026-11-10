@@ -27,6 +27,7 @@ import Domain.Core.Types
 import Domain.ExchangeRate.Events (ExchangeRatesPublished (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
+import Domain.Transaction.Types
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))

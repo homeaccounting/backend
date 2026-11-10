@@ -31,7 +31,6 @@ import Domain.Core.Types
   ( AccountId,
     LabelId,
     TransactionId,
-    TransactionType (..),
   )
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
@@ -42,6 +41,9 @@ import Domain.Transaction.Events
     TransactionPostingFailed (..),
   )
 import Domain.Transaction.Projection (StatusKind (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import qualified Eventium
 import Infrastructure.App (AppEnv)
 import RIO

@@ -31,20 +31,12 @@ import qualified Data.Set as Set
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
-    Allocations,
     ContactId,
     Currency (..),
     ExchangeRate,
     Money,
     TransactionId,
-    TransactionType (..),
     UserId,
-    allAllocations,
-    kindOf,
-    mkAllocations,
-    mkExpense,
-    mkIncome,
     moneyCurrency,
     unMoney,
     unsafeAccountId,
@@ -70,6 +62,16 @@ import Domain.Transaction.Projection
     TransactionEvent (..),
     transactionDefault,
     transactionProjection,
+  )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations,
+    TransactionType (..),
+    allAllocations,
+    kindOf,
+    mkAllocations,
+    mkExpense,
+    mkIncome,
   )
 import Eventium (latestProjection)
 import Optics ((^.))

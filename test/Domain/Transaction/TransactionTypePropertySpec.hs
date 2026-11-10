@@ -3,9 +3,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- |
--- Module      : Domain.Core.TransactionTypePropertySpec
+-- Module      : Domain.Transaction.TransactionTypePropertySpec
 -- Description : Property tests for 'TransactionType' smart constructors and accessors.
-module Domain.Core.TransactionTypePropertySpec (spec) where
+module Domain.Transaction.TransactionTypePropertySpec (spec) where
 
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isJust)
@@ -13,6 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Domain.Core.Errors (DomainError (..), ValidationError (..))
 import Domain.Core.Types
+import Domain.Transaction.Types
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck

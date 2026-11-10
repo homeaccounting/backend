@@ -99,7 +99,7 @@ import Domain.Banking.Import (importInfoCategory, importInfoContact)
 import Domain.Banking.Signal (BankProviderCategory, BankProviderContact, parseBankProviderCategoryKey, parseBankProviderContactKey, renderBankProviderCategoryKey, renderBankProviderContactKey)
 import Domain.Core.Page (Page (..))
 import Domain.Core.Range (Range (..))
-import Domain.Core.Types (AccountId, Allocation (..), ContactId, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), TransactionId, TransactionKind (..), TransactionType, allAllocations, allocationsOf, kindOf, mkTransactionIdSafe, replaceAllocations)
+import Domain.Core.Types (AccountId, ContactId, DictionaryEntryId, ExchangeRate, LabelId, Money, TransactionId, mkTransactionIdSafe)
 -- Event record types imported with @(..)@ so their field labels are in scope —
 -- 'OverloadedRecordDot' (@evt.sourceAccountId@ etc.) needs the label visible
 -- under @DuplicateRecordFields@, since 'TransactionData' shares some names.
@@ -118,6 +118,7 @@ import Domain.Models
     TransactionRelationRemoved (..),
   )
 import Domain.Transaction.Projection (StatusKind (..), TransactionStatus (..), statusFromKind)
+import Domain.Transaction.Types (Allocation (..), RelationKind (..), TransactionKind (..), TransactionType, allAllocations, allocationsOf, kindOf, replaceAllocations)
 import Eventium
   ( EventHandler (..),
     EventVersion (..),

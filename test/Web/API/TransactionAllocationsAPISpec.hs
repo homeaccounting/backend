@@ -29,13 +29,15 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import Domain.Core.Types
-  ( Allocation (..),
-    Allocations (..),
-    Currency (..),
+  ( Currency (..),
     unAccountId,
     unDictionaryEntryId,
     unTransactionId,
     unsafeMoney,
+  )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations (..),
   )
 import Network.HTTP.Types (status200, status400, status409)
 import Network.Wai.Test (SResponse (..))

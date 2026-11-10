@@ -32,7 +32,6 @@ import Domain.Core.Types
     AccountType (..),
     Currency (..),
     Money,
-    TransactionType (..),
     UserId,
     defaultBankAccount,
     mkMoney,
@@ -49,6 +48,9 @@ import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Eventium (GlobalStreamEvent, StreamEvent (..), emptyMetadata)
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Config (AppConfig (..), ExchangeRateConfig (..))

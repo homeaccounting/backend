@@ -42,14 +42,10 @@ import Domain.Account.Events (AccountAccessGranted (..), AccountAccessRevoked (.
 import Domain.Configuration.Events (ConfigurationCreated (..))
 import Domain.Core.Types
   ( AccountRole (..),
-    Allocation (..),
     CreatedBy (..),
     Currency (..),
     TransactionId,
-    TransactionType (..),
     UserId,
-    mkExpenseAllocations,
-    mkIncomeAllocations,
     unAccountId,
     unUserId,
     unsafeMoney,
@@ -57,6 +53,12 @@ import Domain.Core.Types
 import Domain.Localization.Language (Language (..))
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events (TransactionLabelsSet (..), TransactionPostingCompleted (..))
+import Domain.Transaction.Types
+  ( Allocation (..),
+    TransactionType (..),
+    mkExpenseAllocations,
+    mkIncomeAllocations,
+  )
 import Infrastructure.App (AppEnv, runAppM)
 import RIO
 import Test.Hspec

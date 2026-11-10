@@ -18,7 +18,7 @@ import Data.Time (NominalDiffTime, UTCTime (..), addUTCTime, fromGregorian, seco
 import qualified Data.UUID as UUID
 import Domain.Core.Page (Page (..), defaultLimit)
 import Domain.Core.Range (Range (..))
-import Domain.Core.Types (TransactionType (..))
+import Domain.Transaction.Types (TransactionType (..))
 import RIO
 import Test.Hspec
 import Test.QuickCheck

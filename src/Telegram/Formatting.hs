@@ -43,14 +43,10 @@ import qualified Data.UUID as UUID
 import Domain.Account.Naming (ShownByContext (..), accountNameParts, shortAccountName)
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
-    Allocations,
     Currency (..),
     DictionaryEntryId,
     Money,
     TransactionId,
-    TransactionType (..),
-    allAllocations,
     exchangeRateValue,
     moneyCurrency,
     unAccountId,
@@ -58,6 +54,12 @@ import Domain.Core.Types
   )
 import Domain.Localization.Language (Language)
 import Domain.Transaction.Projection (TransactionStatus (..))
+import Domain.Transaction.Types
+  ( Allocation (..),
+    Allocations,
+    TransactionType (..),
+    allAllocations,
+  )
 import Numeric (showFFloat)
 import Telegram.I18n (TelegramStrings (..), TransactionStrings (..), telegramStrings)
 import Telegram.Types (botCommands)

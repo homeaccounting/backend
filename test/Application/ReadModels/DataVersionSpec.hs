@@ -22,14 +22,7 @@ import Domain.Account.Events
   ( AccountAccessRevoked (..),
     AccountRenamed (..),
   )
-import Domain.Core.Types
-  ( AccountId,
-    RelationKind (Refund),
-    TransactionId,
-    TransactionType (Transfer),
-    UserId,
-    mkTransactionIdSafe,
-  )
+import Domain.Core.Types (AccountId, TransactionId, UserId, mkTransactionIdSafe)
 import Domain.Models (AccountingEvent (..))
 import Domain.Transaction.Events
   ( TransactionAmendmentInitiated (..),
@@ -38,6 +31,10 @@ import Domain.Transaction.Events
     TransactionPostingCompleted (..),
     TransactionPostingInitiated (..),
     TransactionRelationAdded (..),
+  )
+import Domain.Transaction.Types
+  ( RelationKind (Refund),
+    TransactionType (Transfer),
   )
 import RIO
 import Test.Hspec

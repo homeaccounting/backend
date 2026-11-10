@@ -17,13 +17,10 @@ module Domain.Transaction.AmendmentCommandHandlerSpec (spec) where
 import qualified Data.UUID as UUID
 import Domain.Core.Types
   ( AccountId,
-    Allocation (..),
     Currency (..),
     DictionaryEntryId,
     TransactionId,
-    TransactionType (..),
     UserId,
-    mkMixedAllocations,
     unsafeDictionaryEntryId,
     unsafeMoney,
     unsafeTransactionId,
@@ -50,6 +47,11 @@ import Domain.Transaction.Projection
     TransactionEvent (..),
     TransactionStatus (..),
     transactionDefault,
+  )
+import Domain.Transaction.Types
+  ( Allocation (..),
+    TransactionType (..),
+    mkMixedAllocations,
   )
 import Optics ((&), (.~))
 import RIO hiding ((&), (.~))

@@ -44,7 +44,6 @@ import Domain.Configuration.Dictionary (EntryRole (ItemRole))
 import Domain.Core.Errors (DomainError (..))
 import Domain.Core.Types
   ( DictionaryEntryId,
-    TransactionType (..),
     UserId,
     unsafeAccountId,
     unsafeEntryName,
@@ -53,6 +52,9 @@ import Domain.Core.Types
 import qualified Domain.Core.Types as Core (Currency (..))
 import Domain.Transaction.CommandHandler (TransactionCommand (..))
 import Domain.Transaction.Commands (InitiateTransactionPosting (..))
+import Domain.Transaction.Types
+  ( TransactionType (..),
+  )
 import Infrastructure.App (AppEnv (..), runAppM)
 import Infrastructure.Eventium (applyTransactionCommand)
 import RIO
