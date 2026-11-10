@@ -89,7 +89,7 @@ import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Page (Page)
-import Domain.Core.Types (AccountId, AccountType (..), Allocation (..), Allocations (..), ContactId, Currency, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), RelationSpec (..), TransactionId, TransactionKind (..), TransactionType (..), UserId, allocationsOf, convert, deriveTransactionKind, exchangeRateValue, kindOf, mkExchangeRate, mkExpense, mkIncome, mkMoney, mkTransactionId, mkTransfer, moneyCurrency, transferFeeTotal, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountType (..), Allocation (..), Allocations (..), ContactId, Currency, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), RelationSpec (..), TransactionId, TransactionKind (..), TransactionType (..), UserId, allocationsOf, convert, deriveTransactionKind, exchangeRateValue, kindOf, mkExchangeRate, mkExpense, mkIncome, mkMoney, mkTransactionId, mkTransfer, moneyCurrency, transferNetAmount, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Models
   ( AccountingEvent
       ( TransactionAmendmentCompletedEvent,
@@ -389,7 +389,7 @@ initiateTransfer userId sourceAccountId targetAccountId amount fees labels descr
     -- it, so only the remainder is converted and credited to the target.
     forM_ fees $ ExceptT . validateAllocationsAgainstDictionary userId
     transferType <- ExceptT (pure (mkTransfer amount fees))
-    creditedAnchor <- ExceptT (pure (anchorLessFees amount transferType))
+    creditedAnchor <- ExceptT (pure (transferNetAmount amount transferType))
     now <- liftIO getCurrentTime
     ExceptT (validateLabels userId labels)
     -- Internal transfers never carry a contact; this call has no
@@ -719,7 +719,7 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
   anchorAmount <- case derivedKind of
     IncomeKind -> pure amendCmd.newTargetAmount
     -- Fees are debited from the source but never converted or credited.
-    TransferKind -> ExceptT (pure (anchorLessFees amendCmd.newSourceAmount newTT))
+    TransferKind -> ExceptT (pure (transferNetAmount amendCmd.newSourceAmount newTT))
     _ -> pure amendCmd.newSourceAmount
   let anchorIsSource = derivedKind /= IncomeKind
       maybeUserRate = exchangeRateValue <$> amendCmd.newExchangeRate
@@ -1623,14 +1623,6 @@ pickCategoryDict tt = case kindOf tt of
   ExpenseKind -> Just ConfigurationService.expenseCategoryDictKind
   TransferKind -> Nothing
   AdjustmentKind -> Nothing
-
--- | The part of a transfer's debited amount that reaches the target side
--- (before conversion): the debited amount less the transfer's fees.
-anchorLessFees :: Money -> TransactionType -> Either DomainError Money
-anchorLessFees debited tt =
-  first
-    (\msg -> ValidationErr (mkValidationError "amount" msg (tshow (unMoney debited))))
-    (mkMoney (moneyCurrency debited) (unMoney debited - transferFeeTotal tt))
 
 -- | Verify every allocation's 'categoryId' exists in the dictionary that
 -- matches its bucket: income-bucket categories against the income

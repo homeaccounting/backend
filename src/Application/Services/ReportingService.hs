@@ -178,42 +178,48 @@ type FeeRates = Map (Day, Currency) ExchangeRate
 -- this total.
 transferFees :: Currency -> FeeRates -> [TransactionData] -> [(CategoryId, Rational)]
 transferFees base rates txs =
-  [ (a.categoryId, toBase td a.amount)
+  [(a.categoryId, toBase day a.amount) | (day, a) <- feeAllocations txs]
+  where
+    toBase day m
+      | m.currency == base = unMoney m
+      | otherwise = maybe (unMoney m) (\er -> unMoney (convert er m)) (Map.lookup (day, m.currency) rates)
+
+-- | Every expense-bucket fee allocation on a fee transfer, tagged with its
+-- transaction day (the day its FX rate is looked up for).
+feeAllocations :: [TransactionData] -> [(Day, Allocation)]
+feeAllocations txs =
+  [ (utctDay td.date, a)
   | td <- txs,
     Transfer (Just allocs) <- [td.transactionType],
     a <- allocs.expenses
   ]
-  where
-    toBase td m
-      | m.currency == base = unMoney m
-      | otherwise = maybe (unMoney m) (\er -> unMoney (convert er m)) (Map.lookup (utctDay td.date, m.currency) rates)
 
 -- | Look up the rate of every non-base fee currency on its transaction day.
--- A missing rate yields @Left ('ExchangeRateUnavailable' _)@, worded like
--- 'netWorth'.
+-- A missing rate yields @Left ('ExchangeRateUnavailable' _)@.
 resolveFeeRates :: Currency -> [TransactionData] -> AppM (Either DomainError FeeRates)
 resolveFeeRates base txs = do
-  cfg <- view appConfigL
-  let provider = cfg.exchangeRate.provider
-      needed =
-        Set.fromList
-          [ (utctDay td.date, a.amount.currency)
-          | td <- txs,
-            Transfer (Just allocs) <- [td.transactionType],
-            a <- allocs.expenses,
-            a.amount.currency /= base
-          ]
-  runExceptT . fmap Map.fromList . forM (Set.toList needed) $ \(day, cur) -> do
-    mer <- lift (runDb (lookupHistoricalRate provider day cur base))
-    case mer of
-      Just er -> pure ((day, cur), er)
-      Nothing ->
-        throwError
-          . ExchangeRateUnavailable
-          $ "No rate for "
-          <> tshow cur
-          <> " -> "
-          <> tshow base
+  provider <- exchangeRateProvider
+  let needed = Set.fromList [(day, a.amount.currency) | (day, a) <- feeAllocations txs, a.amount.currency /= base]
+  runExceptT . fmap Map.fromList . forM (Set.toList needed) $ \(day, cur) ->
+    (,) (day, cur) <$> rateToBase provider day cur base
+
+-- | The configured FX rate provider.
+exchangeRateProvider :: AppM Provider
+exchangeRateProvider = (\cfg -> cfg.exchangeRate.provider) <$> view appConfigL
+
+-- | The @from -> base@ rate on @day@, or @'ExchangeRateUnavailable' _@.
+rateToBase :: Provider -> Day -> Currency -> Currency -> ExceptT DomainError AppM ExchangeRate
+rateToBase provider day from base = do
+  mer <- lift (runDb (lookupHistoricalRate provider day from base))
+  case mer of
+    Just er -> pure er
+    Nothing ->
+      throwError
+        . ExchangeRateUnavailable
+        $ "No rate for "
+        <> tshow from
+        <> " -> "
+        <> tshow base
 
 -- | Aggregate signed expense-bucket spend per category (in base currency).
 -- Expense-bucket allocations on 'Expense' txns add; the same on 'Income' txns
@@ -259,26 +265,32 @@ visibleAccounts userId = runDb (getAccountIds userId)
 -- optional inclusive date window. Returns the base-currency grand total plus
 -- the per-category breakdown.
 spendingByCategory :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Either DomainError (Money, [(CategoryId, Money)]))
-spendingByCategory userId mFrom mTo = do
-  base <- resolveBaseCurrency userId
-  visible <- visibleAccounts userId
-  txs <- withVisibleFees visible <$> runDb (reportableTransactions visible mFrom mTo)
-  fmap
-    ( \rates ->
-        let perCat = aggregateSpending base rates txs
-            totalR = sum [unMoney m | m <- Map.elems perCat]
-         in (unsafeMoney base totalR, Map.toList perCat)
-    )
-    <$> resolveFeeRates base txs
+spendingByCategory userId mFrom mTo =
+  withReportInputs userId mFrom mTo $ \base rates txs ->
+    let perCat = aggregateSpending base rates txs
+        totalR = sum [unMoney m | m <- Map.elems perCat]
+     in (unsafeMoney base totalR, Map.toList perCat)
 
 -- | Income, expense, and net totals (all in base currency) for the user's
 -- visible accounts within the optional inclusive date window.
 incomeVsExpense :: UserId -> Maybe UTCTime -> Maybe UTCTime -> AppM (Either DomainError (Money, Money, Money))
-incomeVsExpense userId mFrom mTo = do
+incomeVsExpense userId mFrom mTo =
+  withReportInputs userId mFrom mTo aggregateIncomeExpense
+
+-- | Load the base currency, the user's reportable transactions in the window
+-- (fees kept only for visible source accounts), and the fee FX rates they
+-- need, then hand them to a pure aggregation.
+withReportInputs ::
+  UserId ->
+  Maybe UTCTime ->
+  Maybe UTCTime ->
+  (Currency -> FeeRates -> [TransactionData] -> a) ->
+  AppM (Either DomainError a)
+withReportInputs userId mFrom mTo aggregate = do
   base <- resolveBaseCurrency userId
   visible <- visibleAccounts userId
   txs <- withVisibleFees visible <$> runDb (reportableTransactions visible mFrom mTo)
-  fmap (\rates -> aggregateIncomeExpense base rates txs) <$> resolveFeeRates base txs
+  fmap (\rates -> aggregate base rates txs) <$> resolveFeeRates base txs
 
 -- | Restrict an @(AccountId, AccountData)@ list to the accounts that count
 -- towards a user's net worth: 'Regular' (not 'External'), 'Opened' (not
@@ -309,32 +321,13 @@ netWorth userId = do
   base <- resolveBaseCurrency userId
   myAccts <- runDb (getOwnedAccounts userId)
   let owned = ownedRegularOpened userId (Map.toList myAccts)
-  cfg <- view appConfigL
-  now <- liftIO getCurrentTime
-  let provider = cfg.exchangeRate.provider
-      day = utctDay now
+  provider <- exchangeRateProvider
+  day <- utctDay <$> liftIO getCurrentTime
   runExceptT $ do
     rows <- forM owned $ \(aid, ad) -> do
-      baseBal <- toBase provider day base ad.balance
+      baseBal <-
+        if ad.balance.currency == base
+          then pure ad.balance
+          else (`convert` ad.balance) <$> rateToBase provider day ad.balance.currency base
       pure (aid, ad.balance, baseBal)
     pure (unsafeMoney base (sum [unMoney bb | (_, _, bb) <- rows]), rows)
-  where
-    toBase ::
-      Provider ->
-      Day ->
-      Currency ->
-      Money ->
-      ExceptT DomainError AppM Money
-    toBase provider day base bal
-      | bal.currency == base = pure bal
-      | otherwise = do
-          mer <- lift (runDb (lookupHistoricalRate provider day bal.currency base))
-          case mer of
-            Just er -> pure (convert er bal)
-            Nothing ->
-              throwError
-                . ExchangeRateUnavailable
-                $ "No rate for "
-                <> tshow bal.currency
-                <> " -> "
-                <> tshow base

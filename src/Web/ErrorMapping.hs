@@ -40,6 +40,7 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import Domain.Core.Errors
   ( DomainError (..),
     ValidationError (..),
+    renderDomainError,
   )
 import RIO
 import Servant.Server (ServerError, err400, err401, err404, err409, err422, errBody)
@@ -427,46 +428,10 @@ mapDomainError AllocationsRequiredForCategorisedKind =
               details = Nothing
             }
     }
-mapDomainError TransferFeeIncomeNotSupported =
-  err400
-    { errBody =
-        encode $
-          ErrorResponse
-            { message = "Transfer fees must be expenses",
-              code = "TRANSFER_FEE_INCOME_NOT_SUPPORTED",
-              details = Nothing
-            }
-    }
-mapDomainError TransferFeesNotBelowSource =
-  err400
-    { errBody =
-        encode $
-          ErrorResponse
-            { message = "Transfer fees must be less than the debited amount",
-              code = "TRANSFER_FEES_NOT_BELOW_SOURCE",
-              details = Nothing
-            }
-    }
-mapDomainError TransferFeesDoNotBalance =
-  err400
-    { errBody =
-        encode $
-          ErrorResponse
-            { message = "Transfer amount must equal the debited amount minus fees",
-              code = "TRANSFER_FEES_DO_NOT_BALANCE",
-              details = Nothing
-            }
-    }
-mapDomainError TransferFeeTotalChanged =
-  err400
-    { errBody =
-        encode $
-          ErrorResponse
-            { message = "Allocation edits cannot change the transfer fee total; amend the transfer instead",
-              code = "TRANSFER_FEE_TOTAL_CHANGED",
-              details = Nothing
-            }
-    }
+mapDomainError err@TransferFeeIncomeNotSupported = badRequestWithCode "TRANSFER_FEE_INCOME_NOT_SUPPORTED" err
+mapDomainError err@TransferFeesNotBelowSource = badRequestWithCode "TRANSFER_FEES_NOT_BELOW_SOURCE" err
+mapDomainError err@TransferFeesDoNotBalance = badRequestWithCode "TRANSFER_FEES_DO_NOT_BALANCE" err
+mapDomainError err@TransferFeeTotalChanged = badRequestWithCode "TRANSFER_FEE_TOTAL_CHANGED" err
 mapDomainError CannotAmendToAdjustmentKind =
   err400
     { errBody =
@@ -744,6 +709,11 @@ mapDomainError (BankConnectionAccountInvalid field) =
 -- >>>   Right val -> return val
 throwDomainError :: (MonadIO m) => DomainError -> m a
 throwDomainError = throwIO . mapDomainError
+
+-- | A 400 whose message is the error's canonical 'renderDomainError' text.
+badRequestWithCode :: Text -> DomainError -> ServerError
+badRequestWithCode code err =
+  err400 {errBody = encode ErrorResponse {message = renderDomainError err, code = code, details = Nothing}}
 
 -- | Throw a validation error with field name and message.
 --

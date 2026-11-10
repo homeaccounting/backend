@@ -583,7 +583,7 @@ genTransactionData = do
       amt <- genPositiveMoneyIn regCur
       fees <- genTransferFees amt
       let tt = fromRight (Transfer Nothing) (mkTransfer amt fees)
-          tgtAmt = unsafeMoney regCur (unMoney amt - transferFeeTotal tt)
+          tgtAmt = fromRight amt (transferNetAmount amt tt)
       pure (mockTransactionData src tgt amt tgtAmt Nothing tt)
     ShAdjustment -> uncategorised src tgt regCur Adjustment
     _ -> do

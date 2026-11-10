@@ -114,6 +114,8 @@ module Domain.Core.Types
     mkExpense,
     mkTransfer,
     transferFeeTotal,
+    transferNetAmount,
+    allocationsTotal,
     allocationsOf,
     isCategorised,
     validateAllocations,
@@ -1181,10 +1183,23 @@ validateAllocations ::
   Allocations ->
   Either DomainError ()
 validateAllocations expectedTotal a =
-  checkNotEmpty *> checkPositive *> checkCurrency *> checkSum
+  validateAllocationItems expectedTotal.currency a *> checkSum
+  where
+    checkSum =
+      let s = Money (allocationsTotal a) expectedTotal.currency
+       in if s == expectedTotal
+            then Right ()
+            else
+              Left . ValidationErr $
+                mkValidationError "allocations" "Sum of allocations must equal categorised amount" (T.pack (show s.amount))
+
+-- | Per-item allocation invariants shared by every categorised constructor:
+-- non-empty, every amount strictly positive, every amount in 'expectedCurrency'.
+validateAllocationItems :: Currency -> Allocations -> Either DomainError ()
+validateAllocationItems expectedCurrency a =
+  checkNotEmpty *> checkPositive *> checkCurrency
   where
     xs = allAllocations a
-    expectedCurrency = expectedTotal.currency
 
     checkNotEmpty
       | null xs = Left AllocationsEmpty
@@ -1202,13 +1217,9 @@ validateAllocations expectedTotal a =
         Left . ValidationErr $
           mkValidationError "currency" "All allocations must share the categorised currency" (T.pack (show bad.amount.currency))
 
-    checkSum =
-      let s = Money (sum (fmap (\x -> x.amount.amount) xs)) expectedCurrency
-       in if s == expectedTotal
-            then Right ()
-            else
-              Left . ValidationErr $
-                mkValidationError "allocations" "Sum of allocations must equal categorised amount" (T.pack (show s.amount))
+-- | Sum of every allocation amount across both buckets.
+allocationsTotal :: Allocations -> Rational
+allocationsTotal a = sum (fmap (\x -> x.amount.amount) (allAllocations a))
 
 -- | Replace the allocations payload of a categorised 'TransactionType'.
 --
@@ -1233,43 +1244,24 @@ replaceAllocations new tt = case tt of
 mkTransfer :: Money -> Maybe Allocations -> Either DomainError TransactionType
 mkTransfer _ Nothing = Right (Transfer Nothing)
 mkTransfer source (Just a) = do
-  checkNoIncome
-  checkNotEmpty
-  checkPositive
-  checkCurrency
-  checkBelowSource
+  if null a.incomes then Right () else Left TransferFeeIncomeNotSupported
+  validateAllocationItems source.currency a
+  if allocationsTotal a < source.amount then Right () else Left TransferFeesNotBelowSource
   pure (Transfer (Just a))
-  where
-    fees = a.expenses
-
-    checkNoIncome
-      | null a.incomes = Right ()
-      | otherwise = Left TransferFeeIncomeNotSupported
-
-    checkNotEmpty
-      | null fees = Left AllocationsEmpty
-      | otherwise = Right ()
-
-    checkPositive = case filter (\x -> x.amount.amount <= 0) fees of
-      [] -> Right ()
-      (bad : _) ->
-        Left . ValidationErr $
-          mkValidationError "amount" "Transfer fee must be positive" (T.pack (show bad.amount.amount))
-
-    checkCurrency = case filter (\x -> x.amount.currency /= source.currency) fees of
-      [] -> Right ()
-      (bad : _) ->
-        Left . ValidationErr $
-          mkValidationError "currency" "Transfer fees must be in the source currency" (T.pack (show bad.amount.currency))
-
-    checkBelowSource
-      | sum (fmap (\x -> x.amount.amount) fees) < source.amount = Right ()
-      | otherwise = Left TransferFeesNotBelowSource
 
 -- | Total of the fee allocations on a 'Transfer'; 0 for anything else.
 transferFeeTotal :: TransactionType -> Rational
-transferFeeTotal (Transfer (Just a)) = sum (fmap (\x -> x.amount.amount) (allAllocations a))
+transferFeeTotal (Transfer (Just a)) = allocationsTotal a
 transferFeeTotal _ = 0
+
+-- | The part of a transfer's debited amount that reaches the target side
+-- (before any FX conversion): the debited amount less the transfer's fees.
+transferNetAmount :: Money -> TransactionType -> Either DomainError Money
+transferNetAmount debited tt =
+  either
+    (\msg -> Left (ValidationErr (mkValidationError "amount" msg (T.pack (show debited.amount)))))
+    Right
+    (mkMoney debited.currency (debited.amount - transferFeeTotal tt))
 
 -- | Construct an Income 'TransactionType'.
 --

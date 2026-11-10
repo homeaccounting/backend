@@ -45,11 +45,13 @@ import Domain.Banking.Import (importAttributionCapacity)
 import Domain.Core.Types
   ( Allocation (..),
     Allocations (..),
+    Currency,
     Money (..),
     RelationSpec (..),
     TransactionType (..),
     allAllocations,
     allocationsOf,
+    allocationsTotal,
     moneyCurrency,
     unAccountId,
     unMoney,
@@ -590,14 +592,9 @@ handleTransactionCommand transaction (RemoveTransactionRelationTransactionComman
 -- direct constructions bypassing them).
 checkAllocationsAgainst :: Money -> Allocations -> Either TransactionError ()
 checkAllocationsAgainst expected a =
-  checkNotEmpty *> checkCurrency *> checkSum *> checkPositive
+  checkAllocationsNotEmpty a *> checkAllocationsCurrency (moneyCurrency expected) a *> checkSum *> checkAllocationsPositive a
   where
-    xs = allAllocations a
-    expectedCurrency = moneyCurrency expected
-    checkNotEmpty = if null xs then Left AllocationsEmpty else Right ()
-    checkCurrency = if all (\x -> x.amount.currency == expectedCurrency) xs then Right () else Left AllocationCurrencyMismatch
-    checkSum = if Money (sum (fmap (\x -> x.amount.amount) xs)) expectedCurrency == expected then Right () else Left AllocationsDoNotSumToTotal
-    checkPositive = if all (\x -> unMoney x.amount > 0) xs then Right () else Left AllocationAmountNotPositive
+    checkSum = if Money (allocationsTotal a) (moneyCurrency expected) == expected then Right () else Left AllocationsDoNotSumToTotal
 
 -- | Fee rules for a 'Transfer' (spec §4): expense bucket only, source
 -- currency, each fee positive, total strictly below the source amount, and —
@@ -605,14 +602,15 @@ checkAllocationsAgainst expected a =
 -- source, target, fees.
 checkTransferFees :: Money -> Money -> Allocations -> Either TransactionError ()
 checkTransferFees source target fees =
-  checkNotEmpty *> checkNoIncome *> checkCurrency *> checkPositive *> checkBelowSource *> checkBalance
+  checkAllocationsNotEmpty fees
+    *> checkNoIncome
+    *> checkAllocationsCurrency (moneyCurrency source) fees
+    *> checkAllocationsPositive fees
+    *> checkBelowSource
+    *> checkBalance
   where
-    xs = allAllocations fees
     feeTotal = allocationsTotal fees
-    checkNotEmpty = if null xs then Left AllocationsEmpty else Right ()
     checkNoIncome = if null fees.incomes then Right () else Left TransferFeeIncomeNotSupported
-    checkCurrency = if all (\x -> x.amount.currency == moneyCurrency source) xs then Right () else Left AllocationCurrencyMismatch
-    checkPositive = if all (\x -> unMoney x.amount > 0) xs then Right () else Left AllocationAmountNotPositive
     checkBelowSource = if feeTotal < unMoney source then Right () else Left TransferFeesNotBelowSource
     checkBalance
       | moneyCurrency source == moneyCurrency target && unMoney source - feeTotal /= unMoney target = Left TransferFeesDoNotBalance
@@ -621,8 +619,16 @@ checkTransferFees source target fees =
 checkTransferFeesIfAny :: Money -> Money -> Maybe Allocations -> Either TransactionError ()
 checkTransferFeesIfAny source target = maybe (Right ()) (checkTransferFees source target)
 
-allocationsTotal :: Allocations -> Rational
-allocationsTotal a = sum (fmap (\x -> x.amount.amount) (allAllocations a))
+checkAllocationsNotEmpty :: Allocations -> Either TransactionError ()
+checkAllocationsNotEmpty a = if null (allAllocations a) then Left AllocationsEmpty else Right ()
+
+checkAllocationsCurrency :: Currency -> Allocations -> Either TransactionError ()
+checkAllocationsCurrency cur a =
+  if all (\x -> x.amount.currency == cur) (allAllocations a) then Right () else Left AllocationCurrencyMismatch
+
+checkAllocationsPositive :: Allocations -> Either TransactionError ()
+checkAllocationsPositive a =
+  if all (\x -> unMoney x.amount > 0) (allAllocations a) then Right () else Left AllocationAmountNotPositive
 
 -- -----------------------------------------------------------------------------
 -- Command Handler
