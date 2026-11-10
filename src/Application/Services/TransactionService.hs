@@ -89,7 +89,7 @@ import Domain.Banking.Signal (BankProviderCategory, BankProviderContact)
 import Domain.Configuration.Dictionary (DictionaryKind)
 import Domain.Core.Errors (DomainError (..), mkValidationError)
 import Domain.Core.Page (Page)
-import Domain.Core.Types (AccountId, AccountType (..), Allocation (..), Allocations (..), ContactId, Currency, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), RelationSpec (..), TransactionId, TransactionKind (..), TransactionType (..), UserId, allocationsOf, convert, deriveTransactionKind, exchangeRateValue, kindOf, mkExchangeRate, mkExpense, mkIncome, mkMoney, mkTransactionId, mkTransfer, moneyCurrency, transferNetAmount, unDictionaryEntryId, unMoney, unTransactionId)
+import Domain.Core.Types (AccountId, AccountType (..), Allocation (..), Allocations (..), ContactId, Currency, DictionaryEntryId, ExchangeRate, LabelId, Money, RelationKind (..), RelationSpec (..), TransactionId, TransactionKind (..), TransactionType (..), UserId, allocationsOf, convert, deriveTransactionKind, exchangeRateValue, kindOf, mkExchangeRate, mkExpense, mkIncome, mkMoney, mkTransactionId, mkTransfer, moneyCurrency, transferGrossAmount, transferNetAmount, unDictionaryEntryId, unMoney, unTransactionId)
 import Domain.Models
   ( AccountingEvent
       ( TransactionAmendmentCompletedEvent,
@@ -716,15 +716,16 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
       )
   let srcCurrency = moneyCurrency newSrcAcc.balance
       tgtCurrency = moneyCurrency newTgtAcc.balance
-  anchorAmount <- case derivedKind of
-    IncomeKind -> pure amendCmd.newTargetAmount
-    -- Fees are debited from the source but never converted or credited.
-    TransferKind -> ExceptT (pure (transferNetAmount amendCmd.newSourceAmount newTT))
-    _ -> pure amendCmd.newSourceAmount
   let anchorIsSource = derivedKind /= IncomeKind
-      maybeUserRate = exchangeRateValue <$> amendCmd.newExchangeRate
+  -- Transfer fees are debited from the source but never converted or
+  -- credited: resolve the net amount, then add the fees back to the debit.
+  anchorAmount <-
+    if anchorIsSource
+      then ExceptT (pure (transferNetAmount amendCmd.newSourceAmount newTT))
+      else pure amendCmd.newTargetAmount
+  let maybeUserRate = exchangeRateValue <$> amendCmd.newExchangeRate
       rateDay = utctDay transaction.date
-  (resolvedSrc, resolvedTgt, resolvedRate) <-
+  (netSrc, resolvedTgt, resolvedRate) <-
     ExceptT
       ( resolveAmounts
           anchorAmount
@@ -742,7 +743,7 @@ resolveAmendment userId transaction amendCmd = runExceptT $ do
       { transactionId = amendCmd.transactionId,
         newSourceAccountId = amendCmd.newSourceAccountId,
         newTargetAccountId = amendCmd.newTargetAccountId,
-        newSourceAmount = if derivedKind == TransferKind then amendCmd.newSourceAmount else resolvedSrc,
+        newSourceAmount = transferGrossAmount netSrc newTT,
         newTargetAmount = resolvedTgt,
         newExchangeRate = resolvedRate,
         newAllocations = amendCmd.newAllocations,

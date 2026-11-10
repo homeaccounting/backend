@@ -115,6 +115,7 @@ module Domain.Core.Types
     mkTransfer,
     transferFeeTotal,
     transferNetAmount,
+    transferGrossAmount,
     allocationsTotal,
     allocationsOf,
     isCategorised,
@@ -1262,6 +1263,12 @@ transferNetAmount debited tt =
     (\msg -> Left (ValidationErr (mkValidationError "amount" msg (T.pack (show debited.amount)))))
     Right
     (mkMoney debited.currency (debited.amount - transferFeeTotal tt))
+
+-- | Inverse of 'transferNetAmount': the net amount plus the transfer's fees,
+-- i.e. the total debited from the source. Identity for anything but a fee
+-- transfer.
+transferGrossAmount :: Money -> TransactionType -> Money
+transferGrossAmount net tt = Money (net.amount + transferFeeTotal tt) net.currency
 
 -- | Construct an Income 'TransactionType'.
 --

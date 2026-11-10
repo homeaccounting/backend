@@ -36,6 +36,13 @@ spec = describe "TransferFees" $ do
           Right tt -> transferFeeTotal tt < unMoney src
           Left _ -> False
 
+  prop "transferGrossAmount inverts transferNetAmount for accepted transfers" $
+    forAll genPositiveMoney $ \src ->
+      forAll (genTransferFees src) $ \f ->
+        case mkTransfer src f of
+          Right tt -> fmap (`transferGrossAmount` tt) (transferNetAmount src tt) === Right src
+          Left _ -> property False
+
   prop "transferFeeTotal is zero without fees" $
     transferFeeTotal (Transfer Nothing) === 0
 
